@@ -14,6 +14,7 @@ Publicar una landing simple que permita presentar la comunidad, mostrar el trail
 - Landing estática en HTML, CSS y JavaScript.
 - Documentación base para organizar el crecimiento del proyecto.
 - Preparación de carpetas para backend y orquestación futura.
+- Plataforma de tasks y orquestación integrada para coordinar trabajo técnico.
 
 ## Stack actual
 

@@ -15,3 +15,7 @@ Se incluye una carpeta `ai/` y un documento `AGENTS.md` para facilitar una futur
 ## Decision 004: branding militar Vietnam
 
 La dirección visual inicial se alinea con una estética sobria, táctica y militar inspirada en el contexto Vietnam para mantener coherencia temática desde la primera iteración.
+
+## Decision 005: AI Development Platform integrada de forma adaptada
+
+Se integra una capa de orquestación por tasks inspirada en la plantilla de AI Development Platform, pero adaptada al contexto real de HLL Vietnam y sin arrastrar supuestos genéricos de otros stacks. La plataforma se usa como soporte operativo del repositorio, no como funcionalidad del producto.

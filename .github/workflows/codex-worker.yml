@@ -1,0 +1,33 @@
+name: Codex Worker
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - 'ai/tasks/pending/**'
+      - 'AGENTS.md'
+      - 'ai/**'
+      - 'scripts/codex-runner.ps1'
+
+jobs:
+  run-codex-worker:
+    runs-on: ubuntu-latest
+    if: ${{ secrets.OPENAI_API_KEY != '' }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install Codex CLI
+        run: npm install -g @openai/codex
+
+      - name: Run Codex Worker
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        run: |
+          codex --auto "Follow AGENTS.md, read the AI platform files in ai/, and process only the pending tasks within scoped repository rules."
