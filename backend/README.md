@@ -61,6 +61,11 @@ Variables opcionales:
 - `HLL_BACKEND_ALLOWED_ORIGINS`
 - `HLL_BACKEND_REFRESH_INTERVAL_SECONDS`
 
+El `frontend/index.html` viene preparado para volver a consultar el bloque de
+servidores cada `60000` ms (`60s`) sin recargar la pagina completa. La landing
+lee ese valor desde `data-server-refresh-ms`, por lo que puede ajustarse en el
+HTML si una demo local necesita un intervalo distinto.
+
 Valor por defecto de `HLL_BACKEND_ALLOWED_ORIGINS`:
 
 - `null`
@@ -239,7 +244,7 @@ Ese comando ejecuta capturas persistidas de forma repetida usando el mismo
 flujo del colector y la base SQLite local. Por defecto:
 
 - usa `--source auto`
-- espera `300` segundos entre ejecuciones
+- espera `60` segundos entre ejecuciones
 - permite fallback controlado si A2S no responde
 - sigue en ejecucion hasta que se detiene manualmente
 
@@ -258,6 +263,25 @@ Ejemplos:
 python -m app.scheduler --interval 120
 python -m app.scheduler --source a2s --no-fallback --max-runs 2
 ```
+
+Flujo local recomendado para ver datos vivos en la landing:
+
+1. Desde `backend/`, arrancar la API:
+
+   ```powershell
+   python -m app.main
+   ```
+
+2. En otra terminal, dejar el scheduler corriendo:
+
+   ```powershell
+   python -m app.scheduler
+   ```
+
+3. Servir `frontend/` con un servidor local sencillo y abrir la landing. El
+   frontend volvera a pedir `/api/servers` y `/api/servers/latest` cada `60`
+   segundos, por lo que los cambios de mapa o poblacion apareceran sin recarga
+   manual cuando existan snapshots nuevos.
 
 Este mecanismo deja el refresco desacoplado del servidor HTTP y es facil de
 reemplazar mas adelante por un scheduler mas serio sin rehacer el colector.

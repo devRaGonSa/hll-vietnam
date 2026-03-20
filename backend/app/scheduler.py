@@ -49,13 +49,13 @@ def run_local_refresh_loop(
 def main() -> None:
     """Allow local scheduled refresh execution without adding external infrastructure."""
     parser = argparse.ArgumentParser(
-        description="Run periodic local snapshot refreshes for development.",
+        description="Run periodic local snapshot refreshes for development and landing demos.",
     )
     parser.add_argument(
         "--interval",
         type=int,
         default=get_refresh_interval_seconds(),
-        help="Seconds to wait between persisted refresh runs.",
+        help="Seconds to wait between persisted refresh runs. Defaults to env value or 60.",
     )
     parser.add_argument(
         "--source",

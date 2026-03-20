@@ -1,11 +1,15 @@
 // Progressive enhancement for local frontend-backend checks.
 const RECENT_SNAPSHOT_WINDOW_MS = 30 * 60 * 1000;
+const DEFAULT_SERVER_POLL_INTERVAL_MS = 60 * 1000;
 
 document.addEventListener("DOMContentLoaded", () => {
   console.info("HLL Vietnam frontend ready");
 
   const backendBaseUrl =
     document.body.dataset.backendBaseUrl || "http://127.0.0.1:8000";
+  const serverPollIntervalMs = getServerPollIntervalMs(
+    document.body.dataset.serverRefreshMs,
+  );
   const statusNode = document.getElementById("backend-status");
   const trailerFrame = document.getElementById("trailer-frame");
   const trailerTitle = document.getElementById("trailer-title");
@@ -13,42 +17,44 @@ document.addEventListener("DOMContentLoaded", () => {
   const serversNote = document.getElementById("servers-note");
   const serversList = document.getElementById("servers-list");
   const serversBadge = document.getElementById("servers-badge");
-  const serversSource = document.getElementById("servers-source");
-  const serversSourceLabel = document.getElementById("servers-source-label");
-  const serversSourceMeta = document.getElementById("servers-source-meta");
-  const statsPreview = document.getElementById("stats-preview");
-  const statsPreviewItems = document.getElementById("stats-preview-items");
 
   updateBackendStatus(statusNode, "Backend comprobando", "status-chip--idle");
 
-  setServersDataState(
-    {
-      badgeNode: serversBadge,
-      sourceNode: serversSource,
-      labelNode: serversSourceLabel,
-      metaNode: serversSourceMeta,
-    },
-    { kind: "fallback" },
-  );
+  setServersDataState(serversBadge, { kind: "fallback" });
+
+  let serverRefreshInFlight = false;
+  const refreshServers = async () => {
+    if (serverRefreshInFlight) {
+      return;
+    }
+
+    serverRefreshInFlight = true;
+    try {
+      await hydrateServers(
+        backendBaseUrl,
+        serversTitle,
+        serversNote,
+        serversList,
+        serversBadge,
+      );
+    } finally {
+      serverRefreshInFlight = false;
+    }
+  };
 
   Promise.allSettled([
     fetchHealth(backendBaseUrl, statusNode),
     hydrateTrailer(backendBaseUrl, trailerFrame, trailerTitle),
-    hydrateServers(
-      backendBaseUrl,
-      serversTitle,
-      serversNote,
-      serversList,
-      serversBadge,
-      serversSource,
-      serversSourceLabel,
-      serversSourceMeta,
-      statsPreview,
-      statsPreviewItems,
-    ),
+    refreshServers(),
   ]).catch((error) => {
     console.warn("Progressive enhancement failed", error);
   });
+
+  if (serverPollIntervalMs > 0) {
+    window.setInterval(() => {
+      void refreshServers();
+    }, serverPollIntervalMs);
+  }
 });
 
 async function fetchHealth(backendBaseUrl, statusNode) {
@@ -102,11 +108,6 @@ async function hydrateServers(
   serversNote,
   serversList,
   serversBadge,
-  serversSource,
-  serversSourceLabel,
-  serversSourceMeta,
-  statsPreview,
-  statsPreviewItems,
 ) {
   if (!serversTitle || !serversNote || !serversList || !serversBadge) {
     return;
@@ -125,20 +126,12 @@ async function hydrateServers(
     }
 
     serversTitle.textContent =
-      serversData.title || "Servidores actuales de Hell Let Loose";
-    setServersDataState(
-      {
-        badgeNode: serversBadge,
-        sourceNode: serversSource,
-        labelNode: serversSourceLabel,
-        metaNode: serversSourceMeta,
-      },
-      { kind: "fallback" },
-    );
+      serversData.title || "Estado actual de servidores";
+    setServersDataState(serversBadge, { kind: "fallback" });
 
     if (serversData.context === "current-hll-reference") {
       serversNote.textContent =
-        "Referencia provisional del HLL actual mientras no existan datos reales de HLL Vietnam.";
+        "Referencia actual de servidores de Hell Let Loose.";
     }
 
     if (serversData.items.length === 0) {
@@ -154,11 +147,6 @@ async function hydrateServers(
       serversNote,
       serversList,
       serversBadge,
-      serversSource,
-      serversSourceLabel,
-      serversSourceMeta,
-      statsPreview,
-      statsPreviewItems,
     );
   } catch (error) {
     console.warn("Servers panel remains on static fallback", error);
@@ -171,16 +159,7 @@ async function hydrateServerStats(
   serversNote,
   serversList,
   serversBadge,
-  serversSource,
-  serversSourceLabel,
-  serversSourceMeta,
-  statsPreview,
-  statsPreviewItems,
 ) {
-  if (!statsPreview || !statsPreviewItems) {
-    return;
-  }
-
   try {
     const latestPayload = await fetchJson(`${backendBaseUrl}/api/servers/latest`);
     const latestItems = latestPayload?.data?.items;
@@ -188,48 +167,20 @@ async function hydrateServerStats(
       return;
     }
 
-    const histories = await Promise.all(
-      latestItems.map(async (server) => {
-        const serverKey = server.external_server_id || server.server_id;
-        const historyPayload = await fetchJson(
-          `${backendBaseUrl}/api/servers/${encodeURIComponent(serverKey)}/history?limit=4`,
-        );
-        return {
-          key: serverKey,
-          items: Array.isArray(historyPayload?.data?.items)
-            ? historyPayload.data.items
-            : [],
-        };
-      }),
-    );
-
-    const historyByServer = new Map(
-      histories.map((entry) => [String(entry.key), entry.items]),
-    );
     const visibleItems = selectPrimaryServerItems(latestItems);
     const latestState = deriveSnapshotState(visibleItems);
     const hasRealSnapshots = visibleItems.some(isRealA2SSnapshot);
 
     serversTitle.textContent = hasRealSnapshots
-      ? "Servidores activos con captura real"
+      ? "Servidores disponibles"
       : latestPayload.data.title || "Actividad reciente de servidores";
     serversNote.textContent = hasRealSnapshots
-      ? "La vista principal muestra solo servidores con snapshots reales A2S utilizables. El fallback provisional queda reservado para cuando el backend no aporta capturas validas."
-      : "Vista ligera basada en snapshots persistidos del backend. Si no hay capturas reales utilizables, el panel conserva la referencia provisional.";
-    setServersDataState(
-      {
-        badgeNode: serversBadge,
-        sourceNode: serversSource,
-        labelNode: serversSourceLabel,
-        metaNode: serversSourceMeta,
-      },
-      latestState,
-    );
-    statsPreview.hidden = false;
-    statsPreviewItems.innerHTML = renderStatsPreview(visibleItems);
-    serversList.innerHTML = renderServerSections(visibleItems, historyByServer);
+      ? "Estado actual y acceso directo a los servidores disponibles."
+      : "Ultimo estado disponible de servidores.";
+    setServersDataState(serversBadge, latestState);
+    serversList.innerHTML = renderServerSections(visibleItems);
   } catch (error) {
-    console.warn("Historical stats preview unavailable", error);
+    console.warn("Historical server enrichment unavailable", error);
   }
 }
 
@@ -245,45 +196,28 @@ function updateBackendStatus(statusNode, label, stateClass) {
   }
 }
 
-function setServersDataState(nodes, state) {
-  const { badgeNode, sourceNode, labelNode, metaNode } = nodes;
-  if (!badgeNode || !sourceNode || !labelNode || !metaNode) {
+function setServersDataState(badgeNode, state) {
+  if (!badgeNode) {
     return;
   }
 
   if (state.kind === "live") {
-    badgeNode.textContent = "Snapshots A2S recientes";
-    labelNode.textContent = "Captura real reciente";
-    metaNode.textContent =
-      state.timestampLabel
-        ? `Ultima captura A2S registrada ${state.timestampLabel}.`
-        : "El bloque muestra snapshots recientes procedentes del backend.";
+    badgeNode.textContent = "Datos en vivo";
     badgeNode.classList.remove("status-chip--fallback");
     badgeNode.classList.add("status-chip--ok");
-    sourceNode.dataset.state = "live";
     return;
   }
 
   if (state.kind === "historical") {
-    badgeNode.textContent = "Historico persistido";
-    labelNode.textContent = "Persistencia local disponible";
-    metaNode.textContent =
-      state.timestampLabel
-        ? `Se muestran snapshots guardados. Ultima captura ${state.timestampLabel}.`
-        : "El backend devuelve historico persistido, aunque no sea una captura reciente.";
+    badgeNode.textContent = "Actividad reciente";
     badgeNode.classList.remove("status-chip--fallback");
     badgeNode.classList.add("status-chip--ok");
-    sourceNode.dataset.state = "historical";
     return;
   }
 
-  badgeNode.textContent = "Fallback estatico";
-  labelNode.textContent = "Fallback estatico activo";
-  metaNode.textContent =
-    "La landing conserva la referencia provisional cuando el backend o el historico aun no aportan snapshots utilizables.";
+  badgeNode.textContent = "Referencia actual";
   badgeNode.classList.remove("status-chip--ok");
   badgeNode.classList.add("status-chip--fallback");
-  sourceNode.dataset.state = "fallback";
 }
 
 function renderServerCard(server) {
@@ -296,20 +230,23 @@ function renderServerCard(server) {
   const region = server.region || "Region pendiente";
   const players = Number.isFinite(server.players) ? server.players : 0;
   const maxPlayers = Number.isFinite(server.max_players) ? server.max_players : 0;
-  const loadPercent =
-    maxPlayers > 0 ? Math.max(0, Math.min(100, Math.round((players / maxPlayers) * 100))) : 0;
+  const occupancy = getPopulationPercent(players, maxPlayers);
+  const sourceLabel = isRealA2SSnapshot(server) ? "Snapshot activo" : "Referencia actual";
 
   return `
     <article class="server-card">
       <div class="server-card__top">
         <div class="server-card__identity">
-          <p class="server-card__eyebrow">Servidor de referencia</p>
+          <p class="server-card__eyebrow">${escapeHtml(sourceLabel)}</p>
           <h3>${escapeHtml(serverName)}</h3>
         </div>
-        <span class="server-state ${stateClass}">${escapeHtml(serverStatus)}</span>
+        <div class="server-card__status-column">
+          <span class="server-state ${stateClass}">${escapeHtml(serverStatus)}</span>
+          <p class="server-card__population">${players} / ${maxPlayers}</p>
+        </div>
       </div>
       <div class="server-card__load" aria-hidden="true">
-        <span style="width: ${loadPercent}%"></span>
+        <span style="width: ${occupancy}%"></span>
       </div>
       <dl class="server-card__stats">
         <div class="server-stat server-stat--players">
@@ -329,7 +266,7 @@ function renderServerCard(server) {
   `;
 }
 
-function renderServerStatsCard(server, historyItems) {
+function renderServerStatsCard(server) {
   const serverName = server.server_name || "Servidor sin nombre";
   const statusLabel = formatServerStatus(server.status);
   const stateClass =
@@ -339,17 +276,13 @@ function renderServerStatsCard(server, historyItems) {
   const region = server.region || "Region pendiente";
   const players = Number.isFinite(server.players) ? server.players : 0;
   const maxPlayers = Number.isFinite(server.max_players) ? server.max_players : 0;
-  const loadPercent =
-    maxPlayers > 0 ? Math.max(0, Math.min(100, Math.round((players / maxPlayers) * 100))) : 0;
+  const occupancy = getPopulationPercent(players, maxPlayers);
   const updatedAt = server.captured_at
     ? formatTimestamp(server.captured_at)
     : "Sin captura reciente";
   const updatedAgo = formatElapsedMinutes(server.history_summary?.minutes_since_last_capture);
-  const trendMarkup = renderTrend(historyItems);
   const connectAction = renderConnectAction(server);
-  const summaryMarkup = renderHistorySummary(server.history_summary);
   const cardVariantClass = isRealSnapshot ? "server-card--real" : "server-card--reference";
-  const eyebrowLabel = isRealSnapshot ? "Snapshot real A2S" : "Referencia persistida";
   const quickFacts = renderQuickFacts([
     { label: "Mapa", value: currentMap },
     { label: "Region", value: region },
@@ -360,9 +293,8 @@ function renderServerStatsCard(server, historyItems) {
     <article class="server-card server-card--stats ${cardVariantClass}">
       <div class="server-card__top server-card__top--stats">
         <div class="server-card__identity">
-          <p class="server-card__eyebrow">${escapeHtml(eyebrowLabel)}</p>
+          <p class="server-card__eyebrow">${isRealSnapshot ? "Snapshot activo" : "Referencia actual"}</p>
           <h3>${escapeHtml(serverName)}</h3>
-          <p class="server-card__meta">Mapa actual, region visible y ultima captura persistida del servidor.</p>
         </div>
         <div class="server-card__status-column">
           <span class="server-state ${stateClass}">${escapeHtml(statusLabel)}</span>
@@ -370,60 +302,19 @@ function renderServerStatsCard(server, historyItems) {
           ${connectAction}
         </div>
       </div>
-      <div class="server-card__body">
-        <div class="server-card__facts">
-          ${quickFacts}
-          ${summaryMarkup}
-        </div>
-        <div class="server-trend">
-          <div class="server-trend__header">
-            <p>Tendencia reciente</p>
-            <span>${historyItems.length} capturas</span>
-          </div>
-          <div class="server-trend__bars" aria-hidden="true">${trendMarkup}</div>
-        </div>
-      </div>
       <div class="server-card__load" aria-hidden="true">
-        <span style="width: ${loadPercent}%"></span>
+        <span style="width: ${occupancy}%"></span>
       </div>
+      ${quickFacts}
     </article>
   `;
 }
 
-function renderServerSections(latestItems, historyByServer) {
-  const hasRealSnapshots = latestItems.some(isRealA2SSnapshot);
-
-  return renderServerSection(
-    hasRealSnapshots ? "Snapshots reales A2S" : "Historico persistido",
-    hasRealSnapshots
-      ? "Servidores reales validados y consultados desde el backend."
-      : "Snapshots persistidos disponibles mientras no haya capturas reales utilizables.",
-    hasRealSnapshots ? "server-panel-section--real" : "server-panel-section--reference",
-    latestItems,
-    historyByServer,
-  );
-}
-
-function renderServerSection(title, intro, variantClass, items, historyByServer) {
-  const cards = items
-    .map((server) =>
-      renderServerStatsCard(
-        server,
-        historyByServer.get(String(server.external_server_id || server.server_id)) || [],
-      ),
-    )
-    .join("");
-
+function renderServerSections(latestItems) {
   return `
-    <section class="server-panel-section ${variantClass}">
-      <div class="server-panel-section__header">
-        <h3>${escapeHtml(title)}</h3>
-        <p>${escapeHtml(intro)}</p>
-      </div>
-      <div class="servers-grid servers-grid--section">
-        ${cards}
-      </div>
-    </section>
+    <div class="servers-grid servers-grid--section">
+      ${latestItems.map((server) => renderServerStatsCard(server)).join("")}
+    </div>
   `;
 }
 
@@ -443,56 +334,6 @@ function renderConnectAction(server) {
     <div class="server-card__actions">
       <a class="server-connect-button" href="${escapeHtml(connectUrl)}">Conectar</a>
     </div>
-  `;
-}
-
-function renderStatsPreview(items) {
-  const latestTimestamp = items
-    .map((item) => item.captured_at)
-    .filter(Boolean)
-    .sort()
-    .at(-1);
-  const totalPlayers = items.reduce(
-    (sum, item) => sum + (Number.isFinite(item.players) ? item.players : 0),
-    0,
-  );
-  const onlineServers = items.filter((item) => item.status === "online").length;
-
-  return [
-    renderStatsPreviewItem("Servidores", String(items.length)),
-    renderStatsPreviewItem("Online", String(onlineServers)),
-    renderStatsPreviewItem("Jugadores", String(totalPlayers)),
-    renderStatsPreviewItem(
-      "Ultima captura",
-      latestTimestamp ? formatTimestamp(latestTimestamp) : "Pendiente",
-    ),
-  ].join("");
-}
-
-function renderHistorySummary(summary) {
-  if (!summary) {
-    return "";
-  }
-
-  return `
-    <dl class="server-summary">
-      <div class="server-summary__item">
-        <dt>Visto online</dt>
-        <dd>${escapeHtml(summary.last_seen_online_at ? formatTimestamp(summary.last_seen_online_at) : "Sin registro")}</dd>
-      </div>
-      <div class="server-summary__item">
-        <dt>Capturas</dt>
-        <dd>${escapeHtml(`${summary.recent_capture_count || 0}/${summary.window_size || 0}`)}</dd>
-      </div>
-      <div class="server-summary__item">
-        <dt>Promedio</dt>
-        <dd>${escapeHtml(formatPlayerMetric(summary.recent_average_players))}</dd>
-      </div>
-      <div class="server-summary__item">
-        <dt>Pico</dt>
-        <dd>${escapeHtml(formatPlayerMetric(summary.recent_peak_players))}</dd>
-      </div>
-    </dl>
   `;
 }
 
@@ -547,32 +388,6 @@ function deriveSnapshotState(items) {
   return { kind: "historical", timestampLabel };
 }
 
-function renderStatsPreviewItem(label, value) {
-  return `
-    <article class="stats-preview__item">
-      <p>${escapeHtml(label)}</p>
-      <strong>${escapeHtml(value)}</strong>
-    </article>
-  `;
-}
-
-function renderTrend(historyItems) {
-  if (!Array.isArray(historyItems) || historyItems.length === 0) {
-    return '<span class="server-trend__bar server-trend__bar--empty"></span>';
-  }
-
-  const orderedItems = [...historyItems].reverse();
-  return orderedItems
-    .map((item) => {
-      const players = Number.isFinite(item.players) ? item.players : 0;
-      const maxPlayers = Number.isFinite(item.max_players) ? item.max_players : 0;
-      const height =
-        maxPlayers > 0 ? Math.max(14, Math.round((players / maxPlayers) * 100)) : 14;
-      return `<span class="server-trend__bar" style="height: ${height}%"></span>`;
-    })
-    .join("");
-}
-
 function formatServerStatus(status) {
   if (status === "online") {
     return "Online";
@@ -619,8 +434,21 @@ function formatElapsedMinutes(minutes) {
   return `hace ${days} d`;
 }
 
-function formatPlayerMetric(value) {
-  return Number.isFinite(value) ? String(value) : "Sin dato";
+function getPopulationPercent(players, maxPlayers) {
+  if (!Number.isFinite(players) || !Number.isFinite(maxPlayers) || maxPlayers <= 0) {
+    return 0;
+  }
+
+  return Math.max(0, Math.min(100, Math.round((players / maxPlayers) * 100)));
+}
+
+function getServerPollIntervalMs(rawValue) {
+  const parsedValue = Number(rawValue);
+  if (!Number.isFinite(parsedValue) || parsedValue <= 0) {
+    return DEFAULT_SERVER_POLL_INTERVAL_MS;
+  }
+
+  return parsedValue;
 }
 
 async function fetchJson(url) {
