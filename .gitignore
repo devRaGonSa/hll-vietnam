@@ -8,3 +8,10 @@ dist/
 build/
 .DS_Store
 Thumbs.db
+
+# Local AI worker/runtime artifacts
+ai/worker.lock
+
+# Local backend runtime data
+backend/data/*.sqlite3
+!backend/data/.gitkeep
