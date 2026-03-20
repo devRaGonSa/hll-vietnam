@@ -674,6 +674,14 @@ h2 {
   overflow-wrap: anywhere;
 }
 
+.server-card__quickfact-value--map {
+  font-size: 0.98rem;
+  line-height: 1.5;
+  overflow-wrap: break-word;
+  word-break: normal;
+  hyphens: auto;
+}
+
 .servers-empty {
   margin: 0;
   padding: 18px;

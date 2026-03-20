@@ -6,6 +6,8 @@ from datetime import datetime, timezone
 
 from .collector import collect_server_snapshots
 from .config import get_refresh_interval_seconds
+from .historical_storage import list_weekly_top_kills
+from .normalizers import normalize_map_name
 from .server_targets import load_a2s_targets
 from .storage import list_latest_snapshots, list_server_history, list_snapshot_history
 
@@ -181,6 +183,28 @@ def build_error_payload(message: str) -> dict[str, str]:
     }
 
 
+def build_weekly_top_kills_payload(
+    *,
+    limit: int = 10,
+    server_id: str | None = None,
+) -> dict[str, object]:
+    """Return weekly top kills grouped by real community server."""
+    result = list_weekly_top_kills(limit=limit, server_id=server_id)
+    return {
+        "status": "ok",
+        "data": {
+            "title": "Top kills semanales por servidor",
+            "context": "historical-top-kills",
+            "metric": "kills",
+            "window_days": 7,
+            "window_start": result["window_start"],
+            "window_end": result["window_end"],
+            "limit": limit,
+            "items": result["items"],
+        },
+    }
+
+
 def _enrich_server_items(items: list[dict[str, object]]) -> list[dict[str, object]]:
     target_index = {
         target.external_server_id: target
@@ -207,6 +231,7 @@ def _enrich_server_item(
     target_index: dict[str, object],
 ) -> dict[str, object]:
     enriched = dict(item)
+    enriched["current_map"] = normalize_map_name(enriched.get("current_map"))
     external_server_id = enriched.get("external_server_id")
     snapshot_origin = enriched.get("snapshot_origin")
     target = target_index.get(external_server_id)

@@ -9,6 +9,31 @@ if TYPE_CHECKING:
     from .a2s_client import A2SServerInfo
 
 
+MAP_NAME_ALIASES = {
+    "stmarie": "Sainte-Marie-du-Mont",
+    "sainte-mariedumont": "Sainte-Marie-du-Mont",
+    "sainte-marie-du-mont": "Sainte-Marie-du-Mont",
+    "stmereeglise": "Sainte-Mere-Eglise",
+    "sainte-mere-eglise": "Sainte-Mere-Eglise",
+    "purpleheartlane": "Purple Heart Lane",
+    "utahbeach": "Utah Beach",
+    "omahabeach": "Omaha Beach",
+    "hurtgenforest": "Hurtgen Forest",
+    "hill400": "Hill 400",
+    "foy": "Foy",
+    "kursk": "Kursk",
+    "kharkov": "Kharkov",
+    "kharkiv": "Kharkiv",
+    "stalingrad": "Stalingrad",
+    "remagen": "Remagen",
+    "driel": "Driel",
+    "elalamein": "El Alamein",
+    "mortain": "Mortain",
+    "carentan": "Carentan",
+    "devq": "Developer Test Map",
+}
+
+
 def normalize_server_record(
     raw_record: Mapping[str, object],
     *,
@@ -22,7 +47,7 @@ def normalize_server_record(
         "status": _normalize_status(raw_record.get("status")),
         "players": _coerce_int(raw_record.get("players")),
         "max_players": _coerce_int(raw_record.get("max_players")),
-        "current_map": _string_or_none(raw_record.get("current_map")),
+        "current_map": normalize_map_name(raw_record.get("current_map")),
         "region": _string_or_none(raw_record.get("region")),
         "source_name": source_name,
         "snapshot_origin": "controlled-fallback",
@@ -47,12 +72,22 @@ def normalize_a2s_server_info(
         "status": "online",
         "players": server_info.players,
         "max_players": server_info.max_players,
-        "current_map": server_info.map_name,
+        "current_map": normalize_map_name(server_info.map_name),
         "region": region,
         "source_name": source_name,
         "snapshot_origin": "real-a2s",
         "source_ref": f"a2s://{server_info.host}:{server_info.query_port}",
     }
+
+
+def normalize_map_name(value: object) -> str | None:
+    """Normalize internal or abbreviated HLL map labels into a stable display name."""
+    normalized = _string_or_none(value)
+    if normalized is None:
+        return None
+
+    alias_key = "".join(character.lower() for character in normalized if character.isalnum())
+    return MAP_NAME_ALIASES.get(alias_key, normalized)
 
 
 def _normalize_status(value: object) -> str:

@@ -181,7 +181,7 @@ function renderServerStatsCard(server) {
   const actionMarkup = renderServerAction(server);
   const cardVariantClass = isRealSnapshot ? "server-card--real" : "server-card--reference";
   const quickFacts = renderQuickFacts([
-    { label: "Mapa", value: currentMap },
+    { label: "Mapa", value: currentMap, valueClassName: "server-card__quickfact-value--map" },
     { label: "Region", value: region },
   ]);
 
@@ -235,7 +235,7 @@ function renderQuickFacts(items) {
           (item) => `
             <article class="server-card__quickfact">
               <p>${escapeHtml(item.label)}</p>
-              <strong>${escapeHtml(item.value)}</strong>
+              <strong class="${escapeHtml(item.valueClassName || "")}">${escapeHtml(item.value)}</strong>
             </article>
           `,
         )
