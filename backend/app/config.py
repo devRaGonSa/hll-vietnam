@@ -19,18 +19,6 @@ DEFAULT_ALLOWED_ORIGINS = (
 )
 DEFAULT_A2S_TARGETS_ENV_VAR = "HLL_BACKEND_A2S_TARGETS"
 DEFAULT_A2S_SOURCE_NAME = "community-hispana-a2s"
-DEFAULT_HISTORICAL_SCOREBOARD_SOURCES = (
-    {
-        "external_server_id": "comunidad-hispana-01",
-        "display_name": "Comunidad Hispana #01",
-        "scoreboard_base_url": "https://scoreboard.comunidadhll.es",
-    },
-    {
-        "external_server_id": "comunidad-hispana-02",
-        "display_name": "Comunidad Hispana #02",
-        "scoreboard_base_url": "https://scoreboard.comunidadhll.es:5443",
-    },
-)
 
 
 def get_bind_address() -> tuple[str, int]:
@@ -87,8 +75,3 @@ def get_a2s_targets_payload() -> str | None:
 
     normalized = raw_payload.strip()
     return normalized or None
-
-
-def get_historical_scoreboard_sources() -> tuple[dict[str, str], ...]:
-    """Return the real scoreboard sources used for historical player stats."""
-    return tuple(dict(source) for source in DEFAULT_HISTORICAL_SCOREBOARD_SOURCES)

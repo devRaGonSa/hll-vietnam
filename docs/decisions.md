@@ -83,22 +83,3 @@ reutilizable para HLL actual y para futuras fuentes mas cercanas a HLL Vietnam.
 
 El modelo base y las preguntas abiertas quedan documentados en
 `docs/stats-database-schema-foundation.md`.
-
-## Decision 012: historico de scoreboards reales separado del estado A2S
-
-La capa historica del proyecto debe tomar como fuente inicial las dos paginas de
-scoreboard reales ya usadas por la comunidad:
-
-- `https://scoreboard.comunidadhll.es/games`
-- `https://scoreboard.comunidadhll.es:5443/games`
-
-Esta fuente historica no debe mezclarse conceptualmente con los snapshots A2S de
-estado actual. A2S sigue siendo la fuente del panel live; el scoreboard pasa a
-ser la fuente base para partidas, jugadores y metricas agregadas.
-
-La primera analitica prioritaria sera `top kills de la ultima semana por
-servidor`, por lo que el dominio historico debe organizarse alrededor de
-servidor, partida, jugador, participacion y metricas por jugador en partida.
-
-La definicion de fuente, identidad, deduplicacion y riesgos queda documentada
-en `docs/historical-stats-domain-model.md`.
