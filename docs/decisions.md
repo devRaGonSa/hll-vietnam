@@ -83,3 +83,19 @@ reutilizable para HLL actual y para futuras fuentes mas cercanas a HLL Vietnam.
 
 El modelo base y las preguntas abiertas quedan documentados en
 `docs/stats-database-schema-foundation.md`.
+
+## Decision 012: historico de partidas desde CRCON scoreboard JSON
+
+El historico reutilizable para estadisticas por partida y por jugador debe
+salir de la capa JSON publica expuesta por los scoreboards CRCON de la
+comunidad, no de A2S ni del HTML renderizado de `/games`.
+
+La discovery tecnica confirma que ambos scoreboards sirven una SPA cuya fuente
+real de datos usa `baseURL: "/api"` y endpoints como
+`/get_scoreboard_maps` y `/get_map_scoreboard`. Esa capa permite obtener listas
+de partidas, detalle por `map_id` y metricas por jugador suficientes para una
+futura agregacion semanal por servidor.
+
+A2S se mantiene como fuente de estado actual de servidores. El historico de
+partidas y rankings debe construirse en una linea separada basada en CRCON. La
+discovery detallada queda en `docs/historical-crcon-source-discovery.md`.
