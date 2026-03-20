@@ -153,6 +153,7 @@ def initialize_historical_storage(*, db_path: Path | None = None) -> Path:
         if legacy_historical_schema:
             _migrate_legacy_historical_data(connection)
         _normalize_historical_player_identities(connection)
+        _normalize_historical_match_identities(connection)
 
     return resolved_path
 
@@ -488,8 +489,9 @@ def list_weekly_top_kills(
     window_start = window_end - timedelta(days=DEFAULT_WEEKLY_WINDOW_DAYS)
 
     where_clauses = [
-        "COALESCE(historical_matches.ended_at, historical_matches.started_at, historical_matches.created_at_source) >= ?",
-        "COALESCE(historical_matches.ended_at, historical_matches.started_at, historical_matches.created_at_source) <= ?",
+        "historical_matches.ended_at IS NOT NULL",
+        "historical_matches.ended_at >= ?",
+        "historical_matches.ended_at <= ?",
     ]
     params: list[object] = [
         window_start.isoformat().replace("+00:00", "Z"),
@@ -778,26 +780,89 @@ def _migrate_legacy_historical_data(connection: sqlite3.Connection) -> None:
 def _normalize_historical_player_identities(connection: sqlite3.Connection) -> None:
     rows = connection.execute(
         """
-        SELECT id, stable_player_key, steam_id
+        SELECT id, stable_player_key, display_name, steam_id, source_player_id
         FROM historical_players
         ORDER BY id ASC
         """
     ).fetchall()
     for row in rows:
-        stable_player_key = _stringify(row["stable_player_key"])
-        if not stable_player_key or ":" in stable_player_key:
+        player_id = int(row["id"])
+        canonical_key, steam_id, source_player_id, display_name = _canonicalize_stored_player_row(row)
+        existing = connection.execute(
+            """
+            SELECT id
+            FROM historical_players
+            WHERE stable_player_key = ?
+            """,
+            (canonical_key,),
+        ).fetchone()
+        if existing is not None and int(existing["id"]) != player_id:
+            _merge_historical_player_rows(
+                connection,
+                source_player_id=player_id,
+                target_player_id=int(existing["id"]),
+                display_name=display_name,
+                steam_id=steam_id,
+                source_ref=source_player_id,
+            )
             continue
-        if stable_player_key.isdigit() and len(stable_player_key) >= 16:
-            normalized_key = f"steam:{stable_player_key}"
-            connection.execute(
-                """
-                UPDATE historical_players
-                SET stable_player_key = ?,
-                    steam_id = COALESCE(steam_id, ?),
-                    updated_at = CURRENT_TIMESTAMP
-                WHERE id = ?
-                """,
-                (normalized_key, stable_player_key, row["id"]),
+
+        connection.execute(
+            """
+            UPDATE historical_players
+            SET stable_player_key = ?,
+                display_name = ?,
+                steam_id = ?,
+                source_player_id = ?,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE id = ?
+            """,
+            (canonical_key, display_name, steam_id, source_player_id, player_id),
+        )
+
+
+def _normalize_historical_match_identities(connection: sqlite3.Connection) -> None:
+    rows = connection.execute(
+        """
+        SELECT
+            historical_matches.id,
+            historical_matches.historical_server_id,
+            historical_matches.external_match_id,
+            historical_matches.started_at,
+            historical_matches.ended_at,
+            historical_matches.created_at_source,
+            historical_matches.map_name,
+            historical_matches.map_pretty_name,
+            COUNT(historical_player_match_stats.id) AS player_count
+        FROM historical_matches
+        LEFT JOIN historical_player_match_stats
+            ON historical_player_match_stats.historical_match_id = historical_matches.id
+        WHERE historical_matches.started_at IS NOT NULL
+        GROUP BY historical_matches.id
+        ORDER BY historical_matches.historical_server_id ASC, historical_matches.started_at ASC, historical_matches.id ASC
+        """
+    ).fetchall()
+
+    grouped_matches: dict[tuple[int, str, str], list[sqlite3.Row]] = {}
+    for row in rows:
+        group_key = (
+            int(row["historical_server_id"]),
+            str(row["started_at"]),
+            _normalize_match_identity_label(row["map_pretty_name"] or row["map_name"]),
+        )
+        grouped_matches.setdefault(group_key, []).append(row)
+
+    for grouped_rows in grouped_matches.values():
+        if len(grouped_rows) < 2:
+            continue
+        target_row = max(grouped_rows, key=_match_identity_preference)
+        for source_row in grouped_rows:
+            if int(source_row["id"]) == int(target_row["id"]):
+                continue
+            _merge_historical_match_rows(
+                connection,
+                source_match_id=int(source_row["id"]),
+                target_match_id=int(target_row["id"]),
             )
 
 
@@ -889,12 +954,8 @@ def _upsert_historical_player(
     connection: sqlite3.Connection,
     player_payload: Mapping[str, object],
 ) -> int:
-    stable_player_key = _build_stable_player_key(player_payload)
-    display_name = _stringify(player_payload.get("player")) or "Unknown player"
-    steam_id = _stringify(_get_nested(player_payload, "steaminfo", "profile", "steamid"))
-    if not steam_id:
-        steam_id = _stringify(_get_nested(player_payload, "steaminfo", "id"))
-    source_player_id = _stringify(player_payload.get("player_id"))
+    stable_player_key, steam_id, source_player_id = _derive_player_identity(player_payload)
+    display_name = _normalize_player_display_name(player_payload.get("player")) or "Unknown player"
     seen_at = _utc_now_iso()
 
     connection.execute(
@@ -933,25 +994,26 @@ def _upsert_historical_player(
 
 
 def _build_stable_player_key(player_payload: Mapping[str, object]) -> str:
+    stable_player_key, _, _ = _derive_player_identity(player_payload)
+    return stable_player_key
+
+
+def _derive_player_identity(player_payload: Mapping[str, object]) -> tuple[str, str | None, str | None]:
     steam_id = _stringify(_get_nested(player_payload, "steaminfo", "profile", "steamid"))
-    if steam_id:
-        return f"steam:{steam_id}"
-
-    steaminfo_id = _stringify(_get_nested(player_payload, "steaminfo", "id"))
-    if steaminfo_id:
-        return f"steaminfo:{steaminfo_id}"
-
     source_player_id = _stringify(player_payload.get("player_id"))
-    if source_player_id:
-        return f"crcon-player:{source_player_id}"
+    steaminfo_id = _stringify(_get_nested(player_payload, "steaminfo", "id"))
 
-    player_name = _stringify(player_payload.get("player")) or "unknown-player"
-    normalized_name = "".join(
-        character.lower() if character.isalnum() else "-"
-        for character in player_name
-    )
-    compact_name = "-".join(part for part in normalized_name.split("-") if part)
-    return f"name:{compact_name or 'unknown-player'}"
+    if steam_id:
+        return f"steam:{steam_id}", steam_id, source_player_id
+    if _is_probable_steam_id(source_player_id):
+        return f"steam:{source_player_id}", source_player_id, source_player_id
+    if source_player_id:
+        return f"crcon-player:{source_player_id}", None, source_player_id
+    if steaminfo_id:
+        return f"steaminfo:{steaminfo_id}", None, None
+
+    player_name = _normalize_player_display_name(player_payload.get("player")) or "unknown-player"
+    return f"name:{_normalize_name_key(player_name)}", None, None
 
 
 def _extract_map_name(match_payload: Mapping[str, object]) -> str | None:
@@ -999,6 +1061,357 @@ def _stringify(value: object) -> str | None:
         return None
     text = str(value).strip()
     return text or None
+
+
+def _normalize_player_display_name(value: object) -> str | None:
+    text = _stringify(value)
+    if not text:
+        return None
+    return " ".join(text.split())
+
+
+def _normalize_name_key(player_name: str) -> str:
+    normalized_name = "".join(
+        character.lower() if character.isalnum() else "-"
+        for character in player_name
+    )
+    compact_name = "-".join(part for part in normalized_name.split("-") if part)
+    return compact_name or "unknown-player"
+
+
+def _is_probable_steam_id(value: object) -> bool:
+    text = _stringify(value)
+    return bool(text and text.isdigit() and len(text) >= 16)
+
+
+def _canonicalize_stored_player_row(
+    row: sqlite3.Row,
+) -> tuple[str, str | None, str | None, str]:
+    stable_player_key = _stringify(row["stable_player_key"])
+    display_name = _normalize_player_display_name(row["display_name"]) or "Unknown player"
+    steam_id = _stringify(row["steam_id"])
+    source_player_id = _stringify(row["source_player_id"])
+
+    if _is_probable_steam_id(steam_id):
+        return f"steam:{steam_id}", steam_id, source_player_id, display_name
+    if _is_probable_steam_id(source_player_id):
+        return f"steam:{source_player_id}", source_player_id, source_player_id, display_name
+    if source_player_id:
+        return f"crcon-player:{source_player_id}", None, source_player_id, display_name
+    if stable_player_key and stable_player_key.startswith("steaminfo:"):
+        return stable_player_key, None, None, display_name
+    if stable_player_key and stable_player_key.startswith("name:"):
+        return stable_player_key, None, None, display_name
+    if stable_player_key and stable_player_key.startswith("steam:"):
+        return stable_player_key, steam_id, source_player_id, display_name
+    if stable_player_key and stable_player_key.startswith("crcon-player:"):
+        source_ref = stable_player_key.removeprefix("crcon-player:")
+        return stable_player_key, None, source_player_id or source_ref, display_name
+    if stable_player_key:
+        if _is_probable_steam_id(stable_player_key):
+            return f"steam:{stable_player_key}", stable_player_key, source_player_id, display_name
+        return f"crcon-player:{stable_player_key}", None, source_player_id or stable_player_key, display_name
+    return f"name:{_normalize_name_key(display_name)}", None, None, display_name
+
+
+def _merge_historical_player_rows(
+    connection: sqlite3.Connection,
+    *,
+    source_player_id: int,
+    target_player_id: int,
+    display_name: str,
+    steam_id: str | None,
+    source_ref: str | None,
+) -> None:
+    target_row = connection.execute(
+        """
+        SELECT display_name, steam_id, source_player_id, first_seen_at, last_seen_at
+        FROM historical_players
+        WHERE id = ?
+        """,
+        (target_player_id,),
+    ).fetchone()
+    if target_row is None:
+        return
+
+    connection.execute(
+        """
+        UPDATE historical_players
+        SET display_name = ?,
+            steam_id = ?,
+            source_player_id = ?,
+            first_seen_at = MIN(first_seen_at, ?),
+            last_seen_at = MAX(last_seen_at, ?),
+            updated_at = CURRENT_TIMESTAMP
+        WHERE id = ?
+        """,
+        (
+            _pick_preferred_display_name(target_row["display_name"], display_name),
+            _pick_preferred_steam_id(target_row["steam_id"], steam_id),
+            _pick_preferred_source_player_id(target_row["source_player_id"], source_ref),
+            connection.execute(
+                "SELECT first_seen_at FROM historical_players WHERE id = ?",
+                (source_player_id,),
+            ).fetchone()["first_seen_at"],
+            connection.execute(
+                "SELECT last_seen_at FROM historical_players WHERE id = ?",
+                (source_player_id,),
+            ).fetchone()["last_seen_at"],
+            target_player_id,
+        ),
+    )
+
+    stats_rows = connection.execute(
+        """
+        SELECT *
+        FROM historical_player_match_stats
+        WHERE historical_player_id = ?
+        ORDER BY id ASC
+        """,
+        (source_player_id,),
+    ).fetchall()
+    for stat_row in stats_rows:
+        existing = connection.execute(
+            """
+            SELECT *
+            FROM historical_player_match_stats
+            WHERE historical_match_id = ? AND historical_player_id = ?
+            """,
+            (stat_row["historical_match_id"], target_player_id),
+        ).fetchone()
+        if existing is None:
+            connection.execute(
+                """
+                UPDATE historical_player_match_stats
+                SET historical_player_id = ?,
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE id = ?
+                """,
+                (target_player_id, stat_row["id"]),
+            )
+            continue
+
+        _merge_player_match_stats_row(connection, existing["id"], stat_row)
+        connection.execute(
+            "DELETE FROM historical_player_match_stats WHERE id = ?",
+            (stat_row["id"],),
+        )
+
+    connection.execute(
+        "DELETE FROM historical_players WHERE id = ?",
+        (source_player_id,),
+    )
+
+
+def _normalize_match_identity_label(value: object) -> str:
+    text = _stringify(value) or "unknown-map"
+    return " ".join(text.lower().split())
+
+
+def _match_identity_preference(row: sqlite3.Row) -> tuple[int, int, int, str, int]:
+    return (
+        1 if _stringify(row["ended_at"]) else 0,
+        1 if (_stringify(row["external_match_id"]) or "").isdigit() else 0,
+        int(row["player_count"] or 0),
+        _stringify(row["created_at_source"]) or "",
+        int(row["id"]),
+    )
+
+
+def _merge_historical_match_rows(
+    connection: sqlite3.Connection,
+    *,
+    source_match_id: int,
+    target_match_id: int,
+) -> None:
+    source_row = connection.execute(
+        "SELECT * FROM historical_matches WHERE id = ?",
+        (source_match_id,),
+    ).fetchone()
+    target_row = connection.execute(
+        "SELECT * FROM historical_matches WHERE id = ?",
+        (target_match_id,),
+    ).fetchone()
+    if source_row is None or target_row is None:
+        return
+
+    connection.execute(
+        """
+        UPDATE historical_matches
+        SET historical_map_id = COALESCE(historical_map_id, ?),
+            created_at_source = COALESCE(created_at_source, ?),
+            started_at = COALESCE(started_at, ?),
+            ended_at = COALESCE(ended_at, ?),
+            map_name = COALESCE(map_name, ?),
+            map_pretty_name = COALESCE(map_pretty_name, ?),
+            game_mode = COALESCE(game_mode, ?),
+            image_name = COALESCE(image_name, ?),
+            allied_score = COALESCE(allied_score, ?),
+            axis_score = COALESCE(axis_score, ?),
+            raw_payload_ref = COALESCE(raw_payload_ref, ?),
+            last_seen_at = MAX(last_seen_at, ?),
+            updated_at = CURRENT_TIMESTAMP
+        WHERE id = ?
+        """,
+        (
+            source_row["historical_map_id"],
+            source_row["created_at_source"],
+            source_row["started_at"],
+            source_row["ended_at"],
+            source_row["map_name"],
+            source_row["map_pretty_name"],
+            source_row["game_mode"],
+            source_row["image_name"],
+            source_row["allied_score"],
+            source_row["axis_score"],
+            source_row["raw_payload_ref"],
+            source_row["last_seen_at"],
+            target_match_id,
+        ),
+    )
+
+    stats_rows = connection.execute(
+        """
+        SELECT *
+        FROM historical_player_match_stats
+        WHERE historical_match_id = ?
+        ORDER BY id ASC
+        """,
+        (source_match_id,),
+    ).fetchall()
+    for stat_row in stats_rows:
+        existing = connection.execute(
+            """
+            SELECT *
+            FROM historical_player_match_stats
+            WHERE historical_match_id = ? AND historical_player_id = ?
+            """,
+            (target_match_id, stat_row["historical_player_id"]),
+        ).fetchone()
+        if existing is None:
+            connection.execute(
+                """
+                UPDATE historical_player_match_stats
+                SET historical_match_id = ?,
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE id = ?
+                """,
+                (target_match_id, stat_row["id"]),
+            )
+            continue
+
+        _merge_player_match_stats_row(connection, existing["id"], stat_row)
+        connection.execute(
+            "DELETE FROM historical_player_match_stats WHERE id = ?",
+            (stat_row["id"],),
+        )
+
+    connection.execute(
+        "DELETE FROM historical_matches WHERE id = ?",
+        (source_match_id,),
+    )
+
+
+def _merge_player_match_stats_row(
+    connection: sqlite3.Connection,
+    target_stat_id: int,
+    source_row: sqlite3.Row,
+) -> None:
+    target_row = connection.execute(
+        "SELECT * FROM historical_player_match_stats WHERE id = ?",
+        (target_stat_id,),
+    ).fetchone()
+    if target_row is None:
+        return
+
+    connection.execute(
+        """
+        UPDATE historical_player_match_stats
+        SET match_player_ref = COALESCE(match_player_ref, ?),
+            team_side = COALESCE(team_side, ?),
+            level = ?,
+            kills = ?,
+            deaths = ?,
+            teamkills = ?,
+            time_seconds = ?,
+            kills_per_minute = ?,
+            deaths_per_minute = ?,
+            kill_death_ratio = ?,
+            combat = ?,
+            offense = ?,
+            defense = ?,
+            support = ?,
+            updated_at = CURRENT_TIMESTAMP
+        WHERE id = ?
+        """,
+        (
+            source_row["match_player_ref"],
+            source_row["team_side"],
+            _max_int_value(target_row["level"], source_row["level"]),
+            _max_int_value(target_row["kills"], source_row["kills"]),
+            _max_int_value(target_row["deaths"], source_row["deaths"]),
+            _max_int_value(target_row["teamkills"], source_row["teamkills"]),
+            _max_int_value(target_row["time_seconds"], source_row["time_seconds"]),
+            _max_float_value(target_row["kills_per_minute"], source_row["kills_per_minute"]),
+            _max_float_value(target_row["deaths_per_minute"], source_row["deaths_per_minute"]),
+            _max_float_value(target_row["kill_death_ratio"], source_row["kill_death_ratio"]),
+            _max_int_value(target_row["combat"], source_row["combat"]),
+            _max_int_value(target_row["offense"], source_row["offense"]),
+            _max_int_value(target_row["defense"], source_row["defense"]),
+            _max_int_value(target_row["support"], source_row["support"]),
+            target_stat_id,
+        ),
+    )
+
+
+def _pick_preferred_display_name(current_value: object, incoming_value: object) -> str:
+    current_name = _normalize_player_display_name(current_value)
+    incoming_name = _normalize_player_display_name(incoming_value)
+    if not current_name:
+        return incoming_name or "Unknown player"
+    if not incoming_name:
+        return current_name
+    if len(incoming_name) > len(current_name):
+        return incoming_name
+    return current_name
+
+
+def _pick_preferred_steam_id(current_value: object, incoming_value: object) -> str | None:
+    current_id = _stringify(current_value)
+    incoming_id = _stringify(incoming_value)
+    if _is_probable_steam_id(current_id):
+        return current_id
+    if _is_probable_steam_id(incoming_id):
+        return incoming_id
+    return None
+
+
+def _pick_preferred_source_player_id(current_value: object, incoming_value: object) -> str | None:
+    current_id = _stringify(current_value)
+    incoming_id = _stringify(incoming_value)
+    if current_id:
+        return current_id
+    return incoming_id
+
+
+def _max_int_value(current_value: object, incoming_value: object) -> int | None:
+    current_number = _coerce_int(current_value)
+    incoming_number = _coerce_int(incoming_value)
+    if current_number is None:
+        return incoming_number
+    if incoming_number is None:
+        return current_number
+    return max(current_number, incoming_number)
+
+
+def _max_float_value(current_value: object, incoming_value: object) -> float | None:
+    current_number = _coerce_float(current_value)
+    incoming_number = _coerce_float(incoming_value)
+    if current_number is None:
+        return incoming_number
+    if incoming_number is None:
+        return current_number
+    return max(current_number, incoming_number)
 
 
 def _normalize_timestamp(value: object) -> str | None:

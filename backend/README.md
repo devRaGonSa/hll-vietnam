@@ -423,8 +423,10 @@ Parametros opcionales:
 - `server` con slug historico como `comunidad-hispana-01`
 
 La ventana temporal es siempre la ultima semana movil respecto al momento de la
-request. El payload devuelve servidor, rango temporal, jugador, kills semanales,
-posicion y numero de partidas consideradas.
+request y solo considera partidas cerradas con `ended_at` para no mezclar
+partidas aun en curso ni filas historicas transitorias. El payload devuelve
+servidor, rango temporal, jugador, kills semanales, posicion y numero de
+partidas consideradas.
 
 ## Ingesta historica CRCON
 
@@ -454,6 +456,18 @@ La ejecucion `bootstrap` recorre paginas historicas hasta agotar resultados.
 La ejecucion `refresh` usa una ventana de solape sobre la ultima partida
 persistida por servidor para releer solo paginas recientes y absorber updates
 tardios sin reimportar todo el historico.
+
+Al inicializar la persistencia local, el backend normaliza tambien la identidad
+historica ya guardada:
+
+- prioriza `steaminfo.profile.steamid` cuando existe
+- si `player_id` ya parece un SteamID real, lo promueve igualmente a `steam:*`
+- si no hay SteamID, usa `player_id` como clave `crcon-player:*`
+- deja `steaminfo.id` como ultimo fallback cuando faltan las claves anteriores
+
+La misma inicializacion fusiona filas duplicadas si una partida abierta quedo
+guardada con un id sintetico y mas tarde CRCON la expone con un id numerico
+definitivo. Esto evita que el ranking semanal cuente dos veces la misma sesion.
 
 ## CORS local minimo
 
