@@ -181,7 +181,7 @@ function hydrateSummary(result, summaryNode, rangeNode, noteNode) {
     ),
     renderSummaryCard("Jugadores unicos", formatNumber(summary.unique_players)),
     renderSummaryCard(
-      "Cobertura registrada",
+      "Datos registrados",
       formatCoverageDays(coverage.coverage_days),
     ),
     renderSummaryCard("Primera partida", formatTimestamp(coverage.first_match_at)),
@@ -394,7 +394,7 @@ function buildSummaryNote(summaryBasis, weeklyWindowDays, coverage) {
   if (status === "under-week") {
     return `Este bloque resume ${basisLabel}. Ahora mismo esa cobertura todavia no alcanza ${weeklyWindowLabel}.`;
   }
-  return `Este bloque resume ${basisLabel}. El ranking semanal de abajo usa solo partidas cerradas de los ultimos ${weeklyWindowLabel}.`;
+  return "Datos generales registrados de los servidores";
 }
 
 function buildWeeklyWindowNote(payload) {
