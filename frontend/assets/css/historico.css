@@ -100,6 +100,41 @@
   color: var(--text);
 }
 
+.historical-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin: 0 0 16px;
+}
+
+.historical-tab {
+  min-height: 42px;
+  padding: 0 16px;
+  border: 1px solid rgba(159, 168, 141, 0.2);
+  border-radius: 999px;
+  background: rgba(13, 17, 12, 0.62);
+  color: var(--muted);
+  font: inherit;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  cursor: pointer;
+  transition:
+    transform 160ms ease,
+    border-color 160ms ease,
+    background 160ms ease,
+    color 160ms ease;
+}
+
+.historical-tab:hover,
+.historical-tab:focus-visible,
+.historical-tab.is-active {
+  transform: translateY(-1px);
+  border-color: rgba(210, 182, 118, 0.46);
+  background: linear-gradient(180deg, rgba(183, 201, 125, 0.16), rgba(89, 101, 58, 0.18));
+  color: var(--text);
+}
+
 .historical-summary-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(min(100%, 180px), 1fr));
@@ -254,6 +289,14 @@
 
   .historical-selector {
     flex-direction: column;
+  }
+
+  .historical-tabs {
+    flex-direction: column;
+  }
+
+  .historical-tab {
+    width: 100%;
   }
 
   .historical-selector__button {

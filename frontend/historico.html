@@ -94,27 +94,69 @@
               <div class="panel__header historical-panel__header">
                 <div>
                   <p class="eyebrow eyebrow--section">Ranking semanal</p>
-                  <h2 id="weekly-ranking-title">Top kills de los ultimos 7 dias</h2>
+                  <h2 id="weekly-ranking-title">Ranking semanal del servidor activo</h2>
                   <p class="historical-panel__note" id="weekly-window-note">
                     Cargando ventana semanal...
                   </p>
                 </div>
               </div>
-            <p class="historical-state" id="weekly-top-kills-state" aria-live="polite">
+            <div
+              class="historical-tabs"
+              id="weekly-leaderboard-tabs"
+              role="tablist"
+              aria-label="Metricas del ranking semanal"
+            >
+              <button
+                class="historical-tab is-active"
+                type="button"
+                role="tab"
+                aria-selected="true"
+                data-leaderboard-metric="kills"
+              >
+                Top kills
+              </button>
+              <button
+                class="historical-tab"
+                type="button"
+                role="tab"
+                aria-selected="false"
+                data-leaderboard-metric="deaths"
+              >
+                Top muertes
+              </button>
+              <button
+                class="historical-tab"
+                type="button"
+                role="tab"
+                aria-selected="false"
+                data-leaderboard-metric="matches_over_100_kills"
+              >
+                Partidas 100+ kills
+              </button>
+              <button
+                class="historical-tab"
+                type="button"
+                role="tab"
+                aria-selected="false"
+                data-leaderboard-metric="support"
+              >
+                Soporte
+              </button>
+            </div>
+            <p class="historical-state" id="weekly-leaderboard-state" aria-live="polite">
               Cargando ranking semanal...
             </p>
             <div class="historical-table-shell">
-              <table class="historical-table" id="weekly-top-kills-table" hidden>
+              <table class="historical-table" id="weekly-leaderboard-table" hidden>
                 <thead>
                   <tr>
                     <th>Pos.</th>
                     <th>Jugador</th>
-                    <th>Kills</th>
+                    <th id="weekly-leaderboard-value-heading">Kills</th>
                     <th>Partidas</th>
-                    <th>Servidor</th>
                   </tr>
                 </thead>
-                <tbody id="weekly-top-kills-body"></tbody>
+                <tbody id="weekly-leaderboard-body"></tbody>
               </table>
             </div>
           </div>

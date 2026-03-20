@@ -3,6 +3,33 @@ const HISTORICAL_SERVER_SLUGS = Object.freeze([
   "comunidad-hispana-02",
 ]);
 const DEFAULT_HISTORICAL_SERVER = HISTORICAL_SERVER_SLUGS[0];
+const LEADERBOARD_METRICS = Object.freeze([
+  {
+    key: "kills",
+    title: "Top kills de los ultimos 7 dias",
+    valueHeading: "Kills",
+    emptyMessage: "Sin datos historicos suficientes para mostrar el top de kills semanal.",
+  },
+  {
+    key: "deaths",
+    title: "Top muertes de los ultimos 7 dias",
+    valueHeading: "Muertes",
+    emptyMessage: "Sin datos historicos suficientes para mostrar el top de muertes semanal.",
+  },
+  {
+    key: "matches_over_100_kills",
+    title: "Top partidas con 100+ kills",
+    valueHeading: "Partidas 100+",
+    emptyMessage: "Ningun jugador ha registrado partidas de 100+ kills en esta ventana semanal.",
+  },
+  {
+    key: "support",
+    title: "Top puntos de soporte de los ultimos 7 dias",
+    valueHeading: "Soporte",
+    emptyMessage: "Sin datos historicos suficientes para mostrar el top de soporte semanal.",
+  },
+]);
+const DEFAULT_LEADERBOARD_METRIC = LEADERBOARD_METRICS[0].key;
 
 document.addEventListener("DOMContentLoaded", () => {
   const backendBaseUrl =
@@ -10,51 +37,72 @@ document.addEventListener("DOMContentLoaded", () => {
   const selectorButtons = Array.from(
     document.querySelectorAll("[data-server-slug]"),
   );
+  const leaderboardTabButtons = Array.from(
+    document.querySelectorAll("[data-leaderboard-metric]"),
+  );
   const summaryNode = document.getElementById("historical-summary");
   const rangeNode = document.getElementById("historical-range");
   const summaryNoteNode = document.getElementById("historical-summary-note");
-  const weeklyStateNode = document.getElementById("weekly-top-kills-state");
-  const weeklyTableNode = document.getElementById("weekly-top-kills-table");
-  const weeklyBodyNode = document.getElementById("weekly-top-kills-body");
+  const weeklyTitleNode = document.getElementById("weekly-ranking-title");
+  const weeklyStateNode = document.getElementById("weekly-leaderboard-state");
+  const weeklyTableNode = document.getElementById("weekly-leaderboard-table");
+  const weeklyBodyNode = document.getElementById("weekly-leaderboard-body");
+  const weeklyValueHeadingNode = document.getElementById("weekly-leaderboard-value-heading");
   const weeklyWindowNoteNode = document.getElementById("weekly-window-note");
   const recentStateNode = document.getElementById("recent-matches-state");
   const recentListNode = document.getElementById("recent-matches-list");
 
   const params = new URLSearchParams(window.location.search);
   let activeServerSlug = normalizeServerSlug(params.get("server"));
+  let activeLeaderboardMetric = normalizeLeaderboardMetric(params.get("metric"));
+  let refreshRequestId = 0;
 
   const refreshHistoricalView = async () => {
+    const requestId = refreshRequestId + 1;
+    refreshRequestId = requestId;
+    const activeMetricConfig = getLeaderboardMetricConfig(activeLeaderboardMetric);
+
     syncActiveButtons(selectorButtons, activeServerSlug);
+    syncLeaderboardTabs(leaderboardTabButtons, activeLeaderboardMetric);
     setRangeBadge(rangeNode, "Cargando rango temporal", false);
     summaryNoteNode.textContent =
       "Este bloque resume solo la cobertura ya registrada en la base local.";
     renderSummaryLoading(summaryNode);
+    weeklyTitleNode.textContent = activeMetricConfig.title;
+    weeklyValueHeadingNode.textContent = activeMetricConfig.valueHeading;
     weeklyWindowNoteNode.textContent = "Cargando ventana semanal...";
     setState(weeklyStateNode, "Cargando ranking semanal...");
     setState(recentStateNode, "Cargando partidas recientes...");
     weeklyTableNode.hidden = true;
     recentListNode.innerHTML = "";
 
-    const [summaryResult, topKillsResult, recentMatchesResult] =
+    const [summaryResult, leaderboardResult, recentMatchesResult] =
       await Promise.allSettled([
         fetchJson(
           `${backendBaseUrl}/api/historical/server-summary?server=${encodeURIComponent(activeServerSlug)}`,
         ),
         fetchJson(
-          `${backendBaseUrl}/api/historical/weekly-top-kills?server=${encodeURIComponent(activeServerSlug)}&limit=10`,
+          `${backendBaseUrl}/api/historical/weekly-leaderboard?server=${encodeURIComponent(activeServerSlug)}&metric=${encodeURIComponent(activeLeaderboardMetric)}&limit=10`,
         ),
         fetchJson(
           `${backendBaseUrl}/api/historical/recent-matches?server=${encodeURIComponent(activeServerSlug)}&limit=6`,
         ),
       ]);
 
+    if (requestId !== refreshRequestId) {
+      return;
+    }
+
     hydrateSummary(summaryResult, summaryNode, rangeNode, summaryNoteNode);
-    hydrateWeeklyTopKills(
-      topKillsResult,
+    hydrateWeeklyLeaderboard(
+      leaderboardResult,
       weeklyStateNode,
       weeklyTableNode,
       weeklyBodyNode,
+      weeklyTitleNode,
+      weeklyValueHeadingNode,
       weeklyWindowNoteNode,
+      activeMetricConfig,
     );
     hydrateRecentMatches(recentMatchesResult, recentStateNode, recentListNode);
   };
@@ -68,6 +116,22 @@ document.addEventListener("DOMContentLoaded", () => {
 
       activeServerSlug = nextServerSlug;
       params.set("server", activeServerSlug);
+      params.set("metric", activeLeaderboardMetric);
+      window.history.replaceState({}, "", `?${params.toString()}`);
+      void refreshHistoricalView();
+    });
+  });
+
+  leaderboardTabButtons.forEach((button) => {
+    button.addEventListener("click", () => {
+      const nextMetric = normalizeLeaderboardMetric(button.dataset.leaderboardMetric);
+      if (nextMetric === activeLeaderboardMetric) {
+        return;
+      }
+
+      activeLeaderboardMetric = nextMetric;
+      params.set("server", activeServerSlug);
+      params.set("metric", activeLeaderboardMetric);
       window.history.replaceState({}, "", `?${params.toString()}`);
       void refreshHistoricalView();
     });
@@ -129,13 +193,18 @@ function hydrateSummary(result, summaryNode, rangeNode, noteNode) {
   ].join("");
 }
 
-function hydrateWeeklyTopKills(
+function hydrateWeeklyLeaderboard(
   result,
   stateNode,
   tableNode,
   bodyNode,
+  titleNode,
+  valueHeadingNode,
   noteNode,
+  metricConfig,
 ) {
+  titleNode.textContent = metricConfig.title;
+  valueHeadingNode.textContent = metricConfig.valueHeading;
   if (result.status !== "fulfilled") {
     noteNode.textContent =
       "El ranking usa solo partidas cerradas dentro de la ultima ventana semanal.";
@@ -148,10 +217,7 @@ function hydrateWeeklyTopKills(
   noteNode.textContent = buildWeeklyWindowNote(payload);
   const items = payload?.items;
   if (!Array.isArray(items) || items.length === 0) {
-    setState(
-      stateNode,
-      "Sin datos historicos suficientes para construir el ranking semanal.",
-    );
+    setState(stateNode, metricConfig.emptyMessage);
     tableNode.hidden = true;
     return;
   }
@@ -162,9 +228,8 @@ function hydrateWeeklyTopKills(
         <tr>
           <td class="historical-table__position">#${escapeHtml(item.ranking_position)}</td>
           <td>${escapeHtml(item.player?.name || "Jugador no identificado")}</td>
-          <td>${escapeHtml(formatNumber(item.weekly_kills))}</td>
+          <td>${escapeHtml(formatNumber(item.metric_value))}</td>
           <td>${escapeHtml(formatNumber(item.matches_considered))}</td>
-          <td>${escapeHtml(item.server?.name || "Servidor no disponible")}</td>
         </tr>
       `,
     )
@@ -264,6 +329,14 @@ function syncActiveButtons(buttons, activeServerSlug) {
   });
 }
 
+function syncLeaderboardTabs(buttons, activeMetric) {
+  buttons.forEach((button) => {
+    const isActive = button.dataset.leaderboardMetric === activeMetric;
+    button.classList.toggle("is-active", isActive);
+    button.setAttribute("aria-selected", String(isActive));
+  });
+}
+
 function normalizeServerSlug(rawValue) {
   const normalized = typeof rawValue === "string" ? rawValue.trim() : "";
   if (HISTORICAL_SERVER_SLUGS.includes(normalized)) {
@@ -271,6 +344,22 @@ function normalizeServerSlug(rawValue) {
   }
 
   return DEFAULT_HISTORICAL_SERVER;
+}
+
+function normalizeLeaderboardMetric(rawValue) {
+  const normalized = typeof rawValue === "string" ? rawValue.trim() : "";
+  if (LEADERBOARD_METRICS.some((metric) => metric.key === normalized)) {
+    return normalized;
+  }
+
+  return DEFAULT_LEADERBOARD_METRIC;
+}
+
+function getLeaderboardMetricConfig(metricKey) {
+  return (
+    LEADERBOARD_METRICS.find((metric) => metric.key === metricKey) ||
+    LEADERBOARD_METRICS[0]
+  );
 }
 
 function buildRangeLabel(start, end) {
