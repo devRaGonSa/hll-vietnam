@@ -67,5 +67,6 @@ Community website repository with a static landing in the current phase and a pl
 - The phased source strategy for that provisional block is documented in `docs/current-hll-servers-source-plan.md`.
 - The ingestion strategy for converting that provisional block into normalized server snapshots is documented in `docs/current-hll-data-ingestion-plan.md`.
 - The logical storage foundation for persisting server snapshots is documented in `docs/stats-database-schema-foundation.md`.
+- The historical domain model for scoreboard-based player and match statistics is documented in `docs/historical-stats-domain-model.md`.
 - Frontend data consumption should remain progressive, endpoint by endpoint, with static fallbacks preserved during migration.
 - The frontend integration strategy is documented in `docs/frontend-data-consumption-plan.md`.

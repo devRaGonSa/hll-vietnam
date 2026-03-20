@@ -109,6 +109,7 @@ normaliza espacios y barras finales para mantener la comparacion con el header
 - `GET /api/servers/latest`
 - `GET /api/servers/history?limit=20`
 - `GET /api/servers/{id}/history?limit=20`
+- `GET /api/historical/top-kills/weekly?limit=10`
 
 `GET /api/servers` trata el ultimo snapshot persistido como cache local y lo
 reutiliza solo si sigue dentro del objetivo de `120` segundos. Si ese snapshot
@@ -396,6 +397,76 @@ consulta historica:
 `{id}` acepta el `server_id` numerico interno o el `external_server_id`
 persistido por el colector. El parametro opcional `limit` acepta valores entre
 `1` y `100`.
+
+## Proximo frente historico
+
+El siguiente frente backend ya documentado no reutiliza A2S como fuente de
+partidas. La base de estadisticas historicas por jugador y por partida parte de
+los scoreboards reales de Comunidad Hispana:
+
+- `https://scoreboard.comunidadhll.es/games`
+- `https://scoreboard.comunidadhll.es:5443/games`
+
+La definicion del modelo de dominio, identidad, deduplicacion y alcance inicial
+queda en `docs/historical-stats-domain-model.md`.
+
+El descubrimiento tecnico realizado sobre el scoreboard publico confirma dos
+endpoints JSON utilizables para esta siguiente fase:
+
+- `/api/get_public_info`
+- `/api/get_live_game_stats`
+
+`get_public_info` aporta contexto de servidor, mapa y comienzo de la partida
+actual. `get_live_game_stats` aporta estadisticas por jugador de la partida en
+curso, incluyendo `player_id`, `kills`, `deaths` y `time_seconds`.
+
+## Bootstrap de ingesta historica
+
+El backend incluye una base minima de ingesta historica orientada al primer
+caso de uso de rankings semanales:
+
+- `historical_ingestion.py` consulta los 2 scoreboards reales
+- `historical_storage.py` persiste partidas, jugadores y estadisticas por
+  jugador en la misma SQLite local de desarrollo
+
+Ejecucion manual desde `backend/`:
+
+```powershell
+python -m app.historical_ingestion
+```
+
+Ese comando:
+
+- consulta `get_public_info` y `get_live_game_stats` en ambos scoreboards
+- construye una identidad de partida por `server + match_start + map`
+- hace upsert de jugadores por `player_id`
+- hace upsert de estadisticas por `match + player`, conservando el maximo valor
+  observado de `kills`, `deaths` y `time_seconds`
+
+Si se quiere validar sin escribir en SQLite:
+
+```powershell
+python -m app.historical_ingestion --no-persist
+```
+
+## Primera API historica util
+
+Una vez exista al menos una ingesta historica persistida, el backend expone:
+
+- `/api/historical/top-kills/weekly?limit=10`
+
+Opcionalmente acepta:
+
+- `server_id=comunidad-hispana-01`
+- `server_id=comunidad-hispana-02`
+
+El payload devuelve:
+
+- rango temporal usado
+- servidor
+- ranking
+- jugador
+- kills semanales agregadas
 
 ## CORS local minimo
 

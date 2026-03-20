@@ -15,6 +15,7 @@ from .payloads import (
     build_server_latest_payload,
     build_servers_payload,
     build_trailer_payload,
+    build_weekly_top_kills_payload,
 )
 
 
@@ -38,6 +39,13 @@ def resolve_get_payload(path: str) -> tuple[HTTPStatus | None, dict[str, object]
         if limit is None:
             return HTTPStatus.BAD_REQUEST, build_error_payload("Invalid limit parameter")
         return HTTPStatus.OK, build_server_history_payload(limit=limit)
+
+    if parsed.path == "/api/historical/top-kills/weekly":
+        limit = _parse_limit(parsed.query)
+        if limit is None:
+            return HTTPStatus.BAD_REQUEST, build_error_payload("Invalid limit parameter")
+        server_id = parse_qs(parsed.query).get("server_id", [None])[0]
+        return HTTPStatus.OK, build_weekly_top_kills_payload(limit=limit, server_id=server_id)
 
     builder = GET_ROUTES.get(parsed.path)
     if builder is None:
