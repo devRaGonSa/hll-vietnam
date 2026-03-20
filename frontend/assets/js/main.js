@@ -157,12 +157,15 @@ function setServersDataState(badgeNode, state) {
     return;
   }
 
-  const hasTimestamp = typeof state.timestampLabel === "string" && state.timestampLabel;
-  badgeNode.textContent = hasTimestamp
-    ? `Actualizado ${state.timestampLabel}`
+  const hasLabel = typeof state.label === "string" && state.label;
+  badgeNode.textContent = hasLabel
+    ? state.label
     : "Actualizado no disponible";
-  badgeNode.classList.toggle("status-chip--ok", Boolean(hasTimestamp));
-  badgeNode.classList.toggle("status-chip--fallback", !hasTimestamp);
+  badgeNode.classList.toggle("status-chip--ok", Boolean(hasLabel && state.isFresh));
+  badgeNode.classList.toggle(
+    "status-chip--fallback",
+    !hasLabel || !state.isFresh,
+  );
 }
 
 function renderServerStatsCard(server) {
@@ -201,11 +204,7 @@ function renderServerStatsCard(server) {
 }
 
 function renderServerSections(latestItems) {
-  return `
-    <div class="servers-grid servers-grid--section">
-      ${latestItems.map((server) => renderServerStatsCard(server)).join("")}
-    </div>
-  `;
+  return latestItems.map((server) => renderServerStatsCard(server)).join("");
 }
 
 function renderServerAction(server) {
@@ -271,10 +270,22 @@ function isRealA2SSnapshot(item) {
 }
 
 function deriveSnapshotState(serversData) {
+  const timestampLabel = serversData?.last_snapshot_at
+    ? formatTimestamp(serversData.last_snapshot_at)
+    : "";
+  if (!timestampLabel) {
+    return {
+      label: "",
+      isFresh: false,
+    };
+  }
+
+  const isFresh = serversData?.is_stale !== true;
   return {
-    timestampLabel: serversData?.last_snapshot_at
-      ? formatTimestamp(serversData.last_snapshot_at)
-      : "",
+    label: isFresh
+      ? `Actualizado ${timestampLabel}`
+      : `Ultimo snapshot ${timestampLabel}`,
+    isFresh,
   };
 }
 
