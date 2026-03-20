@@ -120,6 +120,7 @@ normaliza espacios y barras finales para mantener la comparacion con el header
 - `GET /api/servers/history?limit=20`
 - `GET /api/servers/{id}/history?limit=20`
 - `GET /api/historical/weekly-top-kills?limit=10&server=comunidad-hispana-01`
+- `GET /api/historical/weekly-leaderboard?metric=kills&limit=10&server=comunidad-hispana-01`
 - `GET /api/historical/recent-matches?limit=20&server=comunidad-hispana-01`
 - `GET /api/historical/server-summary?server=comunidad-hispana-01`
 - `GET /api/historical/player-profile?player=steam%3A76561198000000000`
@@ -425,6 +426,7 @@ persistido por el colector. El parametro opcional `limit` acepta valores entre
 La capa historica propia expone:
 
 - `/api/historical/weekly-top-kills`
+- `/api/historical/weekly-leaderboard`
 - `/api/historical/recent-matches`
 - `/api/historical/server-summary`
 - `/api/historical/player-profile`
@@ -441,6 +443,18 @@ request y solo considera partidas cerradas con `ended_at` para no mezclar
 partidas aun en curso ni filas historicas transitorias. El payload devuelve
 servidor, rango temporal, jugador, kills semanales, posicion y numero de
 partidas consideradas.
+
+`weekly-leaderboard` generaliza ese bloque para varias metricas semanales por
+servidor usando la misma ventana movil de 7 dias y el mismo filtro de partidas
+cerradas. Metricas soportadas:
+
+- `kills`
+- `deaths`
+- `support`
+- `matches_over_100_kills`
+
+El endpoint legacy `/api/historical/weekly-top-kills` se conserva como alias
+compatible para la metrica `kills`.
 
 `recent-matches` devuelve cierres recientes por servidor con marcador, mapa y
 conteo de jugadores. `server-summary` agrega volumen historico, jugadores

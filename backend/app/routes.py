@@ -18,6 +18,7 @@ from .payloads import (
     build_server_latest_payload,
     build_servers_payload,
     build_trailer_payload,
+    build_weekly_leaderboard_payload,
     build_weekly_top_kills_payload,
 )
 
@@ -49,6 +50,21 @@ def resolve_get_payload(path: str) -> tuple[HTTPStatus | None, dict[str, object]
             return HTTPStatus.BAD_REQUEST, build_error_payload("Invalid limit parameter")
         server_id = parse_qs(parsed.query).get("server", [None])[0]
         return HTTPStatus.OK, build_weekly_top_kills_payload(limit=limit, server_id=server_id)
+
+    if parsed.path == "/api/historical/weekly-leaderboard":
+        limit = _parse_limit(parsed.query)
+        if limit is None:
+            return HTTPStatus.BAD_REQUEST, build_error_payload("Invalid limit parameter")
+        params = parse_qs(parsed.query)
+        server_id = params.get("server", [None])[0]
+        metric = params.get("metric", ["kills"])[0]
+        if metric not in {"kills", "deaths", "support", "matches_over_100_kills"}:
+            return HTTPStatus.BAD_REQUEST, build_error_payload("Invalid metric parameter")
+        return HTTPStatus.OK, build_weekly_leaderboard_payload(
+            limit=limit,
+            server_id=server_id,
+            metric=metric,
+        )
 
     if parsed.path == "/api/historical/recent-matches":
         limit = _parse_limit(parsed.query)

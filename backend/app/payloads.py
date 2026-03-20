@@ -10,6 +10,7 @@ from .historical_storage import (
     get_historical_player_profile,
     list_historical_server_summaries,
     list_recent_historical_matches,
+    list_weekly_leaderboard,
     list_weekly_top_kills,
 )
 from .normalizers import normalize_map_name
@@ -201,6 +202,36 @@ def build_weekly_top_kills_payload(
             "title": "Top kills semanales por servidor",
             "context": "historical-top-kills",
             "metric": "kills",
+            "summary_basis": "closed-matches-last-7-days",
+            "window_days": 7,
+            "window_start": result["window_start"],
+            "window_end": result["window_end"],
+            "limit": limit,
+            "items": result["items"],
+        },
+    }
+
+
+def build_weekly_leaderboard_payload(
+    *,
+    limit: int = 10,
+    server_id: str | None = None,
+    metric: str = "kills",
+) -> dict[str, object]:
+    """Return one weekly historical leaderboard for the requested metric."""
+    result = list_weekly_leaderboard(limit=limit, server_id=server_id, metric=metric)
+    title_by_metric = {
+        "kills": "Top kills semanales por servidor",
+        "deaths": "Top muertes semanales por servidor",
+        "support": "Top puntos de soporte semanales por servidor",
+        "matches_over_100_kills": "Top partidas de 100+ kills semanales por servidor",
+    }
+    return {
+        "status": "ok",
+        "data": {
+            "title": title_by_metric.get(metric, "Ranking semanal por servidor"),
+            "context": "historical-weekly-leaderboard",
+            "metric": metric,
             "summary_basis": "closed-matches-last-7-days",
             "window_days": 7,
             "window_start": result["window_start"],

@@ -27,6 +27,14 @@ DEFAULT_HISTORICAL_SERVERS = (
 )
 DEFAULT_WEEKLY_WINDOW_DAYS = 7
 DEFAULT_REFRESH_OVERLAP_HOURS = 12
+SUPPORTED_WEEKLY_LEADERBOARD_METRICS = frozenset(
+    {
+        "kills",
+        "deaths",
+        "support",
+        "matches_over_100_kills",
+    }
+)
 
 
 def initialize_historical_storage(*, db_path: Path | None = None) -> Path:
@@ -763,16 +771,20 @@ def get_historical_player_profile(
     }
 
 
-def list_weekly_top_kills(
+def list_weekly_leaderboard(
     *,
     limit: int = 10,
     server_id: str | None = None,
+    metric: str = "kills",
     db_path: Path | None = None,
 ) -> dict[str, object]:
-    """Return ranked weekly kill totals from persisted historical match stats."""
+    """Return ranked weekly leaderboard totals from persisted historical match stats."""
     resolved_path = initialize_historical_storage(db_path=db_path)
     window_end = datetime.now(timezone.utc)
     window_start = window_end - timedelta(days=DEFAULT_WEEKLY_WINDOW_DAYS)
+    normalized_metric = metric.strip() if isinstance(metric, str) else ""
+    if normalized_metric not in SUPPORTED_WEEKLY_LEADERBOARD_METRICS:
+        raise ValueError(f"Unsupported weekly leaderboard metric: {metric}")
 
     where_clauses = [
         "historical_matches.ended_at IS NOT NULL",
@@ -790,6 +802,16 @@ def list_weekly_top_kills(
         )
         params.extend([normalized_server_id, normalized_server_id])
 
+    metric_sum_expression = {
+        "kills": "COALESCE(SUM(historical_player_match_stats.kills), 0)",
+        "deaths": "COALESCE(SUM(historical_player_match_stats.deaths), 0)",
+        "support": "COALESCE(SUM(historical_player_match_stats.support), 0)",
+        "matches_over_100_kills": (
+            "COALESCE(SUM(CASE WHEN COALESCE(historical_player_match_stats.kills, 0) >= 100 "
+            "THEN 1 ELSE 0 END), 0)"
+        ),
+    }[normalized_metric]
+
     with _connect(resolved_path) as connection:
         rows = connection.execute(
             f"""
@@ -801,11 +823,11 @@ def list_weekly_top_kills(
                     historical_players.display_name AS player_name,
                     historical_players.steam_id,
                     COUNT(DISTINCT historical_matches.id) AS matches_count,
-                    COALESCE(SUM(historical_player_match_stats.kills), 0) AS kills,
+                    {metric_sum_expression} AS metric_value,
                     ROW_NUMBER() OVER (
                         PARTITION BY historical_servers.slug
                         ORDER BY
-                            COALESCE(SUM(historical_player_match_stats.kills), 0) DESC,
+                            {metric_sum_expression} DESC,
                             COUNT(DISTINCT historical_matches.id) ASC,
                             historical_players.display_name ASC
                     ) AS ranking_position
@@ -845,15 +867,44 @@ def list_weekly_top_kills(
                     "name": row["player_name"],
                     "steam_id": row["steam_id"],
                 },
+                "metric": normalized_metric,
                 "ranking_position": int(row["ranking_position"]),
-                "weekly_kills": int(row["kills"] or 0),
+                "metric_value": int(row["metric_value"] or 0),
                 "matches_considered": int(row["matches_count"] or 0),
             }
         )
 
     return {
+        "metric": normalized_metric,
         "window_start": window_start.isoformat().replace("+00:00", "Z"),
         "window_end": window_end.isoformat().replace("+00:00", "Z"),
+        "items": items,
+    }
+
+
+def list_weekly_top_kills(
+    *,
+    limit: int = 10,
+    server_id: str | None = None,
+    db_path: Path | None = None,
+) -> dict[str, object]:
+    """Return ranked weekly kill totals from persisted historical match stats."""
+    result = list_weekly_leaderboard(
+        limit=limit,
+        server_id=server_id,
+        metric="kills",
+        db_path=db_path,
+    )
+    items = []
+    for item in result["items"]:
+        legacy_item = dict(item)
+        legacy_item["weekly_kills"] = legacy_item["metric_value"]
+        items.append(legacy_item)
+
+    return {
+        "metric": "kills",
+        "window_start": result["window_start"],
+        "window_end": result["window_end"],
         "items": items,
     }
 
