@@ -29,8 +29,8 @@
                 <span class="hero__title-accent">Comunidad Hispana</span>
               </h1>
               <p class="hero__text historical-hero__text">
-                Consulta el ranking semanal y las partidas recientes usando solo
-                la capa historica interna del proyecto.
+                Consulta cobertura importada, ranking semanal y cierres
+                recientes usando solo la capa historica interna del proyecto.
               </p>
             </div>
             <div class="historical-selector" aria-label="Seleccion de servidor">
@@ -55,16 +55,19 @@
 
       <main class="content historical-content">
         <section class="panel historical-panel" aria-labelledby="historical-summary-title">
-          <div class="panel__shell">
-            <div class="panel__header historical-panel__header">
-              <div>
-                <p class="eyebrow eyebrow--section">Cobertura</p>
-                <h2 id="historical-summary-title">Resumen del servidor</h2>
-              </div>
+            <div class="panel__shell">
+              <div class="panel__header historical-panel__header">
+                <div>
+                  <p class="eyebrow eyebrow--section">Cobertura importada</p>
+                  <h2 id="historical-summary-title">Resumen del historico persistido</h2>
+                  <p class="historical-panel__note" id="historical-summary-note">
+                    Este bloque resume solo la cobertura ya importada en la base local.
+                  </p>
+                </div>
               <p class="status-chip status-chip--fallback" id="historical-range">
                 Cargando rango temporal
               </p>
-            </div>
+              </div>
             <div class="historical-summary-grid" id="historical-summary">
               <article class="historical-stat-card">
                 <p>Estado</p>
@@ -76,12 +79,15 @@
 
         <section class="panel historical-panel" aria-labelledby="weekly-ranking-title">
           <div class="panel__shell">
-            <div class="panel__header historical-panel__header">
-              <div>
-                <p class="eyebrow eyebrow--section">Ranking semanal</p>
-                <h2 id="weekly-ranking-title">Top kills de los ultimos 7 dias</h2>
+              <div class="panel__header historical-panel__header">
+                <div>
+                  <p class="eyebrow eyebrow--section">Ranking semanal</p>
+                  <h2 id="weekly-ranking-title">Top kills de los ultimos 7 dias</h2>
+                  <p class="historical-panel__note" id="weekly-window-note">
+                    Cargando ventana semanal...
+                  </p>
+                </div>
               </div>
-            </div>
             <p class="historical-state" id="weekly-top-kills-state" aria-live="polite">
               Cargando ranking semanal...
             </p>
@@ -104,12 +110,15 @@
 
         <section class="panel historical-panel" aria-labelledby="recent-matches-title">
           <div class="panel__shell">
-            <div class="panel__header historical-panel__header">
-              <div>
-                <p class="eyebrow eyebrow--section">Partidas recientes</p>
-                <h2 id="recent-matches-title">Ultimos cierres registrados</h2>
+              <div class="panel__header historical-panel__header">
+                <div>
+                  <p class="eyebrow eyebrow--section">Partidas recientes</p>
+                  <h2 id="recent-matches-title">Ultimos cierres registrados</h2>
+                  <p class="historical-panel__note">
+                    Lista de cierres ya importados para el servidor activo.
+                  </p>
+                </div>
               </div>
-            </div>
             <p class="historical-state" id="recent-matches-state" aria-live="polite">
               Cargando partidas recientes...
             </p>

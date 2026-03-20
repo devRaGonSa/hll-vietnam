@@ -574,21 +574,97 @@ def list_historical_server_summaries(
 
     items: list[dict[str, object]] = []
     for row in summary_rows:
+        matches_count = int(row["matches_count"] or 0)
+        first_match_at = _stringify(row["first_match_at"])
+        last_match_at = _stringify(row["last_match_at"])
+        coverage_days = _calculate_coverage_days(first_match_at, last_match_at)
         items.append(
             {
                 "server": {
                     "slug": row["server_slug"],
                     "name": row["server_name"],
                 },
-                "matches_count": int(row["matches_count"] or 0),
+                "matches_count": matches_count,
+                "imported_matches_count": matches_count,
                 "unique_players": int(row["unique_players"] or 0),
                 "total_kills": int(row["total_kills"] or 0),
                 "map_count": int(row["map_count"] or 0),
                 "top_maps": top_maps_by_server.get(str(row["server_slug"]), []),
-                "time_range": {
-                    "start": row["first_match_at"],
-                    "end": row["last_match_at"],
+                "coverage": {
+                    "basis": "persisted-import",
+                    "status": _classify_coverage_status(matches_count, coverage_days),
+                    "imported_matches_count": matches_count,
+                    "first_match_at": first_match_at,
+                    "last_match_at": last_match_at,
+                    "coverage_days": coverage_days,
                 },
+                "time_range": {
+                    "start": first_match_at,
+                    "end": last_match_at,
+                },
+            }
+        )
+    return items
+
+
+def list_historical_coverage_report(
+    *,
+    server_slug: str | None = None,
+    db_path: Path | None = None,
+) -> list[dict[str, object]]:
+    """Return persisted coverage metrics used to validate historical bootstrap depth."""
+    resolved_path = initialize_historical_storage(db_path=db_path)
+    where_clause = ""
+    params: list[object] = []
+    if server_slug:
+        where_clause = "WHERE historical_servers.slug = ?"
+        params.append(server_slug)
+
+    with _connect(resolved_path) as connection:
+        rows = connection.execute(
+            f"""
+            SELECT
+                historical_servers.slug AS server_slug,
+                historical_servers.display_name AS server_name,
+                historical_servers.scoreboard_base_url AS scoreboard_base_url,
+                historical_servers.server_number AS server_number,
+                COUNT(DISTINCT historical_matches.id) AS imported_matches_count,
+                COUNT(DISTINCT historical_players.id) AS unique_players,
+                COUNT(DISTINCT historical_player_match_stats.id) AS player_stat_rows,
+                MIN(COALESCE(historical_matches.ended_at, historical_matches.started_at, historical_matches.created_at_source)) AS first_match_at,
+                MAX(COALESCE(historical_matches.ended_at, historical_matches.started_at, historical_matches.created_at_source)) AS last_match_at
+            FROM historical_servers
+            LEFT JOIN historical_matches
+                ON historical_matches.historical_server_id = historical_servers.id
+            LEFT JOIN historical_player_match_stats
+                ON historical_player_match_stats.historical_match_id = historical_matches.id
+            LEFT JOIN historical_players
+                ON historical_players.id = historical_player_match_stats.historical_player_id
+            {where_clause}
+            GROUP BY historical_servers.id
+            ORDER BY historical_servers.server_number ASC, historical_servers.slug ASC
+            """,
+            params,
+        ).fetchall()
+
+    items: list[dict[str, object]] = []
+    for row in rows:
+        first_match_at = _stringify(row["first_match_at"])
+        last_match_at = _stringify(row["last_match_at"])
+        items.append(
+            {
+                "server": {
+                    "slug": row["server_slug"],
+                    "name": row["server_name"],
+                    "server_number": row["server_number"],
+                    "scoreboard_base_url": row["scoreboard_base_url"],
+                },
+                "imported_matches_count": int(row["imported_matches_count"] or 0),
+                "unique_players": int(row["unique_players"] or 0),
+                "player_stat_rows": int(row["player_stat_rows"] or 0),
+                "first_match_at": first_match_at,
+                "last_match_at": last_match_at,
+                "coverage_days": _calculate_coverage_days(first_match_at, last_match_at),
             }
         )
     return items
@@ -1652,6 +1728,32 @@ def _parse_timestamp(value: str) -> datetime:
     if parsed.tzinfo is None:
         parsed = parsed.replace(tzinfo=timezone.utc)
     return parsed
+
+
+def _calculate_coverage_days(
+    first_match_at: str | None,
+    last_match_at: str | None,
+) -> float | None:
+    if not first_match_at or not last_match_at:
+        return None
+    try:
+        delta = _parse_timestamp(last_match_at) - _parse_timestamp(first_match_at)
+    except ValueError:
+        return None
+    return round(delta.total_seconds() / 86400, 2)
+
+
+def _classify_coverage_status(
+    matches_count: int,
+    coverage_days: float | None,
+) -> str:
+    if matches_count <= 0:
+        return "empty"
+    if coverage_days is None:
+        return "range-unknown"
+    if coverage_days < DEFAULT_WEEKLY_WINDOW_DAYS:
+        return "under-week"
+    return "week-plus"
 
 
 def _get_nested(payload: Mapping[str, object], *path: str) -> object:

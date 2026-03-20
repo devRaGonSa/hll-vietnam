@@ -66,6 +66,7 @@ Variables opcionales:
 - `HLL_BACKEND_REFRESH_INTERVAL_SECONDS`
 - `HLL_HISTORICAL_CRCON_PAGE_SIZE`
 - `HLL_HISTORICAL_CRCON_TIMEOUT_SECONDS`
+- `HLL_HISTORICAL_CRCON_DETAIL_WORKERS`
 - `HLL_HISTORICAL_REFRESH_INTERVAL_SECONDS`
 - `HLL_HISTORICAL_REFRESH_MAX_RETRIES`
 - `HLL_HISTORICAL_REFRESH_RETRY_DELAY_SECONDS`
@@ -470,11 +471,30 @@ Flags utiles:
 - `--server comunidad-hispana-01` para limitar a un servidor
 - `--max-pages 2` para validacion local acotada
 - `--page-size 25` para ajustar paginacion
+- `--start-page 4` para reanudar desde una pagina concreta en bootstraps largos
+- `--detail-workers 16` para paralelizar el detalle por partida
 
 La ejecucion `bootstrap` recorre paginas historicas hasta agotar resultados.
 La ejecucion `refresh` usa una ventana de solape sobre la ultima partida
 persistida por servidor para releer solo paginas recientes y absorber updates
 tardios sin reimportar todo el historico.
+
+El comando devuelve ademas un resumen de cobertura persistida por servidor. Esto
+ayuda a validar rapidamente cuantos matches reales quedaron importados, el rango
+temporal cubierto y si la carga ya supera la ultima semana movil que usa la UI.
+
+Como la fuente CRCON publica expone un archivo muy profundo y puede devolver
+errores `502` intermitentes bajo carga sostenida, el bootstrap completo debe
+tratarse como una operacion reanudable. Flujo recomendado:
+
+```powershell
+python -m app.historical_ingestion bootstrap --detail-workers 16
+python -m app.historical_ingestion bootstrap --start-page 4 --detail-workers 16
+```
+
+La segunda invocacion permite continuar desde la siguiente pagina pendiente si
+la sesion anterior se corta por tiempo disponible o por inestabilidad puntual
+del origen.
 
 El runner `python -m app.historical_runner` deja ese refresh incremental listo
 para ejecucion local repetida sin depender de infraestructura externa. Por

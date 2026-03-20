@@ -201,6 +201,7 @@ def build_weekly_top_kills_payload(
             "title": "Top kills semanales por servidor",
             "context": "historical-top-kills",
             "metric": "kills",
+            "summary_basis": "closed-matches-last-7-days",
             "window_days": 7,
             "window_start": result["window_start"],
             "window_end": result["window_end"],
@@ -239,9 +240,11 @@ def build_historical_server_summary_payload(
     return {
         "status": "ok",
         "data": {
-            "title": "Resumen historico por servidor",
+            "title": "Cobertura historica importada por servidor",
             "context": "historical-server-summary",
             "source": "historical-crcon-storage",
+            "summary_basis": "persisted-import",
+            "weekly_ranking_window_days": 7,
             "server_slug": server_slug,
             "items": items,
         },

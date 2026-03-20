@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import argparse
 import json
+import time
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from typing import Iterable
 from urllib.error import HTTPError, URLError
@@ -11,6 +13,7 @@ from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 
 from .config import (
+    get_historical_crcon_detail_workers,
     get_historical_crcon_page_size,
     get_historical_crcon_request_timeout_seconds,
 )
@@ -18,6 +21,7 @@ from .historical_storage import (
     finalize_ingestion_run,
     get_refresh_cutoff_for_server,
     initialize_historical_storage,
+    list_historical_coverage_report,
     list_historical_servers,
     start_ingestion_run,
     upsert_historical_match,
@@ -27,6 +31,7 @@ from .historical_storage import (
 PUBLIC_INFO_ENDPOINT = "/api/get_public_info"
 MATCH_LIST_ENDPOINT = "/api/get_scoreboard_maps"
 MATCH_DETAIL_ENDPOINT = "/api/get_map_scoreboard"
+DEFAULT_DETAIL_FETCH_RETRIES = 3
 
 
 @dataclass(slots=True)
@@ -52,6 +57,8 @@ def run_bootstrap(
     server_slug: str | None = None,
     max_pages: int | None = None,
     page_size: int | None = None,
+    start_page: int = 1,
+    detail_workers: int | None = None,
 ) -> dict[str, object]:
     """Run a first full historical import against one or all configured servers."""
     return _run_ingestion(
@@ -59,6 +66,8 @@ def run_bootstrap(
         server_slug=server_slug,
         max_pages=max_pages,
         page_size=page_size,
+        start_page=start_page,
+        detail_workers=detail_workers,
         incremental=False,
     )
 
@@ -68,6 +77,8 @@ def run_incremental_refresh(
     server_slug: str | None = None,
     max_pages: int | None = None,
     page_size: int | None = None,
+    start_page: int = 1,
+    detail_workers: int | None = None,
 ) -> dict[str, object]:
     """Refresh recent historical pages without replaying the whole archive."""
     return _run_ingestion(
@@ -75,6 +86,8 @@ def run_incremental_refresh(
         server_slug=server_slug,
         max_pages=max_pages,
         page_size=page_size,
+        start_page=start_page,
+        detail_workers=detail_workers,
         incremental=True,
     )
 
@@ -85,6 +98,8 @@ def _run_ingestion(
     server_slug: str | None,
     max_pages: int | None,
     page_size: int | None,
+    start_page: int,
+    detail_workers: int | None,
     incremental: bool,
 ) -> dict[str, object]:
     initialize_historical_storage()
@@ -107,6 +122,8 @@ def _run_ingestion(
                 stats=stats,
                 max_pages=max_pages,
                 page_size=page_size,
+                start_page=start_page,
+                detail_workers=detail_workers,
                 cutoff=cutoff,
             )
             processed_servers.append(server_stats)
@@ -140,7 +157,10 @@ def _run_ingestion(
         "status": "ok",
         "mode": mode,
         "page_size": page_size or get_historical_crcon_page_size(),
+        "start_page": start_page,
+        "detail_workers": detail_workers or get_historical_crcon_detail_workers(),
         "servers": processed_servers,
+        "coverage": list_historical_coverage_report(server_slug=server_slug),
         "totals": {
             "pages_processed": stats.pages_processed,
             "matches_seen": stats.matches_seen,
@@ -158,26 +178,36 @@ def _ingest_server(
     stats: IngestionStats,
     max_pages: int | None,
     page_size: int | None,
+    start_page: int,
+    detail_workers: int | None,
     cutoff: str | None,
 ) -> dict[str, object]:
     resolved_page_size = page_size or get_historical_crcon_page_size()
+    resolved_detail_workers = detail_workers or get_historical_crcon_detail_workers()
     page_limit = max_pages or 1000000
+    start_page = max(1, start_page)
     local_stats = IngestionStats()
     public_info = _fetch_public_info(str(server["scoreboard_base_url"]))
+    discovered_total_matches: int | None = None
+    last_page_processed: int | None = None
 
-    for page_number in range(1, page_limit + 1):
+    for page_number in range(start_page, start_page + page_limit):
         payload = _fetch_match_page(
             str(server["scoreboard_base_url"]),
             page=page_number,
             limit=resolved_page_size,
         )
+        if discovered_total_matches is None:
+            discovered_total_matches = _coerce_int(payload.get("total"))
         page_matches = _coerce_match_list(payload.get("maps"))
         if not page_matches:
             break
 
         local_stats.pages_processed += 1
         stats.pages_processed += 1
+        last_page_processed = page_number
         stop_after_page = False
+        match_ids_to_fetch: list[str] = []
 
         for match_summary in page_matches:
             local_stats.matches_seen += 1
@@ -188,10 +218,15 @@ def _ingest_server(
                 stop_after_page = True
                 continue
 
-            detail_payload = _fetch_match_detail(
-                str(server["scoreboard_base_url"]),
-                match_id=str(match_summary["id"]),
-            )
+            match_id = _stringify(match_summary.get("id"))
+            if match_id:
+                match_ids_to_fetch.append(match_id)
+
+        for detail_payload in _fetch_match_details(
+            str(server["scoreboard_base_url"]),
+            match_ids_to_fetch,
+            max_workers=resolved_detail_workers,
+        ):
             delta = upsert_historical_match(
                 server_slug=str(server["slug"]),
                 match_payload=detail_payload,
@@ -208,10 +243,13 @@ def _ingest_server(
         "server_number": public_info.get("server_number") or server.get("server_number"),
         "pages_processed": local_stats.pages_processed,
         "matches_seen": local_stats.matches_seen,
+        "discovered_total_matches": discovered_total_matches,
         "matches_inserted": local_stats.matches_inserted,
         "matches_updated": local_stats.matches_updated,
         "player_rows_inserted": local_stats.player_rows_inserted,
         "player_rows_updated": local_stats.player_rows_updated,
+        "start_page": start_page,
+        "last_page_processed": last_page_processed,
         "cutoff": cutoff,
     }
 
@@ -229,32 +267,47 @@ def _select_servers(server_slug: str | None) -> list[dict[str, object]]:
 
 
 def _fetch_public_info(base_url: str) -> dict[str, object]:
-    payload = _unwrap_result(_fetch_json(base_url, PUBLIC_INFO_ENDPOINT))
-    if not isinstance(payload, dict):
-        raise ValueError(f"Unexpected public info payload for {base_url}")
-    return payload
+    return _fetch_dict_payload(base_url, PUBLIC_INFO_ENDPOINT)
 
 
 def _fetch_match_page(base_url: str, *, page: int, limit: int) -> dict[str, object]:
-    payload = _unwrap_result(_fetch_json(
+    return _fetch_dict_payload(
         base_url,
         MATCH_LIST_ENDPOINT,
         {"page": page, "limit": limit},
-    ))
-    if not isinstance(payload, dict):
-        raise ValueError(f"Unexpected match list payload for {base_url} page={page}")
-    return payload
+        context=f"page={page}",
+    )
 
 
 def _fetch_match_detail(base_url: str, *, match_id: str) -> dict[str, object]:
-    payload = _unwrap_result(_fetch_json(
+    return _fetch_dict_payload(
         base_url,
         MATCH_DETAIL_ENDPOINT,
         {"map_id": match_id},
-    ))
-    if not isinstance(payload, dict):
-        raise ValueError(f"Unexpected match detail payload for {base_url} match={match_id}")
-    return payload
+        context=f"match={match_id}",
+    )
+
+
+def _fetch_match_details(
+    base_url: str,
+    match_ids: list[str],
+    *,
+    max_workers: int,
+) -> list[dict[str, object]]:
+    if not match_ids:
+        return []
+    if max_workers <= 1:
+        return [
+            _fetch_match_detail(base_url, match_id=match_id)
+            for match_id in match_ids
+        ]
+
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        futures = [
+            executor.submit(_fetch_match_detail, base_url, match_id=match_id)
+            for match_id in match_ids
+        ]
+        return [future.result() for future in futures]
 
 
 def _fetch_json(
@@ -283,6 +336,34 @@ def _fetch_json(
         raise RuntimeError(f"Historical CRCON request failed: {url} ({exc.code})") from exc
     except URLError as exc:
         raise RuntimeError(f"Historical CRCON request failed: {url} ({exc.reason})") from exc
+
+
+def _fetch_dict_payload(
+    base_url: str,
+    endpoint: str,
+    query: dict[str, object] | None = None,
+    *,
+    context: str = "",
+    retries: int = DEFAULT_DETAIL_FETCH_RETRIES,
+) -> dict[str, object]:
+    last_error: Exception | None = None
+    for attempt in range(1, retries + 1):
+        try:
+            payload = _unwrap_result(_fetch_json(base_url, endpoint, query))
+        except Exception as exc:  # pragma: no cover - network path
+            last_error = exc
+        else:
+            if isinstance(payload, dict):
+                return payload
+            last_error = ValueError(
+                f"Unexpected payload type for {base_url}{endpoint} {context}".strip()
+            )
+
+        if attempt < retries:
+            time.sleep(0.5 * attempt)
+
+    assert last_error is not None
+    raise last_error
 
 
 def _coerce_match_list(payload: object) -> list[dict[str, object]]:
@@ -317,6 +398,22 @@ def _extract_public_name(public_info: dict[str, object]) -> str | None:
     return None
 
 
+def _stringify(value: object) -> str | None:
+    if value is None:
+        return None
+    text = str(value).strip()
+    return text or None
+
+
+def _coerce_int(value: object) -> int | None:
+    if value in (None, ""):
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
 def build_arg_parser() -> argparse.ArgumentParser:
     """Create the CLI parser for manual historical ingestion runs."""
     parser = argparse.ArgumentParser(
@@ -342,6 +439,17 @@ def build_arg_parser() -> argparse.ArgumentParser:
         type=int,
         help="override CRCON page size",
     )
+    parser.add_argument(
+        "--start-page",
+        type=int,
+        default=1,
+        help="resume bootstrap or refresh from a specific page number",
+    )
+    parser.add_argument(
+        "--detail-workers",
+        type=int,
+        help="parallel worker count for per-match detail requests",
+    )
     return parser
 
 
@@ -355,12 +463,16 @@ def main(argv: Iterable[str] | None = None) -> int:
             server_slug=args.server_slug,
             max_pages=args.max_pages,
             page_size=args.page_size,
+            start_page=args.start_page,
+            detail_workers=args.detail_workers,
         )
     else:
         result = run_incremental_refresh(
             server_slug=args.server_slug,
             max_pages=args.max_pages,
             page_size=args.page_size,
+            start_page=args.start_page,
+            detail_workers=args.detail_workers,
         )
 
     print(json.dumps(result, indent=2))

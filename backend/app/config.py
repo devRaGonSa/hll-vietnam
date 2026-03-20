@@ -12,6 +12,7 @@ DEFAULT_STORAGE_FILENAME = "hll_vietnam_dev.sqlite3"
 DEFAULT_REFRESH_INTERVAL_SECONDS = 120
 DEFAULT_HISTORICAL_CRCON_PAGE_SIZE = 50
 DEFAULT_HISTORICAL_CRCON_TIMEOUT_SECONDS = 15.0
+DEFAULT_HISTORICAL_CRCON_DETAIL_WORKERS = 8
 DEFAULT_HISTORICAL_REFRESH_INTERVAL_SECONDS = 1800
 DEFAULT_HISTORICAL_REFRESH_MAX_RETRIES = 2
 DEFAULT_HISTORICAL_REFRESH_RETRY_DELAY_SECONDS = 30
@@ -96,6 +97,19 @@ def get_historical_crcon_request_timeout_seconds() -> float:
         raise ValueError("HLL_HISTORICAL_CRCON_TIMEOUT_SECONDS must be positive.")
 
     return timeout_seconds
+
+
+def get_historical_crcon_detail_workers() -> int:
+    """Return the worker count used for CRCON historical detail requests."""
+    configured_value = os.getenv(
+        "HLL_HISTORICAL_CRCON_DETAIL_WORKERS",
+        str(DEFAULT_HISTORICAL_CRCON_DETAIL_WORKERS),
+    )
+    worker_count = int(configured_value)
+    if worker_count <= 0:
+        raise ValueError("HLL_HISTORICAL_CRCON_DETAIL_WORKERS must be positive.")
+
+    return worker_count
 
 
 def get_historical_refresh_interval_seconds() -> int:

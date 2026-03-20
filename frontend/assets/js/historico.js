@@ -12,9 +12,11 @@ document.addEventListener("DOMContentLoaded", () => {
   );
   const summaryNode = document.getElementById("historical-summary");
   const rangeNode = document.getElementById("historical-range");
+  const summaryNoteNode = document.getElementById("historical-summary-note");
   const weeklyStateNode = document.getElementById("weekly-top-kills-state");
   const weeklyTableNode = document.getElementById("weekly-top-kills-table");
   const weeklyBodyNode = document.getElementById("weekly-top-kills-body");
+  const weeklyWindowNoteNode = document.getElementById("weekly-window-note");
   const recentStateNode = document.getElementById("recent-matches-state");
   const recentListNode = document.getElementById("recent-matches-list");
 
@@ -24,7 +26,10 @@ document.addEventListener("DOMContentLoaded", () => {
   const refreshHistoricalView = async () => {
     syncActiveButtons(selectorButtons, activeServerSlug);
     setRangeBadge(rangeNode, "Cargando rango temporal", false);
+    summaryNoteNode.textContent =
+      "Este bloque resume solo la cobertura ya importada en la base local.";
     renderSummaryLoading(summaryNode);
+    weeklyWindowNoteNode.textContent = "Cargando ventana semanal...";
     setState(weeklyStateNode, "Cargando ranking semanal...");
     setState(recentStateNode, "Cargando partidas recientes...");
     weeklyTableNode.hidden = true;
@@ -43,12 +48,13 @@ document.addEventListener("DOMContentLoaded", () => {
         ),
       ]);
 
-    hydrateSummary(summaryResult, summaryNode, rangeNode);
+    hydrateSummary(summaryResult, summaryNode, rangeNode, summaryNoteNode);
     hydrateWeeklyTopKills(
       topKillsResult,
       weeklyStateNode,
       weeklyTableNode,
       weeklyBodyNode,
+      weeklyWindowNoteNode,
     );
     hydrateRecentMatches(recentMatchesResult, recentStateNode, recentListNode);
   };
@@ -70,33 +76,52 @@ document.addEventListener("DOMContentLoaded", () => {
   void refreshHistoricalView();
 });
 
-function hydrateSummary(result, summaryNode, rangeNode) {
+function hydrateSummary(result, summaryNode, rangeNode, noteNode) {
   if (result.status !== "fulfilled") {
     renderSummaryError(summaryNode);
     setRangeBadge(rangeNode, "Resumen historico no disponible", false);
+    noteNode.textContent =
+      "No se pudo leer la cobertura importada persistida para este servidor.";
     return;
   }
 
-  const items = result.value?.data?.items;
+  const payload = result.value?.data;
+  const items = payload?.items;
   if (!Array.isArray(items) || items.length === 0) {
     renderSummaryEmpty(summaryNode);
     setRangeBadge(rangeNode, "Sin cobertura historica", false);
+    noteNode.textContent =
+      "Todavia no existe cobertura importada suficiente en la base local.";
     return;
   }
 
   const summary = items[0];
+  const coverage = summary.coverage || {};
   const timeRange = summary.time_range || {};
-  const rangeLabel = buildRangeLabel(timeRange.start, timeRange.end);
+  const rangeLabel = buildCoverageBadgeLabel(coverage, timeRange);
   setRangeBadge(
     rangeNode,
-    rangeLabel || "Cobertura parcial disponible",
-    Boolean(rangeLabel),
+    rangeLabel || "Cobertura importada parcial",
+    coverage.status === "week-plus",
+  );
+  noteNode.textContent = buildSummaryNote(
+    payload?.summary_basis,
+    payload?.weekly_ranking_window_days,
+    coverage,
   );
   summaryNode.innerHTML = [
     renderSummaryCard("Servidor", summary.server?.name || "Servidor no disponible"),
-    renderSummaryCard("Partidas", formatNumber(summary.matches_count)),
+    renderSummaryCard(
+      "Partidas importadas",
+      formatNumber(summary.imported_matches_count ?? summary.matches_count),
+    ),
     renderSummaryCard("Jugadores unicos", formatNumber(summary.unique_players)),
-    renderSummaryCard("Kills agregadas", formatNumber(summary.total_kills)),
+    renderSummaryCard(
+      "Cobertura importada",
+      formatCoverageDays(coverage.coverage_days),
+    ),
+    renderSummaryCard("Primera partida", formatTimestamp(coverage.first_match_at)),
+    renderSummaryCard("Ultima partida", formatTimestamp(coverage.last_match_at)),
     renderSummaryCard(
       "Mapas dominantes",
       formatTopMaps(summary.top_maps),
@@ -109,14 +134,19 @@ function hydrateWeeklyTopKills(
   stateNode,
   tableNode,
   bodyNode,
+  noteNode,
 ) {
   if (result.status !== "fulfilled") {
+    noteNode.textContent =
+      "El ranking usa solo partidas cerradas dentro de la ultima ventana semanal.";
     setState(stateNode, "No se pudo cargar el ranking semanal.", true);
     tableNode.hidden = true;
     return;
   }
 
-  const items = result.value?.data?.items;
+  const payload = result.value?.data;
+  noteNode.textContent = buildWeeklyWindowNote(payload);
+  const items = payload?.items;
   if (!Array.isArray(items) || items.length === 0) {
     setState(
       stateNode,
@@ -251,6 +281,41 @@ function buildRangeLabel(start, end) {
   return `${formatTimestamp(start)} a ${formatTimestamp(end)}`;
 }
 
+function buildCoverageBadgeLabel(coverage, timeRange) {
+  const coverageDays = formatCoverageDays(coverage?.coverage_days);
+  const rangeLabel = buildRangeLabel(
+    coverage?.first_match_at || timeRange?.start,
+    coverage?.last_match_at || timeRange?.end,
+  );
+  if (coverageDays !== "Cobertura no disponible" && rangeLabel) {
+    return `${coverageDays} importados`;
+  }
+  return rangeLabel;
+}
+
+function buildSummaryNote(summaryBasis, weeklyWindowDays, coverage) {
+  const basisLabel =
+    summaryBasis === "persisted-import"
+      ? "la cobertura ya importada en la base local"
+      : "el historico persistido disponible";
+  const weeklyWindowLabel = Number.isFinite(Number(weeklyWindowDays))
+    ? `${weeklyWindowDays} dias`
+    : "la ultima semana";
+  const status = coverage?.status;
+  if (status === "under-week") {
+    return `Este bloque resume ${basisLabel}. Ahora mismo esa cobertura todavia no alcanza ${weeklyWindowLabel}.`;
+  }
+  return `Este bloque resume ${basisLabel}. El ranking semanal de abajo usa solo partidas cerradas de los ultimos ${weeklyWindowLabel}.`;
+}
+
+function buildWeeklyWindowNote(payload) {
+  const start = formatTimestamp(payload?.window_start);
+  const end = formatTimestamp(payload?.window_end);
+  const windowDays = Number(payload?.window_days);
+  const daysLabel = Number.isFinite(windowDays) ? `${windowDays} dias` : "7 dias";
+  return `Ranking calculado solo con partidas cerradas dentro de la ventana movil de ${daysLabel}: ${start} a ${end}.`;
+}
+
 function formatTopMaps(topMaps) {
   if (!Array.isArray(topMaps) || topMaps.length === 0) {
     return "Sin mapas dominantes";
@@ -259,6 +324,17 @@ function formatTopMaps(topMaps) {
   return topMaps
     .map((item) => `${item.map_name} (${formatNumber(item.matches_count)})`)
     .join(" / ");
+}
+
+function formatCoverageDays(value) {
+  const parsedValue = Number(value);
+  if (!Number.isFinite(parsedValue) || parsedValue <= 0) {
+    return "Cobertura no disponible";
+  }
+  return `${new Intl.NumberFormat("es-ES", {
+    maximumFractionDigits: 1,
+    minimumFractionDigits: parsedValue < 10 ? 1 : 0,
+  }).format(parsedValue)} dias`;
 }
 
 function formatMatchResult(result) {
