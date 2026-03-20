@@ -30,7 +30,6 @@
               />
             </div>
             <div class="hero__copy">
-              <p class="eyebrow">Comunidad táctica hispana</p>
               <h1 class="hero__title">
                 Comunidad Hispana
                 <span class="hero__title-accent">HLL Vietnam</span>
@@ -40,13 +39,6 @@
                 Discord oficial de la comunidad.
               </p>
               <div class="hero__actions">
-                <p
-                  class="status-chip status-chip--idle"
-                  id="backend-status"
-                  aria-live="polite"
-                >
-                  Backend no verificado
-                </p>
                 <a
                   class="discord-button"
                   href="https://discord.com/invite/PedEqZ2Xsa"
@@ -90,70 +82,81 @@
                 <h2 id="servers-title">Estado actual de servidores</h2>
               </div>
               <p class="status-chip status-chip--fallback" id="servers-badge">
-                Referencia actual
+                Actualizado no disponible
               </p>
             </div>
-            <p class="panel__intro" id="servers-note">
-              Estado actual y acceso directo a los servidores disponibles.
-            </p>
             <div class="servers-grid" id="servers-list">
-              <article class="server-card">
-                <div class="server-card__top">
+              <article class="server-card server-card--stats server-card--real">
+                <div class="server-card__top server-card__top--stats">
                   <div class="server-card__identity">
-                    <p class="server-card__eyebrow">Referencia actual</p>
-                    <h3>HLL ESP Tactical Rotation</h3>
+                    <p class="server-card__eyebrow">Servidor de comunidad</p>
+                    <h3>Comunidad Hispana #01</h3>
                   </div>
                   <div class="server-card__status-column">
                     <span class="server-state server-state--online">Online</span>
                     <p class="server-card__population">74 / 100</p>
+                    <div class="server-card__actions">
+                      <button
+                        class="server-copy-button"
+                        type="button"
+                        data-copy-address="152.114.195.174:7777"
+                        data-default-label="Copiar IP"
+                      >
+                        Copiar IP
+                      </button>
+                    </div>
                   </div>
                 </div>
-                <div class="server-card__load" aria-hidden="true">
-                  <span style="width: 74%"></span>
+                <div class="server-card__quickfacts">
+                  <article class="server-card__quickfact">
+                    <p>Mapa</p>
+                    <strong>Sainte-Marie-du-Mont</strong>
+                  </article>
+                  <article class="server-card__quickfact">
+                    <p>Region</p>
+                    <strong>ES</strong>
+                  </article>
+                  <article class="server-card__quickfact">
+                    <p>Direccion</p>
+                    <strong>152.114.195.174:7777</strong>
+                  </article>
                 </div>
-                <dl class="server-card__stats">
-                  <div class="server-stat server-stat--players">
-                    <dt>Jugadores</dt>
-                    <dd>74 / 100</dd>
-                  </div>
-                  <div class="server-stat">
-                    <dt>Mapa</dt>
-                    <dd>Sainte-Marie-du-Mont</dd>
-                  </div>
-                  <div class="server-stat">
-                    <dt>Region</dt>
-                    <dd>EU</dd>
-                  </div>
-                </dl>
               </article>
-              <article class="server-card">
-                <div class="server-card__top">
+              <article class="server-card server-card--stats server-card--real">
+                <div class="server-card__top server-card__top--stats">
                   <div class="server-card__identity">
-                    <p class="server-card__eyebrow">Referencia actual</p>
-                    <h3>HLL LATAM Night Offensive</h3>
+                    <p class="server-card__eyebrow">Servidor de comunidad</p>
+                    <h3>Comunidad Hispana #02</h3>
                   </div>
                   <div class="server-card__status-column">
-                    <span class="server-state server-state--online">Online</span>
-                    <p class="server-card__population">51 / 100</p>
+                    <span class="server-state server-state--offline">Offline</span>
+                    <p class="server-card__population">0 / 100</p>
+                    <div class="server-card__actions">
+                      <button
+                        class="server-copy-button"
+                        type="button"
+                        data-copy-address="152.114.195.150:7877"
+                        data-default-label="Copiar IP"
+                      >
+                        Copiar IP
+                      </button>
+                    </div>
                   </div>
                 </div>
-                <div class="server-card__load" aria-hidden="true">
-                  <span style="width: 51%"></span>
+                <div class="server-card__quickfacts">
+                  <article class="server-card__quickfact">
+                    <p>Mapa</p>
+                    <strong>Sin mapa disponible</strong>
+                  </article>
+                  <article class="server-card__quickfact">
+                    <p>Region</p>
+                    <strong>ES</strong>
+                  </article>
+                  <article class="server-card__quickfact">
+                    <p>Direccion</p>
+                    <strong>152.114.195.150:7877</strong>
+                  </article>
                 </div>
-                <dl class="server-card__stats">
-                  <div class="server-stat server-stat--players">
-                    <dt>Jugadores</dt>
-                    <dd>51 / 100</dd>
-                  </div>
-                  <div class="server-stat">
-                    <dt>Mapa</dt>
-                    <dd>Carentan</dd>
-                  </div>
-                  <div class="server-stat">
-                    <dt>Region</dt>
-                    <dd>LATAM</dd>
-                  </div>
-                </dl>
               </article>
             </div>
           </div>

@@ -572,27 +572,6 @@ h2 {
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.03);
 }
 
-.server-card__load {
-  width: 100%;
-  height: 9px;
-  margin-bottom: 18px;
-  border-radius: 999px;
-  background: rgba(255, 255, 255, 0.05);
-  overflow: hidden;
-  box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.32);
-}
-
-.server-card__load span {
-  display: block;
-  height: 100%;
-  border-radius: inherit;
-  background:
-    linear-gradient(90deg, rgba(210, 182, 118, 0.86), rgba(142, 160, 98, 0.96));
-  box-shadow:
-    0 0 18px rgba(142, 160, 98, 0.22),
-    inset 0 1px 0 rgba(255, 255, 255, 0.18);
-}
-
 .server-card__actions {
   margin: 0;
   width: 100%;
@@ -600,7 +579,7 @@ h2 {
   justify-content: flex-end;
 }
 
-.server-connect-button {
+.server-copy-button {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -617,17 +596,24 @@ h2 {
   font-weight: 700;
   letter-spacing: 0.12em;
   text-transform: uppercase;
+   cursor: pointer;
   transition:
     transform 160ms ease,
     border-color 160ms ease,
-    background 160ms ease;
+    background 160ms ease,
+    opacity 160ms ease;
 }
 
-.server-connect-button:hover,
-.server-connect-button:focus-visible {
+.server-copy-button:hover,
+.server-copy-button:focus-visible {
   transform: translateY(-1px);
   border-color: rgba(210, 182, 118, 0.52);
   background: linear-gradient(180deg, rgba(210, 182, 118, 0.2), rgba(142, 160, 98, 0.26));
+}
+
+.server-copy-button:disabled {
+  opacity: 0.78;
+  cursor: default;
 }
 
 .server-state {
@@ -655,38 +641,6 @@ h2 {
   border-color: rgba(210, 182, 118, 0.24);
   background: rgba(210, 182, 118, 0.08);
   color: var(--accent-warm);
-}
-
-.server-card__stats {
-  margin: 0;
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 12px;
-}
-
-.server-stat {
-  padding: 14px 14px 15px;
-  border: 1px solid rgba(159, 168, 141, 0.14);
-  border-radius: 16px;
-  background: linear-gradient(180deg, rgba(12, 15, 11, 0.38), rgba(8, 10, 7, 0.18));
-}
-
-.server-stat--players dd {
-  color: var(--accent-strong);
-}
-
-.server-card__stats dt {
-  margin: 0 0 6px;
-  color: var(--muted);
-  font-size: 0.75rem;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-}
-
-.server-card__stats dd {
-  margin: 0;
-  font-size: 0.95rem;
-  line-height: 1.4;
 }
 
 .server-card__quickfacts {
@@ -834,10 +788,6 @@ h2 {
 
   .server-card__actions {
     justify-content: start;
-  }
-
-  .server-card__stats {
-    grid-template-columns: 1fr;
   }
 
   .server-card__quickfacts {

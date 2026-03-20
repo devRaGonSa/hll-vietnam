@@ -13,13 +13,12 @@ document.addEventListener("DOMContentLoaded", () => {
   const trailerFrame = document.getElementById("trailer-frame");
   const trailerTitle = document.getElementById("trailer-title");
   const serversTitle = document.getElementById("servers-title");
-  const serversNote = document.getElementById("servers-note");
   const serversList = document.getElementById("servers-list");
   const serversBadge = document.getElementById("servers-badge");
 
   updateBackendStatus(statusNode, "Backend comprobando", "status-chip--idle");
-
-  setServersDataState(serversBadge, { kind: "fallback" });
+  setServersDataState(serversBadge, { timestampLabel: "" });
+  bindCopyAddressActions();
 
   let serverRefreshInFlight = false;
   const refreshServers = async () => {
@@ -32,7 +31,6 @@ document.addEventListener("DOMContentLoaded", () => {
       await hydrateServers(
         backendBaseUrl,
         serversTitle,
-        serversNote,
         serversList,
         serversBadge,
       );
@@ -72,7 +70,11 @@ async function fetchHealth(backendBaseUrl, statusNode) {
     throw new Error("Unexpected health payload");
   } catch (error) {
     console.warn("Backend health check unavailable", error);
-    updateBackendStatus(statusNode, "Modo estatico activo", "status-chip--fallback");
+    updateBackendStatus(
+      statusNode,
+      "Modo estatico activo",
+      "status-chip--fallback",
+    );
   }
 }
 
@@ -104,11 +106,10 @@ async function hydrateTrailer(backendBaseUrl, trailerFrame, trailerTitle) {
 async function hydrateServers(
   backendBaseUrl,
   serversTitle,
-  serversNote,
   serversList,
   serversBadge,
 ) {
-  if (!serversTitle || !serversNote || !serversList || !serversBadge) {
+  if (!serversTitle || !serversList || !serversBadge) {
     return;
   }
 
@@ -121,11 +122,7 @@ async function hydrateServers(
 
     serversTitle.textContent =
       serversData.title || "Estado actual de servidores";
-    setServersDataState(
-      serversBadge,
-      deriveSnapshotState(serversData),
-    );
-    serversNote.textContent = buildServersNote(serversData);
+    setServersDataState(serversBadge, deriveSnapshotState(serversData));
 
     if (serversData.items.length === 0) {
       serversList.innerHTML =
@@ -157,73 +154,12 @@ function setServersDataState(badgeNode, state) {
     return;
   }
 
-  if (state.kind === "live") {
-    badgeNode.textContent = state.timestampLabel
-      ? `Actualizado ${state.timestampLabel}`
-      : "Datos en vivo";
-    badgeNode.classList.remove("status-chip--fallback");
-    badgeNode.classList.add("status-chip--ok");
-    return;
-  }
-
-  if (state.kind === "historical") {
-    badgeNode.textContent = state.timestampLabel
-      ? `Snapshot ${state.timestampLabel}`
-      : "Actividad reciente";
-    badgeNode.classList.remove("status-chip--fallback");
-    badgeNode.classList.add("status-chip--ok");
-    return;
-  }
-
-  badgeNode.textContent = "Respaldo controlado";
-  badgeNode.classList.remove("status-chip--ok");
-  badgeNode.classList.add("status-chip--fallback");
-}
-
-function renderServerCard(server) {
-  const serverName = server.server_name || "Servidor sin nombre";
-  const serverStatus =
-    server.status === "online" ? "Online" : server.status === "offline" ? "Offline" : "Estado pendiente";
-  const stateClass =
-    server.status === "online" ? "server-state--online" : "server-state--offline";
-  const currentMap = server.current_map || "Sin mapa disponible";
-  const region = server.region || "Region pendiente";
-  const players = Number.isFinite(server.players) ? server.players : 0;
-  const maxPlayers = Number.isFinite(server.max_players) ? server.max_players : 0;
-  const occupancy = getPopulationPercent(players, maxPlayers);
-  const sourceLabel = isRealA2SSnapshot(server) ? "Snapshot activo" : "Referencia actual";
-
-  return `
-    <article class="server-card">
-      <div class="server-card__top">
-        <div class="server-card__identity">
-          <p class="server-card__eyebrow">${escapeHtml(sourceLabel)}</p>
-          <h3>${escapeHtml(serverName)}</h3>
-        </div>
-        <div class="server-card__status-column">
-          <span class="server-state ${stateClass}">${escapeHtml(serverStatus)}</span>
-          <p class="server-card__population">${players} / ${maxPlayers}</p>
-        </div>
-      </div>
-      <div class="server-card__load" aria-hidden="true">
-        <span style="width: ${occupancy}%"></span>
-      </div>
-      <dl class="server-card__stats">
-        <div class="server-stat server-stat--players">
-          <dt>Jugadores</dt>
-          <dd>${players} / ${maxPlayers}</dd>
-        </div>
-        <div class="server-stat">
-          <dt>Mapa</dt>
-          <dd>${escapeHtml(currentMap)}</dd>
-        </div>
-        <div class="server-stat">
-          <dt>Region</dt>
-          <dd>${escapeHtml(region)}</dd>
-        </div>
-      </dl>
-    </article>
-  `;
+  const hasTimestamp = typeof state.timestampLabel === "string" && state.timestampLabel;
+  badgeNode.textContent = hasTimestamp
+    ? `Actualizado ${state.timestampLabel}`
+    : "Actualizado no disponible";
+  badgeNode.classList.toggle("status-chip--ok", Boolean(hasTimestamp));
+  badgeNode.classList.toggle("status-chip--fallback", !hasTimestamp);
 }
 
 function renderServerStatsCard(server) {
@@ -236,34 +172,27 @@ function renderServerStatsCard(server) {
   const region = server.region || "Region pendiente";
   const players = Number.isFinite(server.players) ? server.players : 0;
   const maxPlayers = Number.isFinite(server.max_players) ? server.max_players : 0;
-  const occupancy = getPopulationPercent(players, maxPlayers);
-  const updatedAt = server.captured_at
-    ? formatTimestamp(server.captured_at)
-    : "Sin captura reciente";
-  const updatedAgo = formatElapsedMinutes(server.history_summary?.minutes_since_last_capture);
-  const connectAction = renderConnectAction(server);
+  const address = getServerAddress(server);
+  const actionMarkup = renderServerAction(server);
   const cardVariantClass = isRealSnapshot ? "server-card--real" : "server-card--reference";
   const quickFacts = renderQuickFacts([
     { label: "Mapa", value: currentMap },
     { label: "Region", value: region },
-    { label: "Ultima captura", value: updatedAgo || updatedAt },
+    { label: "Direccion", value: address || "No disponible" },
   ]);
 
   return `
     <article class="server-card server-card--stats ${cardVariantClass}">
       <div class="server-card__top server-card__top--stats">
         <div class="server-card__identity">
-          <p class="server-card__eyebrow">${isRealSnapshot ? "Snapshot activo" : "Referencia actual"}</p>
+          <p class="server-card__eyebrow">${isRealSnapshot ? "Servidor de comunidad" : "Referencia actual"}</p>
           <h3>${escapeHtml(serverName)}</h3>
         </div>
         <div class="server-card__status-column">
           <span class="server-state ${stateClass}">${escapeHtml(statusLabel)}</span>
           <p class="server-card__population">${escapeHtml(`${players} / ${maxPlayers}`)}</p>
-          ${connectAction}
+          ${actionMarkup}
         </div>
-      </div>
-      <div class="server-card__load" aria-hidden="true">
-        <span style="width: ${occupancy}%"></span>
       </div>
       ${quickFacts}
     </article>
@@ -278,21 +207,22 @@ function renderServerSections(latestItems) {
   `;
 }
 
-function renderConnectAction(server) {
-  if (!server || !isRealA2SSnapshot(server)) {
+function renderServerAction(server) {
+  const address = getServerAddress(server);
+  if (!address) {
     return "";
   }
 
-  const host = typeof server.host === "string" ? server.host.trim() : "";
-  const gamePort = Number.isInteger(server.game_port) ? server.game_port : Number(server.game_port);
-  if (!host || !Number.isInteger(gamePort) || gamePort <= 0) {
-    return "";
-  }
-
-  const connectUrl = `steam://connect/${host}:${gamePort}`;
   return `
     <div class="server-card__actions">
-      <a class="server-connect-button" href="${escapeHtml(connectUrl)}">Conectar</a>
+      <button
+        class="server-copy-button"
+        type="button"
+        data-copy-address="${escapeHtml(address)}"
+        data-default-label="Copiar IP"
+      >
+        Copiar IP
+      </button>
     </div>
   `;
 }
@@ -314,6 +244,68 @@ function renderQuickFacts(items) {
   `;
 }
 
+function bindCopyAddressActions() {
+  document.addEventListener("click", async (event) => {
+    const button = event.target.closest("[data-copy-address]");
+    if (!(button instanceof HTMLButtonElement)) {
+      return;
+    }
+
+    const address = button.dataset.copyAddress || "";
+    if (!address) {
+      return;
+    }
+
+    const defaultLabel = button.dataset.defaultLabel || "Copiar IP";
+    button.disabled = true;
+
+    try {
+      await copyText(address);
+      button.textContent = "IP copiada";
+    } catch (error) {
+      console.warn("Could not copy server address", error);
+      button.textContent = "Copia manual";
+    } finally {
+      window.setTimeout(() => {
+        button.textContent = defaultLabel;
+        button.disabled = false;
+      }, 1800);
+    }
+  });
+}
+
+async function copyText(value) {
+  if (navigator.clipboard?.writeText) {
+    await navigator.clipboard.writeText(value);
+    return;
+  }
+
+  const textarea = document.createElement("textarea");
+  textarea.value = value;
+  textarea.setAttribute("readonly", "");
+  textarea.style.position = "absolute";
+  textarea.style.left = "-9999px";
+  document.body.append(textarea);
+  textarea.select();
+
+  const copied = document.execCommand("copy");
+  textarea.remove();
+
+  if (!copied) {
+    throw new Error("Clipboard copy command failed");
+  }
+}
+
+function getServerAddress(server) {
+  const host = typeof server?.host === "string" ? server.host.trim() : "";
+  const gamePort = Number(server?.game_port);
+  if (!host || !Number.isInteger(gamePort) || gamePort <= 0) {
+    return "";
+  }
+
+  return `${host}:${gamePort}`;
+}
+
 function selectPrimaryServerItems(items) {
   if (!Array.isArray(items)) {
     return [];
@@ -328,40 +320,11 @@ function isRealA2SSnapshot(item) {
 }
 
 function deriveSnapshotState(serversData) {
-  const timestampLabel = serversData?.last_snapshot_at
-    ? formatTimestamp(serversData.last_snapshot_at)
-    : "";
-
-  if (!serversData) {
-    return { kind: "fallback", timestampLabel };
-  }
-
-  if (serversData.freshness === "fresh" && serversData.source === "real-time-a2s-refresh") {
-    return { kind: "live", timestampLabel };
-  }
-
-  if (Array.isArray(serversData.items) && serversData.items.length > 0) {
-    return { kind: "historical", timestampLabel };
-  }
-
-  return { kind: "fallback", timestampLabel };
-}
-
-function buildServersNote(serversData) {
-  const lastSnapshotLabel = serversData.last_snapshot_at
-    ? formatTimestamp(serversData.last_snapshot_at)
-    : "sin timestamp disponible";
-  const snapshotAgeLabel = formatSnapshotAge(serversData.snapshot_age_seconds);
-
-  if (serversData.freshness === "fresh") {
-    return `Estado real consultado desde backend. Ultimo snapshot: ${lastSnapshotLabel}${snapshotAgeLabel ? `, ${snapshotAgeLabel}.` : "."}`;
-  }
-
-  if (Array.isArray(serversData.items) && serversData.items.length > 0) {
-    return `El backend no pudo refrescar ahora mismo y muestra el ultimo snapshot valido. Captura: ${lastSnapshotLabel}${snapshotAgeLabel ? `, ${snapshotAgeLabel}.` : "."}`;
-  }
-
-  return "El backend no pudo obtener un snapshot valido de los 2 servidores en este momento.";
+  return {
+    timestampLabel: serversData?.last_snapshot_at
+      ? formatTimestamp(serversData.last_snapshot_at)
+      : "",
+  };
 }
 
 function formatServerStatus(status) {
@@ -386,54 +349,6 @@ function formatTimestamp(timestamp) {
     dateStyle: "short",
     timeStyle: "short",
   }).format(value);
-}
-
-function formatElapsedMinutes(minutes) {
-  if (!Number.isFinite(minutes)) {
-    return "";
-  }
-
-  if (minutes < 1) {
-    return "hace menos de 1 min";
-  }
-
-  if (minutes < 60) {
-    return `hace ${minutes} min`;
-  }
-
-  const hours = Math.floor(minutes / 60);
-  if (hours < 24) {
-    return `hace ${hours} h`;
-  }
-
-  const days = Math.floor(hours / 24);
-  return `hace ${days} d`;
-}
-
-function formatSnapshotAge(snapshotAgeSeconds) {
-  if (!Number.isFinite(snapshotAgeSeconds)) {
-    return "";
-  }
-
-  if (snapshotAgeSeconds < 60) {
-    return `hace ${snapshotAgeSeconds} s`;
-  }
-
-  const wholeMinutes = Math.floor(snapshotAgeSeconds / 60);
-  if (wholeMinutes < 60) {
-    return `hace ${wholeMinutes} min`;
-  }
-
-  const wholeHours = Math.floor(wholeMinutes / 60);
-  return `hace ${wholeHours} h`;
-}
-
-function getPopulationPercent(players, maxPlayers) {
-  if (!Number.isFinite(players) || !Number.isFinite(maxPlayers) || maxPlayers <= 0) {
-    return 0;
-  }
-
-  return Math.max(0, Math.min(100, Math.round((players / maxPlayers) * 100)));
 }
 
 function getServerPollIntervalMs(rawValue) {
