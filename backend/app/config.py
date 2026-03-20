@@ -10,6 +10,8 @@ DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 8000
 DEFAULT_STORAGE_FILENAME = "hll_vietnam_dev.sqlite3"
 DEFAULT_REFRESH_INTERVAL_SECONDS = 120
+DEFAULT_HISTORICAL_CRCON_PAGE_SIZE = 50
+DEFAULT_HISTORICAL_CRCON_TIMEOUT_SECONDS = 15.0
 DEFAULT_ALLOWED_ORIGINS = (
     "null",
     "http://127.0.0.1:5500",
@@ -65,6 +67,32 @@ def get_refresh_interval_seconds() -> int:
         raise ValueError("HLL_BACKEND_REFRESH_INTERVAL_SECONDS must be positive.")
 
     return interval_seconds
+
+
+def get_historical_crcon_page_size() -> int:
+    """Return the default page size used for CRCON historical ingestion."""
+    configured_value = os.getenv(
+        "HLL_HISTORICAL_CRCON_PAGE_SIZE",
+        str(DEFAULT_HISTORICAL_CRCON_PAGE_SIZE),
+    )
+    page_size = int(configured_value)
+    if page_size <= 0:
+        raise ValueError("HLL_HISTORICAL_CRCON_PAGE_SIZE must be positive.")
+
+    return page_size
+
+
+def get_historical_crcon_request_timeout_seconds() -> float:
+    """Return the timeout used for CRCON historical JSON requests."""
+    configured_value = os.getenv(
+        "HLL_HISTORICAL_CRCON_TIMEOUT_SECONDS",
+        str(DEFAULT_HISTORICAL_CRCON_TIMEOUT_SECONDS),
+    )
+    timeout_seconds = float(configured_value)
+    if timeout_seconds <= 0:
+        raise ValueError("HLL_HISTORICAL_CRCON_TIMEOUT_SECONDS must be positive.")
+
+    return timeout_seconds
 
 
 def get_a2s_targets_payload() -> str | None:

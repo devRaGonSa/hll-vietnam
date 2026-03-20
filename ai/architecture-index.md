@@ -69,5 +69,6 @@ Community website repository with a static landing in the current phase and a pl
 - The logical storage foundation for persisting server snapshots is documented in `docs/stats-database-schema-foundation.md`.
 - Historical match and player statistics must come from the public CRCON scoreboard JSON layer, not from A2S or the `/games` HTML shell.
 - The validated discovery for those historical sources is documented in `docs/historical-crcon-source-discovery.md`.
+- The persisted historical domain model for CRCON matches, players and ingestion runs is documented in `docs/historical-domain-model.md`.
 - Frontend data consumption should remain progressive, endpoint by endpoint, with static fallbacks preserved during migration.
 - The frontend integration strategy is documented in `docs/frontend-data-consumption-plan.md`.

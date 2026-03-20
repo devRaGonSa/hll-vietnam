@@ -99,3 +99,30 @@ futura agregacion semanal por servidor.
 A2S se mantiene como fuente de estado actual de servidores. El historico de
 partidas y rankings debe construirse en una linea separada basada en CRCON. La
 discovery detallada queda en `docs/historical-crcon-source-discovery.md`.
+
+## Decision 013: persistencia historica local separada del flujo live
+
+El backend mantiene el estado live de servidores y el historico CRCON en el
+mismo SQLite local de desarrollo para no introducir infraestructura prematura,
+pero ambas lineas quedan separadas por tablas y contratos distintos.
+
+El flujo live sigue usando `server_snapshots` via A2S. El flujo historico usa
+tablas `historical_*` para:
+
+- servidores historicos configurados
+- partidas
+- mapas
+- jugadores
+- estadisticas por jugador y partida
+- ejecuciones de ingesta
+
+Las claves estables son:
+
+- servidor: `historical_servers.slug`
+- partida: `(historical_server_id, external_match_id)`
+- jugador: `stable_player_key`
+- estadistica por partida: `(historical_match_id, historical_player_id)`
+
+Esto permite bootstrap, refresco incremental e idempotencia sin mezclar
+semanticas de estado actual con historico persistido. El modelo detallado queda
+en `docs/historical-domain-model.md`.

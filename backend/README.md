@@ -24,6 +24,9 @@ backend/
     |-- __init__.py
     |-- collector.py
     |-- main.py
+    |-- historical_ingestion.py
+    |-- historical_models.py
+    |-- historical_storage.py
     |-- normalizers.py
     |-- payloads.py
     |-- routes.py
@@ -60,6 +63,8 @@ Variables opcionales:
 - `HLL_BACKEND_PORT`
 - `HLL_BACKEND_ALLOWED_ORIGINS`
 - `HLL_BACKEND_REFRESH_INTERVAL_SECONDS`
+- `HLL_HISTORICAL_CRCON_PAGE_SIZE`
+- `HLL_HISTORICAL_CRCON_TIMEOUT_SECONDS`
 
 El `frontend/index.html` viene preparado para volver a consultar el bloque de
 servidores cada `120000` ms (`120s`) sin recargar la pagina completa. La landing
@@ -109,6 +114,7 @@ normaliza espacios y barras finales para mantener la comparacion con el header
 - `GET /api/servers/latest`
 - `GET /api/servers/history?limit=20`
 - `GET /api/servers/{id}/history?limit=20`
+- `GET /api/historical/weekly-top-kills?limit=10&server=comunidad-hispana-01`
 
 `GET /api/servers` trata el ultimo snapshot persistido como cache local y lo
 reutiliza solo si sigue dentro del objetivo de `120` segundos. Si ese snapshot
@@ -145,6 +151,9 @@ colector. Si todavia no hay snapshots guardados, responden `status: "ok"` con
 - `a2s_client.py` encapsula una consulta minima A2S_INFO por UDP para probar
   servidores reales sin acoplar todavia el backend a una fuente mas compleja.
 - `config.py` centraliza host, puerto y allowlist minima de origenes locales.
+- `historical_ingestion.py` consulta la capa JSON publica de CRCON para bootstrap y refresh incremental.
+- `historical_models.py` fija las entidades historicas minimas del dominio.
+- `historical_storage.py` prepara la persistencia `historical_*` y las consultas agregadas iniciales.
 - `main.py` contiene el entrypoint HTTP y la creacion del servidor.
 - `normalizers.py` transforma registros crudos o respuestas A2S a un modelo
   comun del colector.
@@ -165,6 +174,12 @@ solo libreria estandar de Python. Esta base minima sigue el modelo logico de:
 - `game_sources`
 - `servers`
 - `server_snapshots`
+- `historical_servers`
+- `historical_maps`
+- `historical_matches`
+- `historical_players`
+- `historical_player_match_stats`
+- `historical_ingestion_runs`
 
 Por defecto el archivo se crea en:
 
@@ -178,8 +193,9 @@ Variable opcional:
 - `HLL_BACKEND_A2S_TARGETS`
 
 La base logica sigue documentada en
-`docs/stats-database-schema-foundation.md`. Esta implementacion no introduce
-ORM, migraciones ni una decision de almacenamiento productivo.
+`docs/stats-database-schema-foundation.md` para snapshots live y en
+`docs/historical-domain-model.md` para el historico CRCON. Esta implementacion
+no introduce ORM, migraciones ni una decision de almacenamiento productivo.
 
 ## Bootstrap del colector
 
@@ -396,6 +412,48 @@ consulta historica:
 `{id}` acepta el `server_id` numerico interno o el `external_server_id`
 persistido por el colector. El parametro opcional `limit` acepta valores entre
 `1` y `100`.
+
+La primera consulta agregada sobre historico CRCON es:
+
+- `/api/historical/weekly-top-kills`
+
+Parametros opcionales:
+
+- `limit` entre `1` y `100`
+- `server` con slug historico como `comunidad-hispana-01`
+
+La ventana temporal es siempre la ultima semana movil respecto al momento de la
+request. El payload devuelve servidor, rango temporal, jugador, kills semanales,
+posicion y numero de partidas consideradas.
+
+## Ingesta historica CRCON
+
+La ingesta historica no usa A2S ni scraping del HTML de `/games`. Consume la
+capa JSON publica detectada en los scoreboards CRCON de Comunidad Hispana y
+persiste el resultado en las tablas `historical_*`.
+
+Fuentes configuradas:
+
+- `https://scoreboard.comunidadhll.es`
+- `https://scoreboard.comunidadhll.es:5443`
+
+Comandos manuales desde `backend/`:
+
+```powershell
+python -m app.historical_ingestion bootstrap
+python -m app.historical_ingestion refresh
+```
+
+Flags utiles:
+
+- `--server comunidad-hispana-01` para limitar a un servidor
+- `--max-pages 2` para validacion local acotada
+- `--page-size 25` para ajustar paginacion
+
+La ejecucion `bootstrap` recorre paginas historicas hasta agotar resultados.
+La ejecucion `refresh` usa una ventana de solape sobre la ultima partida
+persistida por servidor para releer solo paginas recientes y absorber updates
+tardios sin reimportar todo el historico.
 
 ## CORS local minimo
 
