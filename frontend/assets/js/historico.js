@@ -187,7 +187,7 @@ function hydrateSummary(result, summaryNode, rangeNode, noteNode) {
     renderSummaryCard("Primera partida", formatTimestamp(coverage.first_match_at)),
     renderSummaryCard("Ultima partida", formatTimestamp(coverage.last_match_at)),
     renderSummaryCard(
-      "Mapas dominantes",
+      "Mapas frecuentes",
       formatTopMaps(summary.top_maps),
     ),
   ].join("");
@@ -407,7 +407,7 @@ function buildWeeklyWindowNote(payload) {
 
 function formatTopMaps(topMaps) {
   if (!Array.isArray(topMaps) || topMaps.length === 0) {
-    return "Sin mapas dominantes";
+    return "Sin mapas frecuentes";
   }
 
   return topMaps
