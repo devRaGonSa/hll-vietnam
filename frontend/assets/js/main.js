@@ -6,13 +6,70 @@ const SERVER_HISTORY_URLS = Object.freeze({
 });
 const COMMUNITY_CLANS = Object.freeze([
   {
-    name: "Comunidad Hispana HLL Vietnam",
-    badge: "Comunidad anfitriona",
+    name: "LCM",
+    badge: "Comunidad aliada",
     description:
-      "Punto principal de reunion para escuadras, anuncios y acceso directo al Discord del proyecto.",
-    logoSrc: "./assets/img/logo.png",
-    logoAlt: "Logo de Comunidad Hispana HLL Vietnam",
-    discordUrl: "https://discord.com/invite/PedEqZ2Xsa",
+      "Clan visible dentro de la red comunitaria hispana con acceso confirmado a Discord.",
+    logoSrc: "./assets/img/clans/lcm.png",
+    logoAlt: "Logo de LCM",
+    logoClassName: "",
+    discordUrl: "https://discord.gg/9F9S353QZv",
+    discordLabel: "Abrir Discord",
+  },
+  {
+    name: "La 129",
+    badge: "Discord pendiente",
+    description:
+      "Presencia confirmada para la seccion comunitaria mientras se publica su acceso definitivo.",
+    logoSrc: "./assets/img/clans/la129.png",
+    logoAlt: "Logo de La 129",
+    logoClassName: "clan-card__logo--wide",
+    discordUrl: "",
+    discordLabel: "Proximamente",
+  },
+  {
+    name: "250 Hispania",
+    badge: "Comunidad aliada",
+    description:
+      "Entrada mostrada con su emblema principal y acceso confirmado al Discord compartido.",
+    logoSrc: "./assets/img/clans/250hispania-shield.png",
+    logoAlt: "Escudo de 250 Hispania",
+    logoClassName: "clan-card__logo--shield",
+    discordUrl: "https://discord.gg/3E62Yb6Aw3",
+    discordLabel: "Abrir Discord",
+  },
+  {
+    name: "H9H",
+    badge: "Logo pendiente",
+    description:
+      "Comunidad incluida en la rotacion mientras se incorpora su identidad visual final.",
+    logoSrc: "",
+    logoAlt: "",
+    logoClassName: "",
+    discordUrl: "https://discord.gg/tYnXK7MQjB",
+    discordLabel: "Abrir Discord",
+    placeholderLabel: "H9H",
+  },
+  {
+    name: "BxB",
+    badge: "Discord pendiente",
+    description:
+      "Clan incorporado a la red visible con su emblema actual y enlace aun por confirmar.",
+    logoSrc: "./assets/img/clans/bxb.png",
+    logoAlt: "Logo de BxB",
+    logoClassName: "",
+    discordUrl: "",
+    discordLabel: "Proximamente",
+  },
+  {
+    name: "7dv",
+    badge: "Comunidad aliada",
+    description:
+      "Entrada activa dentro de la seccion con acceso disponible a su Discord comunitario.",
+    logoSrc: "./assets/img/clans/7dv.png",
+    logoAlt: "Logo de 7dv",
+    logoClassName: "",
+    discordUrl: "https://discord.gg/3sxNQZwrg6",
     discordLabel: "Abrir Discord",
   },
 ]);
@@ -246,37 +303,78 @@ function hydrateCommunityClans(listNode) {
     return;
   }
 
-  listNode.innerHTML = COMMUNITY_CLANS.map((clan) => renderCommunityClanCard(clan)).join("");
+  listNode.innerHTML = shuffleItems(COMMUNITY_CLANS)
+    .map((clan) => renderCommunityClanCard(clan))
+    .join("");
 }
 
 function renderCommunityClanCard(clan) {
+  const logoMarkup = renderClanLogo(clan);
+  const discordMarkup = renderClanDiscordLink(clan);
+
   return `
     <article class="clan-card">
       <div class="clan-card__brand">
-        <div class="clan-card__logo">
-          <img
-            src="${escapeHtml(clan.logoSrc)}"
-            alt="${escapeHtml(clan.logoAlt)}"
-            width="1024"
-            height="1044"
-            decoding="async"
-          />
-        </div>
+        ${logoMarkup}
         <div class="clan-card__copy">
           <p class="clan-card__eyebrow">${escapeHtml(clan.badge)}</p>
           <h3>${escapeHtml(clan.name)}</h3>
           <p>${escapeHtml(clan.description)}</p>
         </div>
       </div>
-      <a
-        class="server-action-link clan-card__link"
-        href="${escapeHtml(clan.discordUrl)}"
-        target="_blank"
-        rel="noreferrer"
+      ${discordMarkup}
+    </article>
+  `;
+}
+
+function renderClanLogo(clan) {
+  const logoClassNames = ["clan-card__logo"];
+  if (clan.logoClassName) {
+    logoClassNames.push(clan.logoClassName);
+  }
+
+  if (clan.logoSrc) {
+    return `
+      <div class="${escapeHtml(logoClassNames.join(" "))}">
+        <img
+          src="${escapeHtml(clan.logoSrc)}"
+          alt="${escapeHtml(clan.logoAlt)}"
+          decoding="async"
+        />
+      </div>
+    `;
+  }
+
+  return `
+    <div class="${escapeHtml(logoClassNames.join(" "))}">
+      <div class="clan-card__logo-placeholder" aria-label="Logo pendiente de ${escapeHtml(clan.name)}">
+        ${escapeHtml(clan.placeholderLabel || clan.name)}
+      </div>
+    </div>
+  `;
+}
+
+function renderClanDiscordLink(clan) {
+  if (!clan.discordUrl) {
+    return `
+      <span
+        class="server-action-link server-action-link--disabled clan-card__link"
+        aria-disabled="true"
       >
         ${escapeHtml(clan.discordLabel)}
-      </a>
-    </article>
+      </span>
+    `;
+  }
+
+  return `
+    <a
+      class="server-action-link clan-card__link"
+      href="${escapeHtml(clan.discordUrl)}"
+      target="_blank"
+      rel="noreferrer"
+    >
+      ${escapeHtml(clan.discordLabel)}
+    </a>
   `;
 }
 
@@ -382,6 +480,19 @@ async function fetchJson(url) {
   }
 
   return response.json();
+}
+
+function shuffleItems(items) {
+  const shuffledItems = [...items];
+  for (let currentIndex = shuffledItems.length - 1; currentIndex > 0; currentIndex -= 1) {
+    const randomIndex = Math.floor(Math.random() * (currentIndex + 1));
+    [shuffledItems[currentIndex], shuffledItems[randomIndex]] = [
+      shuffledItems[randomIndex],
+      shuffledItems[currentIndex],
+    ];
+  }
+
+  return shuffledItems;
 }
 
 function escapeHtml(value) {
