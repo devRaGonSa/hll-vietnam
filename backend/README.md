@@ -62,7 +62,7 @@ Variables opcionales:
 - `HLL_BACKEND_REFRESH_INTERVAL_SECONDS`
 
 El `frontend/index.html` viene preparado para volver a consultar el bloque de
-servidores cada `60000` ms (`60s`) sin recargar la pagina completa. La landing
+servidores cada `120000` ms (`120s`) sin recargar la pagina completa. La landing
 lee ese valor desde `data-server-refresh-ms`, por lo que puede ajustarse en el
 HTML si una demo local necesita un intervalo distinto.
 
@@ -110,10 +110,27 @@ normaliza espacios y barras finales para mantener la comparacion con el header
 - `GET /api/servers/history?limit=20`
 - `GET /api/servers/{id}/history?limit=20`
 
-`GET /api/servers` devuelve en esta fase un payload controlado con servidores
-actuales de Hell Let Loose usados como referencia provisional. La respuesta
-incluye `title`, `context`, `source` e `items`, y no representa todavia datos
-reales de HLL Vietnam ni una integracion externa validada.
+`GET /api/servers` trata el ultimo snapshot persistido como cache local y lo
+reutiliza solo si sigue dentro del objetivo de `120` segundos. Si ese snapshot
+esta vencido, el endpoint intenta una consulta A2S real inmediata contra los 2
+servidores configurados antes de responder.
+
+La respuesta incluye metadata de frescura pensada para frontend:
+
+- `last_snapshot_at`
+- `snapshot_age_seconds`
+- `snapshot_age_minutes`
+- `max_snapshot_age_seconds`
+- `is_stale`
+- `freshness`
+- `source`
+- `refresh_attempted`
+- `refresh_status`
+
+Si la consulta real falla, `/api/servers` devuelve el ultimo snapshot valido
+disponible marcado como stale. Si no existe ningun snapshot valido, responde
+`items: []` en lugar de reintroducir servidores de respaldo ajenos a la
+comunidad.
 
 Los endpoints historicos leen la persistencia local SQLite creada por el
 colector. Si todavia no hay snapshots guardados, responden `status: "ok"` con
@@ -244,7 +261,7 @@ Ese comando ejecuta capturas persistidas de forma repetida usando el mismo
 flujo del colector y la base SQLite local. Por defecto:
 
 - usa `--source auto`
-- espera `60` segundos entre ejecuciones
+- espera `120` segundos entre ejecuciones
 - permite fallback controlado si A2S no responde
 - sigue en ejecucion hasta que se detiene manualmente
 
@@ -279,9 +296,9 @@ Flujo local recomendado para ver datos vivos en la landing:
    ```
 
 3. Servir `frontend/` con un servidor local sencillo y abrir la landing. El
-   frontend volvera a pedir `/api/servers` y `/api/servers/latest` cada `60`
-   segundos, por lo que los cambios de mapa o poblacion apareceran sin recarga
-   manual cuando existan snapshots nuevos.
+   frontend volvera a pedir `/api/servers` cada `120` segundos, por lo que los
+   cambios de mapa o poblacion apareceran sin recarga manual cuando existan
+   snapshots nuevos.
 
 Este mecanismo deja el refresco desacoplado del servidor HTTP y es facil de
 reemplazar mas adelante por un scheduler mas serio sin rehacer el colector.

@@ -120,10 +120,10 @@ Ejemplo JSON:
 
 ### `GET /api/servers`
 
-- Proposito: exponer un bloque provisional de servidores actuales de Hell Let Loose como referencia temporal para la comunidad.
+- Proposito: exponer el estado actual de los 2 servidores reales de la comunidad desde backend, usando el ultimo snapshot valido y forzando refresco real cuando el cache local supere el objetivo de 120 segundos.
 - Metodo HTTP: `GET`
 - Ruta: `/api/servers`
-- Estado actual: placeholder implementado
+- Estado actual: implementado con refresco A2S bajo demanda y fallback a snapshot persistido stale
 
 Ejemplo JSON:
 
@@ -131,28 +131,41 @@ Ejemplo JSON:
 {
   "status": "ok",
   "data": {
-    "title": "Servidores actuales de Hell Let Loose",
-    "context": "current-hll-reference",
-    "source": "controlled-placeholder",
+    "title": "Estado actual de servidores",
+    "context": "current-hll-status",
+    "source": "real-time-a2s-refresh",
+    "last_snapshot_at": "2026-03-20T18:37:58.628122Z",
+    "snapshot_age_seconds": 0,
+    "snapshot_age_minutes": 0,
+    "max_snapshot_age_seconds": 120,
+    "is_stale": false,
+    "freshness": "fresh",
+    "refresh_attempted": true,
+    "refresh_status": "success",
+    "refresh_errors": [],
     "items": [
       {
-        "server_name": "HLL ESP Tactical Rotation",
+        "external_server_id": "comunidad-hispana-01",
+        "server_name": "Comunidad Hispana #01",
         "status": "online",
         "players": 74,
         "max_players": 100,
         "current_map": "Sainte-Marie-du-Mont",
-        "region": "EU"
+        "region": "ES",
+        "snapshot_origin": "real-a2s",
+        "captured_at": "2026-03-20T18:37:58.628122Z"
       }
     ]
   }
 }
 ```
 
-Notas del placeholder actual:
+Notas del comportamiento actual:
 
-- El contenido representa servidores actuales de Hell Let Loose, no servidores de HLL Vietnam.
-- `context` permite al frontend etiquetar el bloque como referencia provisional.
-- `source` indica que la respuesta actual sale de datos controlados del backend.
+- Si el snapshot persistido tiene `120` segundos o menos, puede reutilizarse sin refresco inmediato.
+- Si el snapshot supera ese umbral, backend intenta una consulta A2S real antes de responder.
+- Si la consulta real falla, backend devuelve el ultimo snapshot valido con `is_stale: true`.
+- Si no existe ningun snapshot valido, backend responde `items: []` y no inventa servidores de referencia.
 
 ### `GET /api/servers/latest`
 

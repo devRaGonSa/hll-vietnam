@@ -1,6 +1,5 @@
 // Progressive enhancement for local frontend-backend checks.
-const RECENT_SNAPSHOT_WINDOW_MS = 30 * 60 * 1000;
-const DEFAULT_SERVER_POLL_INTERVAL_MS = 60 * 1000;
+const DEFAULT_SERVER_POLL_INTERVAL_MS = 120 * 1000;
 
 document.addEventListener("DOMContentLoaded", () => {
   console.info("HLL Vietnam frontend ready");
@@ -114,12 +113,7 @@ async function hydrateServers(
   }
 
   try {
-    const response = await fetch(`${backendBaseUrl}/api/servers`);
-    if (!response.ok) {
-      throw new Error(`Servers request failed with ${response.status}`);
-    }
-
-    const payload = await response.json();
+    const payload = await fetchJson(`${backendBaseUrl}/api/servers`);
     const serversData = payload.data;
     if (!serversData || !Array.isArray(serversData.items)) {
       throw new Error("Servers payload incomplete");
@@ -127,12 +121,11 @@ async function hydrateServers(
 
     serversTitle.textContent =
       serversData.title || "Estado actual de servidores";
-    setServersDataState(serversBadge, { kind: "fallback" });
-
-    if (serversData.context === "current-hll-reference") {
-      serversNote.textContent =
-        "Referencia actual de servidores de Hell Let Loose.";
-    }
+    setServersDataState(
+      serversBadge,
+      deriveSnapshotState(serversData),
+    );
+    serversNote.textContent = buildServersNote(serversData);
 
     if (serversData.items.length === 0) {
       serversList.innerHTML =
@@ -140,47 +133,10 @@ async function hydrateServers(
       return;
     }
 
-    serversList.innerHTML = serversData.items.map(renderServerCard).join("");
-    await hydrateServerStats(
-      backendBaseUrl,
-      serversTitle,
-      serversNote,
-      serversList,
-      serversBadge,
-    );
-  } catch (error) {
-    console.warn("Servers panel remains on static fallback", error);
-  }
-}
-
-async function hydrateServerStats(
-  backendBaseUrl,
-  serversTitle,
-  serversNote,
-  serversList,
-  serversBadge,
-) {
-  try {
-    const latestPayload = await fetchJson(`${backendBaseUrl}/api/servers/latest`);
-    const latestItems = latestPayload?.data?.items;
-    if (!Array.isArray(latestItems) || latestItems.length === 0) {
-      return;
-    }
-
-    const visibleItems = selectPrimaryServerItems(latestItems);
-    const latestState = deriveSnapshotState(visibleItems);
-    const hasRealSnapshots = visibleItems.some(isRealA2SSnapshot);
-
-    serversTitle.textContent = hasRealSnapshots
-      ? "Servidores disponibles"
-      : latestPayload.data.title || "Actividad reciente de servidores";
-    serversNote.textContent = hasRealSnapshots
-      ? "Estado actual y acceso directo a los servidores disponibles."
-      : "Ultimo estado disponible de servidores.";
-    setServersDataState(serversBadge, latestState);
+    const visibleItems = selectPrimaryServerItems(serversData.items);
     serversList.innerHTML = renderServerSections(visibleItems);
   } catch (error) {
-    console.warn("Historical server enrichment unavailable", error);
+    console.warn("Servers panel remains on static fallback", error);
   }
 }
 
@@ -202,20 +158,24 @@ function setServersDataState(badgeNode, state) {
   }
 
   if (state.kind === "live") {
-    badgeNode.textContent = "Datos en vivo";
+    badgeNode.textContent = state.timestampLabel
+      ? `Actualizado ${state.timestampLabel}`
+      : "Datos en vivo";
     badgeNode.classList.remove("status-chip--fallback");
     badgeNode.classList.add("status-chip--ok");
     return;
   }
 
   if (state.kind === "historical") {
-    badgeNode.textContent = "Actividad reciente";
+    badgeNode.textContent = state.timestampLabel
+      ? `Snapshot ${state.timestampLabel}`
+      : "Actividad reciente";
     badgeNode.classList.remove("status-chip--fallback");
     badgeNode.classList.add("status-chip--ok");
     return;
   }
 
-  badgeNode.textContent = "Referencia actual";
+  badgeNode.textContent = "Respaldo controlado";
   badgeNode.classList.remove("status-chip--ok");
   badgeNode.classList.add("status-chip--fallback");
 }
@@ -367,25 +327,41 @@ function isRealA2SSnapshot(item) {
   return item?.snapshot_origin === "real-a2s";
 }
 
-function deriveSnapshotState(items) {
-  const stateItems = Array.isArray(items) ? items : [];
-  const realItems = stateItems.filter(isRealA2SSnapshot);
-  const itemsForState = realItems.length > 0 ? realItems : stateItems;
-  const latestTimestamp = itemsForState
-    .map((item) => item.captured_at)
-    .filter(Boolean)
-    .sort()
-    .at(-1);
-  const latestDate = latestTimestamp ? new Date(latestTimestamp) : null;
-  const latestTime = latestDate && !Number.isNaN(latestDate.getTime()) ? latestDate.getTime() : null;
-  const timestampLabel = latestTimestamp ? formatTimestamp(latestTimestamp) : "";
-  const hasRealA2S = realItems.length > 0;
+function deriveSnapshotState(serversData) {
+  const timestampLabel = serversData?.last_snapshot_at
+    ? formatTimestamp(serversData.last_snapshot_at)
+    : "";
 
-  if (hasRealA2S && latestTime && Date.now() - latestTime <= RECENT_SNAPSHOT_WINDOW_MS) {
+  if (!serversData) {
+    return { kind: "fallback", timestampLabel };
+  }
+
+  if (serversData.freshness === "fresh" && serversData.source === "real-time-a2s-refresh") {
     return { kind: "live", timestampLabel };
   }
 
-  return { kind: "historical", timestampLabel };
+  if (Array.isArray(serversData.items) && serversData.items.length > 0) {
+    return { kind: "historical", timestampLabel };
+  }
+
+  return { kind: "fallback", timestampLabel };
+}
+
+function buildServersNote(serversData) {
+  const lastSnapshotLabel = serversData.last_snapshot_at
+    ? formatTimestamp(serversData.last_snapshot_at)
+    : "sin timestamp disponible";
+  const snapshotAgeLabel = formatSnapshotAge(serversData.snapshot_age_seconds);
+
+  if (serversData.freshness === "fresh") {
+    return `Estado real consultado desde backend. Ultimo snapshot: ${lastSnapshotLabel}${snapshotAgeLabel ? `, ${snapshotAgeLabel}.` : "."}`;
+  }
+
+  if (Array.isArray(serversData.items) && serversData.items.length > 0) {
+    return `El backend no pudo refrescar ahora mismo y muestra el ultimo snapshot valido. Captura: ${lastSnapshotLabel}${snapshotAgeLabel ? `, ${snapshotAgeLabel}.` : "."}`;
+  }
+
+  return "El backend no pudo obtener un snapshot valido de los 2 servidores en este momento.";
 }
 
 function formatServerStatus(status) {
@@ -432,6 +408,24 @@ function formatElapsedMinutes(minutes) {
 
   const days = Math.floor(hours / 24);
   return `hace ${days} d`;
+}
+
+function formatSnapshotAge(snapshotAgeSeconds) {
+  if (!Number.isFinite(snapshotAgeSeconds)) {
+    return "";
+  }
+
+  if (snapshotAgeSeconds < 60) {
+    return `hace ${snapshotAgeSeconds} s`;
+  }
+
+  const wholeMinutes = Math.floor(snapshotAgeSeconds / 60);
+  if (wholeMinutes < 60) {
+    return `hace ${wholeMinutes} min`;
+  }
+
+  const wholeHours = Math.floor(wholeMinutes / 60);
+  return `hace ${wholeHours} h`;
 }
 
 function getPopulationPercent(players, maxPlayers) {

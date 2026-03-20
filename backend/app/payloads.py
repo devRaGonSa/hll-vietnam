@@ -1,7 +1,11 @@
-"""Placeholder payload builders for the HLL Vietnam backend."""
+"""Payload builders for the HLL Vietnam backend."""
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
+
+from .collector import collect_server_snapshots
+from .config import get_refresh_interval_seconds
 from .server_targets import load_a2s_targets
 from .storage import list_latest_snapshots, list_server_history, list_snapshot_history
 
@@ -52,39 +56,69 @@ def build_discord_payload() -> dict[str, object]:
 
 
 def build_servers_payload() -> dict[str, object]:
-    """Return a controlled placeholder for current Hell Let Loose servers."""
+    """Return current server status, refreshing stale snapshots before responding."""
+    max_snapshot_age_seconds = get_refresh_interval_seconds()
+    persisted_items = _select_primary_snapshot_items(
+        _enrich_server_items(list_latest_snapshots())
+    )
+    persisted_snapshot_at = _resolve_last_snapshot_at(persisted_items)
+    persisted_snapshot_age_seconds = _calculate_snapshot_age_seconds(persisted_snapshot_at)
+
+    refresh_attempted = _should_refresh_snapshot(
+        persisted_items,
+        persisted_snapshot_age_seconds,
+        max_snapshot_age_seconds,
+    )
+    refresh_errors: list[dict[str, object]] = []
+
+    if refresh_attempted:
+        refreshed_items, refresh_errors = _try_collect_real_time_snapshot()
+        if refreshed_items:
+            refreshed_snapshot_at = _resolve_last_snapshot_at(refreshed_items)
+            refreshed_snapshot_age_seconds = _calculate_snapshot_age_seconds(refreshed_snapshot_at)
+            return _build_servers_response(
+                items=refreshed_items,
+                response_source="real-time-a2s-refresh",
+                last_snapshot_at=refreshed_snapshot_at,
+                snapshot_age_seconds=refreshed_snapshot_age_seconds,
+                max_snapshot_age_seconds=max_snapshot_age_seconds,
+                refresh_attempted=True,
+                refresh_status="success",
+                refresh_errors=refresh_errors,
+            )
+
+    if persisted_items:
+        refresh_status = "failed" if refresh_attempted else "not-needed"
+        response_source = (
+            "persisted-stale-snapshot" if refresh_attempted else "persisted-fresh-snapshot"
+        )
+        return _build_servers_response(
+            items=persisted_items,
+            response_source=response_source,
+            last_snapshot_at=persisted_snapshot_at,
+            snapshot_age_seconds=persisted_snapshot_age_seconds,
+            max_snapshot_age_seconds=max_snapshot_age_seconds,
+            refresh_attempted=refresh_attempted,
+            refresh_status=refresh_status,
+            refresh_errors=refresh_errors,
+        )
+
     return {
         "status": "ok",
         "data": {
-            "title": "Servidores actuales de Hell Let Loose",
-            "context": "current-hll-reference",
-            "source": "controlled-placeholder",
-            "items": [
-                {
-                    "server_name": "HLL ESP Tactical Rotation",
-                    "status": "online",
-                    "players": 74,
-                    "max_players": 100,
-                    "current_map": "Sainte-Marie-du-Mont",
-                    "region": "EU",
-                },
-                {
-                    "server_name": "HLL LATAM Night Offensive",
-                    "status": "online",
-                    "players": 51,
-                    "max_players": 100,
-                    "current_map": "Carentan",
-                    "region": "LATAM",
-                },
-                {
-                    "server_name": "HLL Community Reserve",
-                    "status": "offline",
-                    "players": 0,
-                    "max_players": 100,
-                    "current_map": None,
-                    "region": "EU",
-                },
-            ],
+            "title": "Estado actual de servidores",
+            "context": "current-hll-status",
+            "source": "no-snapshot-available",
+            "last_snapshot_at": None,
+            "snapshot_age_seconds": None,
+            "snapshot_age_minutes": None,
+            "max_snapshot_age_seconds": max_snapshot_age_seconds,
+            "is_stale": True,
+            "freshness": "stale",
+            "refresh_attempted": refresh_attempted,
+            "refresh_status": "failed" if refresh_attempted else "not-needed",
+            "refresh_errors": refresh_errors,
+            "items": [],
         },
     }
 
@@ -159,6 +193,15 @@ def _enrich_server_items(items: list[dict[str, object]]) -> list[dict[str, objec
     return enriched_items
 
 
+def _select_primary_snapshot_items(items: list[dict[str, object]]) -> list[dict[str, object]]:
+    real_items = [
+        item
+        for item in items
+        if item.get("snapshot_origin") == "real-a2s"
+    ]
+    return real_items or items
+
+
 def _enrich_server_item(
     item: dict[str, object],
     target_index: dict[str, object],
@@ -178,3 +221,97 @@ def _enrich_server_item(
     enriched["query_port"] = target.query_port
     enriched["game_port"] = target.game_port
     return enriched
+
+
+def _resolve_last_snapshot_at(items: list[dict[str, object]]) -> str | None:
+    timestamps = [
+        str(item["captured_at"])
+        for item in items
+        if item.get("captured_at")
+    ]
+    if not timestamps:
+        return None
+
+    return max(timestamps)
+
+
+def _should_refresh_snapshot(
+    items: list[dict[str, object]],
+    snapshot_age_seconds: int | None,
+    max_snapshot_age_seconds: int,
+) -> bool:
+    if not items:
+        return True
+
+    if snapshot_age_seconds is None:
+        return True
+
+    return snapshot_age_seconds > max_snapshot_age_seconds
+
+
+def _try_collect_real_time_snapshot() -> tuple[list[dict[str, object]], list[dict[str, object]]]:
+    payload = collect_server_snapshots(
+        source_mode="a2s",
+        allow_controlled_fallback=False,
+        persist=True,
+    )
+    snapshots = payload.get("snapshots")
+    items = _select_primary_snapshot_items(_enrich_server_items(list(snapshots or [])))
+    errors = payload.get("errors")
+    return items, list(errors or [])
+
+
+def _build_servers_response(
+    *,
+    items: list[dict[str, object]],
+    response_source: str,
+    last_snapshot_at: str | None,
+    snapshot_age_seconds: int | None,
+    max_snapshot_age_seconds: int,
+    refresh_attempted: bool,
+    refresh_status: str,
+    refresh_errors: list[dict[str, object]],
+) -> dict[str, object]:
+    freshness = (
+        "fresh"
+        if snapshot_age_seconds is not None and snapshot_age_seconds <= max_snapshot_age_seconds
+        else "stale"
+    )
+    return {
+        "status": "ok",
+        "data": {
+            "title": "Estado actual de servidores",
+            "context": "current-hll-status",
+            "source": response_source,
+            "last_snapshot_at": last_snapshot_at,
+            "snapshot_age_seconds": snapshot_age_seconds,
+            "snapshot_age_minutes": _to_snapshot_age_minutes(snapshot_age_seconds),
+            "max_snapshot_age_seconds": max_snapshot_age_seconds,
+            "is_stale": freshness == "stale",
+            "freshness": freshness,
+            "refresh_attempted": refresh_attempted,
+            "refresh_status": refresh_status,
+            "refresh_errors": refresh_errors,
+            "items": items,
+        },
+    }
+
+
+def _calculate_snapshot_age_seconds(timestamp: str | None) -> int | None:
+    if not timestamp:
+        return None
+
+    normalized = timestamp.replace("Z", "+00:00")
+    captured_at = datetime.fromisoformat(normalized)
+    if captured_at.tzinfo is None:
+        captured_at = captured_at.replace(tzinfo=timezone.utc)
+
+    age = datetime.now(timezone.utc) - captured_at.astimezone(timezone.utc)
+    return max(0, int(age.total_seconds()))
+
+
+def _to_snapshot_age_minutes(snapshot_age_seconds: int | None) -> int | None:
+    if snapshot_age_seconds is None:
+        return None
+
+    return snapshot_age_seconds // 60
