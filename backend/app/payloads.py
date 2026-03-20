@@ -6,7 +6,12 @@ from datetime import datetime, timezone
 
 from .collector import collect_server_snapshots
 from .config import get_refresh_interval_seconds
-from .historical_storage import list_weekly_top_kills
+from .historical_storage import (
+    get_historical_player_profile,
+    list_historical_server_summaries,
+    list_recent_historical_matches,
+    list_weekly_top_kills,
+)
 from .normalizers import normalize_map_name
 from .server_targets import load_a2s_targets
 from .storage import list_latest_snapshots, list_server_history, list_snapshot_history
@@ -201,6 +206,60 @@ def build_weekly_top_kills_payload(
             "window_end": result["window_end"],
             "limit": limit,
             "items": result["items"],
+        },
+    }
+
+
+def build_recent_historical_matches_payload(
+    *,
+    limit: int = 20,
+    server_slug: str | None = None,
+) -> dict[str, object]:
+    """Return recent historical matches from persisted CRCON data."""
+    items = list_recent_historical_matches(limit=limit, server_slug=server_slug)
+    return {
+        "status": "ok",
+        "data": {
+            "title": "Partidas recientes por servidor",
+            "context": "historical-recent-matches",
+            "source": "historical-crcon-storage",
+            "limit": limit,
+            "server_slug": server_slug,
+            "items": items,
+        },
+    }
+
+
+def build_historical_server_summary_payload(
+    *,
+    server_slug: str | None = None,
+) -> dict[str, object]:
+    """Return aggregated historical metrics per server."""
+    items = list_historical_server_summaries(server_slug=server_slug)
+    return {
+        "status": "ok",
+        "data": {
+            "title": "Resumen historico por servidor",
+            "context": "historical-server-summary",
+            "source": "historical-crcon-storage",
+            "server_slug": server_slug,
+            "items": items,
+        },
+    }
+
+
+def build_historical_player_profile_payload(player_id: str) -> dict[str, object]:
+    """Return aggregate historical metrics for one player identity."""
+    profile = get_historical_player_profile(player_id)
+    return {
+        "status": "ok",
+        "data": {
+            "title": "Perfil historico de jugador",
+            "context": "historical-player-profile",
+            "source": "historical-crcon-storage",
+            "player_id": player_id,
+            "found": profile is not None,
+            "profile": profile,
         },
     }
 

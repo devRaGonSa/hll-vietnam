@@ -10,6 +10,9 @@ from .payloads import (
     build_discord_payload,
     build_error_payload,
     build_health_payload,
+    build_historical_player_profile_payload,
+    build_historical_server_summary_payload,
+    build_recent_historical_matches_payload,
     build_server_detail_history_payload,
     build_server_history_payload,
     build_server_latest_payload,
@@ -46,6 +49,26 @@ def resolve_get_payload(path: str) -> tuple[HTTPStatus | None, dict[str, object]
             return HTTPStatus.BAD_REQUEST, build_error_payload("Invalid limit parameter")
         server_id = parse_qs(parsed.query).get("server", [None])[0]
         return HTTPStatus.OK, build_weekly_top_kills_payload(limit=limit, server_id=server_id)
+
+    if parsed.path == "/api/historical/recent-matches":
+        limit = _parse_limit(parsed.query)
+        if limit is None:
+            return HTTPStatus.BAD_REQUEST, build_error_payload("Invalid limit parameter")
+        server_slug = parse_qs(parsed.query).get("server", [None])[0]
+        return HTTPStatus.OK, build_recent_historical_matches_payload(
+            limit=limit,
+            server_slug=server_slug,
+        )
+
+    if parsed.path == "/api/historical/server-summary":
+        server_slug = parse_qs(parsed.query).get("server", [None])[0]
+        return HTTPStatus.OK, build_historical_server_summary_payload(server_slug=server_slug)
+
+    if parsed.path == "/api/historical/player-profile":
+        player_id = parse_qs(parsed.query).get("player", [None])[0]
+        if not player_id:
+            return HTTPStatus.BAD_REQUEST, build_error_payload("Player parameter is required")
+        return HTTPStatus.OK, build_historical_player_profile_payload(player_id)
 
     builder = GET_ROUTES.get(parsed.path)
     if builder is None:

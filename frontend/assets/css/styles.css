@@ -332,6 +332,47 @@ h2 {
   box-shadow: 0 12px 30px rgba(110, 127, 72, 0.35);
 }
 
+.secondary-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 52px;
+  min-width: 220px;
+  padding: 0 24px;
+  border: 1px solid rgba(210, 182, 118, 0.32);
+  border-radius: 999px;
+  background: linear-gradient(180deg, rgba(28, 34, 25, 0.9), rgba(12, 15, 11, 0.96));
+  color: var(--text);
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  transition:
+    transform 160ms ease,
+    border-color 160ms ease,
+    background 160ms ease;
+}
+
+.secondary-button:hover,
+.secondary-button:focus-visible {
+  transform: translateY(-1px);
+  border-color: rgba(210, 182, 118, 0.5);
+  background: linear-gradient(180deg, rgba(43, 50, 36, 0.94), rgba(16, 20, 14, 0.98));
+}
+
+.secondary-button--ghost {
+  min-width: 0;
+  min-height: 42px;
+  padding: 0 18px;
+  font-size: 0.76rem;
+}
+
+.secondary-button--compact {
+  min-height: 44px;
+  min-width: 0;
+  padding: 0 18px;
+  font-size: 0.76rem;
+}
+
 .discord-button:hover,
 .discord-button:focus-visible {
   transform: translateY(-1px);
@@ -408,6 +449,17 @@ h2 {
 .panel__intro--tight {
   margin-bottom: 0;
   max-width: 58ch;
+}
+
+.panel__actions {
+  margin-top: 18px;
+  margin-bottom: 20px;
+}
+
+.panel__actions--compact {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
 }
 
 .panel--video {
@@ -761,6 +813,10 @@ h2 {
   }
 
   .discord-button {
+    width: 100%;
+  }
+
+  .secondary-button {
     width: 100%;
   }
 

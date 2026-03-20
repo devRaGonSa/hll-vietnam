@@ -26,6 +26,7 @@ backend/
     |-- main.py
     |-- historical_ingestion.py
     |-- historical_models.py
+    |-- historical_runner.py
     |-- historical_storage.py
     |-- normalizers.py
     |-- payloads.py
@@ -65,6 +66,9 @@ Variables opcionales:
 - `HLL_BACKEND_REFRESH_INTERVAL_SECONDS`
 - `HLL_HISTORICAL_CRCON_PAGE_SIZE`
 - `HLL_HISTORICAL_CRCON_TIMEOUT_SECONDS`
+- `HLL_HISTORICAL_REFRESH_INTERVAL_SECONDS`
+- `HLL_HISTORICAL_REFRESH_MAX_RETRIES`
+- `HLL_HISTORICAL_REFRESH_RETRY_DELAY_SECONDS`
 
 El `frontend/index.html` viene preparado para volver a consultar el bloque de
 servidores cada `120000` ms (`120s`) sin recargar la pagina completa. La landing
@@ -115,6 +119,9 @@ normaliza espacios y barras finales para mantener la comparacion con el header
 - `GET /api/servers/history?limit=20`
 - `GET /api/servers/{id}/history?limit=20`
 - `GET /api/historical/weekly-top-kills?limit=10&server=comunidad-hispana-01`
+- `GET /api/historical/recent-matches?limit=20&server=comunidad-hispana-01`
+- `GET /api/historical/server-summary?server=comunidad-hispana-01`
+- `GET /api/historical/player-profile?player=steam%3A76561198000000000`
 
 `GET /api/servers` trata el ultimo snapshot persistido como cache local y lo
 reutiliza solo si sigue dentro del objetivo de `120` segundos. Si ese snapshot
@@ -153,6 +160,7 @@ colector. Si todavia no hay snapshots guardados, responden `status: "ok"` con
 - `config.py` centraliza host, puerto y allowlist minima de origenes locales.
 - `historical_ingestion.py` consulta la capa JSON publica de CRCON para bootstrap y refresh incremental.
 - `historical_models.py` fija las entidades historicas minimas del dominio.
+- `historical_runner.py` ejecuta refresh incremental periodico con reintentos basicos.
 - `historical_storage.py` prepara la persistencia `historical_*` y las consultas agregadas iniciales.
 - `main.py` contiene el entrypoint HTTP y la creacion del servidor.
 - `normalizers.py` transforma registros crudos o respuestas A2S a un modelo
@@ -413,20 +421,30 @@ consulta historica:
 persistido por el colector. El parametro opcional `limit` acepta valores entre
 `1` y `100`.
 
-La primera consulta agregada sobre historico CRCON es:
+La capa historica propia expone:
 
 - `/api/historical/weekly-top-kills`
+- `/api/historical/recent-matches`
+- `/api/historical/server-summary`
+- `/api/historical/player-profile`
 
 Parametros opcionales:
 
 - `limit` entre `1` y `100`
 - `server` con slug historico como `comunidad-hispana-01`
+- `player` en `/api/historical/player-profile` aceptando `stable_player_key`,
+  `steam_id` o `source_player_id`
 
 La ventana temporal es siempre la ultima semana movil respecto al momento de la
 request y solo considera partidas cerradas con `ended_at` para no mezclar
 partidas aun en curso ni filas historicas transitorias. El payload devuelve
 servidor, rango temporal, jugador, kills semanales, posicion y numero de
 partidas consideradas.
+
+`recent-matches` devuelve cierres recientes por servidor con marcador, mapa y
+conteo de jugadores. `server-summary` agrega volumen historico, jugadores
+unicos, kills, mapas dominantes y rango temporal cubierto. `player-profile`
+deja lista la base de consulta agregada por jugador para futuras vistas.
 
 ## Ingesta historica CRCON
 
@@ -444,6 +462,7 @@ Comandos manuales desde `backend/`:
 ```powershell
 python -m app.historical_ingestion bootstrap
 python -m app.historical_ingestion refresh
+python -m app.historical_runner --interval 1800
 ```
 
 Flags utiles:
@@ -456,6 +475,24 @@ La ejecucion `bootstrap` recorre paginas historicas hasta agotar resultados.
 La ejecucion `refresh` usa una ventana de solape sobre la ultima partida
 persistida por servidor para releer solo paginas recientes y absorber updates
 tardios sin reimportar todo el historico.
+
+El runner `python -m app.historical_runner` deja ese refresh incremental listo
+para ejecucion local repetida sin depender de infraestructura externa. Por
+defecto:
+
+- refresca cada `1800` segundos
+- reintenta hasta `2` veces tras un fallo
+- espera `30` segundos entre reintentos
+- reutiliza el registro de `historical_ingestion_runs` para dejar trazabilidad
+  de ultimo refresh, resultado y errores basicos
+
+Flags utiles del runner:
+
+- `--server comunidad-hispana-01` para limitar a un servidor
+- `--interval 900` para aumentar frecuencia local
+- `--retries 1` para reducir reintentos
+- `--retry-delay 10` para bajar la espera entre fallos
+- `--max-runs 1` para una validacion puntual sin bucle indefinido
 
 Al inicializar la persistencia local, el backend normaliza tambien la identidad
 historica ya guardada:

@@ -439,7 +439,7 @@ def list_recent_historical_matches(
     limit: int = 20,
     db_path: Path | None = None,
 ) -> list[dict[str, object]]:
-    """Return recent persisted matches for validation and later API work."""
+    """Return recent persisted matches grouped for the historical API layer."""
     resolved_path = initialize_historical_storage(db_path=db_path)
     where_clause = ""
     params: list[object] = []
@@ -474,7 +474,217 @@ def list_recent_historical_matches(
             """,
             params,
         ).fetchall()
-    return [dict(row) for row in rows]
+    items: list[dict[str, object]] = []
+    for row in rows:
+        items.append(
+            {
+                "server": {
+                    "slug": row["server_slug"],
+                    "name": row["server_name"],
+                },
+                "match_id": row["external_match_id"],
+                "started_at": row["started_at"],
+                "ended_at": row["ended_at"],
+                "closed_at": row["ended_at"] or row["started_at"],
+                "map": {
+                    "name": row["map_name"],
+                    "pretty_name": row["map_pretty_name"] or row["map_name"],
+                },
+                "result": {
+                    "allied_score": _coerce_int(row["allied_score"]),
+                    "axis_score": _coerce_int(row["axis_score"]),
+                    "winner": _resolve_match_winner(
+                        row["allied_score"],
+                        row["axis_score"],
+                    ),
+                },
+                "player_count": int(row["player_count"] or 0),
+            }
+        )
+    return items
+
+
+def list_historical_server_summaries(
+    *,
+    server_slug: str | None = None,
+    db_path: Path | None = None,
+) -> list[dict[str, object]]:
+    """Return aggregate historical metrics per server."""
+    resolved_path = initialize_historical_storage(db_path=db_path)
+    where_clause = ""
+    params: list[object] = []
+    if server_slug:
+        where_clause = "WHERE historical_servers.slug = ?"
+        params.append(server_slug)
+
+    with _connect(resolved_path) as connection:
+        summary_rows = connection.execute(
+            f"""
+            SELECT
+                historical_servers.slug AS server_slug,
+                historical_servers.display_name AS server_name,
+                COUNT(DISTINCT historical_matches.id) AS matches_count,
+                COUNT(DISTINCT historical_players.id) AS unique_players,
+                COALESCE(SUM(historical_player_match_stats.kills), 0) AS total_kills,
+                COUNT(DISTINCT COALESCE(historical_matches.map_pretty_name, historical_matches.map_name)) AS map_count,
+                MIN(COALESCE(historical_matches.ended_at, historical_matches.started_at, historical_matches.created_at_source)) AS first_match_at,
+                MAX(COALESCE(historical_matches.ended_at, historical_matches.started_at, historical_matches.created_at_source)) AS last_match_at
+            FROM historical_servers
+            LEFT JOIN historical_matches
+                ON historical_matches.historical_server_id = historical_servers.id
+            LEFT JOIN historical_player_match_stats
+                ON historical_player_match_stats.historical_match_id = historical_matches.id
+            LEFT JOIN historical_players
+                ON historical_players.id = historical_player_match_stats.historical_player_id
+            {where_clause}
+            GROUP BY historical_servers.id
+            ORDER BY historical_servers.server_number ASC, historical_servers.slug ASC
+            """,
+            params,
+        ).fetchall()
+
+        map_rows = connection.execute(
+            f"""
+            SELECT
+                historical_servers.slug AS server_slug,
+                COALESCE(historical_matches.map_pretty_name, historical_matches.map_name, 'Mapa no disponible') AS map_name,
+                COUNT(*) AS matches_count
+            FROM historical_matches
+            INNER JOIN historical_servers
+                ON historical_servers.id = historical_matches.historical_server_id
+            {where_clause}
+            GROUP BY historical_servers.slug, COALESCE(historical_matches.map_pretty_name, historical_matches.map_name, 'Mapa no disponible')
+            ORDER BY historical_servers.slug ASC, matches_count DESC, map_name ASC
+            """,
+            params,
+        ).fetchall()
+
+    top_maps_by_server: dict[str, list[dict[str, object]]] = {}
+    for row in map_rows:
+        server_key = str(row["server_slug"])
+        top_maps_by_server.setdefault(server_key, [])
+        if len(top_maps_by_server[server_key]) >= 3:
+            continue
+        top_maps_by_server[server_key].append(
+            {
+                "map_name": row["map_name"],
+                "matches_count": int(row["matches_count"] or 0),
+            }
+        )
+
+    items: list[dict[str, object]] = []
+    for row in summary_rows:
+        items.append(
+            {
+                "server": {
+                    "slug": row["server_slug"],
+                    "name": row["server_name"],
+                },
+                "matches_count": int(row["matches_count"] or 0),
+                "unique_players": int(row["unique_players"] or 0),
+                "total_kills": int(row["total_kills"] or 0),
+                "map_count": int(row["map_count"] or 0),
+                "top_maps": top_maps_by_server.get(str(row["server_slug"]), []),
+                "time_range": {
+                    "start": row["first_match_at"],
+                    "end": row["last_match_at"],
+                },
+            }
+        )
+    return items
+
+
+def get_historical_player_profile(
+    player_id: str,
+    *,
+    db_path: Path | None = None,
+) -> dict[str, object] | None:
+    """Return aggregate historical metrics for one player identity."""
+    resolved_player_id = player_id.strip()
+    if not resolved_player_id:
+        return None
+
+    resolved_path = initialize_historical_storage(db_path=db_path)
+    with _connect(resolved_path) as connection:
+        player_row = connection.execute(
+            """
+            SELECT
+                historical_players.id,
+                historical_players.stable_player_key,
+                historical_players.display_name,
+                historical_players.steam_id,
+                historical_players.source_player_id,
+                COUNT(DISTINCT historical_matches.id) AS matches_count,
+                COALESCE(SUM(historical_player_match_stats.kills), 0) AS total_kills,
+                MIN(COALESCE(historical_matches.ended_at, historical_matches.started_at, historical_matches.created_at_source)) AS first_match_at,
+                MAX(COALESCE(historical_matches.ended_at, historical_matches.started_at, historical_matches.created_at_source)) AS last_match_at
+            FROM historical_players
+            LEFT JOIN historical_player_match_stats
+                ON historical_player_match_stats.historical_player_id = historical_players.id
+            LEFT JOIN historical_matches
+                ON historical_matches.id = historical_player_match_stats.historical_match_id
+            WHERE historical_players.stable_player_key = ?
+               OR historical_players.steam_id = ?
+               OR historical_players.source_player_id = ?
+            GROUP BY historical_players.id
+            ORDER BY historical_players.display_name ASC
+            LIMIT 1
+            """,
+            (resolved_player_id, resolved_player_id, resolved_player_id),
+        ).fetchone()
+        if player_row is None:
+            return None
+
+        server_rows = connection.execute(
+            """
+            SELECT
+                historical_servers.slug AS server_slug,
+                historical_servers.display_name AS server_name,
+                COUNT(DISTINCT historical_matches.id) AS matches_count,
+                COALESCE(SUM(historical_player_match_stats.kills), 0) AS total_kills,
+                MIN(COALESCE(historical_matches.ended_at, historical_matches.started_at, historical_matches.created_at_source)) AS first_match_at,
+                MAX(COALESCE(historical_matches.ended_at, historical_matches.started_at, historical_matches.created_at_source)) AS last_match_at
+            FROM historical_player_match_stats
+            INNER JOIN historical_matches
+                ON historical_matches.id = historical_player_match_stats.historical_match_id
+            INNER JOIN historical_servers
+                ON historical_servers.id = historical_matches.historical_server_id
+            WHERE historical_player_match_stats.historical_player_id = ?
+            GROUP BY historical_servers.id
+            ORDER BY total_kills DESC, historical_servers.server_number ASC, historical_servers.slug ASC
+            """,
+            (player_row["id"],),
+        ).fetchall()
+
+    return {
+        "player": {
+            "stable_player_key": player_row["stable_player_key"],
+            "name": player_row["display_name"],
+            "steam_id": player_row["steam_id"],
+            "source_player_id": player_row["source_player_id"],
+        },
+        "matches_count": int(player_row["matches_count"] or 0),
+        "total_kills": int(player_row["total_kills"] or 0),
+        "time_range": {
+            "start": player_row["first_match_at"],
+            "end": player_row["last_match_at"],
+        },
+        "servers": [
+            {
+                "server": {
+                    "slug": row["server_slug"],
+                    "name": row["server_name"],
+                },
+                "matches_count": int(row["matches_count"] or 0),
+                "total_kills": int(row["total_kills"] or 0),
+                "time_range": {
+                    "start": row["first_match_at"],
+                    "end": row["last_match_at"],
+                },
+            }
+            for row in server_rows
+        ],
+    }
 
 
 def list_weekly_top_kills(
@@ -576,6 +786,18 @@ def _connect(db_path: Path) -> sqlite3.Connection:
     connection = sqlite3.connect(db_path)
     connection.row_factory = sqlite3.Row
     return connection
+
+
+def _resolve_match_winner(allied_score: object, axis_score: object) -> str | None:
+    allied = _coerce_int(allied_score)
+    axis = _coerce_int(axis_score)
+    if allied is None or axis is None:
+        return None
+    if allied > axis:
+        return "allies"
+    if axis > allied:
+        return "axis"
+    return "draw"
 
 
 def _has_legacy_historical_schema(connection: sqlite3.Connection) -> bool:

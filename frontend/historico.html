@@ -1,0 +1,124 @@
+<!DOCTYPE html>
+<html lang="es">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta
+      name="description"
+      content="Historico propio de HLL Vietnam con ranking semanal y partidas recientes por servidor."
+    />
+    <title>Historico - HLL Vietnam</title>
+    <link rel="stylesheet" href="./assets/css/styles.css" />
+    <link rel="stylesheet" href="./assets/css/historico.css" />
+  </head>
+  <body data-backend-base-url="http://127.0.0.1:8000">
+    <div class="page-shell historical-shell">
+      <header class="hero historical-hero">
+        <div class="hero__overlay"></div>
+        <div class="hero__content historical-hero__content">
+          <div class="historical-hero__topline">
+            <a class="secondary-button secondary-button--ghost" href="./index.html">
+              Volver a la landing
+            </a>
+            <p class="eyebrow">Historico propio</p>
+          </div>
+          <div class="historical-hero__copy">
+            <div>
+              <h1 class="historical-hero__title">
+                Registro tactico
+                <span class="hero__title-accent">Comunidad Hispana</span>
+              </h1>
+              <p class="hero__text historical-hero__text">
+                Consulta el ranking semanal y las partidas recientes usando solo
+                la capa historica interna del proyecto.
+              </p>
+            </div>
+            <div class="historical-selector" aria-label="Seleccion de servidor">
+              <button
+                class="historical-selector__button is-active"
+                type="button"
+                data-server-slug="comunidad-hispana-01"
+              >
+                Comunidad Hispana #01
+              </button>
+              <button
+                class="historical-selector__button"
+                type="button"
+                data-server-slug="comunidad-hispana-02"
+              >
+                Comunidad Hispana #02
+              </button>
+            </div>
+          </div>
+        </div>
+      </header>
+
+      <main class="content historical-content">
+        <section class="panel historical-panel" aria-labelledby="historical-summary-title">
+          <div class="panel__shell">
+            <div class="panel__header historical-panel__header">
+              <div>
+                <p class="eyebrow eyebrow--section">Cobertura</p>
+                <h2 id="historical-summary-title">Resumen del servidor</h2>
+              </div>
+              <p class="status-chip status-chip--fallback" id="historical-range">
+                Cargando rango temporal
+              </p>
+            </div>
+            <div class="historical-summary-grid" id="historical-summary">
+              <article class="historical-stat-card">
+                <p>Estado</p>
+                <strong>Cargando datos historicos</strong>
+              </article>
+            </div>
+          </div>
+        </section>
+
+        <section class="panel historical-panel" aria-labelledby="weekly-ranking-title">
+          <div class="panel__shell">
+            <div class="panel__header historical-panel__header">
+              <div>
+                <p class="eyebrow eyebrow--section">Ranking semanal</p>
+                <h2 id="weekly-ranking-title">Top kills de los ultimos 7 dias</h2>
+              </div>
+            </div>
+            <p class="historical-state" id="weekly-top-kills-state" aria-live="polite">
+              Cargando ranking semanal...
+            </p>
+            <div class="historical-table-shell">
+              <table class="historical-table" id="weekly-top-kills-table" hidden>
+                <thead>
+                  <tr>
+                    <th>Pos.</th>
+                    <th>Jugador</th>
+                    <th>Kills</th>
+                    <th>Partidas</th>
+                    <th>Servidor</th>
+                  </tr>
+                </thead>
+                <tbody id="weekly-top-kills-body"></tbody>
+              </table>
+            </div>
+          </div>
+        </section>
+
+        <section class="panel historical-panel" aria-labelledby="recent-matches-title">
+          <div class="panel__shell">
+            <div class="panel__header historical-panel__header">
+              <div>
+                <p class="eyebrow eyebrow--section">Partidas recientes</p>
+                <h2 id="recent-matches-title">Ultimos cierres registrados</h2>
+              </div>
+            </div>
+            <p class="historical-state" id="recent-matches-state" aria-live="polite">
+              Cargando partidas recientes...
+            </p>
+            <div class="historical-match-list" id="recent-matches-list"></div>
+          </div>
+        </section>
+      </main>
+    </div>
+
+    <script src="./assets/js/historico.js"></script>
+  </body>
+</html>
