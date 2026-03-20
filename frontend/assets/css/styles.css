@@ -743,6 +743,94 @@ h2 {
   text-align: center;
 }
 
+.clans-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 320px), 1fr));
+  gap: 20px;
+}
+
+.clan-card {
+  position: relative;
+  overflow: hidden;
+  display: grid;
+  gap: 18px;
+  padding: 22px;
+  border: 1px solid rgba(159, 168, 141, 0.18);
+  border-radius: 22px;
+  background:
+    linear-gradient(180deg, rgba(28, 34, 25, 0.94), rgba(15, 18, 13, 0.98));
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.03),
+    var(--shadow-soft);
+}
+
+.clan-card::before {
+  content: "";
+  position: absolute;
+  inset: 0 0 auto;
+  height: 1px;
+  background: linear-gradient(90deg, rgba(210, 182, 118, 0.4), transparent 68%);
+  pointer-events: none;
+}
+
+.clan-card__brand {
+  display: grid;
+  grid-template-columns: minmax(92px, 112px) minmax(0, 1fr);
+  align-items: center;
+  gap: 18px;
+}
+
+.clan-card__logo {
+  min-height: 92px;
+  padding: 12px;
+  display: grid;
+  place-items: center;
+  border: 1px dashed rgba(183, 201, 125, 0.3);
+  border-radius: 18px;
+  background: linear-gradient(180deg, rgba(19, 24, 16, 0.82), rgba(10, 13, 9, 0.66));
+}
+
+.clan-card__logo img {
+  width: auto;
+  height: auto;
+  max-width: 100%;
+  max-height: 84px;
+  object-fit: contain;
+}
+
+.clan-card__copy {
+  display: grid;
+  gap: 8px;
+}
+
+.clan-card__eyebrow {
+  margin: 0;
+  color: var(--accent-warm);
+  font-size: 0.68rem;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
+.clan-card__copy h3,
+.clan-card__copy p {
+  margin: 0;
+}
+
+.clan-card__copy h3 {
+  font-size: 1.08rem;
+  line-height: 1.4;
+}
+
+.clan-card__copy p:last-child {
+  color: var(--text-soft);
+  line-height: 1.65;
+}
+
+.clan-card__link {
+  width: fit-content;
+  min-width: 180px;
+}
+
 @media (max-width: 1120px) {
   .hero__brand {
     grid-template-columns: 1fr;
@@ -766,7 +854,8 @@ h2 {
 
 @media (max-width: 760px) {
   .servers-grid,
-  .servers-grid--section {
+  .servers-grid--section,
+  .clans-grid {
     grid-template-columns: 1fr;
   }
 }
@@ -851,6 +940,15 @@ h2 {
 
   .server-card__quickfacts {
     grid-template-columns: 1fr;
+  }
+
+  .clan-card__brand {
+    grid-template-columns: 1fr;
+    justify-items: start;
+  }
+
+  .clan-card__link {
+    width: 100%;
   }
 
   .panel::before {

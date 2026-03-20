@@ -4,6 +4,18 @@ const SERVER_HISTORY_URLS = Object.freeze({
   "comunidad-hispana-01": "https://scoreboard.comunidadhll.es/games",
   "comunidad-hispana-02": "https://scoreboard.comunidadhll.es:5443/games",
 });
+const COMMUNITY_CLANS = Object.freeze([
+  {
+    name: "Comunidad Hispana HLL Vietnam",
+    badge: "Comunidad anfitriona",
+    description:
+      "Punto principal de reunion para escuadras, anuncios y acceso directo al Discord del proyecto.",
+    logoSrc: "./assets/img/logo.png",
+    logoAlt: "Logo de Comunidad Hispana HLL Vietnam",
+    discordUrl: "https://discord.com/invite/PedEqZ2Xsa",
+    discordLabel: "Abrir Discord",
+  },
+]);
 
 document.addEventListener("DOMContentLoaded", () => {
   console.info("HLL Vietnam frontend ready");
@@ -19,9 +31,11 @@ document.addEventListener("DOMContentLoaded", () => {
   const serversTitle = document.getElementById("servers-title");
   const serversList = document.getElementById("servers-list");
   const serversBadge = document.getElementById("servers-badge");
+  const communityClansList = document.getElementById("community-clans-list");
 
   updateBackendStatus(statusNode, "Backend comprobando", "status-chip--idle");
   setServersDataState(serversBadge, { timestampLabel: "" });
+  hydrateCommunityClans(communityClansList);
 
   let serverRefreshInFlight = false;
   const refreshServers = async () => {
@@ -224,6 +238,45 @@ function renderServerAction(server) {
         Historico
       </a>
     </div>
+  `;
+}
+
+function hydrateCommunityClans(listNode) {
+  if (!listNode) {
+    return;
+  }
+
+  listNode.innerHTML = COMMUNITY_CLANS.map((clan) => renderCommunityClanCard(clan)).join("");
+}
+
+function renderCommunityClanCard(clan) {
+  return `
+    <article class="clan-card">
+      <div class="clan-card__brand">
+        <div class="clan-card__logo">
+          <img
+            src="${escapeHtml(clan.logoSrc)}"
+            alt="${escapeHtml(clan.logoAlt)}"
+            width="1024"
+            height="1044"
+            decoding="async"
+          />
+        </div>
+        <div class="clan-card__copy">
+          <p class="clan-card__eyebrow">${escapeHtml(clan.badge)}</p>
+          <h3>${escapeHtml(clan.name)}</h3>
+          <p>${escapeHtml(clan.description)}</p>
+        </div>
+      </div>
+      <a
+        class="server-action-link clan-card__link"
+        href="${escapeHtml(clan.discordUrl)}"
+        target="_blank"
+        rel="noreferrer"
+      >
+        ${escapeHtml(clan.discordLabel)}
+      </a>
+    </article>
   `;
 }
 
