@@ -9,7 +9,7 @@ En esta primera fase, el proyecto se centra en una landing sencilla, limpia y pr
 - Landing inicial de comunidad.
 - Estructura de repositorio preparada para crecer.
 - Carpeta de backend reservada para una futura implementación en Python.
-- Carpeta `ai/` preparada para integrar más adelante una capa de orquestación y tareas.
+- Carpeta `ai/` ya integrada como capa operativa para orquestación por tasks y trabajo con Codex.
 
 ## Estructura del repositorio
 
@@ -36,17 +36,26 @@ En esta primera fase, el proyecto se centra en una landing sencilla, limpia y pr
 |   |-- requirements.txt
 |   `-- app/
 |       `-- __init__.py
-`-- ai/
-    |-- README.md
-    |-- orchestrator/
-    |   `-- README.md
-    `-- tasks/
-        |-- pending/
-        |   `-- .gitkeep
-        |-- in-progress/
-        |   `-- .gitkeep
-        `-- done/
-            `-- .gitkeep
+|-- ai/
+|   |-- README.md
+|   |-- architecture-index.md
+|   |-- repo-context.md
+|   |-- system-metrics.md
+|   |-- task-template.md
+|   |-- prompts/
+|   |   `-- plan-feature.md
+|   |-- orchestrator/
+|   |   `-- README.md
+|   `-- tasks/
+|       |-- pending/
+|       |   `-- .gitkeep
+|       |-- in-progress/
+|       |   `-- .gitkeep
+|       `-- done/
+|           `-- .gitkeep
+`-- scripts/
+    |-- codex-runner.ps1
+    `-- run-integration-tests.ps1
 ```
 
 ## Backend futuro
@@ -62,4 +71,4 @@ No hace falta servidor para esta primera versión.
 
 ## Evolución prevista
 
-En una fase posterior se integrará el repositorio plantilla `ai-dev-platform-template`. En esta ejecución no se ha copiado esa plantilla completa; únicamente se ha dejado el proyecto preparado para recibirla de forma ordenada.
+La capa inspirada en `ai-dev-platform-template` ya está integrada y adaptada al contexto real de HLL Vietnam. Las siguientes iteraciones deben centrarse en usarla para planificar y ejecutar tasks reales del producto sin ampliar alcance fuera de ese flujo.

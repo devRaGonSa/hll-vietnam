@@ -13,3 +13,5 @@ This file tracks lightweight execution history for the HLL Vietnam AI developmen
 ## Task History
 
 Date | Task | Duration | Result | Notes
+2026-03-19 | TASK-001-platform-readiness-check | n/a | success | README y roadmap alineados con la integración actual de AI Platform; scripts clave presentes; no hay tests de integración configurados para este alcance.
+2026-03-19T13:59:33 | worker-cycle | 641.24 sec | success | codex-runner

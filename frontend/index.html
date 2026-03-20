@@ -10,7 +10,7 @@
     <title>Comunidad Hispana - HLL Vietnam</title>
     <link rel="stylesheet" href="./assets/css/styles.css" />
   </head>
-  <body>
+  <body data-backend-base-url="http://127.0.0.1:8000">
     <div class="page-shell">
       <header class="hero">
         <div class="hero__overlay"></div>
@@ -18,35 +18,56 @@
           <div class="logo-frame">
             <img
               src="./assets/img/logo.png"
-              alt="Logo de HLL Vietnam"
+              alt="Logo oficial de la comunidad HLL Vietnam"
               class="logo-frame__image"
+              width="1024"
+              height="1044"
+              decoding="async"
             />
           </div>
           <p class="eyebrow">Comunidad táctica hispana</p>
-          <h1>Comunidad Hispana - HLL Vietnam</h1>
+          <h1 class="hero__title">
+            Comunidad Hispana
+            <span class="hero__title-accent">HLL Vietnam</span>
+          </h1>
           <p class="hero__text">
             Punto de encuentro para jugadores, escuadras y comunidad alrededor
             del futuro universo HLL Vietnam.
           </p>
-          <a
-            class="discord-button"
-            href="https://discord.com/invite/PedEqZ2Xsa"
-            target="_blank"
-            rel="noreferrer"
-          >
-            Unirse al Discord
-          </a>
+          <div class="hero__actions">
+            <p
+              class="status-chip status-chip--idle"
+              id="backend-status"
+              aria-live="polite"
+            >
+              Backend no verificado
+            </p>
+            <a
+              class="discord-button"
+              href="https://discord.com/invite/PedEqZ2Xsa"
+              target="_blank"
+              rel="noreferrer"
+            >
+              Unirse al Discord
+            </a>
+          </div>
         </div>
       </header>
 
       <main class="content">
-        <section class="panel">
+        <section class="panel panel--video">
           <div class="panel__header">
-            <p class="eyebrow">Trailer</p>
-            <h2>Primer vistazo a HLL Vietnam</h2>
+            <p class="eyebrow eyebrow--section">Trailer</p>
+            <h2 id="trailer-title">Primer vistazo a HLL Vietnam</h2>
+            <p class="panel__intro panel__intro--tight">
+              El bloque principal se apoya en una presentacion limpia del
+              trailer para reforzar el tono tactico y cinematografico del
+              proyecto.
+            </p>
           </div>
           <div class="video-wrapper">
             <iframe
+              id="trailer-frame"
               src="https://www.youtube.com/embed/JzYzYNVWZ_A"
               title="Trailer HLL Vietnam"
               loading="lazy"
@@ -54,6 +75,89 @@
               referrerpolicy="strict-origin-when-cross-origin"
               allowfullscreen
             ></iframe>
+          </div>
+        </section>
+
+        <section class="panel panel--servers" aria-labelledby="servers-title">
+          <div class="panel__header panel__header--servers">
+            <div>
+              <p class="eyebrow eyebrow--section">Actividad de servidores</p>
+              <h2 id="servers-title">Servidores actuales de Hell Let Loose</h2>
+            </div>
+            <p class="status-chip status-chip--fallback" id="servers-badge">
+              Fallback estatico
+            </p>
+          </div>
+          <p class="panel__intro" id="servers-note">
+            El panel prioriza snapshots reales capturados por el backend y
+            conserva un fallback provisional solo cuando no hay datos utilizables.
+          </p>
+          <div class="servers-source" id="servers-source" data-state="fallback">
+            <p class="servers-source__label" id="servers-source-label">
+              Fallback estatico activo
+            </p>
+            <p class="servers-source__meta" id="servers-source-meta">
+              La landing conserva la referencia provisional cuando el backend o
+              el historico aun no aportan snapshots utilizables.
+            </p>
+          </div>
+          <div class="stats-preview" id="stats-preview" hidden>
+            <p class="stats-preview__eyebrow">Vista previa historica</p>
+            <div class="stats-preview__items" id="stats-preview-items"></div>
+          </div>
+          <div class="servers-grid" id="servers-list">
+            <article class="server-card">
+              <div class="server-card__top">
+                <div class="server-card__identity">
+                  <p class="server-card__eyebrow">Servidor de referencia</p>
+                  <h3>HLL ESP Tactical Rotation</h3>
+                </div>
+                <span class="server-state server-state--online">Online</span>
+              </div>
+              <div class="server-card__load" aria-hidden="true">
+                <span style="width: 74%"></span>
+              </div>
+              <dl class="server-card__stats">
+                <div class="server-stat server-stat--players">
+                  <dt>Jugadores</dt>
+                  <dd>74 / 100</dd>
+                </div>
+                <div class="server-stat">
+                  <dt>Mapa</dt>
+                  <dd>Sainte-Marie-du-Mont</dd>
+                </div>
+                <div class="server-stat">
+                  <dt>Region</dt>
+                  <dd>EU</dd>
+                </div>
+              </dl>
+            </article>
+            <article class="server-card">
+              <div class="server-card__top">
+                <div class="server-card__identity">
+                  <p class="server-card__eyebrow">Servidor de referencia</p>
+                  <h3>HLL LATAM Night Offensive</h3>
+                </div>
+                <span class="server-state server-state--online">Online</span>
+              </div>
+              <div class="server-card__load" aria-hidden="true">
+                <span style="width: 51%"></span>
+              </div>
+              <dl class="server-card__stats">
+                <div class="server-stat server-stat--players">
+                  <dt>Jugadores</dt>
+                  <dd>51 / 100</dd>
+                </div>
+                <div class="server-stat">
+                  <dt>Mapa</dt>
+                  <dd>Carentan</dd>
+                </div>
+                <div class="server-stat">
+                  <dt>Region</dt>
+                  <dd>LATAM</dd>
+                </div>
+              </dl>
+            </article>
           </div>
         </section>
       </main>

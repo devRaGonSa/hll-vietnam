@@ -1,1 +1,1 @@
-# Dependencias del backend Python se definiran en fases posteriores.
+# El bootstrap actual usa solo la libreria estandar de Python.
