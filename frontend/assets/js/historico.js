@@ -27,7 +27,7 @@ document.addEventListener("DOMContentLoaded", () => {
     syncActiveButtons(selectorButtons, activeServerSlug);
     setRangeBadge(rangeNode, "Cargando rango temporal", false);
     summaryNoteNode.textContent =
-      "Este bloque resume solo la cobertura ya importada en la base local.";
+      "Este bloque resume solo la cobertura ya registrada en la base local.";
     renderSummaryLoading(summaryNode);
     weeklyWindowNoteNode.textContent = "Cargando ventana semanal...";
     setState(weeklyStateNode, "Cargando ranking semanal...");
@@ -81,7 +81,7 @@ function hydrateSummary(result, summaryNode, rangeNode, noteNode) {
     renderSummaryError(summaryNode);
     setRangeBadge(rangeNode, "Resumen historico no disponible", false);
     noteNode.textContent =
-      "No se pudo leer la cobertura importada persistida para este servidor.";
+      "No se pudo leer la cobertura historica registrada para este servidor.";
     return;
   }
 
@@ -91,7 +91,7 @@ function hydrateSummary(result, summaryNode, rangeNode, noteNode) {
     renderSummaryEmpty(summaryNode);
     setRangeBadge(rangeNode, "Sin cobertura historica", false);
     noteNode.textContent =
-      "Todavia no existe cobertura importada suficiente en la base local.";
+      "Todavia no existe cobertura historica suficiente en la base local.";
     return;
   }
 
@@ -101,7 +101,7 @@ function hydrateSummary(result, summaryNode, rangeNode, noteNode) {
   const rangeLabel = buildCoverageBadgeLabel(coverage, timeRange);
   setRangeBadge(
     rangeNode,
-    rangeLabel || "Cobertura importada parcial",
+    rangeLabel || "Cobertura registrada parcial",
     coverage.status === "week-plus",
   );
   noteNode.textContent = buildSummaryNote(
@@ -112,12 +112,12 @@ function hydrateSummary(result, summaryNode, rangeNode, noteNode) {
   summaryNode.innerHTML = [
     renderSummaryCard("Servidor", summary.server?.name || "Servidor no disponible"),
     renderSummaryCard(
-      "Partidas importadas",
+      "Partidas registradas",
       formatNumber(summary.imported_matches_count ?? summary.matches_count),
     ),
     renderSummaryCard("Jugadores unicos", formatNumber(summary.unique_players)),
     renderSummaryCard(
-      "Cobertura importada",
+      "Cobertura registrada",
       formatCoverageDays(coverage.coverage_days),
     ),
     renderSummaryCard("Primera partida", formatTimestamp(coverage.first_match_at)),
@@ -288,7 +288,7 @@ function buildCoverageBadgeLabel(coverage, timeRange) {
     coverage?.last_match_at || timeRange?.end,
   );
   if (coverageDays !== "Cobertura no disponible" && rangeLabel) {
-    return `${coverageDays} importados`;
+    return `${coverageDays} registrados`;
   }
   return rangeLabel;
 }
@@ -296,7 +296,7 @@ function buildCoverageBadgeLabel(coverage, timeRange) {
 function buildSummaryNote(summaryBasis, weeklyWindowDays, coverage) {
   const basisLabel =
     summaryBasis === "persisted-import"
-      ? "la cobertura ya importada en la base local"
+      ? "la cobertura ya registrada en la base local"
       : "el historico persistido disponible";
   const weeklyWindowLabel = Number.isFinite(Number(weeklyWindowDays))
     ? `${weeklyWindowDays} dias`

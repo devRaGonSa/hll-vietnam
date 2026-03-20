@@ -22,32 +22,44 @@
             </a>
             <p class="eyebrow">Historico propio</p>
           </div>
-          <div class="historical-hero__copy">
-            <div>
-              <h1 class="historical-hero__title">
-                Registro tactico
-                <span class="hero__title-accent">Comunidad Hispana</span>
-              </h1>
-              <p class="hero__text historical-hero__text">
-                Consulta cobertura importada, ranking semanal y cierres
-                recientes usando solo la capa historica interna del proyecto.
-              </p>
+          <div class="historical-hero__layout">
+            <div class="logo-frame historical-logo-frame">
+              <img
+                src="./assets/img/logo.png"
+                alt="Logo oficial de la comunidad HLL Vietnam"
+                class="logo-frame__image"
+                width="1024"
+                height="1044"
+                decoding="async"
+              />
             </div>
-            <div class="historical-selector" aria-label="Seleccion de servidor">
-              <button
-                class="historical-selector__button is-active"
-                type="button"
-                data-server-slug="comunidad-hispana-01"
-              >
-                Comunidad Hispana #01
-              </button>
-              <button
-                class="historical-selector__button"
-                type="button"
-                data-server-slug="comunidad-hispana-02"
-              >
-                Comunidad Hispana #02
-              </button>
+            <div class="historical-hero__copy">
+              <div>
+                <h1 class="historical-hero__title">
+                  Registro de la
+                  <span class="hero__title-accent">Comunidad Hispana</span>
+                </h1>
+                <p class="hero__text historical-hero__text">
+                  Consulta la cobertura registrada, el ranking semanal y los
+                  cierres recientes usando solo la capa historica interna del proyecto.
+                </p>
+              </div>
+              <div class="historical-selector" aria-label="Seleccion de servidor">
+                <button
+                  class="historical-selector__button is-active"
+                  type="button"
+                  data-server-slug="comunidad-hispana-01"
+                >
+                  Comunidad Hispana #01
+                </button>
+                <button
+                  class="historical-selector__button"
+                  type="button"
+                  data-server-slug="comunidad-hispana-02"
+                >
+                  Comunidad Hispana #02
+                </button>
+              </div>
             </div>
           </div>
         </div>
@@ -58,10 +70,10 @@
             <div class="panel__shell">
               <div class="panel__header historical-panel__header">
                 <div>
-                  <p class="eyebrow eyebrow--section">Cobertura importada</p>
+                  <p class="eyebrow eyebrow--section">Cobertura registrada</p>
                   <h2 id="historical-summary-title">Resumen del historico persistido</h2>
                   <p class="historical-panel__note" id="historical-summary-note">
-                    Este bloque resume solo la cobertura ya importada en la base local.
+                    Este bloque resume solo la cobertura ya registrada en la base local.
                   </p>
                 </div>
               <p class="status-chip status-chip--fallback" id="historical-range">
@@ -115,7 +127,7 @@
                   <p class="eyebrow eyebrow--section">Partidas recientes</p>
                   <h2 id="recent-matches-title">Ultimos cierres registrados</h2>
                   <p class="historical-panel__note">
-                    Lista de cierres ya importados para el servidor activo.
+                    Lista de cierres ya registrados para el servidor activo.
                   </p>
                 </div>
               </div>
