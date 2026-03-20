@@ -1,5 +1,9 @@
 // Progressive enhancement for local frontend-backend checks.
 const DEFAULT_SERVER_POLL_INTERVAL_MS = 120 * 1000;
+const SERVER_HISTORY_URLS = Object.freeze({
+  "comunidad-hispana-01": "https://scoreboard.comunidadhll.es/games",
+  "comunidad-hispana-02": "https://scoreboard.comunidadhll.es:5443/games",
+});
 
 document.addEventListener("DOMContentLoaded", () => {
   console.info("HLL Vietnam frontend ready");
@@ -18,7 +22,6 @@ document.addEventListener("DOMContentLoaded", () => {
 
   updateBackendStatus(statusNode, "Backend comprobando", "status-chip--idle");
   setServersDataState(serversBadge, { timestampLabel: "" });
-  bindCopyAddressActions();
 
   let serverRefreshInFlight = false;
   const refreshServers = async () => {
@@ -172,13 +175,11 @@ function renderServerStatsCard(server) {
   const region = server.region || "Region pendiente";
   const players = Number.isFinite(server.players) ? server.players : 0;
   const maxPlayers = Number.isFinite(server.max_players) ? server.max_players : 0;
-  const address = getServerAddress(server);
   const actionMarkup = renderServerAction(server);
   const cardVariantClass = isRealSnapshot ? "server-card--real" : "server-card--reference";
   const quickFacts = renderQuickFacts([
     { label: "Mapa", value: currentMap },
     { label: "Region", value: region },
-    { label: "Direccion", value: address || "No disponible" },
   ]);
 
   return `
@@ -208,21 +209,21 @@ function renderServerSections(latestItems) {
 }
 
 function renderServerAction(server) {
-  const address = getServerAddress(server);
-  if (!address) {
+  const historyUrl = getServerHistoryUrl(server);
+  if (!historyUrl) {
     return "";
   }
 
   return `
     <div class="server-card__actions">
-      <button
-        class="server-copy-button"
-        type="button"
-        data-copy-address="${escapeHtml(address)}"
-        data-default-label="Copiar IP"
+      <a
+        class="server-action-link"
+        href="${escapeHtml(historyUrl)}"
+        target="_blank"
+        rel="noreferrer"
       >
-        Copiar IP
-      </button>
+        Historico
+      </a>
     </div>
   `;
 }
@@ -244,66 +245,16 @@ function renderQuickFacts(items) {
   `;
 }
 
-function bindCopyAddressActions() {
-  document.addEventListener("click", async (event) => {
-    const button = event.target.closest("[data-copy-address]");
-    if (!(button instanceof HTMLButtonElement)) {
-      return;
-    }
-
-    const address = button.dataset.copyAddress || "";
-    if (!address) {
-      return;
-    }
-
-    const defaultLabel = button.dataset.defaultLabel || "Copiar IP";
-    button.disabled = true;
-
-    try {
-      await copyText(address);
-      button.textContent = "IP copiada";
-    } catch (error) {
-      console.warn("Could not copy server address", error);
-      button.textContent = "Copia manual";
-    } finally {
-      window.setTimeout(() => {
-        button.textContent = defaultLabel;
-        button.disabled = false;
-      }, 1800);
-    }
-  });
-}
-
-async function copyText(value) {
-  if (navigator.clipboard?.writeText) {
-    await navigator.clipboard.writeText(value);
-    return;
-  }
-
-  const textarea = document.createElement("textarea");
-  textarea.value = value;
-  textarea.setAttribute("readonly", "");
-  textarea.style.position = "absolute";
-  textarea.style.left = "-9999px";
-  document.body.append(textarea);
-  textarea.select();
-
-  const copied = document.execCommand("copy");
-  textarea.remove();
-
-  if (!copied) {
-    throw new Error("Clipboard copy command failed");
-  }
-}
-
-function getServerAddress(server) {
-  const host = typeof server?.host === "string" ? server.host.trim() : "";
-  const gamePort = Number(server?.game_port);
-  if (!host || !Number.isInteger(gamePort) || gamePort <= 0) {
+function getServerHistoryUrl(server) {
+  const externalServerId =
+    typeof server?.external_server_id === "string"
+      ? server.external_server_id.trim()
+      : "";
+  if (!externalServerId) {
     return "";
   }
 
-  return `${host}:${gamePort}`;
+  return SERVER_HISTORY_URLS[externalServerId] || "";
 }
 
 function selectPrimaryServerItems(items) {
