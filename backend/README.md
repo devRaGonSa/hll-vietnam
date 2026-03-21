@@ -164,6 +164,8 @@ colector. Si todavia no hay snapshots guardados, responden `status: "ok"` con
 - `config.py` centraliza host, puerto y allowlist minima de origenes locales.
 - `historical_ingestion.py` consulta la capa JSON publica de CRCON para bootstrap y refresh incremental.
 - `historical_models.py` fija las entidades historicas minimas del dominio.
+- `historical_snapshots.py` fija los tipos y selectores validos de snapshots historicos precalculados.
+- `historical_snapshot_storage.py` persiste snapshots historicos precalculados listos para lectura rapida.
 - `historical_runner.py` ejecuta refresh incremental periodico con reintentos basicos.
 - `historical_storage.py` prepara la persistencia `historical_*` y las consultas agregadas iniciales.
 - `main.py` contiene el entrypoint HTTP y la creacion del servidor.
@@ -192,6 +194,7 @@ solo libreria estandar de Python. Esta base minima sigue el modelo logico de:
 - `historical_players`
 - `historical_player_match_stats`
 - `historical_ingestion_runs`
+- `historical_precomputed_snapshots`
 
 Por defecto el archivo se crea en:
 
@@ -208,6 +211,32 @@ La base logica sigue documentada en
 `docs/stats-database-schema-foundation.md` para snapshots live y en
 `docs/historical-domain-model.md` para el historico CRCON. Esta implementacion
 no introduce ORM, migraciones ni una decision de almacenamiento productivo.
+
+## Snapshots historicos precalculados
+
+La capa historica incluye ahora una tabla adicional `historical_precomputed_snapshots`
+en el mismo SQLite local para persistir payloads ya agregados y servirlos sin
+recalculo pesado en cada request. Esta capa esta preparada para guardar:
+
+- `server-summary`
+- `weekly-leaderboard` con metricas `kills`, `deaths`, `support` y `matches_over_100_kills`
+- `recent-matches`
+
+Cada snapshot conserva metadatos operativos minimos:
+
+- `server_key`
+- `snapshot_type`
+- `metric`
+- `window`
+- `payload_json`
+- `generated_at`
+- `source_range_start`
+- `source_range_end`
+- `is_stale`
+
+La persistencia usa `upsert` por combinacion de servidor, tipo, metrica y
+ventana para que la siguiente task pueda refrescar estos snapshots de forma
+periodica sin duplicar filas.
 
 ## Bootstrap del colector
 

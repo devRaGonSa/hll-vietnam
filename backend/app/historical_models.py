@@ -109,3 +109,18 @@ class HistoricalBackfillProgressSummary:
     last_run_started_at: datetime | None
     last_run_completed_at: datetime | None
     last_error: str | None
+
+
+@dataclass(frozen=True, slots=True)
+class HistoricalSnapshotRecord:
+    """Persisted precomputed historical snapshot ready for lightweight reads."""
+
+    server_key: str
+    snapshot_type: str
+    metric: str | None
+    window: str | None
+    payload_json: str
+    generated_at: datetime
+    source_range_start: datetime | None
+    source_range_end: datetime | None
+    is_stale: bool

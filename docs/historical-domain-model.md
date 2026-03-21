@@ -16,6 +16,7 @@ Esta capa cubre solo historico persistido en backend:
 - identidad reutilizable de jugadores
 - estadisticas de jugador por partida
 - trazabilidad de ejecuciones de ingesta
+- snapshots precalculados para lectura rapida
 
 No sustituye ni modifica el flujo actual de snapshots live via A2S.
 
@@ -76,6 +77,19 @@ uniforme.
   - matches vistos
   - inserts y updates
 
+### Precomputed Snapshot
+
+- tabla: `historical_precomputed_snapshots`
+- clave estable:
+  - `server_key`
+  - `snapshot_type`
+  - `metric`
+  - `window`
+- razon:
+  - permite exponer resumen, rankings y partidas recientes sin recalcular
+    agregados pesados en cada request
+  - mantiene metadatos operativos sobre frescura y rango fuente
+
 ## Data Model
 
 ### `historical_servers`
@@ -121,6 +135,20 @@ Metricas por jugador y partida con al menos:
 
 Trazabilidad operativa para bootstrap y refresh incremental.
 
+### `historical_precomputed_snapshots`
+
+Payloads JSON precalculados listos para lectura rapida desde API/UI con:
+
+- `server_key`
+- `snapshot_type`
+- `metric`
+- `window`
+- `payload_json`
+- `generated_at`
+- `source_range_start`
+- `source_range_end`
+- `is_stale`
+
 ## Idempotency Strategy
 
 - servidores sembrados de forma declarativa y actualizables por `slug`
@@ -130,12 +158,15 @@ Trazabilidad operativa para bootstrap y refresh incremental.
   `(historical_match_id, historical_player_id)`
 - el refresco incremental usa una ventana de solape temporal para volver a leer
   partidas recientes y absorber cambios tardios sin rehacer todo el historico
+- los snapshots precalculados usan `UPSERT` por identidad logica para refrescar
+  el payload sin crear duplicados
 
 ## Query Readiness
 
 La estructura soporta ya consultas futuras como:
 
 - top kills de la ultima semana por servidor
+- top muertes, soporte y partidas de 100+ kills desde una capa cacheada
 - partidas recientes por servidor
 - mapas jugados y frecuencia
 - agregados por jugador sobre ventanas temporales
@@ -144,6 +175,8 @@ La estructura soporta ya consultas futuras como:
 
 - live state actual: `server_snapshots` via A2S
 - historico persistido: `historical_*` via CRCON scoreboard JSON
+- snapshots precalculados: `historical_precomputed_snapshots` sobre el mismo
+  historico persistido
 
 Ambas lineas comparten el mismo SQLite local de desarrollo para reducir
 complejidad operativa, pero mantienen tablas y contratos separados.
