@@ -91,3 +91,21 @@ class HistoricalIngestionRunSummary:
     matches_updated: int
     player_rows_inserted: int
     player_rows_updated: int
+
+
+@dataclass(frozen=True, slots=True)
+class HistoricalBackfillProgressSummary:
+    """Persisted resume checkpoint and last attempt metadata per server."""
+
+    server_slug: str
+    mode: str
+    next_page: int
+    last_completed_page: int | None
+    discovered_total_matches: int | None
+    discovered_total_pages: int | None
+    archive_exhausted: bool
+    last_run_id: int | None
+    last_run_status: str | None
+    last_run_started_at: datetime | None
+    last_run_completed_at: datetime | None
+    last_error: str | None

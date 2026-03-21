@@ -13,6 +13,8 @@ DEFAULT_REFRESH_INTERVAL_SECONDS = 120
 DEFAULT_HISTORICAL_CRCON_PAGE_SIZE = 50
 DEFAULT_HISTORICAL_CRCON_TIMEOUT_SECONDS = 15.0
 DEFAULT_HISTORICAL_CRCON_DETAIL_WORKERS = 8
+DEFAULT_HISTORICAL_CRCON_REQUEST_RETRIES = 3
+DEFAULT_HISTORICAL_CRCON_RETRY_DELAY_SECONDS = 0.5
 DEFAULT_HISTORICAL_REFRESH_INTERVAL_SECONDS = 1800
 DEFAULT_HISTORICAL_REFRESH_MAX_RETRIES = 2
 DEFAULT_HISTORICAL_REFRESH_RETRY_DELAY_SECONDS = 30
@@ -110,6 +112,34 @@ def get_historical_crcon_detail_workers() -> int:
         raise ValueError("HLL_HISTORICAL_CRCON_DETAIL_WORKERS must be positive.")
 
     return worker_count
+
+
+def get_historical_crcon_request_retries() -> int:
+    """Return the retry count used for CRCON historical JSON requests."""
+    configured_value = os.getenv(
+        "HLL_HISTORICAL_CRCON_REQUEST_RETRIES",
+        str(DEFAULT_HISTORICAL_CRCON_REQUEST_RETRIES),
+    )
+    retry_count = int(configured_value)
+    if retry_count <= 0:
+        raise ValueError("HLL_HISTORICAL_CRCON_REQUEST_RETRIES must be positive.")
+
+    return retry_count
+
+
+def get_historical_crcon_retry_delay_seconds() -> float:
+    """Return the base delay used between CRCON request retries."""
+    configured_value = os.getenv(
+        "HLL_HISTORICAL_CRCON_RETRY_DELAY_SECONDS",
+        str(DEFAULT_HISTORICAL_CRCON_RETRY_DELAY_SECONDS),
+    )
+    retry_delay_seconds = float(configured_value)
+    if retry_delay_seconds < 0:
+        raise ValueError(
+            "HLL_HISTORICAL_CRCON_RETRY_DELAY_SECONDS must be zero or positive."
+        )
+
+    return retry_delay_seconds
 
 
 def get_historical_refresh_interval_seconds() -> int:

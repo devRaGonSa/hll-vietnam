@@ -15,14 +15,20 @@ from urllib.request import Request, urlopen
 from .config import (
     get_historical_crcon_detail_workers,
     get_historical_crcon_page_size,
+    get_historical_crcon_request_retries,
     get_historical_crcon_request_timeout_seconds,
+    get_historical_crcon_retry_delay_seconds,
 )
 from .historical_storage import (
+    finalize_backfill_progress,
     finalize_ingestion_run,
+    get_backfill_resume_page,
     get_refresh_cutoff_for_server,
     initialize_historical_storage,
     list_historical_coverage_report,
     list_historical_servers,
+    mark_backfill_progress_page_completed,
+    mark_backfill_progress_started,
     start_ingestion_run,
     upsert_historical_match,
 )
@@ -31,7 +37,6 @@ from .historical_storage import (
 PUBLIC_INFO_ENDPOINT = "/api/get_public_info"
 MATCH_LIST_ENDPOINT = "/api/get_scoreboard_maps"
 MATCH_DETAIL_ENDPOINT = "/api/get_map_scoreboard"
-DEFAULT_DETAIL_FETCH_RETRIES = 3
 
 
 @dataclass(slots=True)
@@ -57,7 +62,7 @@ def run_bootstrap(
     server_slug: str | None = None,
     max_pages: int | None = None,
     page_size: int | None = None,
-    start_page: int = 1,
+    start_page: int | None = None,
     detail_workers: int | None = None,
 ) -> dict[str, object]:
     """Run a first full historical import against one or all configured servers."""
@@ -77,7 +82,7 @@ def run_incremental_refresh(
     server_slug: str | None = None,
     max_pages: int | None = None,
     page_size: int | None = None,
-    start_page: int = 1,
+    start_page: int | None = None,
     detail_workers: int | None = None,
 ) -> dict[str, object]:
     """Refresh recent historical pages without replaying the whole archive."""
@@ -98,7 +103,7 @@ def _run_ingestion(
     server_slug: str | None,
     max_pages: int | None,
     page_size: int | None,
-    start_page: int,
+    start_page: int | None,
     detail_workers: int | None,
     incremental: bool,
 ) -> dict[str, object]:
@@ -106,23 +111,35 @@ def _run_ingestion(
     stats = IngestionStats()
     selected_servers = _select_servers(server_slug)
     processed_servers: list[dict[str, object]] = []
-    runs: list[int] = []
+    active_runs: dict[str, int] = {}
 
     try:
         for server in selected_servers:
             run_id = start_ingestion_run(mode=mode, target_server_slug=str(server["slug"]))
-            runs.append(run_id)
+            active_runs[str(server["slug"])] = run_id
+            mark_backfill_progress_started(
+                server_slug=str(server["slug"]),
+                mode=mode,
+                run_id=run_id,
+            )
             cutoff = (
                 get_refresh_cutoff_for_server(str(server["slug"]))
                 if incremental
                 else None
             )
+            resolved_start_page = _resolve_start_page(
+                start_page=start_page,
+                server_slug=str(server["slug"]),
+                mode=mode,
+            )
             server_stats = _ingest_server(
                 server=server,
+                mode=mode,
+                run_id=run_id,
                 stats=stats,
                 max_pages=max_pages,
                 page_size=page_size,
-                start_page=start_page,
+                start_page=resolved_start_page,
                 detail_workers=detail_workers,
                 cutoff=cutoff,
             )
@@ -138,8 +155,16 @@ def _run_ingestion(
                 player_rows_updated=server_stats["player_rows_updated"],
                 notes=f"public_name={server_stats['public_name']}",
             )
+            finalize_backfill_progress(
+                server_slug=str(server["slug"]),
+                mode=mode,
+                run_id=run_id,
+                status="success",
+                archive_exhausted=bool(server_stats["archive_exhausted"]),
+            )
+            active_runs.pop(str(server["slug"]), None)
     except Exception as exc:
-        for run_id in runs:
+        for active_server_slug, run_id in active_runs.items():
             finalize_ingestion_run(
                 run_id,
                 status="failed",
@@ -150,6 +175,13 @@ def _run_ingestion(
                 player_rows_inserted=stats.player_rows_inserted,
                 player_rows_updated=stats.player_rows_updated,
                 notes=str(exc),
+            )
+            finalize_backfill_progress(
+                server_slug=active_server_slug,
+                mode=mode,
+                run_id=run_id,
+                status="failed",
+                error_message=str(exc),
             )
         raise
 
@@ -175,6 +207,8 @@ def _run_ingestion(
 def _ingest_server(
     *,
     server: dict[str, object],
+    mode: str,
+    run_id: int,
     stats: IngestionStats,
     max_pages: int | None,
     page_size: int | None,
@@ -190,6 +224,7 @@ def _ingest_server(
     public_info = _fetch_public_info(str(server["scoreboard_base_url"]))
     discovered_total_matches: int | None = None
     last_page_processed: int | None = None
+    archive_exhausted = False
 
     for page_number in range(start_page, start_page + page_limit):
         payload = _fetch_match_page(
@@ -201,6 +236,7 @@ def _ingest_server(
             discovered_total_matches = _coerce_int(payload.get("total"))
         page_matches = _coerce_match_list(payload.get("maps"))
         if not page_matches:
+            archive_exhausted = True
             break
 
         local_stats.pages_processed += 1
@@ -234,6 +270,15 @@ def _ingest_server(
             local_stats.apply(delta)
             stats.apply(delta)
 
+        mark_backfill_progress_page_completed(
+            server_slug=str(server["slug"]),
+            mode=mode,
+            page_number=page_number,
+            page_size=resolved_page_size,
+            run_id=run_id,
+            discovered_total_matches=discovered_total_matches,
+        )
+
         if stop_after_page:
             break
 
@@ -251,7 +296,21 @@ def _ingest_server(
         "start_page": start_page,
         "last_page_processed": last_page_processed,
         "cutoff": cutoff,
+        "archive_exhausted": archive_exhausted,
     }
+
+
+def _resolve_start_page(
+    *,
+    start_page: int | None,
+    server_slug: str,
+    mode: str,
+) -> int:
+    if start_page is not None:
+        return max(1, start_page)
+    if mode != "bootstrap":
+        return 1
+    return get_backfill_resume_page(server_slug, mode=mode)
 
 
 def _select_servers(server_slug: str | None) -> list[dict[str, object]]:
@@ -344,10 +403,12 @@ def _fetch_dict_payload(
     query: dict[str, object] | None = None,
     *,
     context: str = "",
-    retries: int = DEFAULT_DETAIL_FETCH_RETRIES,
+    retries: int | None = None,
 ) -> dict[str, object]:
+    resolved_retries = retries or get_historical_crcon_request_retries()
+    base_retry_delay_seconds = get_historical_crcon_retry_delay_seconds()
     last_error: Exception | None = None
-    for attempt in range(1, retries + 1):
+    for attempt in range(1, resolved_retries + 1):
         try:
             payload = _unwrap_result(_fetch_json(base_url, endpoint, query))
         except Exception as exc:  # pragma: no cover - network path
@@ -359,8 +420,8 @@ def _fetch_dict_payload(
                 f"Unexpected payload type for {base_url}{endpoint} {context}".strip()
             )
 
-        if attempt < retries:
-            time.sleep(0.5 * attempt)
+        if attempt < resolved_retries:
+            time.sleep(base_retry_delay_seconds * attempt)
 
     assert last_error is not None
     raise last_error
@@ -442,8 +503,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--start-page",
         type=int,
-        default=1,
-        help="resume bootstrap or refresh from a specific page number",
+        help="override the resume page; bootstrap uses persisted progress when omitted",
     )
     parser.add_argument(
         "--detail-workers",

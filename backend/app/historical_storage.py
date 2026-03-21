@@ -147,6 +147,24 @@ def initialize_historical_storage(*, db_path: Path | None = None) -> Path:
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
             );
 
+            CREATE TABLE IF NOT EXISTS historical_backfill_progress (
+                historical_server_id INTEGER NOT NULL,
+                mode TEXT NOT NULL,
+                next_page INTEGER NOT NULL DEFAULT 1,
+                last_completed_page INTEGER,
+                discovered_total_matches INTEGER,
+                discovered_total_pages INTEGER,
+                archive_exhausted INTEGER NOT NULL DEFAULT 0,
+                last_run_id INTEGER,
+                last_run_status TEXT,
+                last_run_started_at TEXT,
+                last_run_completed_at TEXT,
+                last_error TEXT,
+                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                PRIMARY KEY (historical_server_id, mode),
+                FOREIGN KEY (historical_server_id) REFERENCES historical_servers(id)
+            );
+
             CREATE INDEX IF NOT EXISTS idx_historical_matches_server_end
             ON historical_matches(historical_server_id, ended_at DESC, started_at DESC);
 
@@ -155,6 +173,9 @@ def initialize_historical_storage(*, db_path: Path | None = None) -> Path:
 
             CREATE INDEX IF NOT EXISTS idx_historical_players_steam
             ON historical_players(steam_id);
+
+            CREATE INDEX IF NOT EXISTS idx_historical_backfill_progress_run
+            ON historical_backfill_progress(last_run_id);
             """
         )
         _seed_default_historical_servers(connection)
@@ -246,6 +267,259 @@ def finalize_ingestion_run(
                 run_id,
             ),
         )
+
+
+def mark_backfill_progress_started(
+    *,
+    server_slug: str,
+    mode: str,
+    run_id: int,
+    db_path: Path | None = None,
+) -> None:
+    """Persist the start of one resumable historical backfill attempt."""
+    resolved_path = initialize_historical_storage(db_path=db_path)
+    with _connect(resolved_path) as connection:
+        server_row = _resolve_historical_server(connection, server_slug)
+        connection.execute(
+            """
+            INSERT INTO historical_backfill_progress (
+                historical_server_id,
+                mode,
+                next_page,
+                archive_exhausted,
+                last_run_id,
+                last_run_status,
+                last_run_started_at,
+                last_run_completed_at,
+                last_error
+            ) VALUES (?, ?, 1, 0, ?, 'running', ?, NULL, NULL)
+            ON CONFLICT(historical_server_id, mode) DO UPDATE SET
+                last_run_id = excluded.last_run_id,
+                last_run_status = excluded.last_run_status,
+                last_run_started_at = excluded.last_run_started_at,
+                last_run_completed_at = NULL,
+                last_error = NULL,
+                archive_exhausted = CASE
+                    WHEN excluded.mode = 'bootstrap' THEN 0
+                    ELSE historical_backfill_progress.archive_exhausted
+                END,
+                updated_at = CURRENT_TIMESTAMP
+            """,
+            (server_row["id"], mode, run_id, _utc_now_iso()),
+        )
+
+
+def mark_backfill_progress_page_completed(
+    *,
+    server_slug: str,
+    mode: str,
+    page_number: int,
+    page_size: int,
+    run_id: int,
+    discovered_total_matches: int | None,
+    db_path: Path | None = None,
+) -> None:
+    """Persist the latest completed page so bootstraps can resume safely."""
+    resolved_path = initialize_historical_storage(db_path=db_path)
+    discovered_total_pages = None
+    if discovered_total_matches and page_size > 0:
+        discovered_total_pages = (discovered_total_matches + page_size - 1) // page_size
+
+    with _connect(resolved_path) as connection:
+        server_row = _resolve_historical_server(connection, server_slug)
+        connection.execute(
+            """
+            INSERT INTO historical_backfill_progress (
+                historical_server_id,
+                mode,
+                next_page,
+                last_completed_page,
+                discovered_total_matches,
+                discovered_total_pages,
+                archive_exhausted,
+                last_run_id,
+                last_run_status,
+                last_run_started_at,
+                last_run_completed_at,
+                last_error
+            ) VALUES (?, ?, ?, ?, ?, ?, 0, ?, ?, ?, NULL, NULL)
+            ON CONFLICT(historical_server_id, mode) DO UPDATE SET
+                next_page = excluded.next_page,
+                last_completed_page = excluded.last_completed_page,
+                discovered_total_matches = COALESCE(
+                    excluded.discovered_total_matches,
+                    historical_backfill_progress.discovered_total_matches
+                ),
+                discovered_total_pages = COALESCE(
+                    excluded.discovered_total_pages,
+                    historical_backfill_progress.discovered_total_pages
+                ),
+                archive_exhausted = 0,
+                last_run_id = excluded.last_run_id,
+                last_run_status = excluded.last_run_status,
+                last_run_started_at = excluded.last_run_started_at,
+                last_run_completed_at = NULL,
+                last_error = NULL,
+                updated_at = CURRENT_TIMESTAMP
+            """,
+            (
+                server_row["id"],
+                mode,
+                page_number + 1,
+                page_number,
+                discovered_total_matches,
+                discovered_total_pages,
+                run_id,
+                "running",
+                _utc_now_iso(),
+            ),
+        )
+
+
+def finalize_backfill_progress(
+    *,
+    server_slug: str,
+    mode: str,
+    run_id: int,
+    status: str,
+    archive_exhausted: bool = False,
+    error_message: str | None = None,
+    db_path: Path | None = None,
+) -> None:
+    """Persist the final state of one resumable historical backfill attempt."""
+    resolved_path = initialize_historical_storage(db_path=db_path)
+    with _connect(resolved_path) as connection:
+        server_row = _resolve_historical_server(connection, server_slug)
+        connection.execute(
+            """
+            INSERT INTO historical_backfill_progress (
+                historical_server_id,
+                mode,
+                next_page,
+                archive_exhausted,
+                last_run_id,
+                last_run_status,
+                last_run_started_at,
+                last_run_completed_at,
+                last_error
+            ) VALUES (?, ?, 1, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(historical_server_id, mode) DO UPDATE SET
+                archive_exhausted = CASE
+                    WHEN excluded.last_run_status = 'success' AND excluded.archive_exhausted = 1
+                    THEN 1
+                    WHEN excluded.last_run_status = 'success'
+                    THEN historical_backfill_progress.archive_exhausted
+                    ELSE historical_backfill_progress.archive_exhausted
+                END,
+                last_run_id = excluded.last_run_id,
+                last_run_status = excluded.last_run_status,
+                last_run_started_at = COALESCE(
+                    historical_backfill_progress.last_run_started_at,
+                    excluded.last_run_started_at
+                ),
+                last_run_completed_at = excluded.last_run_completed_at,
+                last_error = excluded.last_error,
+                updated_at = CURRENT_TIMESTAMP
+            """,
+            (
+                server_row["id"],
+                mode,
+                1 if archive_exhausted else 0,
+                run_id,
+                status,
+                _utc_now_iso(),
+                _utc_now_iso(),
+                error_message,
+            ),
+        )
+
+
+def get_backfill_resume_page(
+    server_slug: str,
+    *,
+    mode: str = "bootstrap",
+    db_path: Path | None = None,
+) -> int:
+    """Return the next page recorded for one resumable historical backfill."""
+    resolved_path = initialize_historical_storage(db_path=db_path)
+    with _connect(resolved_path) as connection:
+        server_row = _resolve_historical_server(connection, server_slug)
+        row = connection.execute(
+            """
+            SELECT next_page
+            FROM historical_backfill_progress
+            WHERE historical_server_id = ? AND mode = ?
+            """,
+            (server_row["id"], mode),
+        ).fetchone()
+    return max(1, int(row["next_page"])) if row and row["next_page"] else 1
+
+
+def list_historical_backfill_progress(
+    *,
+    server_slug: str | None = None,
+    mode: str = "bootstrap",
+    db_path: Path | None = None,
+) -> list[dict[str, object]]:
+    """Return persisted resume checkpoints and last run state per server."""
+    resolved_path = initialize_historical_storage(db_path=db_path)
+    where_clause = ""
+    params: list[object] = [mode]
+    if server_slug:
+        where_clause = "WHERE historical_servers.slug = ?"
+        params.append(server_slug)
+
+    with _connect(resolved_path) as connection:
+        rows = connection.execute(
+            f"""
+            SELECT
+                historical_servers.slug AS server_slug,
+                historical_servers.display_name AS server_name,
+                progress.mode AS mode,
+                progress.next_page AS next_page,
+                progress.last_completed_page AS last_completed_page,
+                progress.discovered_total_matches AS discovered_total_matches,
+                progress.discovered_total_pages AS discovered_total_pages,
+                progress.archive_exhausted AS archive_exhausted,
+                progress.last_run_id AS last_run_id,
+                progress.last_run_status AS last_run_status,
+                progress.last_run_started_at AS last_run_started_at,
+                progress.last_run_completed_at AS last_run_completed_at,
+                progress.last_error AS last_error
+            FROM historical_servers
+            LEFT JOIN historical_backfill_progress AS progress
+                ON progress.historical_server_id = historical_servers.id
+                AND progress.mode = ?
+            {where_clause}
+            ORDER BY historical_servers.server_number ASC, historical_servers.slug ASC
+            """,
+            params,
+        ).fetchall()
+
+    items: list[dict[str, object]] = []
+    for row in rows:
+        items.append(
+            {
+                "server": {
+                    "slug": row["server_slug"],
+                    "name": row["server_name"],
+                },
+                "mode": row["mode"] or mode,
+                "next_page": int(row["next_page"] or 1),
+                "last_completed_page": _coerce_int(row["last_completed_page"]),
+                "discovered_total_matches": _coerce_int(row["discovered_total_matches"]),
+                "discovered_total_pages": _coerce_int(row["discovered_total_pages"]),
+                "archive_exhausted": bool(row["archive_exhausted"]),
+                "last_run": {
+                    "run_id": _coerce_int(row["last_run_id"]),
+                    "status": _stringify(row["last_run_status"]),
+                    "started_at": _stringify(row["last_run_started_at"]),
+                    "completed_at": _stringify(row["last_run_completed_at"]),
+                    "error": _stringify(row["last_error"]),
+                },
+            }
+        )
+    return items
 
 
 def upsert_historical_match(
@@ -567,6 +841,13 @@ def list_historical_server_summaries(
             params,
         ).fetchall()
 
+    progress_by_server = {
+        item["server"]["slug"]: item
+        for item in list_historical_backfill_progress(
+            server_slug=server_slug,
+            db_path=resolved_path,
+        )
+    }
     top_maps_by_server: dict[str, list[dict[str, object]]] = {}
     for row in map_rows:
         server_key = str(row["server_slug"])
@@ -586,6 +867,8 @@ def list_historical_server_summaries(
         first_match_at = _stringify(row["first_match_at"])
         last_match_at = _stringify(row["last_match_at"])
         coverage_days = _calculate_coverage_days(first_match_at, last_match_at)
+        progress = progress_by_server.get(str(row["server_slug"]), {})
+        discovered_total_matches = _coerce_int(progress.get("discovered_total_matches"))
         items.append(
             {
                 "server": {
@@ -602,9 +885,24 @@ def list_historical_server_summaries(
                     "basis": "persisted-import",
                     "status": _classify_coverage_status(matches_count, coverage_days),
                     "imported_matches_count": matches_count,
+                    "discovered_total_matches": discovered_total_matches,
                     "first_match_at": first_match_at,
                     "last_match_at": last_match_at,
                     "coverage_days": coverage_days,
+                },
+                "backfill": {
+                    "mode": progress.get("mode", "bootstrap"),
+                    "next_page": _coerce_int(progress.get("next_page")) or 1,
+                    "last_completed_page": _coerce_int(progress.get("last_completed_page")),
+                    "discovered_total_matches": discovered_total_matches,
+                    "discovered_total_pages": _coerce_int(progress.get("discovered_total_pages")),
+                    "remaining_matches_estimate": (
+                        max(discovered_total_matches - matches_count, 0)
+                        if discovered_total_matches is not None
+                        else None
+                    ),
+                    "archive_exhausted": bool(progress.get("archive_exhausted")),
+                    "last_run": progress.get("last_run"),
                 },
                 "time_range": {
                     "start": first_match_at,
@@ -656,9 +954,17 @@ def list_historical_coverage_report(
         ).fetchall()
 
     items: list[dict[str, object]] = []
+    progress_by_server = {
+        item["server"]["slug"]: item
+        for item in list_historical_backfill_progress(
+            server_slug=server_slug,
+            db_path=resolved_path,
+        )
+    }
     for row in rows:
         first_match_at = _stringify(row["first_match_at"])
         last_match_at = _stringify(row["last_match_at"])
+        progress = progress_by_server.get(str(row["server_slug"]), {})
         items.append(
             {
                 "server": {
@@ -673,6 +979,18 @@ def list_historical_coverage_report(
                 "first_match_at": first_match_at,
                 "last_match_at": last_match_at,
                 "coverage_days": _calculate_coverage_days(first_match_at, last_match_at),
+                "backfill": {
+                    "next_page": _coerce_int(progress.get("next_page")) or 1,
+                    "last_completed_page": _coerce_int(progress.get("last_completed_page")),
+                    "discovered_total_matches": _coerce_int(
+                        progress.get("discovered_total_matches")
+                    ),
+                    "discovered_total_pages": _coerce_int(
+                        progress.get("discovered_total_pages")
+                    ),
+                    "archive_exhausted": bool(progress.get("archive_exhausted")),
+                    "last_run": progress.get("last_run"),
+                },
             }
         )
     return items

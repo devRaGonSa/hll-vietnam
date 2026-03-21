@@ -2,7 +2,7 @@
 
 ## Validation Date
 
-- 2026-03-20
+- 2026-03-21
 
 ## Scope
 
@@ -80,10 +80,20 @@ larga incluso con paralelismo.
 
 ## Operational Conclusion
 
-- El bootstrap ya es reanudable mediante `--start-page`.
+- El bootstrap queda reanudable por checkpoint persistido en
+  `historical_backfill_progress`; si no se pasa `--start-page`, una nueva
+  sesion continua desde `next_page`.
+- Cada pagina completada actualiza por servidor:
+  - `last_completed_page`
+  - `next_page`
+  - `discovered_total_matches`
+  - `discovered_total_pages`
+  - `last_run`
 - La estrategia operativa razonable para completar todo el archivo es ejecutar
-  varias sesiones consecutivas, registrando la ultima pagina completada y
-  continuando desde ahi si el origen falla o si la sesion debe cortarse.
+  varias sesiones consecutivas con el mismo comando hasta que
+  `archive_exhausted` pase a `true`.
+- `--start-page` se conserva solo como override manual cuando haga falta
+  reprocesar un tramo concreto.
 - Mientras no se complete todo el archivo, cualquier UI o API debe mostrar la
   cobertura importada como cobertura real disponible y no como historico total
   del servidor.
