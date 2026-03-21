@@ -70,6 +70,7 @@ Variables opcionales:
 - `HLL_HISTORICAL_CRCON_REQUEST_RETRIES`
 - `HLL_HISTORICAL_CRCON_RETRY_DELAY_SECONDS`
 - `HLL_HISTORICAL_REFRESH_INTERVAL_SECONDS`
+- `HLL_HISTORICAL_SNAPSHOT_REFRESH_INTERVAL_SECONDS`
 - `HLL_HISTORICAL_REFRESH_MAX_RETRIES`
 - `HLL_HISTORICAL_REFRESH_RETRY_DELAY_SECONDS`
 
@@ -558,22 +559,33 @@ Los reintentos de cada request JSON pueden ajustarse sin tocar codigo con:
 - `HLL_HISTORICAL_CRCON_RETRY_DELAY_SECONDS`
 
 El runner `python -m app.historical_runner` deja ese refresh incremental listo
-para ejecucion local repetida sin depender de infraestructura externa. Por
+para ejecucion local repetida sin depender de infraestructura externa y
+regenera snapshots historicos precalculados tras cada refresh correcto. Por
 defecto:
 
-- refresca cada `1800` segundos
+- refresca y recompone snapshots cada `900` segundos
 - reintenta hasta `2` veces tras un fallo
 - espera `30` segundos entre reintentos
 - reutiliza el registro de `historical_ingestion_runs` para dejar trazabilidad
   de ultimo refresh, resultado y errores basicos
+- persiste por servidor:
+  - `server-summary`
+  - `weekly-leaderboard` para `kills`, `deaths`, `support` y `matches_over_100_kills`
+  - `recent-matches`
 
 Flags utiles del runner:
 
 - `--server comunidad-hispana-01` para limitar a un servidor
-- `--interval 900` para aumentar frecuencia local
+- `--interval 900` para fijar la frecuencia recomendada de snapshots
 - `--retries 1` para reducir reintentos
 - `--retry-delay 10` para bajar la espera entre fallos
 - `--max-runs 1` para una validacion puntual sin bucle indefinido
+
+Variables utiles del runner:
+
+- `HLL_HISTORICAL_SNAPSHOT_REFRESH_INTERVAL_SECONDS`
+- `HLL_HISTORICAL_REFRESH_MAX_RETRIES`
+- `HLL_HISTORICAL_REFRESH_RETRY_DELAY_SECONDS`
 
 Al inicializar la persistencia local, el backend normaliza tambien la identidad
 historica ya guardada:

@@ -16,6 +16,7 @@ DEFAULT_HISTORICAL_CRCON_DETAIL_WORKERS = 8
 DEFAULT_HISTORICAL_CRCON_REQUEST_RETRIES = 3
 DEFAULT_HISTORICAL_CRCON_RETRY_DELAY_SECONDS = 0.5
 DEFAULT_HISTORICAL_REFRESH_INTERVAL_SECONDS = 1800
+DEFAULT_HISTORICAL_SNAPSHOT_REFRESH_INTERVAL_SECONDS = 900
 DEFAULT_HISTORICAL_REFRESH_MAX_RETRIES = 2
 DEFAULT_HISTORICAL_REFRESH_RETRY_DELAY_SECONDS = 30
 DEFAULT_ALLOWED_ORIGINS = (
@@ -145,12 +146,17 @@ def get_historical_crcon_retry_delay_seconds() -> float:
 def get_historical_refresh_interval_seconds() -> int:
     """Return the default interval used by the historical refresh loop."""
     configured_value = os.getenv(
-        "HLL_HISTORICAL_REFRESH_INTERVAL_SECONDS",
-        str(DEFAULT_HISTORICAL_REFRESH_INTERVAL_SECONDS),
+        "HLL_HISTORICAL_SNAPSHOT_REFRESH_INTERVAL_SECONDS",
+        os.getenv(
+            "HLL_HISTORICAL_REFRESH_INTERVAL_SECONDS",
+            str(DEFAULT_HISTORICAL_SNAPSHOT_REFRESH_INTERVAL_SECONDS),
+        ),
     )
     interval_seconds = int(configured_value)
     if interval_seconds <= 0:
-        raise ValueError("HLL_HISTORICAL_REFRESH_INTERVAL_SECONDS must be positive.")
+        raise ValueError(
+            "HLL_HISTORICAL_SNAPSHOT_REFRESH_INTERVAL_SECONDS must be positive."
+        )
 
     return interval_seconds
 

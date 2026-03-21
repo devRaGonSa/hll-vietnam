@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import json
 import time
+from datetime import datetime, timezone
 from typing import Any
 
 from .config import (
@@ -13,6 +14,8 @@ from .config import (
     get_historical_refresh_retry_delay_seconds,
 )
 from .historical_ingestion import run_incremental_refresh
+from .historical_snapshot_storage import persist_historical_snapshot_batch
+from .historical_snapshots import build_all_historical_snapshots
 
 
 def run_periodic_historical_refresh(
@@ -25,7 +28,7 @@ def run_periodic_historical_refresh(
     page_size: int | None = None,
     max_runs: int | None = None,
 ) -> None:
-    """Run periodic historical refreshes until interrupted or the limit is reached."""
+    """Run periodic historical refreshes and rebuild persisted snapshots."""
     completed_runs = 0
     print(
         "Starting historical refresh loop "
@@ -65,16 +68,18 @@ def _run_refresh_with_retries(
     while True:
         attempt += 1
         try:
-            result = run_incremental_refresh(
+            refresh_result = run_incremental_refresh(
                 server_slug=server_slug,
                 max_pages=max_pages,
                 page_size=page_size,
             )
+            snapshot_result = generate_historical_snapshots(server_slug=server_slug)
             return {
                 "status": "ok",
                 "attempts_used": attempt,
                 "max_retries": max_retries,
-                "result": result,
+                "refresh_result": refresh_result,
+                "snapshot_result": snapshot_result,
             }
         except Exception as exc:
             if attempt > max_retries:
@@ -88,16 +93,42 @@ def _run_refresh_with_retries(
                 time.sleep(retry_delay_seconds)
 
 
+def generate_historical_snapshots(
+    *,
+    server_slug: str | None = None,
+) -> dict[str, Any]:
+    """Build and persist precomputed snapshots for one server or all servers."""
+    generated_at = datetime.now(timezone.utc)
+    snapshots = build_all_historical_snapshots(
+        server_key=server_slug,
+        generated_at=generated_at,
+    )
+    persisted_records = persist_historical_snapshot_batch(snapshots)
+    snapshots_by_server: dict[str, int] = {}
+    for record in persisted_records:
+        snapshots_by_server.setdefault(record.server_key, 0)
+        snapshots_by_server[record.server_key] += 1
+
+    return {
+        "generated_at": generated_at.isoformat().replace("+00:00", "Z"),
+        "server_slug": server_slug,
+        "snapshot_count": len(persisted_records),
+        "servers_processed": len(snapshots_by_server),
+        "snapshots_by_server": snapshots_by_server,
+        "refresh_interval_seconds": get_historical_refresh_interval_seconds(),
+    }
+
+
 def main() -> None:
     """Allow local scheduled historical refresh execution without external infra."""
     parser = argparse.ArgumentParser(
-        description="Run periodic historical CRCON refreshes for HLL Vietnam.",
+        description="Run periodic historical refreshes and regenerate snapshots for HLL Vietnam.",
     )
     parser.add_argument(
         "--interval",
         type=int,
         default=get_historical_refresh_interval_seconds(),
-        help="Seconds to wait between incremental refresh runs.",
+        help="Seconds to wait between refresh-plus-snapshot runs.",
     )
     parser.add_argument(
         "--retries",

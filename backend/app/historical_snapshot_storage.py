@@ -123,6 +123,31 @@ def persist_historical_snapshot(
     )
 
 
+def persist_historical_snapshot_batch(
+    snapshots: list[dict[str, object]],
+    *,
+    db_path: Path | None = None,
+) -> list[HistoricalSnapshotRecord]:
+    """Persist a batch of snapshots generated in one runner cycle."""
+    records: list[HistoricalSnapshotRecord] = []
+    for snapshot in snapshots:
+        records.append(
+            persist_historical_snapshot(
+                server_key=str(snapshot["server_key"]),
+                snapshot_type=str(snapshot["snapshot_type"]),
+                payload=snapshot["payload"],
+                metric=snapshot.get("metric"),
+                window=snapshot.get("window"),
+                generated_at=snapshot.get("generated_at"),
+                source_range_start=snapshot.get("source_range_start"),
+                source_range_end=snapshot.get("source_range_end"),
+                is_stale=bool(snapshot.get("is_stale", False)),
+                db_path=db_path,
+            )
+        )
+    return records
+
+
 def get_historical_snapshot(
     *,
     server_key: str,
