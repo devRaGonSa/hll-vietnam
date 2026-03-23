@@ -19,6 +19,7 @@ from .config import (
     get_historical_crcon_request_timeout_seconds,
     get_historical_crcon_retry_delay_seconds,
 )
+from .historical_snapshots import generate_and_persist_historical_snapshots
 from .historical_storage import (
     finalize_backfill_progress,
     finalize_ingestion_run,
@@ -163,6 +164,7 @@ def _run_ingestion(
                 archive_exhausted=bool(server_stats["archive_exhausted"]),
             )
             active_runs.pop(str(server["slug"]), None)
+        snapshot_result = generate_and_persist_historical_snapshots(server_key=server_slug)
     except Exception as exc:
         for active_server_slug, run_id in active_runs.items():
             finalize_ingestion_run(
@@ -193,6 +195,7 @@ def _run_ingestion(
         "detail_workers": detail_workers or get_historical_crcon_detail_workers(),
         "servers": processed_servers,
         "coverage": list_historical_coverage_report(server_slug=server_slug),
+        "snapshot_result": snapshot_result,
         "totals": {
             "pages_processed": stats.pages_processed,
             "matches_seen": stats.matches_seen,

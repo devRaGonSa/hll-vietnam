@@ -19,6 +19,8 @@ DEFAULT_HISTORICAL_REFRESH_INTERVAL_SECONDS = 1800
 DEFAULT_HISTORICAL_SNAPSHOT_REFRESH_INTERVAL_SECONDS = 900
 DEFAULT_HISTORICAL_REFRESH_MAX_RETRIES = 2
 DEFAULT_HISTORICAL_REFRESH_RETRY_DELAY_SECONDS = 30
+DEFAULT_HISTORICAL_WEEKLY_FALLBACK_MIN_MATCHES = 3
+DEFAULT_HISTORICAL_WEEKLY_FALLBACK_MAX_WEEKDAY = 2
 DEFAULT_ALLOWED_ORIGINS = (
     "null",
     "http://127.0.0.1:5500",
@@ -187,6 +189,32 @@ def get_historical_refresh_retry_delay_seconds() -> int:
         )
 
     return retry_delay_seconds
+
+
+def get_historical_weekly_fallback_min_matches() -> int:
+    """Return the minimum closed matches required to trust the current week."""
+    configured_value = os.getenv(
+        "HLL_HISTORICAL_WEEKLY_FALLBACK_MIN_MATCHES",
+        str(DEFAULT_HISTORICAL_WEEKLY_FALLBACK_MIN_MATCHES),
+    )
+    min_matches = int(configured_value)
+    if min_matches <= 0:
+        raise ValueError("HLL_HISTORICAL_WEEKLY_FALLBACK_MIN_MATCHES must be positive.")
+
+    return min_matches
+
+
+def get_historical_weekly_fallback_max_weekday() -> int:
+    """Return the last weekday index where weekly fallback may still apply."""
+    configured_value = os.getenv(
+        "HLL_HISTORICAL_WEEKLY_FALLBACK_MAX_WEEKDAY",
+        str(DEFAULT_HISTORICAL_WEEKLY_FALLBACK_MAX_WEEKDAY),
+    )
+    max_weekday = int(configured_value)
+    if max_weekday < 0 or max_weekday > 6:
+        raise ValueError("HLL_HISTORICAL_WEEKLY_FALLBACK_MAX_WEEKDAY must be between 0 and 6.")
+
+    return max_weekday
 
 
 def get_a2s_targets_payload() -> str | None:

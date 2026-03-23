@@ -14,8 +14,7 @@ from .config import (
     get_historical_refresh_retry_delay_seconds,
 )
 from .historical_ingestion import run_incremental_refresh
-from .historical_snapshot_storage import persist_historical_snapshot_batch
-from .historical_snapshots import build_all_historical_snapshots
+from .historical_snapshots import generate_and_persist_historical_snapshots
 
 
 def run_periodic_historical_refresh(
@@ -98,23 +97,12 @@ def generate_historical_snapshots(
     server_slug: str | None = None,
 ) -> dict[str, Any]:
     """Build and persist precomputed snapshots for one server or all servers."""
-    generated_at = datetime.now(timezone.utc)
-    snapshots = build_all_historical_snapshots(
+    result = generate_and_persist_historical_snapshots(
         server_key=server_slug,
-        generated_at=generated_at,
+        generated_at=datetime.now(timezone.utc),
     )
-    persisted_records = persist_historical_snapshot_batch(snapshots)
-    snapshots_by_server: dict[str, int] = {}
-    for record in persisted_records:
-        snapshots_by_server.setdefault(record.server_key, 0)
-        snapshots_by_server[record.server_key] += 1
-
     return {
-        "generated_at": generated_at.isoformat().replace("+00:00", "Z"),
-        "server_slug": server_slug,
-        "snapshot_count": len(persisted_records),
-        "servers_processed": len(snapshots_by_server),
-        "snapshots_by_server": snapshots_by_server,
+        **result,
         "refresh_interval_seconds": get_historical_refresh_interval_seconds(),
     }
 

@@ -7,7 +7,11 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Mapping
 
-from .config import get_storage_path
+from .config import (
+    get_historical_weekly_fallback_max_weekday,
+    get_historical_weekly_fallback_min_matches,
+    get_storage_path,
+)
 from .historical_models import HistoricalServerDefinition
 
 
@@ -1098,16 +1102,26 @@ def list_weekly_leaderboard(
 ) -> dict[str, object]:
     """Return ranked weekly leaderboard totals from persisted historical match stats."""
     resolved_path = initialize_historical_storage(db_path=db_path)
-    window_end = datetime.now(timezone.utc)
-    window_start = window_end - timedelta(days=DEFAULT_WEEKLY_WINDOW_DAYS)
+    current_time = datetime.now(timezone.utc)
+    current_week_start = _start_of_week(current_time)
+    previous_week_start = current_week_start - timedelta(days=DEFAULT_WEEKLY_WINDOW_DAYS)
     normalized_metric = metric.strip() if isinstance(metric, str) else ""
     if normalized_metric not in SUPPORTED_WEEKLY_LEADERBOARD_METRICS:
         raise ValueError(f"Unsupported weekly leaderboard metric: {metric}")
 
+    weekly_window = _select_weekly_window(
+        server_id=server_id,
+        current_time=current_time,
+        current_week_start=current_week_start,
+        previous_week_start=previous_week_start,
+        db_path=resolved_path,
+    )
+    window_start = weekly_window["window_start"]
+    window_end = weekly_window["window_end"]
     where_clauses = [
         "historical_matches.ended_at IS NOT NULL",
         "historical_matches.ended_at >= ?",
-        "historical_matches.ended_at <= ?",
+        "historical_matches.ended_at < ?",
     ]
     params: list[object] = [
         window_start.isoformat().replace("+00:00", "Z"),
@@ -1196,6 +1210,21 @@ def list_weekly_leaderboard(
         "metric": normalized_metric,
         "window_start": window_start.isoformat().replace("+00:00", "Z"),
         "window_end": window_end.isoformat().replace("+00:00", "Z"),
+        "window_days": DEFAULT_WEEKLY_WINDOW_DAYS,
+        "window_kind": weekly_window["window_kind"],
+        "window_label": weekly_window["window_label"],
+        "uses_fallback": weekly_window["uses_fallback"],
+        "selection_reason": weekly_window["selection_reason"],
+        "current_week_start": current_week_start.isoformat().replace("+00:00", "Z"),
+        "current_week_closed_matches": weekly_window["current_week_closed_matches"],
+        "previous_week_closed_matches": weekly_window["previous_week_closed_matches"],
+        "sufficient_sample": {
+            "minimum_closed_matches": weekly_window["minimum_closed_matches"],
+            "current_week_closed_matches": weekly_window["current_week_closed_matches"],
+            "current_week_has_sufficient_sample": weekly_window["current_week_has_sufficient_sample"],
+            "is_early_week": weekly_window["is_early_week"],
+            "fallback_max_weekday": weekly_window["fallback_max_weekday"],
+        },
         "items": items,
     }
 
@@ -2112,6 +2141,105 @@ def _calculate_coverage_days(
     return round(delta.total_seconds() / 86400, 2)
 
 
+def _select_weekly_window(
+    *,
+    server_id: str | None,
+    current_time: datetime,
+    current_week_start: datetime,
+    previous_week_start: datetime,
+    db_path: Path,
+) -> dict[str, object]:
+    min_matches = get_historical_weekly_fallback_min_matches()
+    fallback_max_weekday = get_historical_weekly_fallback_max_weekday()
+    current_week_closed_matches = _count_closed_matches_in_window(
+        server_id=server_id,
+        window_start=current_week_start,
+        window_end=current_time,
+        db_path=db_path,
+    )
+    previous_week_closed_matches = _count_closed_matches_in_window(
+        server_id=server_id,
+        window_start=previous_week_start,
+        window_end=current_week_start,
+        db_path=db_path,
+    )
+    is_early_week = current_time.weekday() <= fallback_max_weekday
+    current_week_has_sufficient_sample = current_week_closed_matches >= min_matches
+    uses_fallback = (
+        is_early_week
+        and not current_week_has_sufficient_sample
+        and previous_week_closed_matches > 0
+    )
+
+    if uses_fallback:
+        return {
+            "window_start": previous_week_start,
+            "window_end": current_week_start,
+            "window_kind": "previous-closed-week-fallback",
+            "window_label": "Semana cerrada anterior",
+            "uses_fallback": True,
+            "selection_reason": "insufficient-current-week-sample",
+            "minimum_closed_matches": min_matches,
+            "current_week_closed_matches": current_week_closed_matches,
+            "previous_week_closed_matches": previous_week_closed_matches,
+            "current_week_has_sufficient_sample": False,
+            "is_early_week": is_early_week,
+            "fallback_max_weekday": fallback_max_weekday,
+        }
+
+    return {
+        "window_start": current_week_start,
+        "window_end": current_time,
+        "window_kind": "current-week",
+        "window_label": "Semana actual",
+        "uses_fallback": False,
+        "selection_reason": "current-week",
+        "minimum_closed_matches": min_matches,
+        "current_week_closed_matches": current_week_closed_matches,
+        "previous_week_closed_matches": previous_week_closed_matches,
+        "current_week_has_sufficient_sample": current_week_has_sufficient_sample,
+        "is_early_week": is_early_week,
+        "fallback_max_weekday": fallback_max_weekday,
+    }
+
+
+def _count_closed_matches_in_window(
+    *,
+    server_id: str | None,
+    window_start: datetime,
+    window_end: datetime,
+    db_path: Path,
+) -> int:
+    where_clauses = [
+        "historical_matches.ended_at IS NOT NULL",
+        "historical_matches.ended_at >= ?",
+        "historical_matches.ended_at < ?",
+    ]
+    params: list[object] = [
+        window_start.isoformat().replace("+00:00", "Z"),
+        window_end.isoformat().replace("+00:00", "Z"),
+    ]
+    if server_id:
+        normalized_server_id = server_id.strip()
+        where_clauses.append(
+            "(historical_servers.slug = ? OR CAST(historical_servers.server_number AS TEXT) = ?)"
+        )
+        params.extend([normalized_server_id, normalized_server_id])
+
+    with _connect(db_path) as connection:
+        row = connection.execute(
+            f"""
+            SELECT COUNT(DISTINCT historical_matches.id) AS matches_count
+            FROM historical_matches
+            INNER JOIN historical_servers
+                ON historical_servers.id = historical_matches.historical_server_id
+            WHERE {" AND ".join(where_clauses)}
+            """,
+            params,
+        ).fetchone()
+    return int(row["matches_count"] or 0) if row is not None else 0
+
+
 def _classify_coverage_status(
     matches_count: int,
     coverage_days: float | None,
@@ -2123,6 +2251,12 @@ def _classify_coverage_status(
     if coverage_days < DEFAULT_WEEKLY_WINDOW_DAYS:
         return "under-week"
     return "week-plus"
+
+
+def _start_of_week(value: datetime) -> datetime:
+    normalized = value.astimezone(timezone.utc)
+    midnight = normalized.replace(hour=0, minute=0, second=0, microsecond=0)
+    return midnight - timedelta(days=midnight.weekday())
 
 
 def _get_nested(payload: Mapping[str, object], *path: str) -> object:

@@ -6,13 +6,13 @@ const DEFAULT_HISTORICAL_SERVER = HISTORICAL_SERVER_SLUGS[0];
 const LEADERBOARD_METRICS = Object.freeze([
   {
     key: "kills",
-    title: "Top kills de los ultimos 7 dias",
+    title: "Top kills semanales",
     valueHeading: "Kills",
     emptyMessage: "Sin datos historicos suficientes para mostrar el top de kills semanal.",
   },
   {
     key: "deaths",
-    title: "Top muertes de los ultimos 7 dias",
+    title: "Top muertes semanales",
     valueHeading: "Muertes",
     emptyMessage: "Sin datos historicos suficientes para mostrar el top de muertes semanal.",
   },
@@ -24,7 +24,7 @@ const LEADERBOARD_METRICS = Object.freeze([
   },
   {
     key: "support",
-    title: "Top puntos de soporte de los ultimos 7 dias",
+    title: "Top puntos de soporte semanales",
     valueHeading: "Soporte",
     emptyMessage: "Sin datos historicos suficientes para mostrar el top de soporte semanal.",
   },
@@ -593,9 +593,17 @@ function buildWeeklyWindowNote(payload) {
 
   const start = formatTimestamp(payload?.window_start);
   const end = formatTimestamp(payload?.window_end);
-  const windowDays = Number(payload?.window_days);
-  const daysLabel = Number.isFinite(windowDays) ? `${windowDays} dias` : "7 dias";
-  return `Ranking servido desde snapshot semanal de ${daysLabel}: ${start} a ${end}.`;
+  const windowLabel = payload?.window_label || "Semana activa";
+  if (payload?.uses_fallback) {
+    const minimumMatches =
+      payload?.sufficient_sample?.minimum_closed_matches || payload?.minimum_closed_matches || 0;
+    const currentWeekMatches =
+      payload?.current_week_closed_matches ??
+      payload?.sufficient_sample?.current_week_closed_matches ??
+      0;
+    return `${windowLabel}: ${start} a ${end}. Se muestra temporalmente porque la semana actual solo tiene ${formatNumber(currentWeekMatches)} cierres y el minimo operativo es ${formatNumber(minimumMatches)}.`;
+  }
+  return `${windowLabel}: ${start} a ${end}.`;
 }
 
 function buildSnapshotMetaText(payload, missingMessage) {

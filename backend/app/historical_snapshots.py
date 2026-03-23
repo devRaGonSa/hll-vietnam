@@ -126,8 +126,42 @@ def build_all_historical_snapshots(
                 recent_matches_limit=recent_matches_limit,
                 db_path=db_path,
             )
-        )
+    )
     return snapshots
+
+
+def generate_and_persist_historical_snapshots(
+    *,
+    server_key: str | None = None,
+    generated_at: datetime | None = None,
+    leaderboard_limit: int = DEFAULT_WEEKLY_LEADERBOARD_LIMIT,
+    recent_matches_limit: int = DEFAULT_RECENT_MATCHES_LIMIT,
+    db_path: Path | None = None,
+) -> dict[str, object]:
+    """Build and persist precomputed snapshots for one server or all servers."""
+    from .historical_snapshot_storage import persist_historical_snapshot_batch
+
+    generated_at_value = _as_utc(generated_at or datetime.now(timezone.utc))
+    snapshots = build_all_historical_snapshots(
+        server_key=server_key,
+        generated_at=generated_at_value,
+        leaderboard_limit=leaderboard_limit,
+        recent_matches_limit=recent_matches_limit,
+        db_path=db_path,
+    )
+    persisted_records = persist_historical_snapshot_batch(snapshots, db_path=db_path)
+    snapshots_by_server: dict[str, int] = {}
+    for record in persisted_records:
+        snapshots_by_server.setdefault(record.server_key, 0)
+        snapshots_by_server[record.server_key] += 1
+
+    return {
+        "generated_at": _to_iso(generated_at_value),
+        "server_slug": server_key,
+        "snapshot_count": len(persisted_records),
+        "servers_processed": len(snapshots_by_server),
+        "snapshots_by_server": snapshots_by_server,
+    }
 
 
 def _build_server_summary_snapshot(

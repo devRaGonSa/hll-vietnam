@@ -73,6 +73,8 @@ Variables opcionales:
 - `HLL_HISTORICAL_SNAPSHOT_REFRESH_INTERVAL_SECONDS`
 - `HLL_HISTORICAL_REFRESH_MAX_RETRIES`
 - `HLL_HISTORICAL_REFRESH_RETRY_DELAY_SECONDS`
+- `HLL_HISTORICAL_WEEKLY_FALLBACK_MIN_MATCHES`
+- `HLL_HISTORICAL_WEEKLY_FALLBACK_MAX_WEEKDAY`
 
 El `frontend/index.html` viene preparado para volver a consultar el bloque de
 servidores cada `120000` ms (`120s`) sin recargar la pagina completa. La landing
@@ -476,15 +478,16 @@ Parametros opcionales:
 - `player` en `/api/historical/player-profile` aceptando `stable_player_key`,
   `steam_id` o `source_player_id`
 
-La ventana temporal es siempre la ultima semana movil respecto al momento de la
-request y solo considera partidas cerradas con `ended_at` para no mezclar
-partidas aun en curso ni filas historicas transitorias. El payload devuelve
-servidor, rango temporal, jugador, kills semanales, posicion y numero de
-partidas consideradas.
+La ventana temporal usa semana calendario UTC y solo considera partidas
+cerradas con `ended_at` para no mezclar partidas aun en curso ni filas
+historicas transitorias. El payload devuelve servidor, rango temporal,
+jugador, kills semanales, posicion y numero de partidas consideradas.
 
 `weekly-leaderboard` generaliza ese bloque para varias metricas semanales por
-servidor usando la misma ventana movil de 7 dias y el mismo filtro de partidas
-cerradas. Metricas soportadas:
+servidor usando el mismo filtro de partidas cerradas. Si la semana actual cae
+entre lunes y miercoles UTC y todavia no acumula al menos `3` partidas
+cerradas, el backend activa un fallback temporal a la semana cerrada anterior.
+Metricas soportadas:
 
 - `kills`
 - `deaths`
@@ -509,6 +512,15 @@ request. Estos endpoints devuelven payloads ligeros listos para frontend con:
 - `is_stale`
 - `freshness`
 - `found`
+- `window_start`
+- `window_end`
+- `window_kind`
+- `window_label`
+- `uses_fallback`
+- `selection_reason`
+- `current_week_closed_matches`
+- `previous_week_closed_matches`
+- `sufficient_sample`
 
 `/api/historical/snapshots/server-summary` devuelve `item` con el resumen del
 servidor. `/api/historical/snapshots/weekly-leaderboard` devuelve `items` ya
@@ -547,7 +559,9 @@ Flags utiles:
 La ejecucion `bootstrap` recorre paginas historicas hasta agotar resultados.
 La ejecucion `refresh` usa una ventana de solape sobre la ultima partida
 persistida por servidor para releer solo paginas recientes y absorber updates
-tardios sin reimportar todo el historico.
+tardios sin reimportar todo el historico. Cuando una ejecucion termina
+correctamente, tambien recompone los snapshots historicos precalculados para el
+servidor afectado o para todos los servidores si la ingesta fue global.
 
 El comando devuelve ademas un resumen de cobertura persistida por servidor. Esto
 ayuda a validar rapidamente cuantos matches reales quedaron importados, el rango
@@ -610,6 +624,8 @@ Variables utiles del runner:
 - `HLL_HISTORICAL_SNAPSHOT_REFRESH_INTERVAL_SECONDS`
 - `HLL_HISTORICAL_REFRESH_MAX_RETRIES`
 - `HLL_HISTORICAL_REFRESH_RETRY_DELAY_SECONDS`
+- `HLL_HISTORICAL_WEEKLY_FALLBACK_MIN_MATCHES`
+- `HLL_HISTORICAL_WEEKLY_FALLBACK_MAX_WEEKDAY`
 
 Al inicializar la persistencia local, el backend normaliza tambien la identidad
 historica ya guardada:
