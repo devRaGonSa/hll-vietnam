@@ -19,10 +19,14 @@ const HISTORICAL_SERVERS = Object.freeze([
 const HISTORICAL_SERVER_SLUGS = Object.freeze(
   HISTORICAL_SERVERS.map((server) => server.slug),
 );
-const DEFAULT_HISTORICAL_SERVER = HISTORICAL_SERVER_SLUGS[0];
+const DEFAULT_HISTORICAL_SERVER = "all-servers";
 const SNAPSHOT_CACHE_TTL_MS = 120000;
 const STALE_SNAPSHOT_CACHE_TTL_MS = 30000;
 const NEGATIVE_SNAPSHOT_CACHE_TTL_MS = 15000;
+let activeServerSlug = DEFAULT_HISTORICAL_SERVER;
+let activeLeaderboardMetric;
+let activeServerRequestId = 0;
+let activeLeaderboardRequestId = 0;
 const LEADERBOARD_METRICS = Object.freeze([
   {
     key: "kills",
@@ -50,6 +54,7 @@ const LEADERBOARD_METRICS = Object.freeze([
   },
 ]);
 const DEFAULT_LEADERBOARD_METRIC = LEADERBOARD_METRICS[0].key;
+activeLeaderboardMetric = DEFAULT_LEADERBOARD_METRIC;
 
 document.addEventListener("DOMContentLoaded", () => {
   const backendBaseUrl =
@@ -83,10 +88,8 @@ document.addEventListener("DOMContentLoaded", () => {
   );
 
   const params = new URLSearchParams(window.location.search);
-  let activeServerSlug = normalizeServerSlug(params.get("server"));
-  let activeLeaderboardMetric = normalizeLeaderboardMetric(params.get("metric"));
-  let activeServerRequestId = 0;
-  let activeLeaderboardRequestId = 0;
+  activeServerSlug = normalizeServerSlug(params.get("server"));
+  activeLeaderboardMetric = normalizeLeaderboardMetric(params.get("metric"));
 
   const summaryCache = new Map();
   const recentMatchesCache = new Map();
