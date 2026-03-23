@@ -523,6 +523,10 @@ precalculados bajo `backend/data/snapshots/` y evita recalcular agregados
 pesados en cada request. Estos endpoints devuelven payloads ligeros listos para
 frontend con:
 
+- `snapshot_status`
+- `missing_reason`
+- `request_path_policy`
+- `generation_policy`
 - `generated_at`
 - `source_range_start`
 - `source_range_end`
@@ -539,11 +543,12 @@ frontend con:
 - `previous_week_closed_matches`
 - `sufficient_sample`
 
-Si un servidor ya tiene historico bruto en `historical_*` pero aun no conserva
-el archivo precalculado correspondiente en `backend/data/snapshots/`, la API
-intenta regenerar automaticamente el lote de snapshots de ese servidor antes de
-responder. Esto evita que un servidor quede bloqueado en `found: false` por una
-ausencia puntual de persistencia precalculada.
+Si un snapshot todavia no existe en `backend/data/snapshots/`, la API responde
+rapido con `found: false`, `snapshot_status: "missing"` y
+`missing_reason: "snapshot-not-generated"`. La generacion y refresco de esos
+artefactos debe ocurrir fuera del request path mediante `historical_ingestion`
+o `historical_runner`; la lectura HTTP se mantiene como fast path de solo
+lectura.
 
 `/api/historical/snapshots/server-summary` devuelve `item` con el resumen del
 servidor. `/api/historical/snapshots/weekly-leaderboard` devuelve `items` ya

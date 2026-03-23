@@ -13,7 +13,6 @@ from .historical_snapshots import (
     SNAPSHOT_TYPE_RECENT_MATCHES,
     SNAPSHOT_TYPE_SERVER_SUMMARY,
     SNAPSHOT_TYPE_WEEKLY_LEADERBOARD,
-    generate_and_persist_historical_snapshots,
 )
 from .historical_storage import (
     ALL_SERVERS_SLUG,
@@ -465,21 +464,6 @@ def _get_historical_snapshot_record(
 ) -> dict[str, object] | None:
     if not server_key:
         return None
-    snapshot = get_historical_snapshot(
-        server_key=server_key,
-        snapshot_type=snapshot_type,
-        metric=metric,
-        window=window,
-    )
-    if snapshot is not None:
-        return snapshot
-
-    # Self-heal missing precomputed rows when raw historical data already exists.
-    try:
-        generate_and_persist_historical_snapshots(server_key=server_key)
-    except Exception:
-        return None
-
     return get_historical_snapshot(
         server_key=server_key,
         snapshot_type=snapshot_type,
@@ -491,6 +475,10 @@ def _get_historical_snapshot_record(
 def _build_historical_snapshot_metadata(snapshot: dict[str, object] | None) -> dict[str, object]:
     if snapshot is None:
         return {
+            "snapshot_status": "missing",
+            "missing_reason": "snapshot-not-generated",
+            "request_path_policy": "read-only-fast-path",
+            "generation_policy": "out-of-band-refresh-only",
             "generated_at": None,
             "source_range_start": None,
             "source_range_end": None,
@@ -499,6 +487,10 @@ def _build_historical_snapshot_metadata(snapshot: dict[str, object] | None) -> d
         }
     is_stale = bool(snapshot.get("is_stale", False))
     return {
+        "snapshot_status": "ready",
+        "missing_reason": None,
+        "request_path_policy": "read-only-fast-path",
+        "generation_policy": "out-of-band-refresh-only",
         "generated_at": snapshot.get("generated_at"),
         "source_range_start": snapshot.get("source_range_start"),
         "source_range_end": snapshot.get("source_range_end"),
