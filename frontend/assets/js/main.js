@@ -7,9 +7,9 @@ const SERVER_HISTORY_URLS = Object.freeze({
 const COMMUNITY_CLANS = Object.freeze([
   {
     name: "LCM",
-    badge: "Comunidad aliada",
+    badge: "Clan CH",
     description:
-      "Clan visible dentro de la red comunitaria hispana con acceso confirmado a Discord.",
+      "Clan activo de la comunidad, con acceso directo a su discord.",
     logoSrc: "./assets/img/clans/lcm.png",
     logoAlt: "Logo de LCM",
     logoClassName: "",
@@ -18,9 +18,9 @@ const COMMUNITY_CLANS = Object.freeze([
   },
   {
     name: "La 129",
-    badge: "Discord pendiente",
+    badge: "Clan CH",
     description:
-      "Presencia confirmada para la seccion comunitaria mientras se publica su acceso definitivo.",
+      "Clan activo de la comunidad, con acceso directo a su discord.",
     logoSrc: "./assets/img/clans/la129.png",
     logoAlt: "Logo de La 129",
     logoClassName: "clan-card__logo--wide",
@@ -29,9 +29,9 @@ const COMMUNITY_CLANS = Object.freeze([
   },
   {
     name: "250 Hispania",
-    badge: "Comunidad aliada",
+    badge: "Clan CH",
     description:
-      "Entrada mostrada con su emblema principal y acceso confirmado al Discord compartido.",
+      "Clan activo de la comunidad, con acceso directo a su discord.",
     logoSrc: "./assets/img/clans/250hispania-shield.png",
     logoAlt: "Escudo de 250 Hispania",
     logoClassName: "clan-card__logo--shield",
@@ -40,9 +40,9 @@ const COMMUNITY_CLANS = Object.freeze([
   },
   {
     name: "H9H",
-    badge: "Logo pendiente",
+    badge: "Clan CH",
     description:
-      "Comunidad incluida en la rotacion mientras se incorpora su identidad visual final.",
+      "Clan activo de la comunidad, con acceso directo a su discord.",
     logoSrc: "",
     logoAlt: "",
     logoClassName: "",
@@ -52,9 +52,9 @@ const COMMUNITY_CLANS = Object.freeze([
   },
   {
     name: "BxB",
-    badge: "Discord pendiente",
+    badge: "Clan CH",
     description:
-      "Clan incorporado a la red visible con su emblema actual y enlace aun por confirmar.",
+      "Clan activo de la comunidad, son raretes.",
     logoSrc: "./assets/img/clans/bxb.png",
     logoAlt: "Logo de BxB",
     logoClassName: "",
@@ -63,9 +63,9 @@ const COMMUNITY_CLANS = Object.freeze([
   },
   {
     name: "7dv",
-    badge: "Comunidad aliada",
+    badge: "Clan CH",
     description:
-      "Entrada activa dentro de la seccion con acceso disponible a su Discord comunitario.",
+      "Clan activo de la comunidad, con acceso directo a su discord.",
     logoSrc: "./assets/img/clans/7dv.png",
     logoAlt: "Logo de 7dv",
     logoClassName: "",
