@@ -9,12 +9,16 @@ from datetime import datetime, timezone
 from typing import Any
 
 from .config import (
+    get_historical_full_snapshot_every_runs,
     get_historical_refresh_interval_seconds,
     get_historical_refresh_max_retries,
     get_historical_refresh_retry_delay_seconds,
 )
 from .historical_ingestion import run_incremental_refresh
-from .historical_snapshots import generate_and_persist_historical_snapshots
+from .historical_snapshots import (
+    generate_and_persist_historical_snapshots,
+    generate_and_persist_priority_historical_snapshots,
+)
 
 
 def run_periodic_historical_refresh(
@@ -44,6 +48,7 @@ def run_periodic_historical_refresh(
                 server_slug=server_slug,
                 max_pages=max_pages,
                 page_size=page_size,
+                run_number=completed_runs,
             )
             print(json.dumps({"run": completed_runs, **payload}, indent=2))
 
@@ -62,6 +67,7 @@ def _run_refresh_with_retries(
     server_slug: str | None,
     max_pages: int | None,
     page_size: int | None,
+    run_number: int,
 ) -> dict[str, Any]:
     attempt = 0
     while True:
@@ -71,8 +77,12 @@ def _run_refresh_with_retries(
                 server_slug=server_slug,
                 max_pages=max_pages,
                 page_size=page_size,
+                rebuild_snapshots=False,
             )
-            snapshot_result = generate_historical_snapshots(server_slug=server_slug)
+            snapshot_result = generate_historical_snapshots(
+                server_slug=server_slug,
+                run_number=run_number,
+            )
             return {
                 "status": "ok",
                 "attempts_used": attempt,
@@ -95,14 +105,26 @@ def _run_refresh_with_retries(
 def generate_historical_snapshots(
     *,
     server_slug: str | None = None,
+    run_number: int = 1,
 ) -> dict[str, Any]:
-    """Build and persist precomputed snapshots for one server or all servers."""
-    result = generate_and_persist_historical_snapshots(
-        server_key=server_slug,
-        generated_at=datetime.now(timezone.utc),
-    )
+    """Build priority prewarm snapshots on every run and the full matrix on cadence."""
+    generated_at = datetime.now(timezone.utc)
+    full_snapshot_every_runs = get_historical_full_snapshot_every_runs()
+    should_run_full_refresh = bool(server_slug) or run_number % full_snapshot_every_runs == 0
+    if should_run_full_refresh:
+        result = generate_and_persist_historical_snapshots(
+            server_key=server_slug,
+            generated_at=generated_at,
+        )
+    else:
+        result = generate_and_persist_priority_historical_snapshots(
+            generated_at=generated_at,
+        )
     return {
         **result,
+        "run_number": run_number,
+        "full_snapshot_every_runs": full_snapshot_every_runs,
+        "prewarm_only": not should_run_full_refresh,
         "refresh_interval_seconds": get_historical_refresh_interval_seconds(),
     }
 

@@ -65,6 +65,7 @@ def run_bootstrap(
     page_size: int | None = None,
     start_page: int | None = None,
     detail_workers: int | None = None,
+    rebuild_snapshots: bool = True,
 ) -> dict[str, object]:
     """Run a first full historical import against one or all configured servers."""
     return _run_ingestion(
@@ -75,6 +76,7 @@ def run_bootstrap(
         start_page=start_page,
         detail_workers=detail_workers,
         incremental=False,
+        rebuild_snapshots=rebuild_snapshots,
     )
 
 
@@ -85,6 +87,7 @@ def run_incremental_refresh(
     page_size: int | None = None,
     start_page: int | None = None,
     detail_workers: int | None = None,
+    rebuild_snapshots: bool = True,
 ) -> dict[str, object]:
     """Refresh recent historical pages without replaying the whole archive."""
     return _run_ingestion(
@@ -95,6 +98,7 @@ def run_incremental_refresh(
         start_page=start_page,
         detail_workers=detail_workers,
         incremental=True,
+        rebuild_snapshots=rebuild_snapshots,
     )
 
 
@@ -107,6 +111,7 @@ def _run_ingestion(
     start_page: int | None,
     detail_workers: int | None,
     incremental: bool,
+    rebuild_snapshots: bool,
 ) -> dict[str, object]:
     initialize_historical_storage()
     stats = IngestionStats()
@@ -164,7 +169,14 @@ def _run_ingestion(
                 archive_exhausted=bool(server_stats["archive_exhausted"]),
             )
             active_runs.pop(str(server["slug"]), None)
-        snapshot_result = generate_and_persist_historical_snapshots(server_key=server_slug)
+        if rebuild_snapshots:
+            snapshot_result = generate_and_persist_historical_snapshots(server_key=server_slug)
+        else:
+            snapshot_result = {
+                "status": "skipped",
+                "reason": "snapshot-rebuild-disabled",
+                "generation_policy": "handled-by-caller",
+            }
     except Exception as exc:
         for active_server_slug, run_id in active_runs.items():
             finalize_ingestion_run(

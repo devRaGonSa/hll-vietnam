@@ -20,8 +20,9 @@ const HISTORICAL_SERVER_SLUGS = Object.freeze(
   HISTORICAL_SERVERS.map((server) => server.slug),
 );
 const DEFAULT_HISTORICAL_SERVER = HISTORICAL_SERVER_SLUGS[0];
-const SNAPSHOT_CACHE_TTL_MS = 60000;
-const NEGATIVE_SNAPSHOT_CACHE_TTL_MS = 5000;
+const SNAPSHOT_CACHE_TTL_MS = 120000;
+const STALE_SNAPSHOT_CACHE_TTL_MS = 30000;
+const NEGATIVE_SNAPSHOT_CACHE_TTL_MS = 15000;
 const LEADERBOARD_METRICS = Object.freeze([
   {
     key: "kills",
@@ -847,9 +848,20 @@ function writeCachedPayload(cache, key, payload) {
 }
 
 function resolveSnapshotCacheTtl(payload) {
-  return payload?.data?.found === false
-    ? NEGATIVE_SNAPSHOT_CACHE_TTL_MS
-    : SNAPSHOT_CACHE_TTL_MS;
+  const data = payload?.data;
+  if (!data) {
+    return NEGATIVE_SNAPSHOT_CACHE_TTL_MS;
+  }
+
+  if (data.snapshot_status === "missing" || data.found === false) {
+    return NEGATIVE_SNAPSHOT_CACHE_TTL_MS;
+  }
+
+  if (data.is_stale) {
+    return STALE_SNAPSHOT_CACHE_TTL_MS;
+  }
+
+  return SNAPSHOT_CACHE_TTL_MS;
 }
 
 async function settlePromise(promise) {

@@ -19,6 +19,7 @@ DEFAULT_HISTORICAL_REFRESH_INTERVAL_SECONDS = 1800
 DEFAULT_HISTORICAL_SNAPSHOT_REFRESH_INTERVAL_SECONDS = 900
 DEFAULT_HISTORICAL_REFRESH_MAX_RETRIES = 2
 DEFAULT_HISTORICAL_REFRESH_RETRY_DELAY_SECONDS = 30
+DEFAULT_HISTORICAL_FULL_SNAPSHOT_EVERY_RUNS = 4
 DEFAULT_HISTORICAL_WEEKLY_FALLBACK_MIN_MATCHES = 3
 DEFAULT_HISTORICAL_WEEKLY_FALLBACK_MAX_WEEKDAY = 2
 DEFAULT_ALLOWED_ORIGINS = (
@@ -189,6 +190,19 @@ def get_historical_refresh_retry_delay_seconds() -> int:
         )
 
     return retry_delay_seconds
+
+
+def get_historical_full_snapshot_every_runs() -> int:
+    """Return how often the runner should rebuild the full snapshot matrix."""
+    configured_value = os.getenv(
+        "HLL_HISTORICAL_FULL_SNAPSHOT_EVERY_RUNS",
+        str(DEFAULT_HISTORICAL_FULL_SNAPSHOT_EVERY_RUNS),
+    )
+    run_count = int(configured_value)
+    if run_count <= 0:
+        raise ValueError("HLL_HISTORICAL_FULL_SNAPSHOT_EVERY_RUNS must be positive.")
+
+    return run_count
 
 
 def get_historical_weekly_fallback_min_matches() -> int:
