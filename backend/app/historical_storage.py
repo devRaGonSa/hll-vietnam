@@ -47,6 +47,7 @@ SUPPORTED_WEEKLY_LEADERBOARD_METRICS = frozenset(
         "matches_over_100_kills",
     }
 )
+SUPPORTED_MONTHLY_LEADERBOARD_METRICS = SUPPORTED_WEEKLY_LEADERBOARD_METRICS
 
 
 def initialize_historical_storage(*, db_path: Path | None = None) -> Path:
@@ -1289,6 +1290,165 @@ def list_weekly_top_kills(
     }
 
 
+def list_monthly_leaderboard(
+    *,
+    limit: int = 10,
+    server_id: str | None = None,
+    metric: str = "kills",
+    db_path: Path | None = None,
+) -> dict[str, object]:
+    """Return ranked monthly leaderboard totals from persisted historical match stats."""
+    resolved_path = initialize_historical_storage(db_path=db_path)
+    aggregate_all_servers = _is_all_servers_selector(server_id)
+    current_time = datetime.now(timezone.utc)
+    current_month_start = _start_of_month(current_time)
+    previous_month_start = _start_of_previous_month(current_month_start)
+    normalized_metric = metric.strip() if isinstance(metric, str) else ""
+    if normalized_metric not in SUPPORTED_MONTHLY_LEADERBOARD_METRICS:
+        raise ValueError(f"Unsupported monthly leaderboard metric: {metric}")
+
+    monthly_window = _select_monthly_window(
+        server_id=server_id,
+        current_time=current_time,
+        current_month_start=current_month_start,
+        previous_month_start=previous_month_start,
+        db_path=resolved_path,
+    )
+    window_start = monthly_window["window_start"]
+    window_end = monthly_window["window_end"]
+    where_clauses = [
+        "historical_matches.ended_at IS NOT NULL",
+        "historical_matches.ended_at >= ?",
+        "historical_matches.ended_at < ?",
+    ]
+    params: list[object] = [
+        window_start.isoformat().replace("+00:00", "Z"),
+        window_end.isoformat().replace("+00:00", "Z"),
+    ]
+    if server_id and not aggregate_all_servers:
+        normalized_server_id = server_id.strip()
+        where_clauses.append(
+            "(historical_servers.slug = ? OR CAST(historical_servers.server_number AS TEXT) = ?)"
+        )
+        params.extend([normalized_server_id, normalized_server_id])
+
+    server_slug_expression = (
+        f"'{ALL_SERVERS_SLUG}'"
+        if aggregate_all_servers
+        else "historical_servers.slug"
+    )
+    server_name_expression = (
+        f"'{ALL_SERVERS_DISPLAY_NAME}'"
+        if aggregate_all_servers
+        else "historical_servers.display_name"
+    )
+    partition_expression = (
+        f"'{ALL_SERVERS_SLUG}'"
+        if aggregate_all_servers
+        else "historical_servers.slug"
+    )
+    group_by_expression = (
+        "historical_players.id"
+        if aggregate_all_servers
+        else "historical_servers.slug, historical_players.id"
+    )
+
+    metric_sum_expression = {
+        "kills": "COALESCE(SUM(historical_player_match_stats.kills), 0)",
+        "deaths": "COALESCE(SUM(historical_player_match_stats.deaths), 0)",
+        "support": "COALESCE(SUM(historical_player_match_stats.support), 0)",
+        "matches_over_100_kills": (
+            "COALESCE(SUM(CASE WHEN COALESCE(historical_player_match_stats.kills, 0) >= 100 "
+            "THEN 1 ELSE 0 END), 0)"
+        ),
+    }[normalized_metric]
+
+    with _connect(resolved_path) as connection:
+        rows = connection.execute(
+            f"""
+            WITH ranked_players AS (
+                SELECT
+                    {server_slug_expression} AS server_slug,
+                    {server_name_expression} AS server_name,
+                    historical_players.stable_player_key,
+                    historical_players.display_name AS player_name,
+                    historical_players.steam_id,
+                    COUNT(DISTINCT historical_matches.id) AS matches_count,
+                    {metric_sum_expression} AS metric_value,
+                    ROW_NUMBER() OVER (
+                        PARTITION BY {partition_expression}
+                        ORDER BY
+                            {metric_sum_expression} DESC,
+                            COUNT(DISTINCT historical_matches.id) ASC,
+                            historical_players.display_name ASC
+                    ) AS ranking_position
+                FROM historical_player_match_stats
+                INNER JOIN historical_matches
+                    ON historical_matches.id = historical_player_match_stats.historical_match_id
+                INNER JOIN historical_servers
+                    ON historical_servers.id = historical_matches.historical_server_id
+                INNER JOIN historical_players
+                    ON historical_players.id = historical_player_match_stats.historical_player_id
+                WHERE {" AND ".join(where_clauses)}
+                GROUP BY {group_by_expression}
+            )
+            SELECT *
+            FROM ranked_players
+            WHERE ranking_position <= ?
+            ORDER BY server_slug ASC, ranking_position ASC
+            """,
+            [*params, limit],
+        ).fetchall()
+
+    window_days = _calculate_window_days(window_start=window_start, window_end=window_end)
+    items: list[dict[str, object]] = []
+    for row in rows:
+        items.append(
+            {
+                "server": {
+                    "slug": row["server_slug"],
+                    "name": row["server_name"],
+                },
+                "time_range": {
+                    "start": window_start.isoformat().replace("+00:00", "Z"),
+                    "end": window_end.isoformat().replace("+00:00", "Z"),
+                    "window_days": window_days,
+                },
+                "player": {
+                    "stable_player_key": row["stable_player_key"],
+                    "name": row["player_name"],
+                    "steam_id": row["steam_id"],
+                },
+                "metric": normalized_metric,
+                "ranking_position": int(row["ranking_position"]),
+                "metric_value": int(row["metric_value"] or 0),
+                "matches_considered": int(row["matches_count"] or 0),
+            }
+        )
+
+    return {
+        "timeframe": "monthly",
+        "metric": normalized_metric,
+        "window_start": window_start.isoformat().replace("+00:00", "Z"),
+        "window_end": window_end.isoformat().replace("+00:00", "Z"),
+        "window_days": window_days,
+        "window_kind": monthly_window["window_kind"],
+        "window_label": monthly_window["window_label"],
+        "uses_fallback": monthly_window["uses_fallback"],
+        "selection_reason": monthly_window["selection_reason"],
+        "current_month_start": current_month_start.isoformat().replace("+00:00", "Z"),
+        "current_month_closed_matches": monthly_window["current_month_closed_matches"],
+        "previous_month_closed_matches": monthly_window["previous_month_closed_matches"],
+        "sufficient_sample": {
+            "minimum_closed_matches": monthly_window["minimum_closed_matches"],
+            "current_month_closed_matches": monthly_window["current_month_closed_matches"],
+            "current_month_has_sufficient_sample": monthly_window["current_month_has_sufficient_sample"],
+            "is_early_month": monthly_window["is_early_month"],
+        },
+        "items": items,
+    }
+
+
 def _connect(db_path: Path) -> sqlite3.Connection:
     connection = sqlite3.connect(db_path)
     connection.row_factory = sqlite3.Row
@@ -2236,6 +2396,59 @@ def _select_weekly_window(
     }
 
 
+def _select_monthly_window(
+    *,
+    server_id: str | None,
+    current_time: datetime,
+    current_month_start: datetime,
+    previous_month_start: datetime,
+    db_path: Path,
+) -> dict[str, object]:
+    current_month_closed_matches = _count_closed_matches_in_window(
+        server_id=server_id,
+        window_start=current_month_start,
+        window_end=current_time,
+        db_path=db_path,
+    )
+    previous_month_closed_matches = _count_closed_matches_in_window(
+        server_id=server_id,
+        window_start=previous_month_start,
+        window_end=current_month_start,
+        db_path=db_path,
+    )
+    is_early_month = current_time.day <= 3
+    uses_fallback = current_month_closed_matches <= 0 and previous_month_closed_matches > 0
+
+    if uses_fallback:
+        return {
+            "window_start": previous_month_start,
+            "window_end": current_month_start,
+            "window_kind": "previous-closed-month-fallback",
+            "window_label": "Mes cerrado anterior",
+            "uses_fallback": True,
+            "selection_reason": "no-current-month-matches",
+            "minimum_closed_matches": 1,
+            "current_month_closed_matches": current_month_closed_matches,
+            "previous_month_closed_matches": previous_month_closed_matches,
+            "current_month_has_sufficient_sample": False,
+            "is_early_month": is_early_month,
+        }
+
+    return {
+        "window_start": current_month_start,
+        "window_end": current_time,
+        "window_kind": "current-month",
+        "window_label": "Mes actual",
+        "uses_fallback": False,
+        "selection_reason": "current-month",
+        "minimum_closed_matches": 1,
+        "current_month_closed_matches": current_month_closed_matches,
+        "previous_month_closed_matches": previous_month_closed_matches,
+        "current_month_has_sufficient_sample": current_month_closed_matches > 0,
+        "is_early_month": is_early_month,
+    }
+
+
 def _count_closed_matches_in_window(
     *,
     server_id: str | None,
@@ -2406,6 +2619,21 @@ def _start_of_week(value: datetime) -> datetime:
     normalized = value.astimezone(timezone.utc)
     midnight = normalized.replace(hour=0, minute=0, second=0, microsecond=0)
     return midnight - timedelta(days=midnight.weekday())
+
+
+def _start_of_month(value: datetime) -> datetime:
+    normalized = value.astimezone(timezone.utc)
+    return normalized.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+
+
+def _start_of_previous_month(value: datetime) -> datetime:
+    previous_day = value - timedelta(days=1)
+    return _start_of_month(previous_day)
+
+
+def _calculate_window_days(*, window_start: datetime, window_end: datetime) -> int:
+    delta = window_end - window_start
+    return max(1, int((delta.total_seconds() + 86399) // 86400))
 
 
 def _get_nested(payload: Mapping[str, object], *path: str) -> object:

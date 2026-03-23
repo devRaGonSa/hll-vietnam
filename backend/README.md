@@ -127,10 +127,12 @@ normaliza espacios y barras finales para mantener la comparacion con el header
 - `GET /api/servers/{id}/history?limit=20`
 - `GET /api/historical/weekly-top-kills?limit=10&server=comunidad-hispana-01`
 - `GET /api/historical/weekly-leaderboard?metric=kills&limit=10&server=comunidad-hispana-01`
+- `GET /api/historical/leaderboard?timeframe=monthly&metric=kills&limit=10&server=comunidad-hispana-01`
 - `GET /api/historical/recent-matches?limit=20&server=comunidad-hispana-01`
 - `GET /api/historical/server-summary?server=comunidad-hispana-01`
 - `GET /api/historical/snapshots/server-summary?server=comunidad-hispana-01`
 - `GET /api/historical/snapshots/weekly-leaderboard?metric=kills&limit=10&server=comunidad-hispana-01`
+- `GET /api/historical/snapshots/leaderboard?timeframe=monthly&metric=kills&limit=10&server=comunidad-hispana-01`
 - `GET /api/historical/snapshots/recent-matches?limit=6&server=comunidad-hispana-01`
 - `GET /api/historical/player-profile?player=steam%3A76561198000000000`
 
@@ -226,6 +228,7 @@ bruto. Esta capa esta preparada para guardar:
 
 - `server-summary`
 - `weekly-leaderboard` con metricas `kills`, `deaths`, `support` y `matches_over_100_kills`
+- `monthly-leaderboard` con las mismas metricas semanticas
 - `recent-matches`
 
 Por defecto se escriben bajo:
@@ -477,10 +480,12 @@ La capa historica propia expone:
 
 - `/api/historical/weekly-top-kills`
 - `/api/historical/weekly-leaderboard`
+- `/api/historical/leaderboard`
 - `/api/historical/recent-matches`
 - `/api/historical/server-summary`
 - `/api/historical/snapshots/server-summary`
 - `/api/historical/snapshots/weekly-leaderboard`
+- `/api/historical/snapshots/leaderboard`
 - `/api/historical/snapshots/recent-matches`
 - `/api/historical/player-profile`
 
@@ -513,6 +518,13 @@ Metricas soportadas:
 
 El endpoint legacy `/api/historical/weekly-top-kills` se conserva como alias
 compatible para la metrica `kills`.
+
+`/api/historical/leaderboard` y `/api/historical/snapshots/leaderboard`
+generalizan ese mismo contrato con `timeframe=weekly|monthly`. Para `monthly`,
+la politica temporal usa el mes natural UTC en curso y hace fallback al mes
+cerrado anterior solo cuando el mes actual todavia no tiene ningun cierre.
+Ambas variantes exponen el rango real usado mediante `window_start`,
+`window_end`, `window_kind`, `window_label` y `selection_reason`.
 
 `recent-matches` devuelve cierres recientes por servidor con marcador, mapa y
 conteo de jugadores. `server-summary` agrega volumen historico, jugadores
@@ -557,6 +569,10 @@ precalculados para una metrica semanal y acepta `limit` para recortar el
 payload ya persistido sin recalcularlo. `/api/historical/snapshots/recent-matches`
 devuelve `items` de cierres recientes ya preparados y tambien acepta `limit`
 para servir solo una parte del snapshot persistido.
+
+La misma capa de snapshots guarda tambien `monthly-leaderboard` por servidor y
+por agregado `all-servers`, con archivos como `monthly-kills.json` y
+`monthly-support.json`.
 
 ## Ingesta historica CRCON
 
@@ -639,6 +655,7 @@ correcto. Por defecto:
 - prewarmea en cada ciclo:
   - `server-summary` para `comunidad-hispana-01`, `comunidad-hispana-02`, `comunidad-hispana-03` y `all-servers`
   - `weekly-leaderboard` de la metrica por defecto `kills` para esos mismos alcances
+  - `monthly-leaderboard` de la metrica por defecto `kills` para esos mismos alcances
   - `recent-matches` para esos mismos alcances
 - recompone la matriz completa de snapshots cada `4` ciclos para mantener el resto de metricas al dia sin penalizar todos los refresh
 - reintenta hasta `2` veces tras un fallo
@@ -648,6 +665,7 @@ correcto. Por defecto:
 - persiste por servidor:
   - `server-summary`
   - `weekly-leaderboard` para `kills`, `deaths`, `support` y `matches_over_100_kills`
+  - `monthly-leaderboard` para `kills`, `deaths`, `support` y `matches_over_100_kills`
   - `recent-matches`
 
 Flags utiles del runner:

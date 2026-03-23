@@ -25,42 +25,60 @@ const STALE_SNAPSHOT_CACHE_TTL_MS = 30000;
 const NEGATIVE_SNAPSHOT_CACHE_TTL_MS = 15000;
 let activeServerSlug = DEFAULT_HISTORICAL_SERVER;
 let activeLeaderboardMetric;
+let activeLeaderboardTimeframe;
 let activeServerRequestId = 0;
 let activeLeaderboardRequestId = 0;
+const LEADERBOARD_TIMEFRAMES = Object.freeze([
+  {
+    key: "weekly",
+    label: "Semanal",
+    shortLabel: "semanal",
+  },
+  {
+    key: "monthly",
+    label: "Mensual",
+    shortLabel: "mensual",
+  },
+]);
 const LEADERBOARD_METRICS = Object.freeze([
   {
     key: "kills",
-    title: "Top kills semanales",
+    title: "Top kills",
     valueHeading: "Kills",
-    emptyMessage: "Sin datos historicos suficientes para mostrar el top de kills semanal.",
+    emptyMessage: "Sin datos historicos suficientes para mostrar este ranking de kills.",
   },
   {
     key: "deaths",
-    title: "Top muertes semanales",
+    title: "Top muertes",
     valueHeading: "Muertes",
-    emptyMessage: "Sin datos historicos suficientes para mostrar el top de muertes semanal.",
+    emptyMessage: "Sin datos historicos suficientes para mostrar este ranking de muertes.",
   },
   {
     key: "matches_over_100_kills",
     title: "Top partidas con 100+ kills",
     valueHeading: "Partidas 100+",
-    emptyMessage: "Ningun jugador ha registrado partidas de 100+ kills en esta ventana semanal.",
+    emptyMessage: "Ningun jugador ha registrado partidas de 100+ kills en esta ventana.",
   },
   {
     key: "support",
-    title: "Top puntos de soporte semanales",
+    title: "Top puntos de soporte",
     valueHeading: "Soporte",
-    emptyMessage: "Sin datos historicos suficientes para mostrar el top de soporte semanal.",
+    emptyMessage: "Sin datos historicos suficientes para mostrar este ranking de soporte.",
   },
 ]);
 const DEFAULT_LEADERBOARD_METRIC = LEADERBOARD_METRICS[0].key;
+const DEFAULT_LEADERBOARD_TIMEFRAME = LEADERBOARD_TIMEFRAMES[0].key;
 activeLeaderboardMetric = DEFAULT_LEADERBOARD_METRIC;
+activeLeaderboardTimeframe = DEFAULT_LEADERBOARD_TIMEFRAME;
 
 document.addEventListener("DOMContentLoaded", () => {
   const backendBaseUrl =
     document.body.dataset.backendBaseUrl || "http://127.0.0.1:8000";
   const selectorButtons = Array.from(
     document.querySelectorAll("[data-server-slug]"),
+  );
+  const leaderboardTimeframeButtons = Array.from(
+    document.querySelectorAll("[data-leaderboard-timeframe]"),
   );
   const leaderboardTabButtons = Array.from(
     document.querySelectorAll("[data-leaderboard-metric]"),
@@ -90,6 +108,9 @@ document.addEventListener("DOMContentLoaded", () => {
   const params = new URLSearchParams(window.location.search);
   activeServerSlug = normalizeServerSlug(params.get("server"));
   activeLeaderboardMetric = normalizeLeaderboardMetric(params.get("metric"));
+  activeLeaderboardTimeframe = normalizeLeaderboardTimeframe(
+    params.get("timeframe"),
+  );
 
   const summaryCache = new Map();
   const recentMatchesCache = new Map();
@@ -112,12 +133,12 @@ document.addEventListener("DOMContentLoaded", () => {
       `${backendBaseUrl}/api/historical/snapshots/recent-matches?server=${encodeURIComponent(serverSlug)}&limit=6`,
     );
 
-  const getLeaderboardSnapshot = (serverSlug, metricKey) =>
+  const getLeaderboardSnapshot = (serverSlug, timeframeKey, metricKey) =>
     getCachedJson(
       leaderboardCache,
       pendingRequestCache,
-      buildLeaderboardSnapshotKey(serverSlug, metricKey),
-      `${backendBaseUrl}/api/historical/snapshots/weekly-leaderboard?server=${encodeURIComponent(serverSlug)}&metric=${encodeURIComponent(metricKey)}&limit=10`,
+      buildLeaderboardSnapshotKey(serverSlug, timeframeKey, metricKey),
+      `${backendBaseUrl}/api/historical/snapshots/leaderboard?server=${encodeURIComponent(serverSlug)}&timeframe=${encodeURIComponent(timeframeKey)}&metric=${encodeURIComponent(metricKey)}&limit=10`,
     );
 
   const refreshServerContent = async () => {
@@ -126,22 +147,32 @@ document.addEventListener("DOMContentLoaded", () => {
     activeServerRequestId = requestId;
     activeLeaderboardRequestId = leaderboardRequestId;
     const activeMetricConfig = getLeaderboardMetricConfig(activeLeaderboardMetric);
+    const activeTimeframeConfig = getLeaderboardTimeframeConfig(
+      activeLeaderboardTimeframe,
+    );
     const activeServerLabel = getHistoricalServerLabel(activeServerSlug);
 
     syncActiveButtons(selectorButtons, activeServerSlug);
+    syncLeaderboardTimeframes(
+      leaderboardTimeframeButtons,
+      activeLeaderboardTimeframe,
+    );
     syncLeaderboardTabs(leaderboardTabButtons, activeLeaderboardMetric);
     weeklyTitleNode.textContent = buildLeaderboardTitle(
       activeMetricConfig,
       activeServerSlug,
+      activeLeaderboardTimeframe,
     );
     weeklyValueHeadingNode.textContent = activeMetricConfig.valueHeading;
     setRangeBadge(rangeNode, "Cargando rango temporal", false);
     summaryNoteNode.textContent = `La vista esta leyendo snapshots precalculados del historico local para ${activeServerLabel}.`;
     setSnapshotMeta(summarySnapshotMetaNode, "Cargando snapshot de resumen...");
     renderSummaryLoading(summaryNode);
-    weeklyWindowNoteNode.textContent =
-      "Cargando snapshot semanal del alcance activo...";
-    setSnapshotMeta(weeklySnapshotMetaNode, "Preparando snapshot semanal...");
+    weeklyWindowNoteNode.textContent = "Cargando snapshot del ranking activo...";
+    setSnapshotMeta(
+      weeklySnapshotMetaNode,
+      `Preparando snapshot ${activeTimeframeConfig.shortLabel}...`,
+    );
     recentListNode.innerHTML = "";
     recentNoteNode.textContent = buildRecentMatchesNote(activeServerSlug);
     setState(recentStateNode, "Cargando partidas recientes...");
@@ -163,7 +194,11 @@ document.addEventListener("DOMContentLoaded", () => {
 
     const cachedLeaderboardPayload = readCachedPayload(
       leaderboardCache,
-      buildLeaderboardSnapshotKey(activeServerSlug, activeLeaderboardMetric),
+      buildLeaderboardSnapshotKey(
+        activeServerSlug,
+        activeLeaderboardTimeframe,
+        activeLeaderboardMetric,
+      ),
     );
     if (cachedLeaderboardPayload) {
       hydrateWeeklyLeaderboard(
@@ -176,9 +211,13 @@ document.addEventListener("DOMContentLoaded", () => {
         weeklyWindowNoteNode,
         weeklySnapshotMetaNode,
         activeMetricConfig,
+        activeLeaderboardTimeframe,
       );
     } else {
-      setState(weeklyStateNode, "Cargando ranking semanal...");
+      setState(
+        weeklyStateNode,
+        `Cargando ranking ${activeTimeframeConfig.shortLabel}...`,
+      );
       weeklyTableNode.hidden = true;
     }
 
@@ -196,9 +235,17 @@ document.addEventListener("DOMContentLoaded", () => {
     }
 
     const targetServerSlug = activeServerSlug;
+    const targetTimeframe = activeLeaderboardTimeframe;
     const targetMetric = activeLeaderboardMetric;
     void settlePromise(getSummarySnapshot(targetServerSlug)).then((summaryResult) => {
-      if (!isActiveServerRequest(requestId, targetServerSlug, targetMetric)) {
+      if (
+        !isActiveServerRequest(
+          requestId,
+          targetServerSlug,
+          targetTimeframe,
+          targetMetric,
+        )
+      ) {
         return;
       }
 
@@ -212,7 +259,14 @@ document.addEventListener("DOMContentLoaded", () => {
     });
 
     void settlePromise(getRecentMatchesSnapshot(targetServerSlug)).then((recentMatchesResult) => {
-      if (!isActiveServerRequest(requestId, targetServerSlug, targetMetric)) {
+      if (
+        !isActiveServerRequest(
+          requestId,
+          targetServerSlug,
+          targetTimeframe,
+          targetMetric,
+        )
+      ) {
         return;
       }
 
@@ -225,13 +279,14 @@ document.addEventListener("DOMContentLoaded", () => {
     });
 
     void settlePromise(
-      getLeaderboardSnapshot(targetServerSlug, targetMetric),
+      getLeaderboardSnapshot(targetServerSlug, targetTimeframe, targetMetric),
     ).then((leaderboardResult) => {
       if (
         !isActiveLeaderboardRequest(
           requestId,
           leaderboardRequestId,
           targetServerSlug,
+          targetTimeframe,
           targetMetric,
         )
       ) {
@@ -248,6 +303,7 @@ document.addEventListener("DOMContentLoaded", () => {
         weeklyWindowNoteNode,
         weeklySnapshotMetaNode,
         activeMetricConfig,
+        targetTimeframe,
       );
     });
   };
@@ -256,19 +312,32 @@ document.addEventListener("DOMContentLoaded", () => {
     const requestId = activeLeaderboardRequestId + 1;
     activeLeaderboardRequestId = requestId;
     const metricConfig = getLeaderboardMetricConfig(activeLeaderboardMetric);
+    const timeframeConfig = getLeaderboardTimeframeConfig(
+      activeLeaderboardTimeframe,
+    );
     const targetServerSlug = activeServerSlug;
+    const targetTimeframe = activeLeaderboardTimeframe;
     const targetMetric = activeLeaderboardMetric;
 
+    syncLeaderboardTimeframes(
+      leaderboardTimeframeButtons,
+      activeLeaderboardTimeframe,
+    );
     syncLeaderboardTabs(leaderboardTabButtons, activeLeaderboardMetric);
     weeklyTitleNode.textContent = buildLeaderboardTitle(
       metricConfig,
       activeServerSlug,
+      activeLeaderboardTimeframe,
     );
     weeklyValueHeadingNode.textContent = metricConfig.valueHeading;
 
     const cachedPayload = readCachedPayload(
       leaderboardCache,
-      buildLeaderboardSnapshotKey(targetServerSlug, targetMetric),
+      buildLeaderboardSnapshotKey(
+        targetServerSlug,
+        targetTimeframe,
+        targetMetric,
+      ),
     );
     if (cachedPayload) {
       hydrateWeeklyLeaderboard(
@@ -281,23 +350,30 @@ document.addEventListener("DOMContentLoaded", () => {
         weeklyWindowNoteNode,
         weeklySnapshotMetaNode,
         metricConfig,
+        targetTimeframe,
       );
       return;
     }
 
-    weeklyWindowNoteNode.textContent =
-      "Cargando snapshot semanal del alcance activo...";
-    setSnapshotMeta(weeklySnapshotMetaNode, "Cargando snapshot semanal...");
-    setState(weeklyStateNode, "Cargando ranking semanal...");
+    weeklyWindowNoteNode.textContent = "Cargando snapshot del ranking activo...";
+    setSnapshotMeta(
+      weeklySnapshotMetaNode,
+      `Cargando snapshot ${timeframeConfig.shortLabel}...`,
+    );
+    setState(
+      weeklyStateNode,
+      `Cargando ranking ${timeframeConfig.shortLabel}...`,
+    );
     weeklyTableNode.hidden = true;
 
     const leaderboardResult = await settlePromise(
-      getLeaderboardSnapshot(targetServerSlug, targetMetric),
+      getLeaderboardSnapshot(targetServerSlug, targetTimeframe, targetMetric),
     );
 
     if (
       requestId !== activeLeaderboardRequestId ||
       targetServerSlug !== activeServerSlug ||
+      targetTimeframe !== activeLeaderboardTimeframe ||
       targetMetric !== activeLeaderboardMetric
     ) {
       return;
@@ -313,6 +389,7 @@ document.addEventListener("DOMContentLoaded", () => {
       weeklyWindowNoteNode,
       weeklySnapshotMetaNode,
       metricConfig,
+      targetTimeframe,
     );
   };
 
@@ -325,9 +402,28 @@ document.addEventListener("DOMContentLoaded", () => {
 
       activeServerSlug = nextServerSlug;
       params.set("server", activeServerSlug);
+      params.set("timeframe", activeLeaderboardTimeframe);
       params.set("metric", activeLeaderboardMetric);
       window.history.replaceState({}, "", `?${params.toString()}`);
       void refreshServerContent();
+    });
+  });
+
+  leaderboardTimeframeButtons.forEach((button) => {
+    button.addEventListener("click", () => {
+      const nextTimeframe = normalizeLeaderboardTimeframe(
+        button.dataset.leaderboardTimeframe,
+      );
+      if (nextTimeframe === activeLeaderboardTimeframe) {
+        return;
+      }
+
+      activeLeaderboardTimeframe = nextTimeframe;
+      params.set("server", activeServerSlug);
+      params.set("timeframe", activeLeaderboardTimeframe);
+      params.set("metric", activeLeaderboardMetric);
+      window.history.replaceState({}, "", `?${params.toString()}`);
+      void refreshLeaderboardContent();
     });
   });
 
@@ -340,6 +436,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
       activeLeaderboardMetric = nextMetric;
       params.set("server", activeServerSlug);
+      params.set("timeframe", activeLeaderboardTimeframe);
       params.set("metric", activeLeaderboardMetric);
       window.history.replaceState({}, "", `?${params.toString()}`);
       void refreshLeaderboardContent();
@@ -349,10 +446,11 @@ document.addEventListener("DOMContentLoaded", () => {
   void refreshServerContent();
 });
 
-function isActiveServerRequest(requestId, serverSlug, metricKey) {
+function isActiveServerRequest(requestId, serverSlug, timeframeKey, metricKey) {
   return (
     requestId === activeServerRequestId &&
     serverSlug === activeServerSlug &&
+    timeframeKey === activeLeaderboardTimeframe &&
     metricKey === activeLeaderboardMetric
   );
 }
@@ -361,10 +459,11 @@ function isActiveLeaderboardRequest(
   serverRequestId,
   leaderboardRequestId,
   serverSlug,
+  timeframeKey,
   metricKey,
 ) {
   return (
-    isActiveServerRequest(serverRequestId, serverSlug, metricKey) &&
+    isActiveServerRequest(serverRequestId, serverSlug, timeframeKey, metricKey) &&
     leaderboardRequestId === activeLeaderboardRequestId
   );
 }
@@ -448,35 +547,63 @@ function hydrateWeeklyLeaderboard(
   noteNode,
   snapshotMetaNode,
   metricConfig,
+  timeframeKey,
 ) {
   const targetServerSlug = result.value?.data?.server_slug || activeServerSlug;
+  const resolvedTimeframeKey = result.value?.data?.timeframe || timeframeKey;
   valueHeadingNode.textContent = metricConfig.valueHeading;
   if (result.status !== "fulfilled") {
-    titleNode.textContent = metricConfig.title;
+    titleNode.textContent = buildLeaderboardTitle(
+      metricConfig,
+      targetServerSlug,
+      resolvedTimeframeKey,
+    );
     noteNode.textContent =
-      "No se pudo leer el snapshot semanal precalculado para esta metrica.";
-    setSnapshotMeta(snapshotMetaNode, "Error al leer el snapshot semanal.");
-    setState(stateNode, "No se pudo cargar el ranking semanal.", true);
+      "No se pudo leer el snapshot precalculado para esta metrica.";
+    setSnapshotMeta(snapshotMetaNode, "Error al leer el snapshot del ranking.");
+    setState(
+      stateNode,
+      `No se pudo cargar el ranking ${getLeaderboardTimeframeConfig(resolvedTimeframeKey).shortLabel}.`,
+      true,
+    );
     tableNode.hidden = true;
     return;
   }
 
   const payload = result.value?.data;
-  titleNode.textContent = buildLeaderboardTitle(metricConfig, payload?.server_slug);
+  titleNode.textContent = buildLeaderboardTitle(
+    metricConfig,
+    payload?.server_slug,
+    payload?.timeframe || resolvedTimeframeKey,
+  );
   noteNode.textContent = buildWeeklyWindowNote(payload);
   setSnapshotMeta(
     snapshotMetaNode,
-    buildSnapshotMetaText(payload, "Snapshot semanal pendiente de generacion."),
+    buildSnapshotMetaText(payload, "Snapshot del ranking pendiente de generacion."),
   );
   if (!payload?.found) {
-    setState(stateNode, buildLeaderboardEmptyMessage(metricConfig, targetServerSlug));
+    setState(
+      stateNode,
+      buildLeaderboardEmptyMessage(
+        metricConfig,
+        targetServerSlug,
+        payload?.timeframe || resolvedTimeframeKey,
+      ),
+    );
     tableNode.hidden = true;
     return;
   }
 
   const items = payload?.items;
   if (!Array.isArray(items) || items.length === 0) {
-    setState(stateNode, buildLeaderboardEmptyMessage(metricConfig, targetServerSlug));
+    setState(
+      stateNode,
+      buildLeaderboardEmptyMessage(
+        metricConfig,
+        targetServerSlug,
+        payload?.timeframe || resolvedTimeframeKey,
+      ),
+    );
     tableNode.hidden = true;
     return;
   }
@@ -612,6 +739,14 @@ function syncLeaderboardTabs(buttons, activeMetric) {
   });
 }
 
+function syncLeaderboardTimeframes(buttons, activeTimeframe) {
+  buttons.forEach((button) => {
+    const isActive = button.dataset.leaderboardTimeframe === activeTimeframe;
+    button.classList.toggle("is-active", isActive);
+    button.setAttribute("aria-selected", String(isActive));
+  });
+}
+
 function normalizeServerSlug(rawValue) {
   const normalized = typeof rawValue === "string" ? rawValue.trim() : "";
   if (HISTORICAL_SERVER_SLUGS.includes(normalized)) {
@@ -637,10 +772,26 @@ function normalizeLeaderboardMetric(rawValue) {
   return DEFAULT_LEADERBOARD_METRIC;
 }
 
+function normalizeLeaderboardTimeframe(rawValue) {
+  const normalized = typeof rawValue === "string" ? rawValue.trim() : "";
+  if (LEADERBOARD_TIMEFRAMES.some((timeframe) => timeframe.key === normalized)) {
+    return normalized;
+  }
+
+  return DEFAULT_LEADERBOARD_TIMEFRAME;
+}
+
 function getLeaderboardMetricConfig(metricKey) {
   return (
     LEADERBOARD_METRICS.find((metric) => metric.key === metricKey) ||
     LEADERBOARD_METRICS[0]
+  );
+}
+
+function getLeaderboardTimeframeConfig(timeframeKey) {
+  return (
+    LEADERBOARD_TIMEFRAMES.find((timeframe) => timeframe.key === timeframeKey) ||
+    LEADERBOARD_TIMEFRAMES[0]
   );
 }
 
@@ -652,8 +803,8 @@ function buildRecentMatchesSnapshotKey(serverSlug) {
   return `recent:${serverSlug}`;
 }
 
-function buildLeaderboardSnapshotKey(serverSlug, metricKey) {
-  return `leaderboard:${serverSlug}:${metricKey}`;
+function buildLeaderboardSnapshotKey(serverSlug, timeframeKey, metricKey) {
+  return `leaderboard:${serverSlug}:${timeframeKey}:${metricKey}`;
 }
 
 function buildRangeLabel(start, end) {
@@ -668,9 +819,7 @@ function buildCoverageBadgeLabel(coverage, timeRange, serverSlug) {
   const rangeStart = coverage?.first_match_at || timeRange?.start;
   const rangeEnd = coverage?.last_match_at || timeRange?.end;
   if (!rangeStart && !rangeEnd) {
-    return serverSlug === "comunidad-hispana-03"
-      ? "Pendiente de historico"
-      : "Sin cobertura registrada";
+    return "Sin cobertura registrada";
   }
   if (coverage?.status === "under-week") {
     return "Cobertura inicial";
@@ -693,9 +842,6 @@ function buildCoveragePeriodLabel(coverage, timeRange, serverSlug) {
   if (end) {
     return `Hasta ${formatDateOnly(end)}`;
   }
-  if (serverSlug === "comunidad-hispana-03") {
-    return "Pendiente de bootstrap historico";
-  }
   return "Sin cobertura registrada";
 }
 
@@ -706,9 +852,7 @@ function buildSummaryNote(summaryBasis, weeklyWindowDays, coverage, serverSlug) 
       : "el historico persistido disponible";
   const status = coverage?.status;
   void weeklyWindowDays;
-  if (serverSlug === "comunidad-hispana-03" && status === "empty") {
-    return "Comunidad Hispana #03 todavia no tiene historico registrado. Este bloque se activara cuando se ejecute su primer bootstrap.";
-  }
+  void serverSlug;
   if (status === "under-week") {
     return `Este bloque resume ${basisLabel}. La cobertura registrada todavia es inicial y puede crecer en los proximos dias.`;
   }
@@ -720,35 +864,37 @@ function buildSummaryNote(summaryBasis, weeklyWindowDays, coverage, serverSlug) 
 
 function buildWeeklyWindowNote(payload) {
   if (!payload?.found) {
-    if ((payload?.server_slug || activeServerSlug) === "comunidad-hispana-03") {
-      return "El ranking semanal aparecera cuando Comunidad Hispana #03 tenga su primer bootstrap historico.";
-    }
-    return "No existe un snapshot semanal listo para esta metrica en el alcance activo.";
+    const timeframeLabel = getLeaderboardTimeframeConfig(
+      payload?.timeframe || activeLeaderboardTimeframe,
+    ).shortLabel;
+    return `No existe un snapshot ${timeframeLabel} listo para esta metrica en el alcance activo.`;
   }
 
   const start = formatTimestamp(payload?.window_start);
   const end = formatTimestamp(payload?.window_end);
-  const windowLabel = payload?.window_label || "Semana activa";
+  const windowLabel =
+    payload?.window_label ||
+    (payload?.timeframe === "monthly" ? "Mes activo" : "Semana activa");
   if (payload?.uses_fallback) {
-    const currentWeekMatches =
+    const currentPeriodMatches =
       payload?.current_week_closed_matches ??
+      payload?.current_month_closed_matches ??
       payload?.sufficient_sample?.current_week_closed_matches ??
+      payload?.sufficient_sample?.current_month_closed_matches ??
       0;
-    return `${windowLabel}: ${start} a ${end}. Se muestra la ultima semana cerrada porque la actual todavia solo suma ${formatNumber(currentWeekMatches)} cierres.`;
+    return `${windowLabel}: ${start} a ${end}. Se muestra el ultimo periodo cerrado porque el actual todavia solo suma ${formatNumber(currentPeriodMatches)} cierres.`;
   }
   return `${windowLabel}: ${start} a ${end}.`;
 }
 
-function buildLeaderboardTitle(metricConfig, serverSlug) {
-  return `${metricConfig.title} - ${getHistoricalServerLabel(serverSlug)}`;
+function buildLeaderboardTitle(metricConfig, serverSlug, timeframeKey) {
+  const timeframeLabel = getLeaderboardTimeframeConfig(timeframeKey).label;
+  return `${metricConfig.title} ${timeframeLabel} - ${getHistoricalServerLabel(serverSlug)}`;
 }
 
 function buildRecentMatchesNote(serverSlug) {
   if (serverSlug === "all-servers") {
     return "Lista de cierres ya registrados para los servidores con historico disponible.";
-  }
-  if (serverSlug === "comunidad-hispana-03") {
-    return "Este bloque quedara activo cuando Comunidad Hispana #03 tenga su primer registro historico.";
   }
   return `Lista de cierres ya registrados para ${getHistoricalServerLabel(serverSlug)}.`;
 }
@@ -935,24 +1081,14 @@ function escapeHtml(value) {
     .replaceAll("'", "&#39;");
 }
 
-function buildLeaderboardEmptyMessage(metricConfig, serverSlug) {
-  if (serverSlug === "comunidad-hispana-03") {
-    return "Comunidad Hispana #03 todavia no tiene historico registrado para mostrar este ranking.";
-  }
-  return metricConfig.emptyMessage;
+function buildLeaderboardEmptyMessage(metricConfig, serverSlug, timeframeKey) {
+  void serverSlug;
+  const timeframeLabel = getLeaderboardTimeframeConfig(timeframeKey).shortLabel;
+  return metricConfig.emptyMessage.replace("esta ventana", `esta ventana ${timeframeLabel}`);
 }
 
 function getHistoricalEmptyState(serverSlug) {
-  if (serverSlug === "comunidad-hispana-03") {
-    return {
-      rangeLabel: "Pendiente de historico",
-      summaryMessage: "Sin historico registrado todavia",
-      summaryNote:
-        "Comunidad Hispana #03 sigue pendiente de bootstrap historico. Cuando se registren sus primeras partidas, aqui apareceran su cobertura y sus totales.",
-      recentMessage:
-        "Comunidad Hispana #03 todavia no tiene partidas historicas registradas.",
-    };
-  }
+  void serverSlug;
 
   return {
     rangeLabel: "Sin cobertura registrada",

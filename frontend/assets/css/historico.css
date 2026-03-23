@@ -114,6 +114,10 @@
   margin: 0 0 16px;
 }
 
+.historical-tabs--timeframe {
+  margin-bottom: 10px;
+}
+
 .historical-tab {
   min-height: 42px;
   padding: 0 16px;

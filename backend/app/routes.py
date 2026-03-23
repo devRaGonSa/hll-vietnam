@@ -10,9 +10,11 @@ from .payloads import (
     build_discord_payload,
     build_error_payload,
     build_health_payload,
+    build_historical_leaderboard_payload,
     build_historical_server_summary_snapshot_payload,
     build_historical_player_profile_payload,
     build_historical_server_summary_payload,
+    build_leaderboard_snapshot_payload,
     build_recent_historical_matches_snapshot_payload,
     build_recent_historical_matches_payload,
     build_server_detail_history_payload,
@@ -54,6 +56,25 @@ def resolve_get_payload(path: str) -> tuple[HTTPStatus | None, dict[str, object]
         server_id = parse_qs(parsed.query).get("server", [None])[0]
         return HTTPStatus.OK, build_weekly_top_kills_payload(limit=limit, server_id=server_id)
 
+    if parsed.path == "/api/historical/leaderboard":
+        limit = _parse_limit(parsed.query)
+        if limit is None:
+            return HTTPStatus.BAD_REQUEST, build_error_payload("Invalid limit parameter")
+        params = parse_qs(parsed.query)
+        server_id = params.get("server", [None])[0]
+        metric = params.get("metric", ["kills"])[0]
+        timeframe = params.get("timeframe", ["weekly"])[0]
+        if metric not in {"kills", "deaths", "support", "matches_over_100_kills"}:
+            return HTTPStatus.BAD_REQUEST, build_error_payload("Invalid metric parameter")
+        if timeframe not in {"weekly", "monthly"}:
+            return HTTPStatus.BAD_REQUEST, build_error_payload("Invalid timeframe parameter")
+        return HTTPStatus.OK, build_historical_leaderboard_payload(
+            limit=limit,
+            server_id=server_id,
+            metric=metric,
+            timeframe=timeframe,
+        )
+
     if parsed.path == "/api/historical/weekly-leaderboard":
         limit = _parse_limit(parsed.query)
         if limit is None:
@@ -67,6 +88,25 @@ def resolve_get_payload(path: str) -> tuple[HTTPStatus | None, dict[str, object]
             limit=limit,
             server_id=server_id,
             metric=metric,
+        )
+
+    if parsed.path == "/api/historical/snapshots/leaderboard":
+        limit = _parse_limit(parsed.query)
+        if limit is None:
+            return HTTPStatus.BAD_REQUEST, build_error_payload("Invalid limit parameter")
+        params = parse_qs(parsed.query)
+        server_id = params.get("server", [None])[0]
+        metric = params.get("metric", ["kills"])[0]
+        timeframe = params.get("timeframe", ["weekly"])[0]
+        if metric not in {"kills", "deaths", "support", "matches_over_100_kills"}:
+            return HTTPStatus.BAD_REQUEST, build_error_payload("Invalid metric parameter")
+        if timeframe not in {"weekly", "monthly"}:
+            return HTTPStatus.BAD_REQUEST, build_error_payload("Invalid timeframe parameter")
+        return HTTPStatus.OK, build_leaderboard_snapshot_payload(
+            limit=limit,
+            server_id=server_id,
+            metric=metric,
+            timeframe=timeframe,
         )
 
     if parsed.path == "/api/historical/snapshots/weekly-leaderboard":

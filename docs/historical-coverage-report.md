@@ -3,6 +3,7 @@
 ## Validation Date
 
 - 2026-03-21
+- 2026-03-23
 
 ## Scope
 
@@ -16,6 +17,12 @@ Desde `backend/`:
 
 ```powershell
 python -m app.historical_ingestion bootstrap --max-pages 3 --detail-workers 16
+```
+
+Bootstrap acotado y reanudable para `comunidad-hispana-03`:
+
+```powershell
+python -m app.historical_ingestion bootstrap --server comunidad-hispana-03 --page-size 10 --max-pages 1 --detail-workers 8
 ```
 
 Verificacion puntual previa de idempotencia sobre la primera pagina ya
@@ -60,12 +67,26 @@ larga incluso con paralelismo.
 - ultima partida persistida: `2026-03-20T21:14:21Z`
 - rango cubierto: `19.18` dias
 
+### comunidad-hispana-03
+
+- matches importados: `33`
+- jugadores unicos: `1161`
+- filas de estadisticas por jugador: `2547`
+- primera partida persistida: `2026-02-24T18:16:11Z`
+- ultima partida persistida: `2026-03-08T18:11:52Z`
+- rango cubierto: `12.0` dias
+- total descubierto en la fuente publica: `11652` matches
+- checkpoint actual de bootstrap: `next_page = 2`, `last_completed_page = 1`
+
 ## Interpretation
 
 - La base persistida ya supera claramente la ventana semanal en ambos
   servidores, por lo que la UI historica ya puede distinguir entre "ranking de
   ultimos 7 dias" y "cobertura total importada" sin fingir que ambos conceptos
   son lo mismo.
+- `comunidad-hispana-03` ya no esta vacio: existe historico real persistido,
+  snapshots de resumen y partidas recientes, y un checkpoint reanudable para
+  seguir ampliando cobertura sin repetir desde cero.
 - El historico local sigue siendo parcial respecto al total reportado por la
   fuente. Lo importado hoy es suficiente para seguir con semantica y revisiones
   de UI, pero no representa aun el archivo completo disponible en CRCON.

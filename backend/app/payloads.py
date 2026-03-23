@@ -8,8 +8,10 @@ from .collector import collect_server_snapshots
 from .config import get_refresh_interval_seconds
 from .historical_snapshot_storage import get_historical_snapshot
 from .historical_snapshots import (
+    DEFAULT_MONTHLY_SNAPSHOT_WINDOW,
     DEFAULT_SNAPSHOT_WINDOW,
     DEFAULT_WEEKLY_SNAPSHOT_WINDOW,
+    SNAPSHOT_TYPE_MONTHLY_LEADERBOARD,
     SNAPSHOT_TYPE_RECENT_MATCHES,
     SNAPSHOT_TYPE_SERVER_SUMMARY,
     SNAPSHOT_TYPE_WEEKLY_LEADERBOARD,
@@ -18,6 +20,7 @@ from .historical_storage import (
     ALL_SERVERS_SLUG,
     get_historical_player_profile,
     list_historical_server_summaries,
+    list_monthly_leaderboard,
     list_recent_historical_matches,
     list_weekly_leaderboard,
     list_weekly_top_kills,
@@ -221,36 +224,38 @@ def build_weekly_top_kills_payload(
     }
 
 
-def build_weekly_leaderboard_payload(
+def build_historical_leaderboard_payload(
     *,
     limit: int = 10,
     server_id: str | None = None,
     metric: str = "kills",
+    timeframe: str = "weekly",
 ) -> dict[str, object]:
-    """Return one weekly historical leaderboard for the requested metric."""
-    result = list_weekly_leaderboard(limit=limit, server_id=server_id, metric=metric)
+    """Return one historical leaderboard for the requested timeframe and metric."""
+    normalized_timeframe = timeframe.strip().lower() if isinstance(timeframe, str) else "weekly"
+    if normalized_timeframe == "monthly":
+        result = list_monthly_leaderboard(limit=limit, server_id=server_id, metric=metric)
+        summary_basis = "closed-matches-calendar-month"
+        context = "historical-monthly-leaderboard"
+    else:
+        normalized_timeframe = "weekly"
+        result = list_weekly_leaderboard(limit=limit, server_id=server_id, metric=metric)
+        summary_basis = "closed-matches-calendar-week"
+        context = "historical-weekly-leaderboard"
+
     is_all_servers = server_id == ALL_SERVERS_SLUG
-    title_by_metric = {
-        "kills": "Top kills semanales totales" if is_all_servers else "Top kills semanales por servidor",
-        "deaths": "Top muertes semanales totales" if is_all_servers else "Top muertes semanales por servidor",
-        "support": (
-            "Top puntos de soporte semanales totales"
-            if is_all_servers
-            else "Top puntos de soporte semanales por servidor"
-        ),
-        "matches_over_100_kills": (
-            "Top partidas de 100+ kills semanales totales"
-            if is_all_servers
-            else "Top partidas de 100+ kills semanales por servidor"
-        ),
-    }
     return {
         "status": "ok",
         "data": {
-            "title": title_by_metric.get(metric, "Ranking semanal por servidor"),
-            "context": "historical-weekly-leaderboard",
+            "title": _build_leaderboard_title(
+                metric=metric,
+                timeframe=normalized_timeframe,
+                is_all_servers=is_all_servers,
+            ),
+            "context": context,
+            "timeframe": normalized_timeframe,
             "metric": metric,
-            "summary_basis": "closed-matches-calendar-week",
+            "summary_basis": summary_basis,
             "window_days": result.get("window_days", 7),
             "window_start": result["window_start"],
             "window_end": result["window_end"],
@@ -261,11 +266,29 @@ def build_weekly_leaderboard_payload(
             "current_week_start": result.get("current_week_start"),
             "current_week_closed_matches": result.get("current_week_closed_matches"),
             "previous_week_closed_matches": result.get("previous_week_closed_matches"),
+            "current_month_start": result.get("current_month_start"),
+            "current_month_closed_matches": result.get("current_month_closed_matches"),
+            "previous_month_closed_matches": result.get("previous_month_closed_matches"),
             "sufficient_sample": result.get("sufficient_sample"),
             "limit": limit,
             "items": result["items"],
         },
     }
+
+
+def build_weekly_leaderboard_payload(
+    *,
+    limit: int = 10,
+    server_id: str | None = None,
+    metric: str = "kills",
+) -> dict[str, object]:
+    """Return one weekly historical leaderboard for the requested metric."""
+    return build_historical_leaderboard_payload(
+        limit=limit,
+        server_id=server_id,
+        metric=metric,
+        timeframe="weekly",
+    )
 
 
 def build_recent_historical_matches_payload(
@@ -314,52 +337,48 @@ def build_historical_server_summary_snapshot_payload(
     }
 
 
-def build_weekly_leaderboard_snapshot_payload(
+def build_leaderboard_snapshot_payload(
     *,
     limit: int = 10,
     server_id: str | None = None,
     metric: str = "kills",
+    timeframe: str = "weekly",
 ) -> dict[str, object]:
-    """Return one precomputed weekly leaderboard snapshot."""
+    """Return one precomputed leaderboard snapshot for the requested timeframe."""
+    normalized_timeframe = timeframe.strip().lower() if isinstance(timeframe, str) else "weekly"
+    if normalized_timeframe == "monthly":
+        snapshot_type = SNAPSHOT_TYPE_MONTHLY_LEADERBOARD
+        window = DEFAULT_MONTHLY_SNAPSHOT_WINDOW
+        context = "historical-monthly-leaderboard-snapshot"
+    else:
+        normalized_timeframe = "weekly"
+        snapshot_type = SNAPSHOT_TYPE_WEEKLY_LEADERBOARD
+        window = DEFAULT_WEEKLY_SNAPSHOT_WINDOW
+        context = "historical-weekly-leaderboard-snapshot"
+
     snapshot = _get_historical_snapshot_record(
         server_key=server_id,
-        snapshot_type=SNAPSHOT_TYPE_WEEKLY_LEADERBOARD,
+        snapshot_type=snapshot_type,
         metric=metric,
-        window=DEFAULT_WEEKLY_SNAPSHOT_WINDOW,
+        window=window,
     )
     payload = snapshot.get("payload") if snapshot else {}
     items = payload.get("items") if isinstance(payload, dict) else None
     sliced_items = list(items[:limit]) if isinstance(items, list) else []
     is_all_servers = server_id == ALL_SERVERS_SLUG
-    title_by_metric = {
-        "kills": (
-            "Snapshot semanal de top kills totales"
-            if is_all_servers
-            else "Snapshot semanal de top kills por servidor"
-        ),
-        "deaths": (
-            "Snapshot semanal de top muertes totales"
-            if is_all_servers
-            else "Snapshot semanal de top muertes por servidor"
-        ),
-        "support": (
-            "Snapshot semanal de top soporte total"
-            if is_all_servers
-            else "Snapshot semanal de top soporte por servidor"
-        ),
-        "matches_over_100_kills": (
-            "Snapshot semanal de partidas 100+ kills totales"
-            if is_all_servers
-            else "Snapshot semanal de partidas 100+ kills por servidor"
-        ),
-    }
     return {
         "status": "ok",
         "data": {
-            "title": title_by_metric.get(metric, "Snapshot semanal por servidor"),
-            "context": "historical-weekly-leaderboard-snapshot",
+            "title": _build_leaderboard_title(
+                metric=metric,
+                timeframe=normalized_timeframe,
+                is_all_servers=is_all_servers,
+                snapshot=True,
+            ),
+            "context": context,
             "source": "historical-precomputed-snapshots",
             "server_slug": server_id,
+            "timeframe": normalized_timeframe,
             "metric": metric,
             "found": snapshot is not None,
             **_build_historical_snapshot_metadata(snapshot),
@@ -377,12 +396,34 @@ def build_weekly_leaderboard_snapshot_payload(
             "previous_week_closed_matches": (
                 payload.get("previous_week_closed_matches") if isinstance(payload, dict) else None
             ),
+            "current_month_start": payload.get("current_month_start") if isinstance(payload, dict) else None,
+            "current_month_closed_matches": (
+                payload.get("current_month_closed_matches") if isinstance(payload, dict) else None
+            ),
+            "previous_month_closed_matches": (
+                payload.get("previous_month_closed_matches") if isinstance(payload, dict) else None
+            ),
             "sufficient_sample": payload.get("sufficient_sample") if isinstance(payload, dict) else None,
             "snapshot_limit": payload.get("limit") if isinstance(payload, dict) else None,
             "limit": limit,
             "items": sliced_items,
         },
     }
+
+
+def build_weekly_leaderboard_snapshot_payload(
+    *,
+    limit: int = 10,
+    server_id: str | None = None,
+    metric: str = "kills",
+) -> dict[str, object]:
+    """Return one precomputed weekly leaderboard snapshot."""
+    return build_leaderboard_snapshot_payload(
+        limit=limit,
+        server_id=server_id,
+        metric=metric,
+        timeframe="weekly",
+    )
 
 
 def build_recent_historical_matches_snapshot_payload(
@@ -497,6 +538,26 @@ def _build_historical_snapshot_metadata(snapshot: dict[str, object] | None) -> d
         "is_stale": is_stale,
         "freshness": "stale" if is_stale else "fresh",
     }
+
+
+def _build_leaderboard_title(
+    *,
+    metric: str,
+    timeframe: str,
+    is_all_servers: bool,
+    snapshot: bool = False,
+) -> str:
+    timeframe_label = "mensual" if timeframe == "monthly" else "semanal"
+    scope_label = "totales" if is_all_servers else "por servidor"
+    prefix = "Snapshot " if snapshot else ""
+    title_by_metric = {
+        "kills": f"{prefix}Top kills {timeframe_label} {scope_label}",
+        "deaths": f"{prefix}Top muertes {timeframe_label} {scope_label}",
+        "support": f"{prefix}Top puntos de soporte {timeframe_label} {scope_label}",
+        "matches_over_100_kills": f"{prefix}Top partidas de 100+ kills {timeframe_label} {scope_label}",
+    }
+    fallback_label = f"{prefix}Ranking {timeframe_label} por servidor".strip()
+    return title_by_metric.get(metric, fallback_label)
 
 
 def _enrich_server_items(items: list[dict[str, object]]) -> list[dict[str, object]]:

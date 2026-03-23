@@ -9,18 +9,21 @@ from .historical_storage import (
     ALL_SERVERS_SLUG,
     list_historical_server_summaries,
     list_historical_servers,
+    list_monthly_leaderboard,
     list_recent_historical_matches,
     list_weekly_leaderboard,
 )
 
 SNAPSHOT_TYPE_SERVER_SUMMARY = "server-summary"
 SNAPSHOT_TYPE_WEEKLY_LEADERBOARD = "weekly-leaderboard"
+SNAPSHOT_TYPE_MONTHLY_LEADERBOARD = "monthly-leaderboard"
 SNAPSHOT_TYPE_RECENT_MATCHES = "recent-matches"
 
 SUPPORTED_SNAPSHOT_TYPES = frozenset(
     {
         SNAPSHOT_TYPE_SERVER_SUMMARY,
         SNAPSHOT_TYPE_WEEKLY_LEADERBOARD,
+        SNAPSHOT_TYPE_MONTHLY_LEADERBOARD,
         SNAPSHOT_TYPE_RECENT_MATCHES,
     }
 )
@@ -49,6 +52,7 @@ SNAPSHOT_LEADERBOARD_METRICS = (
 
 DEFAULT_SNAPSHOT_WINDOW = "all-time"
 DEFAULT_WEEKLY_SNAPSHOT_WINDOW = "7d"
+DEFAULT_MONTHLY_SNAPSHOT_WINDOW = "month"
 DEFAULT_WEEKLY_LEADERBOARD_LIMIT = 10
 DEFAULT_RECENT_MATCHES_LIMIT = 20
 
@@ -62,13 +66,18 @@ def validate_snapshot_identity(
     if snapshot_type not in SUPPORTED_SNAPSHOT_TYPES:
         raise ValueError(f"Unsupported historical snapshot type: {snapshot_type}")
 
-    if snapshot_type == SNAPSHOT_TYPE_WEEKLY_LEADERBOARD:
+    if snapshot_type in {
+        SNAPSHOT_TYPE_WEEKLY_LEADERBOARD,
+        SNAPSHOT_TYPE_MONTHLY_LEADERBOARD,
+    }:
         if metric not in SUPPORTED_LEADERBOARD_METRICS:
             raise ValueError(f"Unsupported historical snapshot metric: {metric}")
         return
 
     if metric is not None:
-        raise ValueError(f"Metric is only supported for {SNAPSHOT_TYPE_WEEKLY_LEADERBOARD}.")
+        raise ValueError(
+            "Metric is only supported for weekly-leaderboard and monthly-leaderboard."
+        )
 
 
 def list_snapshot_server_keys(*, db_path: Path | None = None) -> list[str]:
@@ -97,6 +106,15 @@ def build_historical_server_snapshots(
     for metric in SNAPSHOT_LEADERBOARD_METRICS:
         snapshots.append(
             _build_weekly_leaderboard_snapshot(
+                server_key,
+                metric,
+                generated_at_value,
+                limit=leaderboard_limit,
+                db_path=db_path,
+            )
+        )
+        snapshots.append(
+            _build_monthly_leaderboard_snapshot(
                 server_key,
                 metric,
                 generated_at_value,
@@ -134,6 +152,15 @@ def build_priority_historical_snapshots(
         for metric in PREWARM_LEADERBOARD_METRICS:
             snapshots.append(
                 _build_weekly_leaderboard_snapshot(
+                    server_key,
+                    metric,
+                    generated_at_value,
+                    limit=leaderboard_limit,
+                    db_path=db_path,
+                )
+            )
+            snapshots.append(
+                _build_monthly_leaderboard_snapshot(
                     server_key,
                     metric,
                     generated_at_value,
@@ -291,6 +318,39 @@ def _build_weekly_leaderboard_snapshot(
         "snapshot_type": SNAPSHOT_TYPE_WEEKLY_LEADERBOARD,
         "metric": metric,
         "window": DEFAULT_WEEKLY_SNAPSHOT_WINDOW,
+        "generated_at": generated_at,
+        "source_range_start": _parse_optional_timestamp(leaderboard_result.get("window_start")),
+        "source_range_end": _parse_optional_timestamp(leaderboard_result.get("window_end")),
+        "is_stale": False,
+        "payload": {
+            "server_key": server_key,
+            "metric": metric,
+            "limit": limit,
+            "generated_at": _to_iso(generated_at),
+            **leaderboard_result,
+        },
+    }
+
+
+def _build_monthly_leaderboard_snapshot(
+    server_key: str,
+    metric: str,
+    generated_at: datetime,
+    *,
+    limit: int,
+    db_path: Path | None = None,
+) -> dict[str, object]:
+    leaderboard_result = list_monthly_leaderboard(
+        limit=limit,
+        server_id=server_key,
+        metric=metric,
+        db_path=db_path,
+    )
+    return {
+        "server_key": server_key,
+        "snapshot_type": SNAPSHOT_TYPE_MONTHLY_LEADERBOARD,
+        "metric": metric,
+        "window": DEFAULT_MONTHLY_SNAPSHOT_WINDOW,
         "generated_at": generated_at,
         "source_range_start": _parse_optional_timestamp(leaderboard_result.get("window_start")),
         "source_range_end": _parse_optional_timestamp(leaderboard_result.get("window_end")),

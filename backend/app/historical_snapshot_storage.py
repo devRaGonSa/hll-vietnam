@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -58,8 +57,6 @@ def persist_historical_snapshot(
     if _should_preserve_existing_snapshot(
         incoming_payload=payload,
         snapshot_type=snapshot_type,
-        server_key=normalized_server_key,
-        db_path=db_path,
         existing_document=existing_document,
     ):
         preserved_payload = existing_document.get("payload") if existing_document else payload
@@ -222,8 +219,6 @@ def _should_preserve_existing_snapshot(
     *,
     incoming_payload: dict[str, object] | list[object],
     snapshot_type: str,
-    server_key: str,
-    db_path: Path | None,
     existing_document: dict[str, object] | None,
 ) -> bool:
     if not _is_effectively_empty_snapshot_payload(snapshot_type, incoming_payload):
@@ -233,7 +228,7 @@ def _should_preserve_existing_snapshot(
         existing_document.get("payload"),
     ):
         return True
-    return _historical_data_exists(server_key=server_key, db_path=db_path)
+    return False
 
 
 def _is_effectively_empty_snapshot_payload(
@@ -254,40 +249,11 @@ def _is_effectively_empty_snapshot_payload(
         items = payload.get("items")
         return not isinstance(items, list) or len(items) == 0
 
-    if snapshot_type == "weekly-leaderboard":
+    if snapshot_type in {"weekly-leaderboard", "monthly-leaderboard"}:
         items = payload.get("items")
         return not isinstance(items, list) or len(items) == 0
 
     return False
-
-
-def _historical_data_exists(*, server_key: str, db_path: Path | None) -> bool:
-    resolved_db_path = initialize_historical_storage(db_path=db_path or get_storage_path())
-    where_clause = ""
-    params: list[object] = []
-    if server_key != "all-servers":
-        where_clause = "WHERE historical_servers.slug = ?"
-        params.append(server_key)
-
-    connection = sqlite3.connect(resolved_db_path)
-    connection.row_factory = sqlite3.Row
-    try:
-        row = connection.execute(
-            f"""
-            SELECT COUNT(*) AS matches_count
-            FROM historical_matches
-            INNER JOIN historical_servers
-                ON historical_servers.id = historical_matches.historical_server_id
-            {where_clause}
-            """,
-            params,
-        ).fetchone()
-    finally:
-        connection.close()
-
-    return bool(row and int(row["matches_count"] or 0) > 0)
-
-
 def _read_snapshot_document(snapshot_path: Path) -> dict[str, object] | None:
     if not snapshot_path.exists():
         return None
@@ -318,6 +284,9 @@ def _build_snapshot_filename(*, snapshot_type: str, metric: str | None) -> str:
     if snapshot_type == "weekly-leaderboard":
         metric_suffix = "matches-over-100-kills" if metric == "matches_over_100_kills" else _slugify(metric or "unknown")
         return f"weekly-{metric_suffix}.json"
+    if snapshot_type == "monthly-leaderboard":
+        metric_suffix = "matches-over-100-kills" if metric == "matches_over_100_kills" else _slugify(metric or "unknown")
+        return f"monthly-{metric_suffix}.json"
     metric_suffix = _slugify(metric or "")
     base_name = _slugify(snapshot_type)
     return f"{base_name}-{metric_suffix}.json" if metric_suffix else f"{base_name}.json"

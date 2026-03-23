@@ -111,21 +111,45 @@
           <div class="panel__shell">
               <div class="panel__header historical-panel__header">
                 <div>
-                  <p class="eyebrow eyebrow--section">Ranking semanal</p>
-                  <h2 id="weekly-ranking-title">Ranking semanal del alcance activo</h2>
+                  <p class="eyebrow eyebrow--section">Rankings historicos</p>
+                  <h2 id="weekly-ranking-title">Ranking del alcance activo</h2>
                   <p class="historical-panel__note" id="weekly-window-note">
-                    Cargando ventana semanal...
+                    Cargando rango del ranking...
                   </p>
                   <p class="historical-snapshot-meta" id="weekly-leaderboard-snapshot-meta">
-                    Cargando datos semanal...
+                    Cargando snapshot del ranking...
                   </p>
                 </div>
               </div>
             <div
+              class="historical-tabs historical-tabs--timeframe"
+              role="tablist"
+              aria-label="Marco temporal del ranking"
+            >
+              <button
+                class="historical-tab is-active"
+                type="button"
+                role="tab"
+                aria-selected="true"
+                data-leaderboard-timeframe="weekly"
+              >
+                Semanal
+              </button>
+              <button
+                class="historical-tab"
+                type="button"
+                role="tab"
+                aria-selected="false"
+                data-leaderboard-timeframe="monthly"
+              >
+                Mensual
+              </button>
+            </div>
+            <div
               class="historical-tabs"
               id="weekly-leaderboard-tabs"
               role="tablist"
-              aria-label="Metricas del ranking semanal"
+              aria-label="Metricas del ranking"
             >
               <button
                 class="historical-tab is-active"
