@@ -593,6 +593,9 @@ persistida por servidor para releer solo paginas recientes y absorber updates
 tardios sin reimportar todo el historico. Cuando una ejecucion termina
 correctamente, tambien recompone los snapshots historicos precalculados para el
 servidor afectado o para todos los servidores si la ingesta fue global.
+Si la recomposicion se lanza para un servidor fisico concreto, el backend
+rehace tambien el agregado logico `all-servers` para mantener `Todos`
+alineado con `#01` y `#02` aunque `#03` siga sin bootstrap.
 
 El comando devuelve ademas un resumen de cobertura persistida por servidor. Esto
 ayuda a validar rapidamente cuantos matches reales quedaron importados, el rango

@@ -370,6 +370,7 @@ function isActiveLeaderboardRequest(
 }
 
 function hydrateSummary(result, summaryNode, rangeNode, noteNode, snapshotMetaNode) {
+  const emptyState = getHistoricalEmptyState(activeServerSlug);
   if (result.status !== "fulfilled") {
     renderSummaryError(summaryNode);
     setRangeBadge(rangeNode, "Snapshot de resumen no disponible", false);
@@ -381,12 +382,18 @@ function hydrateSummary(result, summaryNode, rangeNode, noteNode, snapshotMetaNo
 
   const payload = result.value?.data;
   const summary = payload?.item;
-  if (!payload?.found || !summary) {
-    renderSummaryEmpty(summaryNode);
-    setRangeBadge(rangeNode, "Sin snapshot de resumen", false);
-    noteNode.textContent =
-      "Todavia no existe un snapshot de resumen listo para el alcance seleccionado.";
-    setSnapshotMeta(snapshotMetaNode, "Snapshot de resumen pendiente de generacion.");
+  const hasHistoricalData =
+    Number(summary?.imported_matches_count ?? summary?.matches_count ?? 0) > 0;
+  if (!payload?.found || !summary || !hasHistoricalData) {
+    renderSummaryEmpty(summaryNode, emptyState.summaryMessage);
+    setRangeBadge(rangeNode, emptyState.rangeLabel, false);
+    noteNode.textContent = emptyState.summaryNote;
+    setSnapshotMeta(
+      snapshotMetaNode,
+      payload?.generated_at
+        ? buildSnapshotMetaText(payload, "Snapshot de resumen pendiente de generacion.")
+        : "Snapshot de resumen pendiente de generacion.",
+    );
     return;
   }
 
@@ -395,10 +402,10 @@ function hydrateSummary(result, summaryNode, rangeNode, noteNode, snapshotMetaNo
   const rangeLabel = buildCoverageBadgeLabel(coverage, {
     start: payload?.source_range_start || timeRange.start,
     end: payload?.source_range_end || timeRange.end,
-  });
+  }, summary.server?.slug);
   setRangeBadge(
     rangeNode,
-    rangeLabel || "Cobertura registrada parcial",
+    rangeLabel || "Cobertura historica disponible",
     coverage.status === "week-plus" && !payload?.is_stale,
   );
   noteNode.textContent = buildSummaryNote(
@@ -419,11 +426,11 @@ function hydrateSummary(result, summaryNode, rangeNode, noteNode, snapshotMetaNo
     ),
     renderSummaryCard("Jugadores unicos", formatNumber(summary.unique_players)),
     renderSummaryCard(
-      "Periodo registrado",
-      formatCoverageDays(coverage.coverage_days),
+      "Cobertura historica",
+      buildCoveragePeriodLabel(coverage, timeRange, summary.server?.slug),
     ),
-    renderSummaryCard("Primera partida", formatTimestamp(coverage.first_match_at)),
-    renderSummaryCard("Ultima partida", formatTimestamp(coverage.last_match_at)),
+    renderSummaryCard("Inicio de registro", formatTimestamp(coverage.first_match_at)),
+    renderSummaryCard("Ultimo cierre", formatTimestamp(coverage.last_match_at)),
     renderSummaryCard(
       "Mapas frecuentes",
       formatTopMaps(summary.top_maps),
@@ -442,6 +449,7 @@ function hydrateWeeklyLeaderboard(
   snapshotMetaNode,
   metricConfig,
 ) {
+  const targetServerSlug = result.value?.data?.server_slug || activeServerSlug;
   valueHeadingNode.textContent = metricConfig.valueHeading;
   if (result.status !== "fulfilled") {
     titleNode.textContent = metricConfig.title;
@@ -461,14 +469,14 @@ function hydrateWeeklyLeaderboard(
     buildSnapshotMetaText(payload, "Snapshot semanal pendiente de generacion."),
   );
   if (!payload?.found) {
-    setState(stateNode, metricConfig.emptyMessage);
+    setState(stateNode, buildLeaderboardEmptyMessage(metricConfig, targetServerSlug));
     tableNode.hidden = true;
     return;
   }
 
   const items = payload?.items;
   if (!Array.isArray(items) || items.length === 0) {
-    setState(stateNode, metricConfig.emptyMessage);
+    setState(stateNode, buildLeaderboardEmptyMessage(metricConfig, targetServerSlug));
     tableNode.hidden = true;
     return;
   }
@@ -490,6 +498,7 @@ function hydrateWeeklyLeaderboard(
 }
 
 function hydrateRecentMatches(result, stateNode, listNode, snapshotMetaNode) {
+  const emptyState = getHistoricalEmptyState(activeServerSlug);
   if (result.status !== "fulfilled") {
     setState(stateNode, "No se pudieron cargar las partidas recientes.", true);
     setSnapshotMeta(snapshotMetaNode, "Error al leer el snapshot de partidas.");
@@ -502,13 +511,13 @@ function hydrateRecentMatches(result, stateNode, listNode, snapshotMetaNode) {
     buildSnapshotMetaText(payload, "Snapshot de partidas pendiente de generacion."),
   );
   if (!payload?.found) {
-    setState(stateNode, "Todavia no hay snapshot de partidas recientes disponible.");
+    setState(stateNode, emptyState.recentMessage);
     return;
   }
 
   const items = payload?.items;
   if (!Array.isArray(items) || items.length === 0) {
-    setState(stateNode, "Todavia no hay partidas recientes disponibles.");
+    setState(stateNode, emptyState.recentMessage);
     return;
   }
 
@@ -557,8 +566,8 @@ function renderSummaryError(summaryNode) {
   summaryNode.innerHTML = renderSummaryCard("Estado", "Error al cargar el resumen");
 }
 
-function renderSummaryEmpty(summaryNode) {
-  summaryNode.innerHTML = renderSummaryCard("Estado", "Sin datos historicos suficientes");
+function renderSummaryEmpty(summaryNode, message = "Sin datos historicos suficientes") {
+  summaryNode.innerHTML = renderSummaryCard("Estado", message);
 }
 
 function renderSummaryCard(label, value) {
@@ -655,16 +664,39 @@ function buildRangeLabel(start, end) {
   return `${formatTimestamp(start)} a ${formatTimestamp(end)}`;
 }
 
-function buildCoverageBadgeLabel(coverage, timeRange) {
-  const coverageDays = formatCoverageDays(coverage?.coverage_days);
-  const rangeLabel = buildRangeLabel(
-    coverage?.first_match_at || timeRange?.start,
-    coverage?.last_match_at || timeRange?.end,
-  );
-  if (coverageDays !== "Cobertura no disponible" && rangeLabel) {
-    return `${coverageDays} registrados`;
+function buildCoverageBadgeLabel(coverage, timeRange, serverSlug) {
+  const rangeStart = coverage?.first_match_at || timeRange?.start;
+  const rangeEnd = coverage?.last_match_at || timeRange?.end;
+  if (!rangeStart && !rangeEnd) {
+    return serverSlug === "comunidad-hispana-03"
+      ? "Pendiente de historico"
+      : "Sin cobertura registrada";
   }
-  return rangeLabel;
+  if (coverage?.status === "under-week") {
+    return "Cobertura inicial";
+  }
+  if (coverage?.status === "week-plus") {
+    return "Cobertura historica";
+  }
+  return "Periodo registrado";
+}
+
+function buildCoveragePeriodLabel(coverage, timeRange, serverSlug) {
+  const start = coverage?.first_match_at || timeRange?.start;
+  const end = coverage?.last_match_at || timeRange?.end;
+  if (start && end) {
+    return `Desde ${formatDateOnly(start)} hasta ${formatDateOnly(end)}`;
+  }
+  if (start) {
+    return `Desde ${formatDateOnly(start)}`;
+  }
+  if (end) {
+    return `Hasta ${formatDateOnly(end)}`;
+  }
+  if (serverSlug === "comunidad-hispana-03") {
+    return "Pendiente de bootstrap historico";
+  }
+  return "Sin cobertura registrada";
 }
 
 function buildSummaryNote(summaryBasis, weeklyWindowDays, coverage, serverSlug) {
@@ -672,21 +704,25 @@ function buildSummaryNote(summaryBasis, weeklyWindowDays, coverage, serverSlug) 
     summaryBasis === "snapshot-precomputed"
       ? "el snapshot precalculado del historico local"
       : "el historico persistido disponible";
-  const weeklyWindowLabel = Number.isFinite(Number(weeklyWindowDays))
-    ? `${weeklyWindowDays} dias`
-    : "la ultima semana";
   const status = coverage?.status;
+  void weeklyWindowDays;
+  if (serverSlug === "comunidad-hispana-03" && status === "empty") {
+    return "Comunidad Hispana #03 todavia no tiene historico registrado. Este bloque se activara cuando se ejecute su primer bootstrap.";
+  }
   if (status === "under-week") {
-    return `Este bloque resume ${basisLabel}. Ahora mismo esa cobertura todavia no alcanza ${weeklyWindowLabel}.`;
+    return `Este bloque resume ${basisLabel}. La cobertura registrada todavia es inicial y puede crecer en los proximos dias.`;
   }
   if (serverSlug === "all-servers") {
-    return `Resumen global servido desde ${basisLabel}.`;
+    return `Resumen global servido desde ${basisLabel} y combinado solo con los servidores que ya tienen historico disponible.`;
   }
   return `Resumen servido desde ${basisLabel}.`;
 }
 
 function buildWeeklyWindowNote(payload) {
   if (!payload?.found) {
+    if ((payload?.server_slug || activeServerSlug) === "comunidad-hispana-03") {
+      return "El ranking semanal aparecera cuando Comunidad Hispana #03 tenga su primer bootstrap historico.";
+    }
     return "No existe un snapshot semanal listo para esta metrica en el alcance activo.";
   }
 
@@ -694,24 +730,25 @@ function buildWeeklyWindowNote(payload) {
   const end = formatTimestamp(payload?.window_end);
   const windowLabel = payload?.window_label || "Semana activa";
   if (payload?.uses_fallback) {
-    const minimumMatches =
-      payload?.sufficient_sample?.minimum_closed_matches || payload?.minimum_closed_matches || 0;
     const currentWeekMatches =
       payload?.current_week_closed_matches ??
       payload?.sufficient_sample?.current_week_closed_matches ??
       0;
-    return `${windowLabel}: ${start} a ${end}. Se muestra temporalmente porque la semana actual solo tiene ${formatNumber(currentWeekMatches)} cierres y el minimo operativo es ${formatNumber(minimumMatches)}.`;
+    return `${windowLabel}: ${start} a ${end}. Se muestra la ultima semana cerrada porque la actual todavia solo suma ${formatNumber(currentWeekMatches)} cierres.`;
   }
   return `${windowLabel}: ${start} a ${end}.`;
 }
 
 function buildLeaderboardTitle(metricConfig, serverSlug) {
-  return `${metricConfig.title} · ${getHistoricalServerLabel(serverSlug)}`;
+  return `${metricConfig.title} - ${getHistoricalServerLabel(serverSlug)}`;
 }
 
 function buildRecentMatchesNote(serverSlug) {
   if (serverSlug === "all-servers") {
-    return "Lista de cierres ya registrados para todos los servidores.";
+    return "Lista de cierres ya registrados para los servidores con historico disponible.";
+  }
+  if (serverSlug === "comunidad-hispana-03") {
+    return "Este bloque quedara activo cuando Comunidad Hispana #03 tenga su primer registro historico.";
   }
   return `Lista de cierres ya registrados para ${getHistoricalServerLabel(serverSlug)}.`;
 }
@@ -746,15 +783,19 @@ function formatTopMaps(topMaps) {
     .join(" / ");
 }
 
-function formatCoverageDays(value) {
-  const parsedValue = Number(value);
-  if (!Number.isFinite(parsedValue) || parsedValue <= 0) {
-    return "Cobertura no disponible";
+function formatDateOnly(timestamp) {
+  if (!timestamp) {
+    return "Fecha no disponible";
   }
-  return `${new Intl.NumberFormat("es-ES", {
-    maximumFractionDigits: 1,
-    minimumFractionDigits: parsedValue < 10 ? 1 : 0,
-  }).format(parsedValue)} dias`;
+
+  const value = new Date(timestamp);
+  if (Number.isNaN(value.getTime())) {
+    return "Fecha no disponible";
+  }
+
+  return new Intl.DateTimeFormat("es-ES", {
+    dateStyle: "medium",
+  }).format(value);
 }
 
 function formatMatchResult(result) {
@@ -892,4 +933,32 @@ function escapeHtml(value) {
     .replaceAll(">", "&gt;")
     .replaceAll('"', "&quot;")
     .replaceAll("'", "&#39;");
+}
+
+function buildLeaderboardEmptyMessage(metricConfig, serverSlug) {
+  if (serverSlug === "comunidad-hispana-03") {
+    return "Comunidad Hispana #03 todavia no tiene historico registrado para mostrar este ranking.";
+  }
+  return metricConfig.emptyMessage;
+}
+
+function getHistoricalEmptyState(serverSlug) {
+  if (serverSlug === "comunidad-hispana-03") {
+    return {
+      rangeLabel: "Pendiente de historico",
+      summaryMessage: "Sin historico registrado todavia",
+      summaryNote:
+        "Comunidad Hispana #03 sigue pendiente de bootstrap historico. Cuando se registren sus primeras partidas, aqui apareceran su cobertura y sus totales.",
+      recentMessage:
+        "Comunidad Hispana #03 todavia no tiene partidas historicas registradas.",
+    };
+  }
+
+  return {
+    rangeLabel: "Sin cobertura registrada",
+    summaryMessage: "Sin datos historicos suficientes",
+    summaryNote:
+      "Todavia no existe un snapshot de resumen listo para el alcance seleccionado.",
+    recentMessage: "Todavia no hay partidas recientes disponibles.",
+  };
 }

@@ -161,7 +161,7 @@ def build_all_historical_snapshots(
     db_path: Path | None = None,
 ) -> list[dict[str, object]]:
     """Build the full snapshot set for one server or for all configured servers."""
-    target_server_keys = [server_key] if server_key else list_snapshot_server_keys(db_path=db_path)
+    target_server_keys = _resolve_snapshot_target_keys(server_key=server_key, db_path=db_path)
     snapshots: list[dict[str, object]] = []
     for target_server_key in target_server_keys:
         snapshots.extend(
@@ -338,6 +338,24 @@ def _build_recent_matches_snapshot(
             "items": items,
         },
     }
+
+
+def _resolve_snapshot_target_keys(
+    *,
+    server_key: str | None,
+    db_path: Path | None = None,
+) -> list[str]:
+    """Expand targeted rebuilds so the logical global aggregate stays in sync."""
+    if not server_key:
+        return list_snapshot_server_keys(db_path=db_path)
+
+    normalized_server_key = server_key.strip()
+    if not normalized_server_key:
+        return list_snapshot_server_keys(db_path=db_path)
+    if normalized_server_key == ALL_SERVERS_SLUG:
+        return [ALL_SERVERS_SLUG]
+
+    return [normalized_server_key, ALL_SERVERS_SLUG]
 
 
 def _parse_optional_timestamp(value: object) -> datetime | None:
