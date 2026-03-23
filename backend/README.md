@@ -126,6 +126,9 @@ normaliza espacios y barras finales para mantener la comparacion con el header
 - `GET /api/historical/weekly-leaderboard?metric=kills&limit=10&server=comunidad-hispana-01`
 - `GET /api/historical/recent-matches?limit=20&server=comunidad-hispana-01`
 - `GET /api/historical/server-summary?server=comunidad-hispana-01`
+- `GET /api/historical/snapshots/server-summary?server=comunidad-hispana-01`
+- `GET /api/historical/snapshots/weekly-leaderboard?metric=kills&limit=10&server=comunidad-hispana-01`
+- `GET /api/historical/snapshots/recent-matches?limit=6&server=comunidad-hispana-01`
 - `GET /api/historical/player-profile?player=steam%3A76561198000000000`
 
 `GET /api/servers` trata el ultimo snapshot persistido como cache local y lo
@@ -461,6 +464,9 @@ La capa historica propia expone:
 - `/api/historical/weekly-leaderboard`
 - `/api/historical/recent-matches`
 - `/api/historical/server-summary`
+- `/api/historical/snapshots/server-summary`
+- `/api/historical/snapshots/weekly-leaderboard`
+- `/api/historical/snapshots/recent-matches`
 - `/api/historical/player-profile`
 
 Parametros opcionales:
@@ -492,6 +498,23 @@ compatible para la metrica `kills`.
 conteo de jugadores. `server-summary` agrega volumen historico, jugadores
 unicos, kills, mapas dominantes y rango temporal cubierto. `player-profile`
 deja lista la base de consulta agregada por jugador para futuras vistas.
+
+La familia `/api/historical/snapshots/*` lee directamente la tabla
+`historical_precomputed_snapshots` y evita recalcular agregados pesados en cada
+request. Estos endpoints devuelven payloads ligeros listos para frontend con:
+
+- `generated_at`
+- `source_range_start`
+- `source_range_end`
+- `is_stale`
+- `found`
+
+`/api/historical/snapshots/server-summary` devuelve `item` con el resumen del
+servidor. `/api/historical/snapshots/weekly-leaderboard` devuelve `items` ya
+precalculados para una metrica semanal y acepta `limit` para recortar el
+payload ya persistido sin recalcularlo. `/api/historical/snapshots/recent-matches`
+devuelve `items` de cierres recientes ya preparados y tambien acepta `limit`
+para servir solo una parte del snapshot persistido.
 
 ## Ingesta historica CRCON
 

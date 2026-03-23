@@ -43,57 +43,136 @@ document.addEventListener("DOMContentLoaded", () => {
   const summaryNode = document.getElementById("historical-summary");
   const rangeNode = document.getElementById("historical-range");
   const summaryNoteNode = document.getElementById("historical-summary-note");
+  const summarySnapshotMetaNode = document.getElementById(
+    "historical-summary-snapshot-meta",
+  );
   const weeklyTitleNode = document.getElementById("weekly-ranking-title");
   const weeklyStateNode = document.getElementById("weekly-leaderboard-state");
   const weeklyTableNode = document.getElementById("weekly-leaderboard-table");
   const weeklyBodyNode = document.getElementById("weekly-leaderboard-body");
   const weeklyValueHeadingNode = document.getElementById("weekly-leaderboard-value-heading");
   const weeklyWindowNoteNode = document.getElementById("weekly-window-note");
+  const weeklySnapshotMetaNode = document.getElementById(
+    "weekly-leaderboard-snapshot-meta",
+  );
   const recentStateNode = document.getElementById("recent-matches-state");
   const recentListNode = document.getElementById("recent-matches-list");
+  const recentSnapshotMetaNode = document.getElementById(
+    "recent-matches-snapshot-meta",
+  );
 
   const params = new URLSearchParams(window.location.search);
   let activeServerSlug = normalizeServerSlug(params.get("server"));
   let activeLeaderboardMetric = normalizeLeaderboardMetric(params.get("metric"));
-  let refreshRequestId = 0;
+  let activeServerRequestId = 0;
+  let activeLeaderboardRequestId = 0;
 
-  const refreshHistoricalView = async () => {
-    const requestId = refreshRequestId + 1;
-    refreshRequestId = requestId;
+  const summaryCache = new Map();
+  const recentMatchesCache = new Map();
+  const leaderboardCache = new Map();
+  const pendingRequestCache = new Map();
+
+  const getSummarySnapshot = (serverSlug) =>
+    getCachedJson(
+      summaryCache,
+      pendingRequestCache,
+      buildSummarySnapshotKey(serverSlug),
+      `${backendBaseUrl}/api/historical/snapshots/server-summary?server=${encodeURIComponent(serverSlug)}`,
+    );
+
+  const getRecentMatchesSnapshot = (serverSlug) =>
+    getCachedJson(
+      recentMatchesCache,
+      pendingRequestCache,
+      buildRecentMatchesSnapshotKey(serverSlug),
+      `${backendBaseUrl}/api/historical/snapshots/recent-matches?server=${encodeURIComponent(serverSlug)}&limit=6`,
+    );
+
+  const getLeaderboardSnapshot = (serverSlug, metricKey) =>
+    getCachedJson(
+      leaderboardCache,
+      pendingRequestCache,
+      buildLeaderboardSnapshotKey(serverSlug, metricKey),
+      `${backendBaseUrl}/api/historical/snapshots/weekly-leaderboard?server=${encodeURIComponent(serverSlug)}&metric=${encodeURIComponent(metricKey)}&limit=10`,
+    );
+
+  const prefetchLeaderboardSnapshots = (serverSlug) => {
+    LEADERBOARD_METRICS.forEach((metric) => {
+      void getLeaderboardSnapshot(serverSlug, metric.key).catch(() => {});
+    });
+  };
+
+  const refreshServerContent = async () => {
+    const requestId = activeServerRequestId + 1;
+    activeServerRequestId = requestId;
     const activeMetricConfig = getLeaderboardMetricConfig(activeLeaderboardMetric);
 
     syncActiveButtons(selectorButtons, activeServerSlug);
     syncLeaderboardTabs(leaderboardTabButtons, activeLeaderboardMetric);
-    setRangeBadge(rangeNode, "Cargando rango temporal", false);
-    summaryNoteNode.textContent =
-      "Este bloque resume solo la cobertura ya registrada en la base local.";
-    renderSummaryLoading(summaryNode);
     weeklyTitleNode.textContent = activeMetricConfig.title;
     weeklyValueHeadingNode.textContent = activeMetricConfig.valueHeading;
-    weeklyWindowNoteNode.textContent = "Cargando ventana semanal...";
-    setState(weeklyStateNode, "Cargando ranking semanal...");
-    setState(recentStateNode, "Cargando partidas recientes...");
-    weeklyTableNode.hidden = true;
+    setRangeBadge(rangeNode, "Cargando rango temporal", false);
+    summaryNoteNode.textContent =
+      "La vista esta leyendo snapshots precalculados del historico local.";
+    setSnapshotMeta(summarySnapshotMetaNode, "Cargando snapshot de resumen...");
+    renderSummaryLoading(summaryNode);
+    weeklyWindowNoteNode.textContent =
+      "Cargando snapshot semanal del servidor activo...";
+    setSnapshotMeta(weeklySnapshotMetaNode, "Preparando snapshot semanal...");
     recentListNode.innerHTML = "";
+    setState(recentStateNode, "Cargando partidas recientes...");
+    setSnapshotMeta(recentSnapshotMetaNode, "Cargando snapshot de partidas...");
 
-    const [summaryResult, leaderboardResult, recentMatchesResult] =
+    const cachedLeaderboardPayload = leaderboardCache.get(
+      buildLeaderboardSnapshotKey(activeServerSlug, activeLeaderboardMetric),
+    );
+    if (cachedLeaderboardPayload) {
+      hydrateWeeklyLeaderboard(
+        { status: "fulfilled", value: cachedLeaderboardPayload },
+        weeklyStateNode,
+        weeklyTableNode,
+        weeklyBodyNode,
+        weeklyTitleNode,
+        weeklyValueHeadingNode,
+        weeklyWindowNoteNode,
+        weeklySnapshotMetaNode,
+        activeMetricConfig,
+      );
+    } else {
+      setState(weeklyStateNode, "Cargando ranking semanal...");
+      weeklyTableNode.hidden = true;
+    }
+
+    const targetServerSlug = activeServerSlug;
+    const targetMetric = activeLeaderboardMetric;
+    const [summaryResult, recentMatchesResult, leaderboardResult] =
       await Promise.allSettled([
-        fetchJson(
-          `${backendBaseUrl}/api/historical/server-summary?server=${encodeURIComponent(activeServerSlug)}`,
-        ),
-        fetchJson(
-          `${backendBaseUrl}/api/historical/weekly-leaderboard?server=${encodeURIComponent(activeServerSlug)}&metric=${encodeURIComponent(activeLeaderboardMetric)}&limit=10`,
-        ),
-        fetchJson(
-          `${backendBaseUrl}/api/historical/recent-matches?server=${encodeURIComponent(activeServerSlug)}&limit=6`,
-        ),
+        getSummarySnapshot(targetServerSlug),
+        getRecentMatchesSnapshot(targetServerSlug),
+        getLeaderboardSnapshot(targetServerSlug, targetMetric),
       ]);
 
-    if (requestId !== refreshRequestId) {
+    if (
+      requestId !== activeServerRequestId ||
+      targetServerSlug !== activeServerSlug ||
+      targetMetric !== activeLeaderboardMetric
+    ) {
       return;
     }
 
-    hydrateSummary(summaryResult, summaryNode, rangeNode, summaryNoteNode);
+    hydrateSummary(
+      summaryResult,
+      summaryNode,
+      rangeNode,
+      summaryNoteNode,
+      summarySnapshotMetaNode,
+    );
+    hydrateRecentMatches(
+      recentMatchesResult,
+      recentStateNode,
+      recentListNode,
+      recentSnapshotMetaNode,
+    );
     hydrateWeeklyLeaderboard(
       leaderboardResult,
       weeklyStateNode,
@@ -102,9 +181,71 @@ document.addEventListener("DOMContentLoaded", () => {
       weeklyTitleNode,
       weeklyValueHeadingNode,
       weeklyWindowNoteNode,
+      weeklySnapshotMetaNode,
       activeMetricConfig,
     );
-    hydrateRecentMatches(recentMatchesResult, recentStateNode, recentListNode);
+
+    prefetchLeaderboardSnapshots(targetServerSlug);
+  };
+
+  const refreshLeaderboardContent = async () => {
+    const requestId = activeLeaderboardRequestId + 1;
+    activeLeaderboardRequestId = requestId;
+    const metricConfig = getLeaderboardMetricConfig(activeLeaderboardMetric);
+    const targetServerSlug = activeServerSlug;
+    const targetMetric = activeLeaderboardMetric;
+
+    syncLeaderboardTabs(leaderboardTabButtons, activeLeaderboardMetric);
+    weeklyTitleNode.textContent = metricConfig.title;
+    weeklyValueHeadingNode.textContent = metricConfig.valueHeading;
+
+    const cachedPayload = leaderboardCache.get(
+      buildLeaderboardSnapshotKey(targetServerSlug, targetMetric),
+    );
+    if (cachedPayload) {
+      hydrateWeeklyLeaderboard(
+        { status: "fulfilled", value: cachedPayload },
+        weeklyStateNode,
+        weeklyTableNode,
+        weeklyBodyNode,
+        weeklyTitleNode,
+        weeklyValueHeadingNode,
+        weeklyWindowNoteNode,
+        weeklySnapshotMetaNode,
+        metricConfig,
+      );
+      return;
+    }
+
+    weeklyWindowNoteNode.textContent =
+      "Cargando snapshot semanal del servidor activo...";
+    setSnapshotMeta(weeklySnapshotMetaNode, "Cargando snapshot semanal...");
+    setState(weeklyStateNode, "Cargando ranking semanal...");
+    weeklyTableNode.hidden = true;
+
+    const leaderboardResult = await settlePromise(
+      getLeaderboardSnapshot(targetServerSlug, targetMetric),
+    );
+
+    if (
+      requestId !== activeLeaderboardRequestId ||
+      targetServerSlug !== activeServerSlug ||
+      targetMetric !== activeLeaderboardMetric
+    ) {
+      return;
+    }
+
+    hydrateWeeklyLeaderboard(
+      leaderboardResult,
+      weeklyStateNode,
+      weeklyTableNode,
+      weeklyBodyNode,
+      weeklyTitleNode,
+      weeklyValueHeadingNode,
+      weeklyWindowNoteNode,
+      weeklySnapshotMetaNode,
+      metricConfig,
+    );
   };
 
   selectorButtons.forEach((button) => {
@@ -118,7 +259,7 @@ document.addEventListener("DOMContentLoaded", () => {
       params.set("server", activeServerSlug);
       params.set("metric", activeLeaderboardMetric);
       window.history.replaceState({}, "", `?${params.toString()}`);
-      void refreshHistoricalView();
+      void refreshServerContent();
     });
   });
 
@@ -133,45 +274,54 @@ document.addEventListener("DOMContentLoaded", () => {
       params.set("server", activeServerSlug);
       params.set("metric", activeLeaderboardMetric);
       window.history.replaceState({}, "", `?${params.toString()}`);
-      void refreshHistoricalView();
+      void refreshLeaderboardContent();
     });
   });
 
-  void refreshHistoricalView();
+  prefetchLeaderboardSnapshots(activeServerSlug);
+  void refreshServerContent();
 });
 
-function hydrateSummary(result, summaryNode, rangeNode, noteNode) {
+function hydrateSummary(result, summaryNode, rangeNode, noteNode, snapshotMetaNode) {
   if (result.status !== "fulfilled") {
     renderSummaryError(summaryNode);
-    setRangeBadge(rangeNode, "Resumen historico no disponible", false);
+    setRangeBadge(rangeNode, "Snapshot de resumen no disponible", false);
     noteNode.textContent =
-      "No se pudo leer la cobertura historica registrada para este servidor.";
+      "No se pudo leer el resumen precalculado para este servidor.";
+    setSnapshotMeta(snapshotMetaNode, "Error al leer el snapshot de resumen.");
     return;
   }
 
   const payload = result.value?.data;
-  const items = payload?.items;
-  if (!Array.isArray(items) || items.length === 0) {
+  const summary = payload?.item;
+  if (!payload?.found || !summary) {
     renderSummaryEmpty(summaryNode);
-    setRangeBadge(rangeNode, "Sin cobertura historica", false);
+    setRangeBadge(rangeNode, "Sin snapshot de resumen", false);
     noteNode.textContent =
-      "Todavia no existe cobertura historica suficiente en la base local.";
+      "Todavia no existe un snapshot de resumen listo para este servidor.";
+    setSnapshotMeta(snapshotMetaNode, "Snapshot de resumen pendiente de generacion.");
     return;
   }
 
-  const summary = items[0];
   const coverage = summary.coverage || {};
   const timeRange = summary.time_range || {};
-  const rangeLabel = buildCoverageBadgeLabel(coverage, timeRange);
+  const rangeLabel = buildCoverageBadgeLabel(coverage, {
+    start: payload?.source_range_start || timeRange.start,
+    end: payload?.source_range_end || timeRange.end,
+  });
   setRangeBadge(
     rangeNode,
     rangeLabel || "Cobertura registrada parcial",
-    coverage.status === "week-plus",
+    coverage.status === "week-plus" && !payload?.is_stale,
   );
   noteNode.textContent = buildSummaryNote(
-    payload?.summary_basis,
-    payload?.weekly_ranking_window_days,
+    "snapshot-precomputed",
+    7,
     coverage,
+  );
+  setSnapshotMeta(
+    snapshotMetaNode,
+    buildSnapshotMetaText(payload, "Snapshot de resumen sin timestamp."),
   );
   summaryNode.innerHTML = [
     renderSummaryCard("Servidor", summary.server?.name || "Servidor no disponible"),
@@ -181,7 +331,7 @@ function hydrateSummary(result, summaryNode, rangeNode, noteNode) {
     ),
     renderSummaryCard("Jugadores unicos", formatNumber(summary.unique_players)),
     renderSummaryCard(
-      "Datos registrados",
+      "Periodo registrado",
       formatCoverageDays(coverage.coverage_days),
     ),
     renderSummaryCard("Primera partida", formatTimestamp(coverage.first_match_at)),
@@ -201,13 +351,15 @@ function hydrateWeeklyLeaderboard(
   titleNode,
   valueHeadingNode,
   noteNode,
+  snapshotMetaNode,
   metricConfig,
 ) {
   titleNode.textContent = metricConfig.title;
   valueHeadingNode.textContent = metricConfig.valueHeading;
   if (result.status !== "fulfilled") {
     noteNode.textContent =
-      "El ranking usa solo partidas cerradas dentro de la ultima ventana semanal.";
+      "No se pudo leer el snapshot semanal precalculado para esta metrica.";
+    setSnapshotMeta(snapshotMetaNode, "Error al leer el snapshot semanal.");
     setState(stateNode, "No se pudo cargar el ranking semanal.", true);
     tableNode.hidden = true;
     return;
@@ -215,6 +367,16 @@ function hydrateWeeklyLeaderboard(
 
   const payload = result.value?.data;
   noteNode.textContent = buildWeeklyWindowNote(payload);
+  setSnapshotMeta(
+    snapshotMetaNode,
+    buildSnapshotMetaText(payload, "Snapshot semanal pendiente de generacion."),
+  );
+  if (!payload?.found) {
+    setState(stateNode, metricConfig.emptyMessage);
+    tableNode.hidden = true;
+    return;
+  }
+
   const items = payload?.items;
   if (!Array.isArray(items) || items.length === 0) {
     setState(stateNode, metricConfig.emptyMessage);
@@ -238,13 +400,24 @@ function hydrateWeeklyLeaderboard(
   tableNode.hidden = false;
 }
 
-function hydrateRecentMatches(result, stateNode, listNode) {
+function hydrateRecentMatches(result, stateNode, listNode, snapshotMetaNode) {
   if (result.status !== "fulfilled") {
     setState(stateNode, "No se pudieron cargar las partidas recientes.", true);
+    setSnapshotMeta(snapshotMetaNode, "Error al leer el snapshot de partidas.");
     return;
   }
 
-  const items = result.value?.data?.items;
+  const payload = result.value?.data;
+  setSnapshotMeta(
+    snapshotMetaNode,
+    buildSnapshotMetaText(payload, "Snapshot de partidas pendiente de generacion."),
+  );
+  if (!payload?.found) {
+    setState(stateNode, "Todavia no hay snapshot de partidas recientes disponible.");
+    return;
+  }
+
+  const items = payload?.items;
   if (!Array.isArray(items) || items.length === 0) {
     setState(stateNode, "Todavia no hay partidas recientes disponibles.");
     return;
@@ -320,6 +493,10 @@ function setRangeBadge(node, label, isFresh) {
   node.classList.toggle("status-chip--fallback", !isFresh);
 }
 
+function setSnapshotMeta(node, message) {
+  node.textContent = message;
+}
+
 function syncActiveButtons(buttons, activeServerSlug) {
   buttons.forEach((button) => {
     button.classList.toggle(
@@ -362,6 +539,18 @@ function getLeaderboardMetricConfig(metricKey) {
   );
 }
 
+function buildSummarySnapshotKey(serverSlug) {
+  return `summary:${serverSlug}`;
+}
+
+function buildRecentMatchesSnapshotKey(serverSlug) {
+  return `recent:${serverSlug}`;
+}
+
+function buildLeaderboardSnapshotKey(serverSlug, metricKey) {
+  return `leaderboard:${serverSlug}:${metricKey}`;
+}
+
 function buildRangeLabel(start, end) {
   if (!start && !end) {
     return "";
@@ -384,8 +573,8 @@ function buildCoverageBadgeLabel(coverage, timeRange) {
 
 function buildSummaryNote(summaryBasis, weeklyWindowDays, coverage) {
   const basisLabel =
-    summaryBasis === "persisted-import"
-      ? "la cobertura ya registrada en la base local"
+    summaryBasis === "snapshot-precomputed"
+      ? "el snapshot precalculado del historico local"
       : "el historico persistido disponible";
   const weeklyWindowLabel = Number.isFinite(Number(weeklyWindowDays))
     ? `${weeklyWindowDays} dias`
@@ -394,15 +583,39 @@ function buildSummaryNote(summaryBasis, weeklyWindowDays, coverage) {
   if (status === "under-week") {
     return `Este bloque resume ${basisLabel}. Ahora mismo esa cobertura todavia no alcanza ${weeklyWindowLabel}.`;
   }
-  return "Datos generales registrados de los servidores";
+  return `Resumen servido desde ${basisLabel}.`;
 }
 
 function buildWeeklyWindowNote(payload) {
+  if (!payload?.found) {
+    return "No existe un snapshot semanal listo para esta metrica en el servidor activo.";
+  }
+
   const start = formatTimestamp(payload?.window_start);
   const end = formatTimestamp(payload?.window_end);
   const windowDays = Number(payload?.window_days);
   const daysLabel = Number.isFinite(windowDays) ? `${windowDays} dias` : "7 dias";
-  return `Ranking calculado solo con partidas cerradas dentro de la ventana movil de ${daysLabel}: ${start} a ${end}.`;
+  return `Ranking servido desde snapshot semanal de ${daysLabel}: ${start} a ${end}.`;
+}
+
+function buildSnapshotMetaText(payload, missingMessage) {
+  if (!payload?.generated_at) {
+    return missingMessage;
+  }
+
+  const parts = [
+    payload.is_stale
+      ? `Snapshot posiblemente desactualizado: ${formatTimestamp(payload.generated_at)}`
+      : `Snapshot generado: ${formatTimestamp(payload.generated_at)}`,
+  ];
+  const sourceRangeLabel = buildRangeLabel(
+    payload?.source_range_start,
+    payload?.source_range_end,
+  );
+  if (sourceRangeLabel) {
+    parts.push(`Fuente: ${sourceRangeLabel}`);
+  }
+  return parts.join(" | ");
 }
 
 function formatTopMaps(topMaps) {
@@ -473,6 +686,37 @@ function formatTimestamp(timestamp) {
     dateStyle: "short",
     timeStyle: "short",
   }).format(value);
+}
+
+async function getCachedJson(cache, pendingCache, key, url) {
+  if (cache.has(key)) {
+    return cache.get(key);
+  }
+  if (pendingCache.has(key)) {
+    return pendingCache.get(key);
+  }
+
+  const request = fetchJson(url)
+    .then((payload) => {
+      cache.set(key, payload);
+      pendingCache.delete(key);
+      return payload;
+    })
+    .catch((error) => {
+      pendingCache.delete(key);
+      throw error;
+    });
+  pendingCache.set(key, request);
+  return request;
+}
+
+async function settlePromise(promise) {
+  try {
+    const value = await promise;
+    return { status: "fulfilled", value };
+  } catch (reason) {
+    return { status: "rejected", reason };
+  }
 }
 
 async function fetchJson(url) {

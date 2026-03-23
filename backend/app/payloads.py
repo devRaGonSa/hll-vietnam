@@ -6,6 +6,14 @@ from datetime import datetime, timezone
 
 from .collector import collect_server_snapshots
 from .config import get_refresh_interval_seconds
+from .historical_snapshot_storage import get_historical_snapshot
+from .historical_snapshots import (
+    DEFAULT_SNAPSHOT_WINDOW,
+    DEFAULT_WEEKLY_SNAPSHOT_WINDOW,
+    SNAPSHOT_TYPE_RECENT_MATCHES,
+    SNAPSHOT_TYPE_SERVER_SUMMARY,
+    SNAPSHOT_TYPE_WEEKLY_LEADERBOARD,
+)
 from .historical_storage import (
     get_historical_player_profile,
     list_historical_server_summaries,
@@ -262,6 +270,104 @@ def build_recent_historical_matches_payload(
     }
 
 
+def build_historical_server_summary_snapshot_payload(
+    *,
+    server_slug: str | None = None,
+) -> dict[str, object]:
+    """Return one precomputed summary snapshot without recalculating aggregates."""
+    snapshot = _get_historical_snapshot_record(
+        server_key=server_slug,
+        snapshot_type=SNAPSHOT_TYPE_SERVER_SUMMARY,
+        window=DEFAULT_SNAPSHOT_WINDOW,
+    )
+    payload = snapshot.get("payload") if snapshot else {}
+    item = payload.get("item") if isinstance(payload, dict) else None
+    return {
+        "status": "ok",
+        "data": {
+            "title": "Snapshot historico de resumen por servidor",
+            "context": "historical-server-summary-snapshot",
+            "source": "historical-precomputed-snapshots",
+            "server_slug": server_slug,
+            "found": snapshot is not None and isinstance(item, dict),
+            **_build_historical_snapshot_metadata(snapshot),
+            "item": item if isinstance(item, dict) else None,
+        },
+    }
+
+
+def build_weekly_leaderboard_snapshot_payload(
+    *,
+    limit: int = 10,
+    server_id: str | None = None,
+    metric: str = "kills",
+) -> dict[str, object]:
+    """Return one precomputed weekly leaderboard snapshot."""
+    snapshot = _get_historical_snapshot_record(
+        server_key=server_id,
+        snapshot_type=SNAPSHOT_TYPE_WEEKLY_LEADERBOARD,
+        metric=metric,
+        window=DEFAULT_WEEKLY_SNAPSHOT_WINDOW,
+    )
+    payload = snapshot.get("payload") if snapshot else {}
+    items = payload.get("items") if isinstance(payload, dict) else None
+    sliced_items = list(items[:limit]) if isinstance(items, list) else []
+    title_by_metric = {
+        "kills": "Snapshot semanal de top kills por servidor",
+        "deaths": "Snapshot semanal de top muertes por servidor",
+        "support": "Snapshot semanal de top soporte por servidor",
+        "matches_over_100_kills": "Snapshot semanal de partidas 100+ kills por servidor",
+    }
+    return {
+        "status": "ok",
+        "data": {
+            "title": title_by_metric.get(metric, "Snapshot semanal por servidor"),
+            "context": "historical-weekly-leaderboard-snapshot",
+            "source": "historical-precomputed-snapshots",
+            "server_slug": server_id,
+            "metric": metric,
+            "found": snapshot is not None,
+            **_build_historical_snapshot_metadata(snapshot),
+            "window_days": payload.get("window_days") if isinstance(payload, dict) else 7,
+            "window_start": payload.get("window_start") if isinstance(payload, dict) else None,
+            "window_end": payload.get("window_end") if isinstance(payload, dict) else None,
+            "snapshot_limit": payload.get("limit") if isinstance(payload, dict) else None,
+            "limit": limit,
+            "items": sliced_items,
+        },
+    }
+
+
+def build_recent_historical_matches_snapshot_payload(
+    *,
+    limit: int = 20,
+    server_slug: str | None = None,
+) -> dict[str, object]:
+    """Return one precomputed recent-matches snapshot."""
+    snapshot = _get_historical_snapshot_record(
+        server_key=server_slug,
+        snapshot_type=SNAPSHOT_TYPE_RECENT_MATCHES,
+        window=DEFAULT_SNAPSHOT_WINDOW,
+    )
+    payload = snapshot.get("payload") if snapshot else {}
+    items = payload.get("items") if isinstance(payload, dict) else None
+    sliced_items = list(items[:limit]) if isinstance(items, list) else []
+    return {
+        "status": "ok",
+        "data": {
+            "title": "Snapshot historico de partidas recientes por servidor",
+            "context": "historical-recent-matches-snapshot",
+            "source": "historical-precomputed-snapshots",
+            "server_slug": server_slug,
+            "found": snapshot is not None,
+            **_build_historical_snapshot_metadata(snapshot),
+            "snapshot_limit": payload.get("limit") if isinstance(payload, dict) else None,
+            "limit": limit,
+            "items": sliced_items,
+        },
+    }
+
+
 def build_historical_server_summary_payload(
     *,
     server_slug: str | None = None,
@@ -295,6 +401,39 @@ def build_historical_player_profile_payload(player_id: str) -> dict[str, object]
             "found": profile is not None,
             "profile": profile,
         },
+    }
+
+
+def _get_historical_snapshot_record(
+    *,
+    server_key: str | None,
+    snapshot_type: str,
+    metric: str | None = None,
+    window: str | None = None,
+) -> dict[str, object] | None:
+    if not server_key:
+        return None
+    return get_historical_snapshot(
+        server_key=server_key,
+        snapshot_type=snapshot_type,
+        metric=metric,
+        window=window,
+    )
+
+
+def _build_historical_snapshot_metadata(snapshot: dict[str, object] | None) -> dict[str, object]:
+    if snapshot is None:
+        return {
+            "generated_at": None,
+            "source_range_start": None,
+            "source_range_end": None,
+            "is_stale": True,
+        }
+    return {
+        "generated_at": snapshot.get("generated_at"),
+        "source_range_start": snapshot.get("source_range_start"),
+        "source_range_end": snapshot.get("source_range_end"),
+        "is_stale": bool(snapshot.get("is_stale", False)),
     }
 
 
