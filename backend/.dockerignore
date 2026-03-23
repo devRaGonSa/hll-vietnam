@@ -1,0 +1,11 @@
+.git
+.gitignore
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+data/*.sqlite3
+data/snapshots/**
+!data/.gitkeep
+!data/snapshots/.gitkeep

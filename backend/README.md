@@ -77,6 +77,60 @@ Variables opcionales:
 - `HLL_HISTORICAL_WEEKLY_FALLBACK_MIN_MATCHES`
 - `HLL_HISTORICAL_WEEKLY_FALLBACK_MAX_WEEKDAY`
 
+Variables especialmente relevantes para Docker y Compose:
+
+- `HLL_BACKEND_HOST`
+- `HLL_BACKEND_PORT`
+- `HLL_BACKEND_STORAGE_PATH`
+- `HLL_BACKEND_ALLOWED_ORIGINS`
+- `HLL_HISTORICAL_CRCON_PAGE_SIZE`
+- `HLL_HISTORICAL_CRCON_TIMEOUT_SECONDS`
+- `HLL_HISTORICAL_CRCON_DETAIL_WORKERS`
+- `HLL_HISTORICAL_CRCON_REQUEST_RETRIES`
+- `HLL_HISTORICAL_CRCON_RETRY_DELAY_SECONDS`
+- `HLL_HISTORICAL_SNAPSHOT_REFRESH_INTERVAL_SECONDS`
+- `HLL_HISTORICAL_FULL_SNAPSHOT_EVERY_RUNS`
+- `HLL_HISTORICAL_REFRESH_MAX_RETRIES`
+- `HLL_HISTORICAL_REFRESH_RETRY_DELAY_SECONDS`
+
+Para ejecucion containerizada, el repositorio incluye tambien:
+
+- `backend/Dockerfile`
+- `backend/.dockerignore`
+- `backend/.env.example`
+
+El contenedor usa el mismo entrypoint real del proyecto:
+
+```powershell
+python -m app.main
+```
+
+Dentro del contenedor arranca por defecto con:
+
+- `HLL_BACKEND_HOST=0.0.0.0`
+- `HLL_BACKEND_PORT=8000`
+- `HLL_BACKEND_STORAGE_PATH=/app/data/hll_vietnam_dev.sqlite3`
+
+Build local:
+
+```powershell
+docker build -t hll-vietnam-backend ./backend
+```
+
+Ejecucion local con persistencia bind-mounted:
+
+```powershell
+docker run --rm `
+  -p 8000:8000 `
+  --env-file backend/.env.example `
+  -v ${PWD}\backend\data:/app/data `
+  hll-vietnam-backend
+```
+
+Si se prefiere no usar `--env-file`, el contenedor puede arrancar solo con sus
+defaults para host, puerto y path de SQLite. El bind mount de `/app/data` sigue
+siendo la forma recomendada de no perder persistencia al recrear el contenedor.
+
 El `frontend/index.html` viene preparado para volver a consultar el bloque de
 servidores cada `120000` ms (`120s`) sin recargar la pagina completa. La landing
 lee ese valor desde `data-server-refresh-ms`, por lo que puede ajustarse en el
@@ -210,6 +264,12 @@ Por defecto el archivo se crea en:
 backend/data/hll_vietnam_dev.sqlite3
 ```
 
+En Docker, ese mismo rol de persistencia debe montarse fuera del contenedor en:
+
+```text
+/app/data/hll_vietnam_dev.sqlite3
+```
+
 Variable opcional:
 
 - `HLL_BACKEND_STORAGE_PATH`
@@ -237,6 +297,12 @@ Por defecto se escriben bajo:
 backend/data/snapshots/<server_key>/
 ```
 
+En Docker, estos snapshots deben persistirse bajo:
+
+```text
+/app/data/snapshots/<server_key>/
+```
+
 Ejemplos:
 
 - `backend/data/snapshots/comunidad-hispana-01/server-summary.json`
@@ -259,6 +325,16 @@ Cada archivo conserva metadatos operativos minimos:
 La persistencia usa una identidad de archivo estable por combinacion de
 servidor, tipo y metrica para que cada refresh reemplace el artefacto anterior
 sin mezclarlo con el historico bruto.
+
+Resumen de persistencia recomendada para contenedor:
+
+- montar `/app/data`
+- conservar el SQLite historico en `/app/data/hll_vietnam_dev.sqlite3`
+- conservar los snapshots JSON en `/app/data/snapshots/`
+
+Con `docker compose`, esa persistencia ya queda montada desde:
+
+- `./backend/data -> /app/data`
 
 ## Bootstrap del colector
 
@@ -594,6 +670,14 @@ python -m app.historical_ingestion refresh
 python -m app.historical_runner --interval 1800
 ```
 
+Los mismos flujos desde Docker Compose:
+
+```powershell
+docker compose exec backend python -m app.historical_ingestion bootstrap
+docker compose exec backend python -m app.historical_ingestion refresh
+docker compose exec backend python -m app.historical_runner --interval 1800
+```
+
 Flags utiles:
 
 - `--server comunidad-hispana-01` para limitar a un servidor
@@ -675,6 +759,13 @@ Flags utiles del runner:
 - `--retries 1` para reducir reintentos
 - `--retry-delay 10` para bajar la espera entre fallos
 - `--max-runs 1` para una validacion puntual sin bucle indefinido
+
+Para regenerar snapshots de forma puntual dentro del contenedor sin dejar un
+bucle permanente, la validacion operativa minima es:
+
+```powershell
+docker compose exec backend python -m app.historical_runner --max-runs 1
+```
 
 Variables utiles del runner:
 
