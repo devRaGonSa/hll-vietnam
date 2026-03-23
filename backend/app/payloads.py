@@ -291,6 +291,21 @@ def build_weekly_leaderboard_payload(
     )
 
 
+def build_monthly_leaderboard_payload(
+    *,
+    limit: int = 10,
+    server_id: str | None = None,
+    metric: str = "kills",
+) -> dict[str, object]:
+    """Return one monthly historical leaderboard for the requested metric."""
+    return build_historical_leaderboard_payload(
+        limit=limit,
+        server_id=server_id,
+        metric=metric,
+        timeframe="monthly",
+    )
+
+
 def build_recent_historical_matches_payload(
     *,
     limit: int = 20,
@@ -423,6 +438,21 @@ def build_weekly_leaderboard_snapshot_payload(
         server_id=server_id,
         metric=metric,
         timeframe="weekly",
+    )
+
+
+def build_monthly_leaderboard_snapshot_payload(
+    *,
+    limit: int = 10,
+    server_id: str | None = None,
+    metric: str = "kills",
+) -> dict[str, object]:
+    """Return one precomputed monthly leaderboard snapshot."""
+    return build_leaderboard_snapshot_payload(
+        limit=limit,
+        server_id=server_id,
+        metric=metric,
+        timeframe="monthly",
     )
 
 

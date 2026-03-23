@@ -11,6 +11,8 @@ from .payloads import (
     build_error_payload,
     build_health_payload,
     build_historical_leaderboard_payload,
+    build_monthly_leaderboard_payload,
+    build_monthly_leaderboard_snapshot_payload,
     build_historical_server_summary_snapshot_payload,
     build_historical_player_profile_payload,
     build_historical_server_summary_payload,
@@ -90,6 +92,21 @@ def resolve_get_payload(path: str) -> tuple[HTTPStatus | None, dict[str, object]
             metric=metric,
         )
 
+    if parsed.path == "/api/historical/monthly-leaderboard":
+        limit = _parse_limit(parsed.query)
+        if limit is None:
+            return HTTPStatus.BAD_REQUEST, build_error_payload("Invalid limit parameter")
+        params = parse_qs(parsed.query)
+        server_id = params.get("server", [None])[0]
+        metric = params.get("metric", ["kills"])[0]
+        if metric not in {"kills", "deaths", "support", "matches_over_100_kills"}:
+            return HTTPStatus.BAD_REQUEST, build_error_payload("Invalid metric parameter")
+        return HTTPStatus.OK, build_monthly_leaderboard_payload(
+            limit=limit,
+            server_id=server_id,
+            metric=metric,
+        )
+
     if parsed.path == "/api/historical/snapshots/leaderboard":
         limit = _parse_limit(parsed.query)
         if limit is None:
@@ -107,6 +124,21 @@ def resolve_get_payload(path: str) -> tuple[HTTPStatus | None, dict[str, object]
             server_id=server_id,
             metric=metric,
             timeframe=timeframe,
+        )
+
+    if parsed.path == "/api/historical/snapshots/monthly-leaderboard":
+        limit = _parse_limit(parsed.query)
+        if limit is None:
+            return HTTPStatus.BAD_REQUEST, build_error_payload("Invalid limit parameter")
+        params = parse_qs(parsed.query)
+        server_id = params.get("server", [None])[0]
+        metric = params.get("metric", ["kills"])[0]
+        if metric not in {"kills", "deaths", "support", "matches_over_100_kills"}:
+            return HTTPStatus.BAD_REQUEST, build_error_payload("Invalid metric parameter")
+        return HTTPStatus.OK, build_monthly_leaderboard_snapshot_payload(
+            limit=limit,
+            server_id=server_id,
+            metric=metric,
         )
 
     if parsed.path == "/api/historical/snapshots/weekly-leaderboard":
