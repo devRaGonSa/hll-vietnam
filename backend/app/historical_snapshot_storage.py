@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -52,6 +53,35 @@ def persist_historical_snapshot(
         metric=metric,
     )
     snapshot_path.parent.mkdir(parents=True, exist_ok=True)
+    existing_document = _read_snapshot_document(snapshot_path)
+
+    if _should_preserve_existing_snapshot(
+        incoming_payload=payload,
+        snapshot_type=snapshot_type,
+        server_key=normalized_server_key,
+        db_path=db_path,
+        existing_document=existing_document,
+    ):
+        preserved_payload = existing_document.get("payload") if existing_document else payload
+        return HistoricalSnapshotRecord(
+            server_key=normalized_server_key,
+            snapshot_type=snapshot_type,
+            metric=metric,
+            window=window,
+            payload_json=json.dumps(preserved_payload, ensure_ascii=True),
+            generated_at=_parse_optional_datetime(existing_document.get("generated_at"))
+            if existing_document
+            else generated_at_value,
+            source_range_start=_parse_optional_datetime(
+                existing_document.get("source_range_start")
+            )
+            if existing_document
+            else _as_utc(source_range_start),
+            source_range_end=_parse_optional_datetime(existing_document.get("source_range_end"))
+            if existing_document
+            else _as_utc(source_range_end),
+            is_stale=bool(existing_document.get("is_stale", False)) if existing_document else is_stale,
+        )
 
     snapshot_document = {
         "server_key": normalized_server_key,
@@ -188,6 +218,85 @@ def list_historical_snapshots(
     )
 
 
+def _should_preserve_existing_snapshot(
+    *,
+    incoming_payload: dict[str, object] | list[object],
+    snapshot_type: str,
+    server_key: str,
+    db_path: Path | None,
+    existing_document: dict[str, object] | None,
+) -> bool:
+    if not _is_effectively_empty_snapshot_payload(snapshot_type, incoming_payload):
+        return False
+    if existing_document and not _is_effectively_empty_snapshot_payload(
+        snapshot_type,
+        existing_document.get("payload"),
+    ):
+        return True
+    return _historical_data_exists(server_key=server_key, db_path=db_path)
+
+
+def _is_effectively_empty_snapshot_payload(
+    snapshot_type: str,
+    payload: object,
+) -> bool:
+    if not isinstance(payload, dict):
+        return not payload
+
+    if snapshot_type == "server-summary":
+        item = payload.get("item")
+        if not isinstance(item, dict):
+            return True
+        matches_count = item.get("imported_matches_count", item.get("matches_count", 0))
+        return int(matches_count or 0) <= 0
+
+    if snapshot_type == "recent-matches":
+        items = payload.get("items")
+        return not isinstance(items, list) or len(items) == 0
+
+    if snapshot_type == "weekly-leaderboard":
+        items = payload.get("items")
+        return not isinstance(items, list) or len(items) == 0
+
+    return False
+
+
+def _historical_data_exists(*, server_key: str, db_path: Path | None) -> bool:
+    resolved_db_path = initialize_historical_storage(db_path=db_path or get_storage_path())
+    where_clause = ""
+    params: list[object] = []
+    if server_key != "all-servers":
+        where_clause = "WHERE historical_servers.slug = ?"
+        params.append(server_key)
+
+    connection = sqlite3.connect(resolved_db_path)
+    connection.row_factory = sqlite3.Row
+    try:
+        row = connection.execute(
+            f"""
+            SELECT COUNT(*) AS matches_count
+            FROM historical_matches
+            INNER JOIN historical_servers
+                ON historical_servers.id = historical_matches.historical_server_id
+            {where_clause}
+            """,
+            params,
+        ).fetchone()
+    finally:
+        connection.close()
+
+    return bool(row and int(row["matches_count"] or 0) > 0)
+
+
+def _read_snapshot_document(snapshot_path: Path) -> dict[str, object] | None:
+    if not snapshot_path.exists():
+        return None
+    try:
+        return json.loads(snapshot_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+
+
 def _build_snapshot_path(
     *,
     snapshots_root: Path,
@@ -230,3 +339,13 @@ def _as_utc(value: datetime | None) -> datetime | None:
     if value.tzinfo is None:
         return value.replace(tzinfo=timezone.utc)
     return value.astimezone(timezone.utc)
+
+
+def _parse_optional_datetime(value: object) -> datetime | None:
+    if not isinstance(value, str) or not value.strip():
+        return None
+    normalized = value.strip().replace("Z", "+00:00")
+    parsed = datetime.fromisoformat(normalized)
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
