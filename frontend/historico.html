@@ -45,8 +45,15 @@
                 </p>
               </div>
               <div class="historical-selector" aria-label="Seleccion de servidor">
-                <button
+			  <button
                   class="historical-selector__button is-active"
+                  type="button"
+                  data-server-slug="all-servers"
+                >
+                  Todos
+                </button>
+                <button
+                  class="historical-selector__button"
                   type="button"
                   data-server-slug="comunidad-hispana-01"
                 >
@@ -66,13 +73,7 @@
                 >
                   Comunidad Hispana #03
                 </button>
-                <button
-                  class="historical-selector__button"
-                  type="button"
-                  data-server-slug="all-servers"
-                >
-                  Totales / Todos
-                </button>
+                
               </div>
             </div>
           </div>
@@ -90,7 +91,7 @@
                     Datos generales registrados de los servidores
                   </p>
                   <p class="historical-snapshot-meta" id="historical-summary-snapshot-meta">
-                    Cargando snapshot de resumen...
+                    Cargando datos de resumen...
                   </p>
                 </div>
               <p class="status-chip status-chip--fallback" id="historical-range">
@@ -116,7 +117,7 @@
                     Cargando ventana semanal...
                   </p>
                   <p class="historical-snapshot-meta" id="weekly-leaderboard-snapshot-meta">
-                    Cargando snapshot semanal...
+                    Cargando datos semanal...
                   </p>
                 </div>
               </div>
@@ -187,12 +188,12 @@
               <div class="panel__header historical-panel__header">
                 <div>
                   <p class="eyebrow eyebrow--section">Partidas recientes</p>
-                  <h2 id="recent-matches-title">Ultimos cierres registrados</h2>
+                  <h2 id="recent-matches-title">Ultimas partidas registradas</h2>
                   <p class="historical-panel__note" id="recent-matches-note">
-                    Lista de cierres ya registrados para el alcance activo.
+                    Lista de partidas ya registradas.
                   </p>
                   <p class="historical-snapshot-meta" id="recent-matches-snapshot-meta">
-                    Cargando snapshot de partidas...
+                    Cargando datos de partidas...
                   </p>
                 </div>
               </div>
