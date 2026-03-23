@@ -756,9 +756,26 @@ Flags utiles del runner:
 
 - `--server comunidad-hispana-01` para limitar a un servidor
 - `--interval 900` para fijar la frecuencia recomendada de snapshots
+- `--hourly` para fijar directamente un ciclo horario de `3600` segundos
 - `--retries 1` para reducir reintentos
 - `--retry-delay 10` para bajar la espera entre fallos
 - `--max-runs 1` para una validacion puntual sin bucle indefinido
+
+Para dejar automatizado el refresh historico horario de los tres servidores del
+proyecto en local, el comando recomendado es:
+
+```powershell
+python -m app.historical_runner --hourly
+```
+
+Sin `--server`, ese runner refresca:
+
+- `comunidad-hispana-01`
+- `comunidad-hispana-02`
+- `comunidad-hispana-03`
+
+Despues de cada refresh correcto, recompone snapshots para los servidores
+afectados y vuelve a alinear el agregado `all-servers`.
 
 Para regenerar snapshots de forma puntual dentro del contenedor sin dejar un
 bucle permanente, la validacion operativa minima es:
@@ -766,6 +783,36 @@ bucle permanente, la validacion operativa minima es:
 ```powershell
 docker compose exec backend python -m app.historical_runner --max-runs 1
 ```
+
+Operativa local minima:
+
+1. Desde `backend/`, arrancar la API con `python -m app.main`.
+2. En otra terminal, dejar corriendo `python -m app.historical_runner --hourly`.
+3. Verificar el proceso revisando la salida del runner: al arrancar imprime un
+   bloque JSON con `event: "historical-refresh-loop-started"`, `server_scope`
+   y `snapshot_scope`.
+4. Confirmar que los snapshots siguen actualizandose revisando `generated_at`
+   en archivos bajo `backend/data/snapshots/`, por ejemplo:
+   - `backend/data/snapshots/comunidad-hispana-01/server-summary.json`
+   - `backend/data/snapshots/comunidad-hispana-02/recent-matches.json`
+   - `backend/data/snapshots/comunidad-hispana-03/weekly-kills.json`
+   - `backend/data/snapshots/all-servers/monthly-kills.json`
+
+Operativa minima con Docker Compose:
+
+```powershell
+docker compose up -d backend historical-runner frontend
+```
+
+El servicio `historical-runner` usa el mismo volumen persistente `./backend/data`
+y ejecuta `python -m app.historical_runner --hourly` como bucle operativo
+dedicado, sin mezclar el scheduler con el proceso HTTP principal.
+
+Comprobaciones utiles con Compose:
+
+- `docker compose ps historical-runner`
+- `docker compose logs -f historical-runner`
+- `docker compose exec backend python -m app.historical_runner --max-runs 1`
 
 Variables utiles del runner:
 

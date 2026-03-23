@@ -20,6 +20,13 @@ from .historical_snapshots import (
     generate_and_persist_priority_historical_snapshots,
 )
 
+HOURLY_INTERVAL_SECONDS = 3600
+DEFAULT_HISTORICAL_SERVER_SCOPE = (
+    "comunidad-hispana-01",
+    "comunidad-hispana-02",
+    "comunidad-hispana-03",
+)
+
 
 def run_periodic_historical_refresh(
     *,
@@ -34,8 +41,17 @@ def run_periodic_historical_refresh(
     """Run periodic historical refreshes and rebuild persisted snapshots."""
     completed_runs = 0
     print(
-        "Starting historical refresh loop "
-        f"(interval={interval_seconds}s, retries={max_retries}, server={server_slug or 'all'})."
+        json.dumps(
+            {
+                "event": "historical-refresh-loop-started",
+                "interval_seconds": interval_seconds,
+                "max_retries": max_retries,
+                "retry_delay_seconds": retry_delay_seconds,
+                "server_scope": _describe_refresh_scope(server_slug),
+                "snapshot_scope": _describe_snapshot_scope(server_slug),
+            },
+            indent=2,
+        )
     )
     print("Press Ctrl+C to stop.")
 
@@ -129,6 +145,18 @@ def generate_historical_snapshots(
     }
 
 
+def _describe_refresh_scope(server_slug: str | None) -> list[str]:
+    if server_slug:
+        return [server_slug]
+    return list(DEFAULT_HISTORICAL_SERVER_SCOPE)
+
+
+def _describe_snapshot_scope(server_slug: str | None) -> list[str]:
+    if server_slug:
+        return [server_slug, "all-servers"]
+    return [*DEFAULT_HISTORICAL_SERVER_SCOPE, "all-servers"]
+
+
 def main() -> None:
     """Allow local scheduled historical refresh execution without external infra."""
     parser = argparse.ArgumentParser(
@@ -139,6 +167,11 @@ def main() -> None:
         type=int,
         default=get_historical_refresh_interval_seconds(),
         help="Seconds to wait between refresh-plus-snapshot runs.",
+    )
+    parser.add_argument(
+        "--hourly",
+        action="store_true",
+        help="Shortcut for running the refresh loop every 3600 seconds.",
     )
     parser.add_argument(
         "--retries",
@@ -176,6 +209,9 @@ def main() -> None:
         help="Optional safety limit for the number of refresh cycles to execute.",
     )
     args = parser.parse_args()
+
+    if args.hourly:
+        args.interval = HOURLY_INTERVAL_SECONDS
 
     if args.interval <= 0:
         raise ValueError("--interval must be a positive integer.")

@@ -11,6 +11,19 @@ services:
       - ./backend/data:/app/data
     restart: unless-stopped
 
+  historical-runner:
+    build:
+      context: ./backend
+    container_name: hll-vietnam-historical-runner
+    command: ["python", "-m", "app.historical_runner", "--hourly"]
+    env_file:
+      - ./backend/.env.example
+    depends_on:
+      - backend
+    volumes:
+      - ./backend/data:/app/data
+    restart: unless-stopped
+
   frontend:
     build:
       context: ./frontend

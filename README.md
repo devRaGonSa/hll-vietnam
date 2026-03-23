@@ -133,6 +133,24 @@ Regeneracion puntual de snapshots mediante refresh controlado:
 docker compose exec backend python -m app.historical_runner --max-runs 1
 ```
 
+Automatizacion horaria recomendada:
+
+```powershell
+docker compose up -d backend historical-runner frontend
+```
+
+`historical-runner` es un servicio Compose separado que ejecuta
+`python -m app.historical_runner --hourly`, refresca el historico de
+`comunidad-hispana-01`, `comunidad-hispana-02` y `comunidad-hispana-03`, y
+regenera snapshots al terminar cada refresh correcto sin acoplar ese bucle al
+proceso HTTP del backend.
+
+Verificacion minima:
+
+- `docker compose ps historical-runner`
+- `docker compose logs -f historical-runner`
+- revisar `generated_at` en `backend/data/snapshots/`
+
 Si se prefiere operar fuera de Docker, el backend sigue pudiendo arrancar localmente con `python -m app.main` desde `backend/`.
 
 ## Evolucion prevista
