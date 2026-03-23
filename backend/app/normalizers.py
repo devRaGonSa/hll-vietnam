@@ -10,11 +10,22 @@ if TYPE_CHECKING:
 
 
 MAP_NAME_ALIASES = {
-    "stmarie": "Sainte-Marie-du-Mont",
-    "sainte-mariedumont": "Sainte-Marie-du-Mont",
-    "sainte-marie-du-mont": "Sainte-Marie-du-Mont",
-    "stmereeglise": "Sainte-Mere-Eglise",
-    "sainte-mere-eglise": "Sainte-Mere-Eglise",
+    "stmarie": "St. Marie Du Mont",
+    "stmariedumont": "St. Marie Du Mont",
+    "saintemariedumont": "St. Marie Du Mont",
+    "saintemariedumontwarfare": "St. Marie Du Mont",
+    "saintemariedumontoffensiveus": "St. Marie Du Mont",
+    "saintemariedumontoffensiveger": "St. Marie Du Mont",
+    "saintemariedumontnight": "St. Marie Du Mont",
+    "saintemariedumontovercast": "St. Marie Du Mont",
+    "sainte-mariedumont": "St. Marie Du Mont",
+    "sainte-marie-du-mont": "St. Marie Du Mont",
+    "stmereeglise": "St. Mere Eglise",
+    "stmereeglisewarfare": "St. Mere Eglise",
+    "stmereegliseoffensiveus": "St. Mere Eglise",
+    "stmereegliseoffensiveger": "St. Mere Eglise",
+    "saintemereeglise": "St. Mere Eglise",
+    "sainte-mere-eglise": "St. Mere Eglise",
     "purpleheartlane": "Purple Heart Lane",
     "utahbeach": "Utah Beach",
     "omahabeach": "Omaha Beach",
@@ -30,7 +41,12 @@ MAP_NAME_ALIASES = {
     "elalamein": "El Alamein",
     "mortain": "Mortain",
     "carentan": "Carentan",
-    "devq": "Developer Test Map",
+    "smolensk": "Smolensk",
+    "smolenskwarfare": "Smolensk",
+    "smolenskoffensiverus": "Smolensk",
+    "smolenskoffensiveger": "Smolensk",
+    "developertestmap": "Smolensk",
+    "devq": "Smolensk",
 }
 
 
@@ -87,7 +103,16 @@ def normalize_map_name(value: object) -> str | None:
         return None
 
     alias_key = "".join(character.lower() for character in normalized if character.isalnum())
-    return MAP_NAME_ALIASES.get(alias_key, normalized)
+    alias_match = MAP_NAME_ALIASES.get(alias_key)
+    if alias_match:
+        return alias_match
+
+    for candidate_key, candidate_label in MAP_NAME_ALIASES.items():
+        if alias_key.startswith(candidate_key):
+            return candidate_label
+
+    prettified = _prettify_map_name(normalized)
+    return prettified or normalized
 
 
 def _normalize_status(value: object) -> str:
@@ -122,3 +147,15 @@ def _string_or_none(value: object) -> str | None:
 def _string_or_default(value: object, default: str) -> str:
     normalized = _string_or_none(value)
     return normalized or default
+
+
+def _prettify_map_name(value: str) -> str:
+    text = value.replace("_", " ").replace("-", " ").strip()
+    compact_text = " ".join(text.split())
+    if not compact_text:
+        return value
+
+    return " ".join(
+        word.upper() if word.isdigit() else word.capitalize()
+        for word in compact_text.split(" ")
+    )
