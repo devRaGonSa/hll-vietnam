@@ -116,21 +116,11 @@ document.addEventListener("DOMContentLoaded", () => {
       `${backendBaseUrl}/api/historical/snapshots/weekly-leaderboard?server=${encodeURIComponent(serverSlug)}&metric=${encodeURIComponent(metricKey)}&limit=10`,
     );
 
-  const prefetchLeaderboardSnapshots = (serverSlug) => {
-    LEADERBOARD_METRICS.forEach((metric) => {
-      void getLeaderboardSnapshot(serverSlug, metric.key).catch(() => {});
-    });
-  };
-
-  const prefetchServerSnapshots = (serverSlug) => {
-    void getSummarySnapshot(serverSlug).catch(() => {});
-    void getRecentMatchesSnapshot(serverSlug).catch(() => {});
-    prefetchLeaderboardSnapshots(serverSlug);
-  };
-
   const refreshServerContent = async () => {
     const requestId = activeServerRequestId + 1;
+    const leaderboardRequestId = activeLeaderboardRequestId + 1;
     activeServerRequestId = requestId;
+    activeLeaderboardRequestId = leaderboardRequestId;
     const activeMetricConfig = getLeaderboardMetricConfig(activeLeaderboardMetric);
     const activeServerLabel = getHistoricalServerLabel(activeServerSlug);
 
@@ -153,6 +143,20 @@ document.addEventListener("DOMContentLoaded", () => {
     setState(recentStateNode, "Cargando partidas recientes...");
     setSnapshotMeta(recentSnapshotMetaNode, "Cargando snapshot de partidas...");
 
+    const cachedSummaryPayload = readCachedPayload(
+      summaryCache,
+      buildSummarySnapshotKey(activeServerSlug),
+    );
+    if (cachedSummaryPayload) {
+      hydrateSummary(
+        { status: "fulfilled", value: cachedSummaryPayload },
+        summaryNode,
+        rangeNode,
+        summaryNoteNode,
+        summarySnapshotMetaNode,
+      );
+    }
+
     const cachedLeaderboardPayload = readCachedPayload(
       leaderboardCache,
       buildLeaderboardSnapshotKey(activeServerSlug, activeLeaderboardMetric),
@@ -174,49 +178,74 @@ document.addEventListener("DOMContentLoaded", () => {
       weeklyTableNode.hidden = true;
     }
 
-    const targetServerSlug = activeServerSlug;
-    const targetMetric = activeLeaderboardMetric;
-    const [summaryResult, recentMatchesResult, leaderboardResult] =
-      await Promise.allSettled([
-        getSummarySnapshot(targetServerSlug),
-        getRecentMatchesSnapshot(targetServerSlug),
-        getLeaderboardSnapshot(targetServerSlug, targetMetric),
-      ]);
-
-    if (
-      requestId !== activeServerRequestId ||
-      targetServerSlug !== activeServerSlug ||
-      targetMetric !== activeLeaderboardMetric
-    ) {
-      return;
+    const cachedRecentMatchesPayload = readCachedPayload(
+      recentMatchesCache,
+      buildRecentMatchesSnapshotKey(activeServerSlug),
+    );
+    if (cachedRecentMatchesPayload) {
+      hydrateRecentMatches(
+        { status: "fulfilled", value: cachedRecentMatchesPayload },
+        recentStateNode,
+        recentListNode,
+        recentSnapshotMetaNode,
+      );
     }
 
-    hydrateSummary(
-      summaryResult,
-      summaryNode,
-      rangeNode,
-      summaryNoteNode,
-      summarySnapshotMetaNode,
-    );
-    hydrateRecentMatches(
-      recentMatchesResult,
-      recentStateNode,
-      recentListNode,
-      recentSnapshotMetaNode,
-    );
-    hydrateWeeklyLeaderboard(
-      leaderboardResult,
-      weeklyStateNode,
-      weeklyTableNode,
-      weeklyBodyNode,
-      weeklyTitleNode,
-      weeklyValueHeadingNode,
-      weeklyWindowNoteNode,
-      weeklySnapshotMetaNode,
-      activeMetricConfig,
-    );
+    const targetServerSlug = activeServerSlug;
+    const targetMetric = activeLeaderboardMetric;
+    void settlePromise(getSummarySnapshot(targetServerSlug)).then((summaryResult) => {
+      if (!isActiveServerRequest(requestId, targetServerSlug, targetMetric)) {
+        return;
+      }
 
-    prefetchServerSnapshots(targetServerSlug);
+      hydrateSummary(
+        summaryResult,
+        summaryNode,
+        rangeNode,
+        summaryNoteNode,
+        summarySnapshotMetaNode,
+      );
+    });
+
+    void settlePromise(getRecentMatchesSnapshot(targetServerSlug)).then((recentMatchesResult) => {
+      if (!isActiveServerRequest(requestId, targetServerSlug, targetMetric)) {
+        return;
+      }
+
+      hydrateRecentMatches(
+        recentMatchesResult,
+        recentStateNode,
+        recentListNode,
+        recentSnapshotMetaNode,
+      );
+    });
+
+    void settlePromise(
+      getLeaderboardSnapshot(targetServerSlug, targetMetric),
+    ).then((leaderboardResult) => {
+      if (
+        !isActiveLeaderboardRequest(
+          requestId,
+          leaderboardRequestId,
+          targetServerSlug,
+          targetMetric,
+        )
+      ) {
+        return;
+      }
+
+      hydrateWeeklyLeaderboard(
+        leaderboardResult,
+        weeklyStateNode,
+        weeklyTableNode,
+        weeklyBodyNode,
+        weeklyTitleNode,
+        weeklyValueHeadingNode,
+        weeklyWindowNoteNode,
+        weeklySnapshotMetaNode,
+        activeMetricConfig,
+      );
+    });
   };
 
   const refreshLeaderboardContent = async () => {
@@ -284,14 +313,6 @@ document.addEventListener("DOMContentLoaded", () => {
   };
 
   selectorButtons.forEach((button) => {
-    button.addEventListener("mouseenter", () => {
-      const nextServerSlug = normalizeServerSlug(button.dataset.serverSlug);
-      prefetchServerSnapshots(nextServerSlug);
-    });
-    button.addEventListener("focus", () => {
-      const nextServerSlug = normalizeServerSlug(button.dataset.serverSlug);
-      prefetchServerSnapshots(nextServerSlug);
-    });
     button.addEventListener("click", () => {
       const nextServerSlug = normalizeServerSlug(button.dataset.serverSlug);
       if (nextServerSlug === activeServerSlug) {
@@ -321,9 +342,28 @@ document.addEventListener("DOMContentLoaded", () => {
     });
   });
 
-  prefetchServerSnapshots(activeServerSlug);
   void refreshServerContent();
 });
+
+function isActiveServerRequest(requestId, serverSlug, metricKey) {
+  return (
+    requestId === activeServerRequestId &&
+    serverSlug === activeServerSlug &&
+    metricKey === activeLeaderboardMetric
+  );
+}
+
+function isActiveLeaderboardRequest(
+  serverRequestId,
+  leaderboardRequestId,
+  serverSlug,
+  metricKey,
+) {
+  return (
+    isActiveServerRequest(serverRequestId, serverSlug, metricKey) &&
+    leaderboardRequestId === activeLeaderboardRequestId
+  );
+}
 
 function hydrateSummary(result, summaryNode, rangeNode, noteNode, snapshotMetaNode) {
   if (result.status !== "fulfilled") {
