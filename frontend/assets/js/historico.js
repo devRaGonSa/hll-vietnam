@@ -906,15 +906,15 @@ function buildSnapshotMetaText(payload, missingMessage) {
 
   const parts = [
     payload.is_stale
-      ? `Snapshot posiblemente desactualizado: ${formatTimestamp(payload.generated_at)}`
-      : `Snapshot generado: ${formatTimestamp(payload.generated_at)}`,
+      ? `Actualizado: ${formatTimestamp(payload.generated_at)}`
+      : `Actualizado: ${formatTimestamp(payload.generated_at)}`,
   ];
   const sourceRangeLabel = buildRangeLabel(
     payload?.source_range_start,
     payload?.source_range_end,
   );
   if (sourceRangeLabel) {
-    parts.push(`Fuente: ${sourceRangeLabel}`);
+    parts.push(`Cobertura: ${sourceRangeLabel}`);
   }
   return parts.join(" | ");
 }
