@@ -428,12 +428,15 @@ def _build_historical_snapshot_metadata(snapshot: dict[str, object] | None) -> d
             "source_range_start": None,
             "source_range_end": None,
             "is_stale": True,
+            "freshness": "stale",
         }
+    is_stale = bool(snapshot.get("is_stale", False))
     return {
         "generated_at": snapshot.get("generated_at"),
         "source_range_start": snapshot.get("source_range_start"),
         "source_range_end": snapshot.get("source_range_end"),
-        "is_stale": bool(snapshot.get("is_stale", False)),
+        "is_stale": is_stale,
+        "freshness": "stale" if is_stale else "fresh",
     }
 
 

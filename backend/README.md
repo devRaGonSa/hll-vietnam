@@ -507,6 +507,7 @@ request. Estos endpoints devuelven payloads ligeros listos para frontend con:
 - `source_range_start`
 - `source_range_end`
 - `is_stale`
+- `freshness`
 - `found`
 
 `/api/historical/snapshots/server-summary` devuelve `item` con el resumen del
