@@ -1,5 +1,5 @@
 // Progressive enhancement for local frontend-backend checks.
-const DEFAULT_SERVER_POLL_INTERVAL_MS = 120 * 1000;
+const DEFAULT_SERVER_POLL_INTERVAL_MS = 300 * 1000;
 const SERVER_HISTORY_URLS = Object.freeze({
   "comunidad-hispana-01": "https://scoreboard.comunidadhll.es/games",
   "comunidad-hispana-02": "https://scoreboard.comunidadhll.es:5443/games",
@@ -43,7 +43,7 @@ const COMMUNITY_CLANS = Object.freeze([
     badge: "Clan CH",
     description:
       "Clan activo de la comunidad, con acceso directo a su discord.",
-    logoSrc: "",
+    logoSrc: "./assets/img/clans/h9h.png",
     logoAlt: "",
     logoClassName: "",
     discordUrl: "https://discord.gg/tYnXK7MQjB",
