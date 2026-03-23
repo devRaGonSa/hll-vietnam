@@ -2342,25 +2342,24 @@ def _select_weekly_window(
     previous_week_start: datetime,
     db_path: Path,
 ) -> dict[str, object]:
-    min_matches = get_historical_weekly_fallback_min_matches()
     fallback_max_weekday = get_historical_weekly_fallback_max_weekday()
-    current_week_closed_matches = _count_closed_matches_in_window(
+    current_week_closed_matches = _count_valid_matches_with_stats_in_window(
         server_id=server_id,
         window_start=current_week_start,
         window_end=current_time,
         db_path=db_path,
     )
-    previous_week_closed_matches = _count_closed_matches_in_window(
+    previous_week_closed_matches = _count_valid_matches_with_stats_in_window(
         server_id=server_id,
         window_start=previous_week_start,
         window_end=current_week_start,
         db_path=db_path,
     )
     is_early_week = current_time.weekday() <= fallback_max_weekday
+    min_matches = 1
     current_week_has_sufficient_sample = current_week_closed_matches >= min_matches
     uses_fallback = (
-        is_early_week
-        and not current_week_has_sufficient_sample
+        not current_week_has_sufficient_sample
         and previous_week_closed_matches > 0
     )
 
@@ -2479,6 +2478,54 @@ def _count_closed_matches_in_window(
             FROM historical_matches
             INNER JOIN historical_servers
                 ON historical_servers.id = historical_matches.historical_server_id
+            WHERE {" AND ".join(where_clauses)}
+            """,
+            params,
+        ).fetchone()
+    return int(row["matches_count"] or 0) if row is not None else 0
+
+
+def _count_valid_matches_with_stats_in_window(
+    *,
+    server_id: str | None,
+    window_start: datetime,
+    window_end: datetime,
+    db_path: Path,
+) -> int:
+    where_clauses = [
+        "historical_matches.ended_at IS NOT NULL",
+        "historical_matches.ended_at >= ?",
+        "historical_matches.ended_at < ?",
+        "("
+        "COALESCE(historical_player_match_stats.kills, 0) > 0 "
+        "OR COALESCE(historical_player_match_stats.deaths, 0) > 0 "
+        "OR COALESCE(historical_player_match_stats.support, 0) > 0 "
+        "OR COALESCE(historical_player_match_stats.combat, 0) > 0 "
+        "OR COALESCE(historical_player_match_stats.offense, 0) > 0 "
+        "OR COALESCE(historical_player_match_stats.defense, 0) > 0 "
+        "OR COALESCE(historical_player_match_stats.time_seconds, 0) > 0"
+        ")",
+    ]
+    params: list[object] = [
+        window_start.isoformat().replace("+00:00", "Z"),
+        window_end.isoformat().replace("+00:00", "Z"),
+    ]
+    if server_id and not _is_all_servers_selector(server_id):
+        normalized_server_id = server_id.strip()
+        where_clauses.append(
+            "(historical_servers.slug = ? OR CAST(historical_servers.server_number AS TEXT) = ?)"
+        )
+        params.extend([normalized_server_id, normalized_server_id])
+
+    with _connect(db_path) as connection:
+        row = connection.execute(
+            f"""
+            SELECT COUNT(DISTINCT historical_matches.id) AS matches_count
+            FROM historical_matches
+            INNER JOIN historical_servers
+                ON historical_servers.id = historical_matches.historical_server_id
+            INNER JOIN historical_player_match_stats
+                ON historical_player_match_stats.historical_match_id = historical_matches.id
             WHERE {" AND ".join(where_clauses)}
             """,
             params,
