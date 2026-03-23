@@ -13,8 +13,10 @@ from .historical_snapshots import (
     SNAPSHOT_TYPE_RECENT_MATCHES,
     SNAPSHOT_TYPE_SERVER_SUMMARY,
     SNAPSHOT_TYPE_WEEKLY_LEADERBOARD,
+    generate_and_persist_historical_snapshots,
 )
 from .historical_storage import (
+    ALL_SERVERS_SLUG,
     get_historical_player_profile,
     list_historical_server_summaries,
     list_recent_historical_matches,
@@ -228,11 +230,20 @@ def build_weekly_leaderboard_payload(
 ) -> dict[str, object]:
     """Return one weekly historical leaderboard for the requested metric."""
     result = list_weekly_leaderboard(limit=limit, server_id=server_id, metric=metric)
+    is_all_servers = server_id == ALL_SERVERS_SLUG
     title_by_metric = {
-        "kills": "Top kills semanales por servidor",
-        "deaths": "Top muertes semanales por servidor",
-        "support": "Top puntos de soporte semanales por servidor",
-        "matches_over_100_kills": "Top partidas de 100+ kills semanales por servidor",
+        "kills": "Top kills semanales totales" if is_all_servers else "Top kills semanales por servidor",
+        "deaths": "Top muertes semanales totales" if is_all_servers else "Top muertes semanales por servidor",
+        "support": (
+            "Top puntos de soporte semanales totales"
+            if is_all_servers
+            else "Top puntos de soporte semanales por servidor"
+        ),
+        "matches_over_100_kills": (
+            "Top partidas de 100+ kills semanales totales"
+            if is_all_servers
+            else "Top partidas de 100+ kills semanales por servidor"
+        ),
     }
     return {
         "status": "ok",
@@ -320,11 +331,28 @@ def build_weekly_leaderboard_snapshot_payload(
     payload = snapshot.get("payload") if snapshot else {}
     items = payload.get("items") if isinstance(payload, dict) else None
     sliced_items = list(items[:limit]) if isinstance(items, list) else []
+    is_all_servers = server_id == ALL_SERVERS_SLUG
     title_by_metric = {
-        "kills": "Snapshot semanal de top kills por servidor",
-        "deaths": "Snapshot semanal de top muertes por servidor",
-        "support": "Snapshot semanal de top soporte por servidor",
-        "matches_over_100_kills": "Snapshot semanal de partidas 100+ kills por servidor",
+        "kills": (
+            "Snapshot semanal de top kills totales"
+            if is_all_servers
+            else "Snapshot semanal de top kills por servidor"
+        ),
+        "deaths": (
+            "Snapshot semanal de top muertes totales"
+            if is_all_servers
+            else "Snapshot semanal de top muertes por servidor"
+        ),
+        "support": (
+            "Snapshot semanal de top soporte total"
+            if is_all_servers
+            else "Snapshot semanal de top soporte por servidor"
+        ),
+        "matches_over_100_kills": (
+            "Snapshot semanal de partidas 100+ kills totales"
+            if is_all_servers
+            else "Snapshot semanal de partidas 100+ kills por servidor"
+        ),
     }
     return {
         "status": "ok",
@@ -397,7 +425,11 @@ def build_historical_server_summary_payload(
     return {
         "status": "ok",
         "data": {
-            "title": "Cobertura historica importada por servidor",
+            "title": (
+                "Cobertura historica agregada de todos los servidores"
+                if server_slug == ALL_SERVERS_SLUG
+                else "Cobertura historica importada por servidor"
+            ),
             "context": "historical-server-summary",
             "source": "historical-crcon-storage",
             "summary_basis": "persisted-import",
@@ -433,6 +465,21 @@ def _get_historical_snapshot_record(
 ) -> dict[str, object] | None:
     if not server_key:
         return None
+    snapshot = get_historical_snapshot(
+        server_key=server_key,
+        snapshot_type=snapshot_type,
+        metric=metric,
+        window=window,
+    )
+    if snapshot is not None:
+        return snapshot
+
+    # Self-heal missing precomputed rows when raw historical data already exists.
+    try:
+        generate_and_persist_historical_snapshots(server_key=server_key)
+    except Exception:
+        return None
+
     return get_historical_snapshot(
         server_key=server_key,
         snapshot_type=snapshot_type,

@@ -15,3 +15,5 @@ ai/worker.lock
 # Local backend runtime data
 backend/data/*.sqlite3
 !backend/data/.gitkeep
+backend/data/snapshots/**
+!backend/data/snapshots/.gitkeep

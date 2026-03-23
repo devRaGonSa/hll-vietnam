@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from .historical_storage import (
+    ALL_SERVERS_SLUG,
     list_historical_server_summaries,
     list_historical_servers,
     list_recent_historical_matches,
@@ -65,11 +66,13 @@ def validate_snapshot_identity(
 
 def list_snapshot_server_keys(*, db_path: Path | None = None) -> list[str]:
     """Return the historical server slugs that should receive persisted snapshots."""
-    return [
+    server_keys = [
         str(item["slug"])
         for item in list_historical_servers(db_path=db_path)
         if item.get("slug")
     ]
+    server_keys.append(ALL_SERVERS_SLUG)
+    return server_keys
 
 
 def build_historical_server_snapshots(

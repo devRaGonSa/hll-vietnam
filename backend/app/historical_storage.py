@@ -28,7 +28,15 @@ DEFAULT_HISTORICAL_SERVERS = (
         scoreboard_base_url="https://scoreboard.comunidadhll.es:5443",
         server_number=2,
     ),
+    HistoricalServerDefinition(
+        slug="comunidad-hispana-03",
+        display_name="Comunidad Hispana #03",
+        scoreboard_base_url="https://scoreboard.comunidadhll.es:3443",
+        server_number=3,
+    ),
 )
+ALL_SERVERS_SLUG = "all-servers"
+ALL_SERVERS_DISPLAY_NAME = "Totales / Todos"
 DEFAULT_WEEKLY_WINDOW_DAYS = 7
 DEFAULT_REFRESH_OVERLAP_HOURS = 12
 SUPPORTED_WEEKLY_LEADERBOARD_METRICS = frozenset(
@@ -729,7 +737,7 @@ def list_recent_historical_matches(
     resolved_path = initialize_historical_storage(db_path=db_path)
     where_clause = ""
     params: list[object] = []
-    if server_slug:
+    if server_slug and not _is_all_servers_selector(server_slug):
         where_clause = "WHERE historical_servers.slug = ?"
         params.append(server_slug)
     params.append(limit)
@@ -797,6 +805,9 @@ def list_historical_server_summaries(
 ) -> list[dict[str, object]]:
     """Return aggregate historical metrics per server."""
     resolved_path = initialize_historical_storage(db_path=db_path)
+    if _is_all_servers_selector(server_slug):
+        return [_build_all_servers_summary(db_path=resolved_path)]
+
     where_clause = ""
     params: list[object] = []
     if server_slug:
@@ -1102,6 +1113,7 @@ def list_weekly_leaderboard(
 ) -> dict[str, object]:
     """Return ranked weekly leaderboard totals from persisted historical match stats."""
     resolved_path = initialize_historical_storage(db_path=db_path)
+    aggregate_all_servers = _is_all_servers_selector(server_id)
     current_time = datetime.now(timezone.utc)
     current_week_start = _start_of_week(current_time)
     previous_week_start = current_week_start - timedelta(days=DEFAULT_WEEKLY_WINDOW_DAYS)
@@ -1127,12 +1139,33 @@ def list_weekly_leaderboard(
         window_start.isoformat().replace("+00:00", "Z"),
         window_end.isoformat().replace("+00:00", "Z"),
     ]
-    if server_id:
+    if server_id and not aggregate_all_servers:
         normalized_server_id = server_id.strip()
         where_clauses.append(
             "(historical_servers.slug = ? OR CAST(historical_servers.server_number AS TEXT) = ?)"
         )
         params.extend([normalized_server_id, normalized_server_id])
+
+    server_slug_expression = (
+        f"'{ALL_SERVERS_SLUG}'"
+        if aggregate_all_servers
+        else "historical_servers.slug"
+    )
+    server_name_expression = (
+        f"'{ALL_SERVERS_DISPLAY_NAME}'"
+        if aggregate_all_servers
+        else "historical_servers.display_name"
+    )
+    partition_expression = (
+        f"'{ALL_SERVERS_SLUG}'"
+        if aggregate_all_servers
+        else "historical_servers.slug"
+    )
+    group_by_expression = (
+        "historical_players.id"
+        if aggregate_all_servers
+        else "historical_servers.slug, historical_players.id"
+    )
 
     metric_sum_expression = {
         "kills": "COALESCE(SUM(historical_player_match_stats.kills), 0)",
@@ -1149,15 +1182,15 @@ def list_weekly_leaderboard(
             f"""
             WITH ranked_players AS (
                 SELECT
-                    historical_servers.slug AS server_slug,
-                    historical_servers.display_name AS server_name,
+                    {server_slug_expression} AS server_slug,
+                    {server_name_expression} AS server_name,
                     historical_players.stable_player_key,
                     historical_players.display_name AS player_name,
                     historical_players.steam_id,
                     COUNT(DISTINCT historical_matches.id) AS matches_count,
                     {metric_sum_expression} AS metric_value,
                     ROW_NUMBER() OVER (
-                        PARTITION BY historical_servers.slug
+                        PARTITION BY {partition_expression}
                         ORDER BY
                             {metric_sum_expression} DESC,
                             COUNT(DISTINCT historical_matches.id) ASC,
@@ -1171,7 +1204,7 @@ def list_weekly_leaderboard(
                 INNER JOIN historical_players
                     ON historical_players.id = historical_player_match_stats.historical_player_id
                 WHERE {" AND ".join(where_clauses)}
-                GROUP BY historical_servers.slug, historical_players.id
+                GROUP BY {group_by_expression}
             )
             SELECT *
             FROM ranked_players
@@ -2219,7 +2252,7 @@ def _count_closed_matches_in_window(
         window_start.isoformat().replace("+00:00", "Z"),
         window_end.isoformat().replace("+00:00", "Z"),
     ]
-    if server_id:
+    if server_id and not _is_all_servers_selector(server_id):
         normalized_server_id = server_id.strip()
         where_clauses.append(
             "(historical_servers.slug = ? OR CAST(historical_servers.server_number AS TEXT) = ?)"
@@ -2251,6 +2284,122 @@ def _classify_coverage_status(
     if coverage_days < DEFAULT_WEEKLY_WINDOW_DAYS:
         return "under-week"
     return "week-plus"
+
+
+def _build_all_servers_summary(*, db_path: Path) -> dict[str, object]:
+    per_server_items = list_historical_server_summaries(db_path=db_path)
+    imported_matches_count = sum(int(item.get("matches_count") or 0) for item in per_server_items)
+    unique_players = _count_all_servers_unique_players(db_path=db_path)
+    total_kills = sum(int(item.get("total_kills") or 0) for item in per_server_items)
+    discovered_total_matches = sum(
+        _coerce_int(item.get("backfill", {}).get("discovered_total_matches")) or 0
+        for item in per_server_items
+    )
+    first_points = [
+        item.get("coverage", {}).get("first_match_at")
+        for item in per_server_items
+        if item.get("coverage", {}).get("first_match_at")
+    ]
+    last_points = [
+        item.get("coverage", {}).get("last_match_at")
+        for item in per_server_items
+        if item.get("coverage", {}).get("last_match_at")
+    ]
+    first_match_at = min(first_points) if first_points else None
+    last_match_at = max(last_points) if last_points else None
+    coverage_days = _calculate_coverage_days(first_match_at, last_match_at)
+
+    return {
+        "server": {
+            "slug": ALL_SERVERS_SLUG,
+            "name": ALL_SERVERS_DISPLAY_NAME,
+        },
+        "matches_count": imported_matches_count,
+        "imported_matches_count": imported_matches_count,
+        "unique_players": unique_players,
+        "total_kills": total_kills,
+        "map_count": _count_all_servers_maps(db_path=db_path),
+        "top_maps": _list_all_servers_top_maps(db_path=db_path, limit=3),
+        "coverage": {
+            "basis": "persisted-import-aggregate",
+            "status": _classify_coverage_status(imported_matches_count, coverage_days),
+            "imported_matches_count": imported_matches_count,
+            "discovered_total_matches": discovered_total_matches or None,
+            "first_match_at": first_match_at,
+            "last_match_at": last_match_at,
+            "coverage_days": coverage_days,
+        },
+        "backfill": {
+            "mode": "aggregate",
+            "server_count": len(per_server_items),
+            "discovered_total_matches": discovered_total_matches or None,
+            "remaining_matches_estimate": (
+                max(discovered_total_matches - imported_matches_count, 0)
+                if discovered_total_matches
+                else None
+            ),
+            "archive_exhausted": all(
+                bool(item.get("backfill", {}).get("archive_exhausted"))
+                for item in per_server_items
+            ),
+            "last_run": None,
+        },
+        "time_range": {
+            "start": first_match_at,
+            "end": last_match_at,
+        },
+    }
+
+
+def _count_all_servers_unique_players(*, db_path: Path) -> int:
+    with _connect(db_path) as connection:
+        row = connection.execute(
+            """
+            SELECT COUNT(DISTINCT historical_players.id) AS unique_players
+            FROM historical_player_match_stats
+            INNER JOIN historical_players
+                ON historical_players.id = historical_player_match_stats.historical_player_id
+            """
+        ).fetchone()
+    return int(row["unique_players"] or 0) if row is not None else 0
+
+
+def _count_all_servers_maps(*, db_path: Path) -> int:
+    with _connect(db_path) as connection:
+        row = connection.execute(
+            """
+            SELECT COUNT(DISTINCT COALESCE(map_pretty_name, map_name)) AS map_count
+            FROM historical_matches
+            """
+        ).fetchone()
+    return int(row["map_count"] or 0) if row is not None else 0
+
+
+def _list_all_servers_top_maps(*, db_path: Path, limit: int) -> list[dict[str, object]]:
+    with _connect(db_path) as connection:
+        rows = connection.execute(
+            """
+            SELECT
+                COALESCE(map_pretty_name, map_name, 'Mapa no disponible') AS map_name,
+                COUNT(*) AS matches_count
+            FROM historical_matches
+            GROUP BY COALESCE(map_pretty_name, map_name, 'Mapa no disponible')
+            ORDER BY matches_count DESC, map_name ASC
+            LIMIT ?
+            """,
+            (limit,),
+        ).fetchall()
+    return [
+        {
+            "map_name": row["map_name"],
+            "matches_count": int(row["matches_count"] or 0),
+        }
+        for row in rows
+    ]
+
+
+def _is_all_servers_selector(value: str | None) -> bool:
+    return isinstance(value, str) and value.strip() == ALL_SERVERS_SLUG
 
 
 def _start_of_week(value: datetime) -> datetime:

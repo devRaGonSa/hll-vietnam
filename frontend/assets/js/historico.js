@@ -1,8 +1,27 @@
-const HISTORICAL_SERVER_SLUGS = Object.freeze([
-  "comunidad-hispana-01",
-  "comunidad-hispana-02",
+const HISTORICAL_SERVERS = Object.freeze([
+  {
+    slug: "comunidad-hispana-01",
+    label: "Comunidad Hispana #01",
+  },
+  {
+    slug: "comunidad-hispana-02",
+    label: "Comunidad Hispana #02",
+  },
+  {
+    slug: "comunidad-hispana-03",
+    label: "Comunidad Hispana #03",
+  },
+  {
+    slug: "all-servers",
+    label: "Totales / Todos",
+  },
 ]);
+const HISTORICAL_SERVER_SLUGS = Object.freeze(
+  HISTORICAL_SERVERS.map((server) => server.slug),
+);
 const DEFAULT_HISTORICAL_SERVER = HISTORICAL_SERVER_SLUGS[0];
+const SNAPSHOT_CACHE_TTL_MS = 60000;
+const NEGATIVE_SNAPSHOT_CACHE_TTL_MS = 5000;
 const LEADERBOARD_METRICS = Object.freeze([
   {
     key: "kills",
@@ -57,6 +76,7 @@ document.addEventListener("DOMContentLoaded", () => {
   );
   const recentStateNode = document.getElementById("recent-matches-state");
   const recentListNode = document.getElementById("recent-matches-list");
+  const recentNoteNode = document.getElementById("recent-matches-note");
   const recentSnapshotMetaNode = document.getElementById(
     "recent-matches-snapshot-meta",
   );
@@ -102,28 +122,39 @@ document.addEventListener("DOMContentLoaded", () => {
     });
   };
 
+  const prefetchServerSnapshots = (serverSlug) => {
+    void getSummarySnapshot(serverSlug).catch(() => {});
+    void getRecentMatchesSnapshot(serverSlug).catch(() => {});
+    prefetchLeaderboardSnapshots(serverSlug);
+  };
+
   const refreshServerContent = async () => {
     const requestId = activeServerRequestId + 1;
     activeServerRequestId = requestId;
     const activeMetricConfig = getLeaderboardMetricConfig(activeLeaderboardMetric);
+    const activeServerLabel = getHistoricalServerLabel(activeServerSlug);
 
     syncActiveButtons(selectorButtons, activeServerSlug);
     syncLeaderboardTabs(leaderboardTabButtons, activeLeaderboardMetric);
-    weeklyTitleNode.textContent = activeMetricConfig.title;
+    weeklyTitleNode.textContent = buildLeaderboardTitle(
+      activeMetricConfig,
+      activeServerSlug,
+    );
     weeklyValueHeadingNode.textContent = activeMetricConfig.valueHeading;
     setRangeBadge(rangeNode, "Cargando rango temporal", false);
-    summaryNoteNode.textContent =
-      "La vista esta leyendo snapshots precalculados del historico local.";
+    summaryNoteNode.textContent = `La vista esta leyendo snapshots precalculados del historico local para ${activeServerLabel}.`;
     setSnapshotMeta(summarySnapshotMetaNode, "Cargando snapshot de resumen...");
     renderSummaryLoading(summaryNode);
     weeklyWindowNoteNode.textContent =
-      "Cargando snapshot semanal del servidor activo...";
+      "Cargando snapshot semanal del alcance activo...";
     setSnapshotMeta(weeklySnapshotMetaNode, "Preparando snapshot semanal...");
     recentListNode.innerHTML = "";
+    recentNoteNode.textContent = buildRecentMatchesNote(activeServerSlug);
     setState(recentStateNode, "Cargando partidas recientes...");
     setSnapshotMeta(recentSnapshotMetaNode, "Cargando snapshot de partidas...");
 
-    const cachedLeaderboardPayload = leaderboardCache.get(
+    const cachedLeaderboardPayload = readCachedPayload(
+      leaderboardCache,
       buildLeaderboardSnapshotKey(activeServerSlug, activeLeaderboardMetric),
     );
     if (cachedLeaderboardPayload) {
@@ -185,7 +216,7 @@ document.addEventListener("DOMContentLoaded", () => {
       activeMetricConfig,
     );
 
-    prefetchLeaderboardSnapshots(targetServerSlug);
+    prefetchServerSnapshots(targetServerSlug);
   };
 
   const refreshLeaderboardContent = async () => {
@@ -196,10 +227,14 @@ document.addEventListener("DOMContentLoaded", () => {
     const targetMetric = activeLeaderboardMetric;
 
     syncLeaderboardTabs(leaderboardTabButtons, activeLeaderboardMetric);
-    weeklyTitleNode.textContent = metricConfig.title;
+    weeklyTitleNode.textContent = buildLeaderboardTitle(
+      metricConfig,
+      activeServerSlug,
+    );
     weeklyValueHeadingNode.textContent = metricConfig.valueHeading;
 
-    const cachedPayload = leaderboardCache.get(
+    const cachedPayload = readCachedPayload(
+      leaderboardCache,
       buildLeaderboardSnapshotKey(targetServerSlug, targetMetric),
     );
     if (cachedPayload) {
@@ -218,7 +253,7 @@ document.addEventListener("DOMContentLoaded", () => {
     }
 
     weeklyWindowNoteNode.textContent =
-      "Cargando snapshot semanal del servidor activo...";
+      "Cargando snapshot semanal del alcance activo...";
     setSnapshotMeta(weeklySnapshotMetaNode, "Cargando snapshot semanal...");
     setState(weeklyStateNode, "Cargando ranking semanal...");
     weeklyTableNode.hidden = true;
@@ -249,6 +284,14 @@ document.addEventListener("DOMContentLoaded", () => {
   };
 
   selectorButtons.forEach((button) => {
+    button.addEventListener("mouseenter", () => {
+      const nextServerSlug = normalizeServerSlug(button.dataset.serverSlug);
+      prefetchServerSnapshots(nextServerSlug);
+    });
+    button.addEventListener("focus", () => {
+      const nextServerSlug = normalizeServerSlug(button.dataset.serverSlug);
+      prefetchServerSnapshots(nextServerSlug);
+    });
     button.addEventListener("click", () => {
       const nextServerSlug = normalizeServerSlug(button.dataset.serverSlug);
       if (nextServerSlug === activeServerSlug) {
@@ -278,7 +321,7 @@ document.addEventListener("DOMContentLoaded", () => {
     });
   });
 
-  prefetchLeaderboardSnapshots(activeServerSlug);
+  prefetchServerSnapshots(activeServerSlug);
   void refreshServerContent();
 });
 
@@ -287,7 +330,7 @@ function hydrateSummary(result, summaryNode, rangeNode, noteNode, snapshotMetaNo
     renderSummaryError(summaryNode);
     setRangeBadge(rangeNode, "Snapshot de resumen no disponible", false);
     noteNode.textContent =
-      "No se pudo leer el resumen precalculado para este servidor.";
+      "No se pudo leer el resumen precalculado para el alcance seleccionado.";
     setSnapshotMeta(snapshotMetaNode, "Error al leer el snapshot de resumen.");
     return;
   }
@@ -298,7 +341,7 @@ function hydrateSummary(result, summaryNode, rangeNode, noteNode, snapshotMetaNo
     renderSummaryEmpty(summaryNode);
     setRangeBadge(rangeNode, "Sin snapshot de resumen", false);
     noteNode.textContent =
-      "Todavia no existe un snapshot de resumen listo para este servidor.";
+      "Todavia no existe un snapshot de resumen listo para el alcance seleccionado.";
     setSnapshotMeta(snapshotMetaNode, "Snapshot de resumen pendiente de generacion.");
     return;
   }
@@ -318,6 +361,7 @@ function hydrateSummary(result, summaryNode, rangeNode, noteNode, snapshotMetaNo
     "snapshot-precomputed",
     7,
     coverage,
+    summary.server?.slug,
   );
   setSnapshotMeta(
     snapshotMetaNode,
@@ -354,9 +398,9 @@ function hydrateWeeklyLeaderboard(
   snapshotMetaNode,
   metricConfig,
 ) {
-  titleNode.textContent = metricConfig.title;
   valueHeadingNode.textContent = metricConfig.valueHeading;
   if (result.status !== "fulfilled") {
+    titleNode.textContent = metricConfig.title;
     noteNode.textContent =
       "No se pudo leer el snapshot semanal precalculado para esta metrica.";
     setSnapshotMeta(snapshotMetaNode, "Error al leer el snapshot semanal.");
@@ -366,6 +410,7 @@ function hydrateWeeklyLeaderboard(
   }
 
   const payload = result.value?.data;
+  titleNode.textContent = buildLeaderboardTitle(metricConfig, payload?.server_slug);
   noteNode.textContent = buildWeeklyWindowNote(payload);
   setSnapshotMeta(
     snapshotMetaNode,
@@ -523,6 +568,13 @@ function normalizeServerSlug(rawValue) {
   return DEFAULT_HISTORICAL_SERVER;
 }
 
+function getHistoricalServerLabel(serverSlug) {
+  return (
+    HISTORICAL_SERVERS.find((server) => server.slug === serverSlug)?.label ||
+    HISTORICAL_SERVERS[0].label
+  );
+}
+
 function normalizeLeaderboardMetric(rawValue) {
   const normalized = typeof rawValue === "string" ? rawValue.trim() : "";
   if (LEADERBOARD_METRICS.some((metric) => metric.key === normalized)) {
@@ -571,7 +623,7 @@ function buildCoverageBadgeLabel(coverage, timeRange) {
   return rangeLabel;
 }
 
-function buildSummaryNote(summaryBasis, weeklyWindowDays, coverage) {
+function buildSummaryNote(summaryBasis, weeklyWindowDays, coverage, serverSlug) {
   const basisLabel =
     summaryBasis === "snapshot-precomputed"
       ? "el snapshot precalculado del historico local"
@@ -583,12 +635,15 @@ function buildSummaryNote(summaryBasis, weeklyWindowDays, coverage) {
   if (status === "under-week") {
     return `Este bloque resume ${basisLabel}. Ahora mismo esa cobertura todavia no alcanza ${weeklyWindowLabel}.`;
   }
+  if (serverSlug === "all-servers") {
+    return `Resumen global servido desde ${basisLabel}.`;
+  }
   return `Resumen servido desde ${basisLabel}.`;
 }
 
 function buildWeeklyWindowNote(payload) {
   if (!payload?.found) {
-    return "No existe un snapshot semanal listo para esta metrica en el servidor activo.";
+    return "No existe un snapshot semanal listo para esta metrica en el alcance activo.";
   }
 
   const start = formatTimestamp(payload?.window_start);
@@ -604,6 +659,17 @@ function buildWeeklyWindowNote(payload) {
     return `${windowLabel}: ${start} a ${end}. Se muestra temporalmente porque la semana actual solo tiene ${formatNumber(currentWeekMatches)} cierres y el minimo operativo es ${formatNumber(minimumMatches)}.`;
   }
   return `${windowLabel}: ${start} a ${end}.`;
+}
+
+function buildLeaderboardTitle(metricConfig, serverSlug) {
+  return `${metricConfig.title} · ${getHistoricalServerLabel(serverSlug)}`;
+}
+
+function buildRecentMatchesNote(serverSlug) {
+  if (serverSlug === "all-servers") {
+    return "Lista de cierres ya registrados para todos los servidores.";
+  }
+  return `Lista de cierres ya registrados para ${getHistoricalServerLabel(serverSlug)}.`;
 }
 
 function buildSnapshotMetaText(payload, missingMessage) {
@@ -697,8 +763,9 @@ function formatTimestamp(timestamp) {
 }
 
 async function getCachedJson(cache, pendingCache, key, url) {
-  if (cache.has(key)) {
-    return cache.get(key);
+  const cachedPayload = readCachedPayload(cache, key);
+  if (cachedPayload) {
+    return cachedPayload;
   }
   if (pendingCache.has(key)) {
     return pendingCache.get(key);
@@ -706,7 +773,7 @@ async function getCachedJson(cache, pendingCache, key, url) {
 
   const request = fetchJson(url)
     .then((payload) => {
-      cache.set(key, payload);
+      writeCachedPayload(cache, key, payload);
       pendingCache.delete(key);
       return payload;
     })
@@ -716,6 +783,33 @@ async function getCachedJson(cache, pendingCache, key, url) {
     });
   pendingCache.set(key, request);
   return request;
+}
+
+function readCachedPayload(cache, key) {
+  const entry = cache.get(key);
+  if (!entry) {
+    return null;
+  }
+
+  if (entry.expiresAt <= Date.now()) {
+    cache.delete(key);
+    return null;
+  }
+
+  return entry.payload;
+}
+
+function writeCachedPayload(cache, key, payload) {
+  cache.set(key, {
+    payload,
+    expiresAt: Date.now() + resolveSnapshotCacheTtl(payload),
+  });
+}
+
+function resolveSnapshotCacheTtl(payload) {
+  return payload?.data?.found === false
+    ? NEGATIVE_SNAPSHOT_CACHE_TTL_MS
+    : SNAPSHOT_CACHE_TTL_MS;
 }
 
 async function settlePromise(promise) {

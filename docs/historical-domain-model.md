@@ -10,7 +10,7 @@ CRCON de Comunidad Hispana.
 
 Esta capa cubre solo historico persistido en backend:
 
-- identidad estable de los 2 servidores historicos
+- identidad estable de los 3 servidores historicos
 - partidas cerradas o actualizadas desde CRCON
 - mapas asociados a esas partidas
 - identidad reutilizable de jugadores
@@ -29,10 +29,19 @@ No sustituye ni modifica el flujo actual de snapshots live via A2S.
 - ejemplos:
   - `comunidad-hispana-01`
   - `comunidad-hispana-02`
+  - `comunidad-hispana-03`
 - atributos de soporte:
   - `scoreboard_base_url`
   - `server_number`
   - `source_kind`
+
+La capa de lectura y snapshots admite además una clave lógica adicional:
+
+- `all-servers`
+
+Esta clave no representa una fila física extra en `historical_servers`; es una
+vista agregada sobre los tres servidores históricos reales para rankings y
+resúmenes globales.
 
 ### Match
 
@@ -79,8 +88,8 @@ uniforme.
 
 ### Precomputed Snapshot
 
-- tabla: `historical_precomputed_snapshots`
-- clave estable:
+- directorio: `backend/data/snapshots/<server_key>/`
+- identidad estable:
   - `server_key`
   - `snapshot_type`
   - `metric`
@@ -88,7 +97,8 @@ uniforme.
 - razon:
   - permite exponer resumen, rankings y partidas recientes sin recalcular
     agregados pesados en cada request
-  - mantiene metadatos operativos sobre frescura y rango fuente
+  - mantiene metadatos operativos sobre frescura y rango fuente como artefactos
+    JSON inspeccionables
 
 ## Data Model
 
@@ -135,7 +145,7 @@ Metricas por jugador y partida con al menos:
 
 Trazabilidad operativa para bootstrap y refresh incremental.
 
-### `historical_precomputed_snapshots`
+### `backend/data/snapshots/<server_key>/*.json`
 
 Payloads JSON precalculados listos para lectura rapida desde API/UI con:
 
@@ -143,7 +153,7 @@ Payloads JSON precalculados listos para lectura rapida desde API/UI con:
 - `snapshot_type`
 - `metric`
 - `window`
-- `payload_json`
+- `payload`
 - `generated_at`
 - `source_range_start`
 - `source_range_end`
@@ -158,8 +168,8 @@ Payloads JSON precalculados listos para lectura rapida desde API/UI con:
   `(historical_match_id, historical_player_id)`
 - el refresco incremental usa una ventana de solape temporal para volver a leer
   partidas recientes y absorber cambios tardios sin rehacer todo el historico
-- los snapshots precalculados usan `UPSERT` por identidad logica para refrescar
-  el payload sin crear duplicados
+- los snapshots precalculados usan reemplazo por identidad logica de archivo
+  para refrescar el payload sin crear duplicados
 
 ## Query Readiness
 
@@ -168,6 +178,7 @@ La estructura soporta ya consultas futuras como:
 - top kills de la ultima semana por servidor
 - top muertes, soporte y partidas de 100+ kills desde una capa cacheada
 - partidas recientes por servidor
+- rankings y resumenes globales con la clave logica `all-servers`
 - mapas jugados y frecuencia
 - agregados por jugador sobre ventanas temporales
 
@@ -175,8 +186,9 @@ La estructura soporta ya consultas futuras como:
 
 - live state actual: `server_snapshots` via A2S
 - historico persistido: `historical_*` via CRCON scoreboard JSON
-- snapshots precalculados: `historical_precomputed_snapshots` sobre el mismo
-  historico persistido
+- snapshots precalculados: archivos JSON bajo `backend/data/snapshots/`
+  generados desde el mismo historico persistido
 
-Ambas lineas comparten el mismo SQLite local de desarrollo para reducir
-complejidad operativa, pero mantienen tablas y contratos separados.
+Ambas lineas siguen compartiendo el mismo SQLite local para el estado live y el
+historico bruto, pero la capa de snapshots UI queda desacoplada como archivos
+en disco para simplificar inspeccion, servicio y depuracion.

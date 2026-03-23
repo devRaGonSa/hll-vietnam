@@ -1,9 +1,8 @@
-"""SQLite persistence for precomputed historical snapshots."""
+"""File-based persistence for precomputed historical snapshots."""
 
 from __future__ import annotations
 
 import json
-import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -13,41 +12,15 @@ from .historical_snapshots import validate_snapshot_identity
 from .historical_storage import initialize_historical_storage
 
 
+SNAPSHOT_DIRECTORY_NAME = "snapshots"
+
+
 def initialize_historical_snapshot_storage(*, db_path: Path | None = None) -> Path:
-    """Create the snapshot table used by precomputed historical payloads."""
-    resolved_path = initialize_historical_storage(db_path=db_path or get_storage_path())
-
-    with _connect(resolved_path) as connection:
-        connection.executescript(
-            """
-            CREATE TABLE IF NOT EXISTS historical_precomputed_snapshots (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                server_key TEXT NOT NULL,
-                snapshot_type TEXT NOT NULL,
-                metric TEXT NOT NULL DEFAULT '',
-                window TEXT NOT NULL DEFAULT '',
-                payload_json TEXT NOT NULL,
-                generated_at TEXT NOT NULL,
-                source_range_start TEXT,
-                source_range_end TEXT,
-                is_stale INTEGER NOT NULL DEFAULT 0,
-                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                UNIQUE(server_key, snapshot_type, metric, window)
-            );
-
-            CREATE INDEX IF NOT EXISTS idx_historical_precomputed_snapshots_lookup
-            ON historical_precomputed_snapshots(
-                server_key,
-                snapshot_type,
-                metric,
-                window,
-                generated_at DESC
-            );
-            """
-        )
-
-    return resolved_path
+    """Create the snapshot directory used by precomputed historical payloads."""
+    resolved_db_path = initialize_historical_storage(db_path=db_path or get_storage_path())
+    snapshots_root = resolved_db_path.parent / SNAPSHOT_DIRECTORY_NAME
+    snapshots_root.mkdir(parents=True, exist_ok=True)
+    return snapshots_root
 
 
 def persist_historical_snapshot(
@@ -63,60 +36,46 @@ def persist_historical_snapshot(
     is_stale: bool = False,
     db_path: Path | None = None,
 ) -> HistoricalSnapshotRecord:
-    """Insert or replace one persisted historical snapshot."""
-    if not server_key.strip():
+    """Insert or replace one persisted historical snapshot JSON file."""
+    normalized_server_key = server_key.strip()
+    if not normalized_server_key:
         raise ValueError("server_key is required for historical snapshots.")
 
     validate_snapshot_identity(snapshot_type=snapshot_type, metric=metric)
-    resolved_path = initialize_historical_snapshot_storage(db_path=db_path)
-    generated_at_value = generated_at or datetime.now(timezone.utc)
-    payload_json = json.dumps(payload, ensure_ascii=True, separators=(",", ":"))
-    normalized_metric = metric or ""
-    normalized_window = window or ""
+    snapshots_root = initialize_historical_snapshot_storage(db_path=db_path)
+    generated_at_value = _as_utc(generated_at or datetime.now(timezone.utc))
+    payload_json = json.dumps(payload, ensure_ascii=True)
+    snapshot_path = _build_snapshot_path(
+        snapshots_root=snapshots_root,
+        server_key=normalized_server_key,
+        snapshot_type=snapshot_type,
+        metric=metric,
+    )
+    snapshot_path.parent.mkdir(parents=True, exist_ok=True)
 
-    with _connect(resolved_path) as connection:
-        connection.execute(
-            """
-            INSERT INTO historical_precomputed_snapshots (
-                server_key,
-                snapshot_type,
-                metric,
-                window,
-                payload_json,
-                generated_at,
-                source_range_start,
-                source_range_end,
-                is_stale
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-            ON CONFLICT(server_key, snapshot_type, metric, window)
-            DO UPDATE SET
-                payload_json = excluded.payload_json,
-                generated_at = excluded.generated_at,
-                source_range_start = excluded.source_range_start,
-                source_range_end = excluded.source_range_end,
-                is_stale = excluded.is_stale,
-                updated_at = CURRENT_TIMESTAMP
-            """,
-            (
-                server_key.strip(),
-                snapshot_type,
-                normalized_metric,
-                normalized_window,
-                payload_json,
-                _to_iso(generated_at_value),
-                _to_iso(source_range_start),
-                _to_iso(source_range_end),
-                1 if is_stale else 0,
-            ),
-        )
+    snapshot_document = {
+        "server_key": normalized_server_key,
+        "snapshot_type": snapshot_type,
+        "metric": metric,
+        "window": window,
+        "generated_at": _to_iso(generated_at_value),
+        "source_range_start": _to_iso(source_range_start),
+        "source_range_end": _to_iso(source_range_end),
+        "is_stale": is_stale,
+        "payload": payload,
+    }
+    snapshot_path.write_text(
+        json.dumps(snapshot_document, ensure_ascii=True, indent=2) + "\n",
+        encoding="utf-8",
+    )
 
     return HistoricalSnapshotRecord(
-        server_key=server_key.strip(),
+        server_key=normalized_server_key,
         snapshot_type=snapshot_type,
         metric=metric,
         window=window,
         payload_json=payload_json,
-        generated_at=_as_utc(generated_at_value),
+        generated_at=generated_at_value,
         source_range_start=_as_utc(source_range_start),
         source_range_end=_as_utc(source_range_end),
         is_stale=is_stale,
@@ -158,44 +117,27 @@ def get_historical_snapshot(
 ) -> dict[str, object] | None:
     """Return one persisted snapshot and decoded payload, if present."""
     validate_snapshot_identity(snapshot_type=snapshot_type, metric=metric)
-    resolved_path = initialize_historical_snapshot_storage(db_path=db_path)
-
-    with _connect(resolved_path) as connection:
-        row = connection.execute(
-            """
-            SELECT
-                server_key,
-                snapshot_type,
-                metric,
-                window,
-                payload_json,
-                generated_at,
-                source_range_start,
-                source_range_end,
-                is_stale
-            FROM historical_precomputed_snapshots
-            WHERE server_key = ?
-              AND snapshot_type = ?
-              AND metric = ?
-              AND window = ?
-            """,
-            (server_key, snapshot_type, metric or "", window or ""),
-        ).fetchone()
-
-    if row is None:
+    snapshots_root = initialize_historical_snapshot_storage(db_path=db_path)
+    snapshot_path = _build_snapshot_path(
+        snapshots_root=snapshots_root,
+        server_key=server_key,
+        snapshot_type=snapshot_type,
+        metric=metric,
+    )
+    if not snapshot_path.exists():
         return None
 
-    payload = json.loads(row["payload_json"])
+    document = json.loads(snapshot_path.read_text(encoding="utf-8"))
     return {
-        "server_key": row["server_key"],
-        "snapshot_type": row["snapshot_type"],
-        "metric": row["metric"] or None,
-        "window": row["window"] or None,
-        "generated_at": row["generated_at"],
-        "source_range_start": row["source_range_start"],
-        "source_range_end": row["source_range_end"],
-        "is_stale": bool(row["is_stale"]),
-        "payload": payload,
+        "server_key": document.get("server_key"),
+        "snapshot_type": document.get("snapshot_type"),
+        "metric": document.get("metric"),
+        "window": document.get("window"),
+        "generated_at": document.get("generated_at"),
+        "source_range_start": document.get("source_range_start"),
+        "source_range_end": document.get("source_range_end"),
+        "is_stale": bool(document.get("is_stale", False)),
+        "payload": document.get("payload"),
     }
 
 
@@ -206,60 +148,74 @@ def list_historical_snapshots(
     db_path: Path | None = None,
 ) -> list[dict[str, object]]:
     """List persisted snapshots for validation and operational inspection."""
-    resolved_path = initialize_historical_snapshot_storage(db_path=db_path)
-    where_parts: list[str] = []
-    params: list[object] = []
-
-    if server_key:
-        where_parts.append("server_key = ?")
-        params.append(server_key)
+    snapshots_root = initialize_historical_snapshot_storage(db_path=db_path)
     if snapshot_type:
         validate_snapshot_identity(snapshot_type=snapshot_type)
-        where_parts.append("snapshot_type = ?")
-        params.append(snapshot_type)
 
-    where_sql = ""
-    if where_parts:
-        where_sql = "WHERE " + " AND ".join(where_parts)
+    rows: list[dict[str, object]] = []
+    for snapshot_path in snapshots_root.glob("*/*.json"):
+        try:
+            document = json.loads(snapshot_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
 
-    with _connect(resolved_path) as connection:
-        rows = connection.execute(
-            f"""
-            SELECT
-                server_key,
-                snapshot_type,
-                metric,
-                window,
-                generated_at,
-                source_range_start,
-                source_range_end,
-                is_stale
-            FROM historical_precomputed_snapshots
-            {where_sql}
-            ORDER BY server_key ASC, snapshot_type ASC, generated_at DESC
-            """,
-            params,
-        ).fetchall()
+        if server_key and document.get("server_key") != server_key:
+            continue
+        if snapshot_type and document.get("snapshot_type") != snapshot_type:
+            continue
 
-    return [
-        {
-            "server_key": row["server_key"],
-            "snapshot_type": row["snapshot_type"],
-            "metric": row["metric"] or None,
-            "window": row["window"] or None,
-            "generated_at": row["generated_at"],
-            "source_range_start": row["source_range_start"],
-            "source_range_end": row["source_range_end"],
-            "is_stale": bool(row["is_stale"]),
-        }
-        for row in rows
-    ]
+        rows.append(
+            {
+                "server_key": document.get("server_key"),
+                "snapshot_type": document.get("snapshot_type"),
+                "metric": document.get("metric"),
+                "window": document.get("window"),
+                "generated_at": document.get("generated_at"),
+                "source_range_start": document.get("source_range_start"),
+                "source_range_end": document.get("source_range_end"),
+                "is_stale": bool(document.get("is_stale", False)),
+            }
+        )
+
+    return sorted(
+        rows,
+        key=lambda item: (
+            str(item.get("server_key") or ""),
+            str(item.get("snapshot_type") or ""),
+            str(item.get("metric") or ""),
+            str(item.get("generated_at") or ""),
+        ),
+    )
 
 
-def _connect(db_path: Path) -> sqlite3.Connection:
-    connection = sqlite3.connect(db_path)
-    connection.row_factory = sqlite3.Row
-    return connection
+def _build_snapshot_path(
+    *,
+    snapshots_root: Path,
+    server_key: str,
+    snapshot_type: str,
+    metric: str | None,
+) -> Path:
+    return snapshots_root / server_key / _build_snapshot_filename(
+        snapshot_type=snapshot_type,
+        metric=metric,
+    )
+
+
+def _build_snapshot_filename(*, snapshot_type: str, metric: str | None) -> str:
+    if snapshot_type == "server-summary":
+        return "server-summary.json"
+    if snapshot_type == "recent-matches":
+        return "recent-matches.json"
+    if snapshot_type == "weekly-leaderboard":
+        metric_suffix = "matches-over-100-kills" if metric == "matches_over_100_kills" else _slugify(metric or "unknown")
+        return f"weekly-{metric_suffix}.json"
+    metric_suffix = _slugify(metric or "")
+    base_name = _slugify(snapshot_type)
+    return f"{base_name}-{metric_suffix}.json" if metric_suffix else f"{base_name}.json"
+
+
+def _slugify(value: str) -> str:
+    return value.strip().replace("_", "-").replace(" ", "-").lower()
 
 
 def _to_iso(value: datetime | None) -> str | None:

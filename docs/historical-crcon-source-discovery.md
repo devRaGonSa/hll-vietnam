@@ -36,6 +36,9 @@ Cada scoreboard representa un servidor distinto:
   - `GET /api/get_public_info` identifica `#02 [ESP] Comunidad Hispana - discord.comunidadhll.es - Spa Onl`
   - `public_stats_port`: `7012`
   - `public_stats_port_https`: `7013`
+- `https://scoreboard.comunidadhll.es:3443`
+  - tercer scoreboard comunitario reservado para la identidad estable `comunidad-hispana-03`
+  - la capa de backend ya debe tratarlo como otra fuente CRCON independiente de las de `#01` y `#02`
 
 ## How Historical Data Is Loaded
 

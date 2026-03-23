@@ -200,7 +200,6 @@ solo libreria estandar de Python. Esta base minima sigue el modelo logico de:
 - `historical_players`
 - `historical_player_match_stats`
 - `historical_ingestion_runs`
-- `historical_precomputed_snapshots`
 
 Por defecto el archivo se crea en:
 
@@ -220,29 +219,42 @@ no introduce ORM, migraciones ni una decision de almacenamiento productivo.
 
 ## Snapshots historicos precalculados
 
-La capa historica incluye ahora una tabla adicional `historical_precomputed_snapshots`
-en el mismo SQLite local para persistir payloads ya agregados y servirlos sin
-recalculo pesado en cada request. Esta capa esta preparada para guardar:
+La capa historica persiste ahora los snapshots precalculados orientados a UI
+como archivos JSON independientes en disco, separados del SQLite del historico
+bruto. Esta capa esta preparada para guardar:
 
 - `server-summary`
 - `weekly-leaderboard` con metricas `kills`, `deaths`, `support` y `matches_over_100_kills`
 - `recent-matches`
 
-Cada snapshot conserva metadatos operativos minimos:
+Por defecto se escriben bajo:
+
+```text
+backend/data/snapshots/<server_key>/
+```
+
+Ejemplos:
+
+- `backend/data/snapshots/comunidad-hispana-01/server-summary.json`
+- `backend/data/snapshots/comunidad-hispana-01/weekly-kills.json`
+- `backend/data/snapshots/comunidad-hispana-03/recent-matches.json`
+- `backend/data/snapshots/all-servers/weekly-support.json`
+
+Cada archivo conserva metadatos operativos minimos:
 
 - `server_key`
 - `snapshot_type`
 - `metric`
 - `window`
-- `payload_json`
+- `payload`
 - `generated_at`
 - `source_range_start`
 - `source_range_end`
 - `is_stale`
 
-La persistencia usa `upsert` por combinacion de servidor, tipo, metrica y
-ventana para que la siguiente task pueda refrescar estos snapshots de forma
-periodica sin duplicar filas.
+La persistencia usa una identidad de archivo estable por combinacion de
+servidor, tipo y metrica para que cada refresh reemplace el artefacto anterior
+sin mezclarlo con el historico bruto.
 
 ## Bootstrap del colector
 
@@ -478,6 +490,10 @@ Parametros opcionales:
 - `player` en `/api/historical/player-profile` aceptando `stable_player_key`,
   `steam_id` o `source_player_id`
 
+Ademas de los slugs fisicos de cada scoreboard, la capa historica acepta la
+clave logica `all-servers` para devolver agregados globales sobre los tres
+servidores de Comunidad Hispana sin tratarla como un origen CRCON real aparte.
+
 La ventana temporal usa semana calendario UTC y solo considera partidas
 cerradas con `ended_at` para no mezclar partidas aun en curso ni filas
 historicas transitorias. El payload devuelve servidor, rango temporal,
@@ -502,9 +518,10 @@ conteo de jugadores. `server-summary` agrega volumen historico, jugadores
 unicos, kills, mapas dominantes y rango temporal cubierto. `player-profile`
 deja lista la base de consulta agregada por jugador para futuras vistas.
 
-La familia `/api/historical/snapshots/*` lee directamente la tabla
-`historical_precomputed_snapshots` y evita recalcular agregados pesados en cada
-request. Estos endpoints devuelven payloads ligeros listos para frontend con:
+La familia `/api/historical/snapshots/*` lee directamente los archivos JSON
+precalculados bajo `backend/data/snapshots/` y evita recalcular agregados
+pesados en cada request. Estos endpoints devuelven payloads ligeros listos para
+frontend con:
 
 - `generated_at`
 - `source_range_start`
@@ -521,6 +538,12 @@ request. Estos endpoints devuelven payloads ligeros listos para frontend con:
 - `current_week_closed_matches`
 - `previous_week_closed_matches`
 - `sufficient_sample`
+
+Si un servidor ya tiene historico bruto en `historical_*` pero aun no conserva
+el archivo precalculado correspondiente en `backend/data/snapshots/`, la API
+intenta regenerar automaticamente el lote de snapshots de ese servidor antes de
+responder. Esto evita que un servidor quede bloqueado en `found: false` por una
+ausencia puntual de persistencia precalculada.
 
 `/api/historical/snapshots/server-summary` devuelve `item` con el resumen del
 servidor. `/api/historical/snapshots/weekly-leaderboard` devuelve `items` ya
@@ -539,6 +562,7 @@ Fuentes configuradas:
 
 - `https://scoreboard.comunidadhll.es`
 - `https://scoreboard.comunidadhll.es:5443`
+- `https://scoreboard.comunidadhll.es:3443`
 
 Comandos manuales desde `backend/`:
 
@@ -551,6 +575,7 @@ python -m app.historical_runner --interval 1800
 Flags utiles:
 
 - `--server comunidad-hispana-01` para limitar a un servidor
+- `--server comunidad-hispana-03` para validar solo el tercer scoreboard historico
 - `--max-pages 2` para validacion local acotada
 - `--page-size 25` para ajustar paginacion
 - `--start-page 4` para forzar una pagina concreta en bootstraps largos
