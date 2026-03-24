@@ -9,16 +9,20 @@ from pathlib import Path
 from .config import get_storage_path
 from .historical_models import HistoricalSnapshotRecord
 from .historical_snapshots import validate_snapshot_identity
-from .historical_storage import initialize_historical_storage
 
 
 SNAPSHOT_DIRECTORY_NAME = "snapshots"
 
 
+def resolve_historical_snapshot_storage_path(*, db_path: Path | None = None) -> Path:
+    """Resolve the snapshot directory location without touching SQLite state."""
+    resolved_db_path = db_path or get_storage_path()
+    return resolved_db_path.parent / SNAPSHOT_DIRECTORY_NAME
+
+
 def initialize_historical_snapshot_storage(*, db_path: Path | None = None) -> Path:
     """Create the snapshot directory used by precomputed historical payloads."""
-    resolved_db_path = initialize_historical_storage(db_path=db_path or get_storage_path())
-    snapshots_root = resolved_db_path.parent / SNAPSHOT_DIRECTORY_NAME
+    snapshots_root = resolve_historical_snapshot_storage_path(db_path=db_path)
     snapshots_root.mkdir(parents=True, exist_ok=True)
     return snapshots_root
 
@@ -144,7 +148,7 @@ def get_historical_snapshot(
 ) -> dict[str, object] | None:
     """Return one persisted snapshot and decoded payload, if present."""
     validate_snapshot_identity(snapshot_type=snapshot_type, metric=metric)
-    snapshots_root = initialize_historical_snapshot_storage(db_path=db_path)
+    snapshots_root = resolve_historical_snapshot_storage_path(db_path=db_path)
     snapshot_path = _build_snapshot_path(
         snapshots_root=snapshots_root,
         server_key=server_key,
@@ -175,7 +179,9 @@ def list_historical_snapshots(
     db_path: Path | None = None,
 ) -> list[dict[str, object]]:
     """List persisted snapshots for validation and operational inspection."""
-    snapshots_root = initialize_historical_snapshot_storage(db_path=db_path)
+    snapshots_root = resolve_historical_snapshot_storage_path(db_path=db_path)
+    if not snapshots_root.exists():
+        return []
     if snapshot_type:
         validate_snapshot_identity(snapshot_type=snapshot_type)
 
