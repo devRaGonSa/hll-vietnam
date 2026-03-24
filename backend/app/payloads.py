@@ -754,7 +754,7 @@ def _should_refresh_snapshot(
 
 
 def _try_collect_real_time_snapshot() -> tuple[list[dict[str, object]], list[dict[str, object]]]:
-    payload = get_live_data_source().collect_snapshots(persist=True)
+    payload = get_live_data_source().collect_snapshots(persist=False)
     snapshots = payload.get("snapshots")
     items = _select_primary_snapshot_items(_enrich_server_items(list(snapshots or [])))
     errors = payload.get("errors")

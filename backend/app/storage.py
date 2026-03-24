@@ -18,9 +18,14 @@ DEFAULT_GAME_SOURCE = {
 SUMMARY_SNAPSHOT_LIMIT = 6
 
 
+def resolve_storage_path(*, db_path: Path | None = None) -> Path:
+    """Resolve the SQLite path used by live snapshot persistence."""
+    return db_path or get_storage_path()
+
+
 def initialize_storage(*, db_path: Path | None = None) -> Path:
     """Create the local database file and minimal schema when missing."""
-    resolved_path = db_path or get_storage_path()
+    resolved_path = resolve_storage_path(db_path=db_path)
     resolved_path.parent.mkdir(parents=True, exist_ok=True)
 
     with _connect(resolved_path) as connection:
@@ -139,8 +144,10 @@ def persist_snapshot_batch(
 
 def list_latest_snapshots(*, db_path: Path | None = None) -> list[dict[str, object]]:
     """Return the latest persisted snapshot for each known server."""
-    resolved_path = initialize_storage(db_path=db_path)
-    with _connect(resolved_path) as connection:
+    resolved_path = resolve_storage_path(db_path=db_path)
+    if not resolved_path.exists():
+        return []
+    with _connect_readonly(resolved_path) as connection:
         rows = connection.execute(
             """
             SELECT
@@ -182,8 +189,10 @@ def list_snapshot_history(
     limit: int = 20,
 ) -> list[dict[str, object]]:
     """Return recent persisted snapshots across all servers."""
-    resolved_path = initialize_storage(db_path=db_path)
-    with _connect(resolved_path) as connection:
+    resolved_path = resolve_storage_path(db_path=db_path)
+    if not resolved_path.exists():
+        return []
+    with _connect_readonly(resolved_path) as connection:
         rows = connection.execute(
             """
             SELECT
@@ -220,9 +229,11 @@ def list_server_history(
     limit: int = 20,
 ) -> list[dict[str, object]]:
     """Return recent history for one server by numeric id or external id."""
-    resolved_path = initialize_storage(db_path=db_path)
+    resolved_path = resolve_storage_path(db_path=db_path)
+    if not resolved_path.exists():
+        return []
     server_filter, server_value = _build_server_filter(server_id)
-    with _connect(resolved_path) as connection:
+    with _connect_readonly(resolved_path) as connection:
         rows = connection.execute(
             f"""
             SELECT
@@ -255,6 +266,12 @@ def list_server_history(
 
 def _connect(db_path: Path) -> sqlite3.Connection:
     connection = sqlite3.connect(db_path)
+    connection.row_factory = sqlite3.Row
+    return connection
+
+
+def _connect_readonly(db_path: Path) -> sqlite3.Connection:
+    connection = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
     connection.row_factory = sqlite3.Row
     return connection
 
