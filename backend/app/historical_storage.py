@@ -13,6 +13,7 @@ from .config import (
     get_storage_path,
 )
 from .historical_models import HistoricalServerDefinition
+from .monthly_mvp import build_monthly_mvp_rankings
 
 
 DEFAULT_HISTORICAL_SERVERS = (
@@ -1446,6 +1447,125 @@ def list_monthly_leaderboard(
             "is_early_month": monthly_window["is_early_month"],
         },
         "items": items,
+    }
+
+
+def list_monthly_mvp_ranking(
+    *,
+    limit: int = 10,
+    server_id: str | None = None,
+    db_path: Path | None = None,
+) -> dict[str, object]:
+    """Return the monthly MVP V1 ranking built from persisted historical totals."""
+    resolved_path = initialize_historical_storage(db_path=db_path)
+    aggregate_all_servers = _is_all_servers_selector(server_id)
+    current_time = datetime.now(timezone.utc)
+    current_month_start = _start_of_month(current_time)
+    previous_month_start = _start_of_previous_month(current_month_start)
+    monthly_window = _select_monthly_window(
+        server_id=server_id,
+        current_time=current_time,
+        current_month_start=current_month_start,
+        previous_month_start=previous_month_start,
+        db_path=resolved_path,
+    )
+    window_start = monthly_window["window_start"]
+    window_end = monthly_window["window_end"]
+    where_clauses = [
+        "historical_matches.ended_at IS NOT NULL",
+        "historical_matches.ended_at >= ?",
+        "historical_matches.ended_at < ?",
+    ]
+    params: list[object] = [
+        window_start.isoformat().replace("+00:00", "Z"),
+        window_end.isoformat().replace("+00:00", "Z"),
+    ]
+    if server_id and not aggregate_all_servers:
+        normalized_server_id = server_id.strip()
+        where_clauses.append(
+            "(historical_servers.slug = ? OR CAST(historical_servers.server_number AS TEXT) = ?)"
+        )
+        params.extend([normalized_server_id, normalized_server_id])
+
+    server_slug_expression = (
+        f"'{ALL_SERVERS_SLUG}'"
+        if aggregate_all_servers
+        else "historical_servers.slug"
+    )
+    server_name_expression = (
+        f"'{ALL_SERVERS_DISPLAY_NAME}'"
+        if aggregate_all_servers
+        else "historical_servers.display_name"
+    )
+    group_by_expression = (
+        "historical_players.id"
+        if aggregate_all_servers
+        else "historical_servers.slug, historical_players.id"
+    )
+
+    with _connect(resolved_path) as connection:
+        rows = connection.execute(
+            f"""
+            SELECT
+                {server_slug_expression} AS server_slug,
+                {server_name_expression} AS server_name,
+                historical_players.stable_player_key,
+                historical_players.display_name AS player_name,
+                historical_players.steam_id,
+                COUNT(DISTINCT historical_matches.id) AS matches_count,
+                COALESCE(SUM(historical_player_match_stats.kills), 0) AS total_kills,
+                COALESCE(SUM(historical_player_match_stats.deaths), 0) AS total_deaths,
+                COALESCE(SUM(historical_player_match_stats.support), 0) AS total_support,
+                COALESCE(SUM(historical_player_match_stats.teamkills), 0) AS total_teamkills,
+                COALESCE(SUM(historical_player_match_stats.time_seconds), 0) AS total_time_seconds
+            FROM historical_player_match_stats
+            INNER JOIN historical_matches
+                ON historical_matches.id = historical_player_match_stats.historical_match_id
+            INNER JOIN historical_servers
+                ON historical_servers.id = historical_matches.historical_server_id
+            INNER JOIN historical_players
+                ON historical_players.id = historical_player_match_stats.historical_player_id
+            WHERE {" AND ".join(where_clauses)}
+            GROUP BY {group_by_expression}
+            """,
+            params,
+        ).fetchall()
+
+    ranking_result = build_monthly_mvp_rankings(
+        [dict(row) for row in rows],
+        limit=limit,
+    )
+    window_days = _calculate_window_days(window_start=window_start, window_end=window_end)
+    for item in ranking_result["items"]:
+        item["time_range"] = {
+            "start": window_start.isoformat().replace("+00:00", "Z"),
+            "end": window_end.isoformat().replace("+00:00", "Z"),
+            "window_days": window_days,
+        }
+
+    return {
+        "timeframe": "monthly",
+        "metric": "mvp",
+        "ranking_version": ranking_result["ranking_version"],
+        "window_start": window_start.isoformat().replace("+00:00", "Z"),
+        "window_end": window_end.isoformat().replace("+00:00", "Z"),
+        "window_days": window_days,
+        "window_kind": monthly_window["window_kind"],
+        "window_label": monthly_window["window_label"],
+        "uses_fallback": monthly_window["uses_fallback"],
+        "selection_reason": monthly_window["selection_reason"],
+        "current_month_start": current_month_start.isoformat().replace("+00:00", "Z"),
+        "current_month_closed_matches": monthly_window["current_month_closed_matches"],
+        "previous_month_closed_matches": monthly_window["previous_month_closed_matches"],
+        "sufficient_sample": {
+            "minimum_closed_matches": monthly_window["minimum_closed_matches"],
+            "current_month_closed_matches": monthly_window["current_month_closed_matches"],
+            "current_month_has_sufficient_sample": monthly_window["current_month_has_sufficient_sample"],
+            "is_early_month": monthly_window["is_early_month"],
+        },
+        "eligibility": ranking_result["eligibility"],
+        "eligible_players_count": ranking_result["eligible_players_count"],
+        "items": ranking_result["items"],
     }
 
 

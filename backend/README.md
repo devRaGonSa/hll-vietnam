@@ -650,6 +650,20 @@ La misma capa de snapshots guarda tambien `monthly-leaderboard` por servidor y
 por agregado `all-servers`, con archivos como `monthly-kills.json` y
 `monthly-support.json`.
 
+El backend incluye ademas el calculo interno de `monthly MVP V1` en
+`app/monthly_mvp.py`, separado de los leaderboards mensuales simples por
+metrica. Ese calculo:
+
+- usa solo `kills`, `support`, `time_seconds`, `deaths` y `teamkills`
+  persistidos
+- recompone `KPM` y `KDA` desde totales mensuales
+- aplica elegibilidad minima de `6` partidas cerradas y `6` horas
+- soporta servidor individual y el agregado logico `all-servers`
+
+En esta fase el ranking MVP queda listo para serializar en snapshots o payloads
+sin reemplazar los leaderboards mensuales ya existentes por `kills`, `deaths`,
+`support` y `matches_over_100_kills`.
+
 ## Ingesta historica CRCON
 
 La ingesta historica no usa A2S ni scraping del HTML de `/games`. Consume la
