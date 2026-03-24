@@ -81,7 +81,7 @@
       </header>
 
       <main class="content historical-content">
-        <section class="panel historical-panel" aria-labelledby="historical-summary-title">
+        <section class="panel historical-panel" aria-labelledby="historical-summary-title" hidden>
             <div class="panel__shell">
               <div class="panel__header historical-panel__header">
                 <div>
@@ -104,6 +104,27 @@
                 <strong>Cargando datos historicos</strong>
               </article>
             </div>
+          </div>
+        </section>
+
+        <section class="panel historical-panel" aria-labelledby="monthly-mvp-title">
+          <div class="panel__shell">
+            <div class="panel__header historical-panel__header">
+              <div>
+                <p class="eyebrow eyebrow--section">MVP mensual</p>
+                <h2 id="monthly-mvp-title">Top 3 del alcance activo</h2>
+                <p class="historical-panel__note" id="monthly-mvp-note">
+                  Cargando periodo del MVP mensual...
+                </p>
+                <p class="historical-snapshot-meta" id="monthly-mvp-snapshot-meta">
+                  Cargando snapshot del MVP mensual...
+                </p>
+              </div>
+            </div>
+            <p class="historical-state" id="monthly-mvp-state" aria-live="polite">
+              Cargando Top 3 MVP mensual...
+            </p>
+            <div class="historical-mvp-grid" id="monthly-mvp-list"></div>
           </div>
         </section>
 

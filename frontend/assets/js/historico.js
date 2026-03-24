@@ -93,6 +93,13 @@ document.addEventListener("DOMContentLoaded", () => {
   const weeklyStateNode = document.getElementById("weekly-leaderboard-state");
   const weeklyTableNode = document.getElementById("weekly-leaderboard-table");
   const weeklyBodyNode = document.getElementById("weekly-leaderboard-body");
+  const monthlyMvpTitleNode = document.getElementById("monthly-mvp-title");
+  const monthlyMvpStateNode = document.getElementById("monthly-mvp-state");
+  const monthlyMvpListNode = document.getElementById("monthly-mvp-list");
+  const monthlyMvpNoteNode = document.getElementById("monthly-mvp-note");
+  const monthlyMvpSnapshotMetaNode = document.getElementById(
+    "monthly-mvp-snapshot-meta",
+  );
   const weeklyValueHeadingNode = document.getElementById("weekly-leaderboard-value-heading");
   const weeklyWindowNoteNode = document.getElementById("weekly-window-note");
   const weeklySnapshotMetaNode = document.getElementById(
@@ -115,6 +122,7 @@ document.addEventListener("DOMContentLoaded", () => {
   const summaryCache = new Map();
   const recentMatchesCache = new Map();
   const leaderboardCache = new Map();
+  const monthlyMvpCache = new Map();
   const pendingRequestCache = new Map();
 
   const getSummarySnapshot = (serverSlug) =>
@@ -139,6 +147,14 @@ document.addEventListener("DOMContentLoaded", () => {
       pendingRequestCache,
       buildLeaderboardSnapshotKey(serverSlug, timeframeKey, metricKey),
       `${backendBaseUrl}/api/historical/snapshots/leaderboard?server=${encodeURIComponent(serverSlug)}&timeframe=${encodeURIComponent(timeframeKey)}&metric=${encodeURIComponent(metricKey)}&limit=10`,
+    );
+
+  const getMonthlyMvpSnapshot = (serverSlug) =>
+    getCachedJson(
+      monthlyMvpCache,
+      pendingRequestCache,
+      buildMonthlyMvpSnapshotKey(serverSlug),
+      `${backendBaseUrl}/api/historical/snapshots/monthly-mvp?server=${encodeURIComponent(serverSlug)}&limit=3`,
     );
 
   const refreshServerContent = async () => {
@@ -168,6 +184,14 @@ document.addEventListener("DOMContentLoaded", () => {
     summaryNoteNode.textContent = `La vista esta leyendo snapshots precalculados del historico local para ${activeServerLabel}.`;
     setSnapshotMeta(summarySnapshotMetaNode, "Cargando snapshot de resumen...");
     renderSummaryLoading(summaryNode);
+    monthlyMvpTitleNode.textContent = `Top 3 MVP mensual - ${activeServerLabel}`;
+    monthlyMvpNoteNode.textContent = "Cargando periodo del MVP mensual...";
+    setState(monthlyMvpStateNode, "Cargando Top 3 MVP mensual...");
+    monthlyMvpListNode.innerHTML = "";
+    setSnapshotMeta(
+      monthlyMvpSnapshotMetaNode,
+      "Cargando snapshot del MVP mensual...",
+    );
     weeklyWindowNoteNode.textContent = "Cargando snapshot del ranking activo...";
     setSnapshotMeta(
       weeklySnapshotMetaNode,
@@ -189,6 +213,21 @@ document.addEventListener("DOMContentLoaded", () => {
         rangeNode,
         summaryNoteNode,
         summarySnapshotMetaNode,
+      );
+    }
+
+    const cachedMonthlyMvpPayload = readCachedPayload(
+      monthlyMvpCache,
+      buildMonthlyMvpSnapshotKey(activeServerSlug),
+    );
+    if (cachedMonthlyMvpPayload) {
+      hydrateMonthlyMvp(
+        { status: "fulfilled", value: cachedMonthlyMvpPayload },
+        monthlyMvpStateNode,
+        monthlyMvpListNode,
+        monthlyMvpTitleNode,
+        monthlyMvpNoteNode,
+        monthlyMvpSnapshotMetaNode,
       );
     }
 
@@ -304,6 +343,28 @@ document.addEventListener("DOMContentLoaded", () => {
         weeklySnapshotMetaNode,
         activeMetricConfig,
         targetTimeframe,
+      );
+    });
+
+    void settlePromise(getMonthlyMvpSnapshot(targetServerSlug)).then((monthlyMvpResult) => {
+      if (
+        !isActiveServerRequest(
+          requestId,
+          targetServerSlug,
+          targetTimeframe,
+          targetMetric,
+        )
+      ) {
+        return;
+      }
+
+      hydrateMonthlyMvp(
+        monthlyMvpResult,
+        monthlyMvpStateNode,
+        monthlyMvpListNode,
+        monthlyMvpTitleNode,
+        monthlyMvpNoteNode,
+        monthlyMvpSnapshotMetaNode,
       );
     });
   };
@@ -559,7 +620,7 @@ function hydrateWeeklyLeaderboard(
       resolvedTimeframeKey,
     );
     noteNode.textContent =
-      "No se pudo leer el snapshot precalculado para esta metrica.";
+      "No se pudo leer los datos precalculados para esta metrica.";
     setSnapshotMeta(snapshotMetaNode, "Error al leer el snapshot del ranking.");
     setState(
       stateNode,
@@ -652,6 +713,56 @@ function hydrateRecentMatches(result, stateNode, listNode, snapshotMetaNode) {
   stateNode.hidden = true;
 }
 
+function hydrateMonthlyMvp(
+  result,
+  stateNode,
+  listNode,
+  titleNode,
+  noteNode,
+  snapshotMetaNode,
+) {
+  if (result.status !== "fulfilled") {
+    titleNode.textContent = `Top 3 MVP mensual - ${getHistoricalServerLabel(activeServerSlug)}`;
+    noteNode.textContent = "No se pudo leer el snapshot mensual del MVP.";
+    setSnapshotMeta(snapshotMetaNode, "Error al leer el snapshot del MVP mensual.");
+    setState(stateNode, "No se pudo cargar el Top 3 MVP mensual.", true);
+    listNode.innerHTML = "";
+    return;
+  }
+
+  const payload = result.value?.data;
+  titleNode.textContent = `Top 3 MVP mensual - ${getHistoricalServerLabel(
+    payload?.server_slug || activeServerSlug,
+  )}`;
+  noteNode.textContent = buildMonthlyMvpNote(payload);
+  setSnapshotMeta(
+    snapshotMetaNode,
+    buildSnapshotMetaText(payload, "Snapshot del MVP mensual pendiente de generacion."),
+  );
+
+  if (!payload?.found) {
+    setState(
+      stateNode,
+      "Todavia no hay un Top 3 MVP mensual listo para el alcance activo.",
+    );
+    listNode.innerHTML = "";
+    return;
+  }
+
+  const items = payload?.items;
+  if (!Array.isArray(items) || items.length === 0) {
+    setState(
+      stateNode,
+      "No hay jugadores elegibles para el MVP mensual en el periodo activo.",
+    );
+    listNode.innerHTML = "";
+    return;
+  }
+
+  listNode.innerHTML = items.map((item) => renderMonthlyMvpCard(item, payload)).join("");
+  stateNode.hidden = true;
+}
+
 function renderRecentMatchCard(item) {
   const mapName = item.map?.pretty_name || item.map?.name || "Mapa no disponible";
   return `
@@ -702,6 +813,51 @@ function renderSummaryCard(label, value) {
     <article class="historical-stat-card">
       <p>${escapeHtml(label)}</p>
       <strong>${escapeHtml(value)}</strong>
+    </article>
+  `;
+}
+
+function renderMonthlyMvpCard(item, payload) {
+  const scoreValue = Number(item?.mvp_score);
+  return `
+    <article class="historical-mvp-card historical-mvp-card--rank-${escapeHtml(item?.ranking_position || "x")}">
+      <div class="historical-mvp-card__top">
+        <div>
+          <span class="historical-mvp-card__rank">#${escapeHtml(item?.ranking_position || "-")}</span>
+        </div>
+        <div>
+          <p class="historical-mvp-card__score-label">Puntuacion MVP</p>
+          <strong class="historical-mvp-card__score-value">${escapeHtml(
+            Number.isFinite(scoreValue) ? scoreValue.toFixed(1) : "0.0",
+          )}</strong>
+        </div>
+      </div>
+      <div>
+        <strong class="historical-mvp-card__player">${escapeHtml(
+          item?.player?.name || "Jugador no identificado",
+        )}</strong>
+      </div>
+      <div class="historical-mvp-card__meta">
+        <article>
+          <span>Kills</span>
+          <strong>${escapeHtml(formatNumber(item?.totals?.kills))}</strong>
+        </article>
+        <article>
+          <span>Soporte</span>
+          <strong>${escapeHtml(formatNumber(item?.totals?.support))}</strong>
+        </article>
+        <article>
+          <span>KPM</span>
+          <strong>${escapeHtml(formatDecimal(item?.derived?.kpm, 2))}</strong>
+        </article>
+        <article>
+          <span>KDA</span>
+          <strong>${escapeHtml(formatDecimal(item?.derived?.kda, 2))}</strong>
+        </article>
+      </div>
+      <p class="historical-mvp-card__footer">
+        ${escapeHtml(buildMonthlyMvpFooter(item, payload))}
+      </p>
     </article>
   `;
 }
@@ -807,6 +963,10 @@ function buildLeaderboardSnapshotKey(serverSlug, timeframeKey, metricKey) {
   return `leaderboard:${serverSlug}:${timeframeKey}:${metricKey}`;
 }
 
+function buildMonthlyMvpSnapshotKey(serverSlug) {
+  return `monthly-mvp:${serverSlug}`;
+}
+
 function buildRangeLabel(start, end) {
   if (!start && !end) {
     return "";
@@ -848,7 +1008,7 @@ function buildCoveragePeriodLabel(coverage, timeRange, serverSlug) {
 function buildSummaryNote(summaryBasis, weeklyWindowDays, coverage, serverSlug) {
   const basisLabel =
     summaryBasis === "snapshot-precomputed"
-      ? "el snapshot precalculado del historico local"
+      ? "el historico local"
       : "el historico persistido disponible";
   const status = coverage?.status;
   void weeklyWindowDays;
@@ -857,7 +1017,7 @@ function buildSummaryNote(summaryBasis, weeklyWindowDays, coverage, serverSlug) 
     return `Este bloque resume ${basisLabel}. La cobertura registrada todavia es inicial y puede crecer en los proximos dias.`;
   }
   if (serverSlug === "all-servers") {
-    return `Resumen global servido desde ${basisLabel} y combinado solo con los servidores que ya tienen historico disponible.`;
+    return `Resumen de los servidore desde ${basisLabel} y combinado solo los servidores actuales de la comunidad.`;
   }
   return `Resumen servido desde ${basisLabel}.`;
 }
@@ -867,7 +1027,7 @@ function buildWeeklyWindowNote(payload) {
     const timeframeLabel = getLeaderboardTimeframeConfig(
       payload?.timeframe || activeLeaderboardTimeframe,
     ).shortLabel;
-    return `No existe un snapshot ${timeframeLabel} listo para esta metrica en el alcance activo.`;
+    return `No existen datos en ${timeframeLabel} suficientes para esta metrica en el rango activo.`;
   }
 
   const start = formatTimestamp(payload?.window_start);
@@ -897,6 +1057,26 @@ function buildRecentMatchesNote(serverSlug) {
     return "Lista de cierres ya registrados para los servidores con historico disponible.";
   }
   return `Lista de cierres ya registrados para ${getHistoricalServerLabel(serverSlug)}.`;
+}
+
+function buildMonthlyMvpNote(payload) {
+  if (!payload?.found) {
+    return "El Top 3 mensual aparecera cuando exista un snapshot MVP listo para este alcance.";
+  }
+  const periodLabel =
+    payload?.window_label && payload?.month_key
+      ? `${payload.window_label} (${formatMonthKey(payload.month_key)})`
+      : formatMonthKey(payload?.month_key);
+  const eligiblePlayers = formatNumber(payload?.eligible_players_count);
+  return `${periodLabel || "Periodo mensual activo"}. ${eligiblePlayers} jugadores cumplen los umbrales de elegibilidad.`;
+}
+
+function buildMonthlyMvpFooter(item, payload) {
+  const hoursPlayed = Number(item?.totals?.time_seconds) / 3600;
+  const monthLabel = formatMonthKey(payload?.month_key);
+  return `${monthLabel || "Mes activo"} · ${formatNumber(
+    item?.matches_considered,
+  )} partidas · ${formatDecimal(hoursPlayed, 1)} h jugadas`;
 }
 
 function buildSnapshotMetaText(payload, missingMessage) {
@@ -975,6 +1155,35 @@ function formatNumber(value) {
   }
 
   return new Intl.NumberFormat("es-ES").format(parsedValue);
+}
+
+function formatDecimal(value, fractionDigits = 1) {
+  const parsedValue = Number(value);
+  if (!Number.isFinite(parsedValue)) {
+    return "0";
+  }
+
+  return new Intl.NumberFormat("es-ES", {
+    minimumFractionDigits: fractionDigits,
+    maximumFractionDigits: fractionDigits,
+  }).format(parsedValue);
+}
+
+function formatMonthKey(monthKey) {
+  if (!monthKey) {
+    return "";
+  }
+
+  const value = new Date(`${monthKey}-01T00:00:00Z`);
+  if (Number.isNaN(value.getTime())) {
+    return monthKey;
+  }
+
+  return new Intl.DateTimeFormat("es-ES", {
+    month: "long",
+    year: "numeric",
+    timeZone: "UTC",
+  }).format(value);
 }
 
 function formatTimestamp(timestamp) {
