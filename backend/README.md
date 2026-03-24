@@ -266,7 +266,7 @@ dedicados dentro de `app/providers/`:
 - `providers/public_scoreboard_provider.py` encapsula la semantica actual del
   scoreboard/CRCON publico bajo el contrato historico
 - `providers/rcon_provider.py` encapsula el proveedor live basado en comandos
-  RCON `Get Name`, `Get Slots` y `Get GameState`
+  RCON HLL v2 mediante `ServerConnect`, `Login` y `GetServerInformation`
 
 Proveedores operativos en esta fase:
 
@@ -343,7 +343,8 @@ confirmar si la instancia esta usando `a2s` o `rcon` para live.
   fuente controlada.
 - `a2s_client.py` encapsula una consulta minima A2S_INFO por UDP para probar
   servidores reales sin acoplar todavia el backend a una fuente mas compleja.
-- `rcon_client.py` encapsula una conexion minima HLL RCON por TCP con XOR para
+- `rcon_client.py` encapsula una conexion minima HLL RCON v2 por TCP con
+  `ServerConnect`, XOR key base64, `authToken` y `GetServerInformation` para
   consultas live de produccion.
 - `config.py` centraliza host, puerto y allowlist minima de origenes locales.
 - `data_sources.py` define los contratos y la seleccion por entorno para live e historico.

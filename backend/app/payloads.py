@@ -692,12 +692,17 @@ def _enrich_server_items(items: list[dict[str, object]]) -> list[dict[str, objec
 
 
 def _select_primary_snapshot_items(items: list[dict[str, object]]) -> list[dict[str, object]]:
-    real_items = [
+    preferred_origin = (
+        "real-rcon"
+        if get_live_data_source_kind() == "rcon"
+        else "real-a2s"
+    )
+    preferred_items = [
         item
         for item in items
-        if item.get("snapshot_origin") == "real-a2s"
+        if item.get("snapshot_origin") == preferred_origin
     ]
-    return real_items or items
+    return preferred_items or items
 
 
 def _enrich_server_item(
