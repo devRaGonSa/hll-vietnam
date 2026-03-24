@@ -66,6 +66,8 @@ Variables opcionales:
 - `HLL_BACKEND_REFRESH_INTERVAL_SECONDS`
 - `HLL_BACKEND_LIVE_DATA_SOURCE`
 - `HLL_BACKEND_HISTORICAL_DATA_SOURCE`
+- `HLL_BACKEND_RCON_TIMEOUT_SECONDS`
+- `HLL_BACKEND_RCON_TARGETS`
 - `HLL_HISTORICAL_CRCON_PAGE_SIZE`
 - `HLL_HISTORICAL_CRCON_TIMEOUT_SECONDS`
 - `HLL_HISTORICAL_CRCON_DETAIL_WORKERS`
@@ -87,6 +89,8 @@ Variables especialmente relevantes para Docker y Compose:
 - `HLL_BACKEND_ALLOWED_ORIGINS`
 - `HLL_BACKEND_LIVE_DATA_SOURCE`
 - `HLL_BACKEND_HISTORICAL_DATA_SOURCE`
+- `HLL_BACKEND_RCON_TIMEOUT_SECONDS`
+- `HLL_BACKEND_RCON_TARGETS`
 - `HLL_HISTORICAL_CRCON_PAGE_SIZE`
 - `HLL_HISTORICAL_CRCON_TIMEOUT_SECONDS`
 - `HLL_HISTORICAL_CRCON_DETAIL_WORKERS`
@@ -196,6 +200,11 @@ normaliza espacios y barras finales para mantener la comparacion con el header
 - `GET /api/historical/snapshots/recent-matches?limit=6&server=comunidad-hispana-01`
 - `GET /api/historical/player-profile?player=steam%3A76561198000000000`
 
+`GET /health` expone tambien:
+
+- `live_data_source`
+- `historical_data_source`
+
 `GET /api/servers` trata el ultimo snapshot persistido como cache local y lo
 reutiliza solo si sigue dentro del objetivo de `120` segundos. Si ese snapshot
 esta vencido, el endpoint intenta una consulta A2S real inmediata contra los 2
@@ -237,10 +246,10 @@ Valores soportados en esta fase:
 
 - live:
   - `a2s` como modo actual de desarrollo
-  - `rcon` reservado para la futura integracion productiva
+  - `rcon` como modo productivo para estado live via acceso directo al servidor
 - historico:
   - `public-scoreboard` como modo actual de desarrollo
-  - `rcon` reservado para la futura integracion productiva
+  - `rcon` seleccionado pero todavia sin ingesta historica operativa en esta repo
 
 Defaults actuales:
 
@@ -256,14 +265,56 @@ dedicados dentro de `app/providers/`:
   `historical_ingestion.py` para bootstrap y refresh incremental
 - `providers/public_scoreboard_provider.py` encapsula la semantica actual del
   scoreboard/CRCON publico bajo el contrato historico
+- `providers/rcon_provider.py` encapsula el proveedor live basado en comandos
+  RCON `Get Name`, `Get Slots` y `Get GameState`
 
-En esta task solo queda implementado el proveedor ya operativo de desarrollo:
+Proveedores operativos en esta fase:
 
 - live `a2s`
+- live `rcon`
 - historico `public-scoreboard`
 
-La opcion `rcon` queda preparada como placeholder explicito y hoy responde con
-error controlado si se selecciona antes de implementar su adapter.
+Limitacion actual de `rcon`:
+
+- el backend puede usar `rcon` para `/api/servers`
+- la ingesta historica por `historical_ingestion.py` sigue requiriendo
+  `public-scoreboard`, porque la repo todavia no incluye una canalizacion
+  persistente de eventos o logs RCON para reconstruir partidas cerradas
+
+Variables especificas de RCON live:
+
+- `HLL_BACKEND_RCON_TIMEOUT_SECONDS`
+- `HLL_BACKEND_RCON_TARGETS`
+
+`HLL_BACKEND_RCON_TARGETS` acepta un array JSON con:
+
+- `name`
+- `host`
+- `port`
+- `password`
+- `external_server_id` opcional
+- `region` opcional
+- `game_port` opcional
+- `query_port` opcional
+- `source_name` opcional
+
+Ejemplo:
+
+```powershell
+$env:HLL_BACKEND_RCON_TARGETS='[
+  {
+    "name": "Comunidad Hispana #01",
+    "host": "203.0.113.10",
+    "port": 28015,
+    "password": "replace-me",
+    "external_server_id": "comunidad-hispana-01",
+    "region": "ES",
+    "game_port": 7777,
+    "query_port": 7778,
+    "source_name": "community-hispana-rcon"
+  }
+]'
+```
 
 ## Criterio de estructura
 
@@ -273,6 +324,8 @@ error controlado si se selecciona antes de implementar su adapter.
   fuente controlada.
 - `a2s_client.py` encapsula una consulta minima A2S_INFO por UDP para probar
   servidores reales sin acoplar todavia el backend a una fuente mas compleja.
+- `rcon_client.py` encapsula una conexion minima HLL RCON por TCP con XOR para
+  consultas live de produccion.
 - `config.py` centraliza host, puerto y allowlist minima de origenes locales.
 - `data_sources.py` define los contratos y la seleccion por entorno para live e historico.
 - `historical_ingestion.py` consulta la capa JSON publica de CRCON para bootstrap y refresh incremental.

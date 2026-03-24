@@ -8,6 +8,7 @@ from typing import Protocol
 from .collector import collect_server_snapshots
 from .config import get_historical_data_source_kind, get_live_data_source_kind
 from .providers.public_scoreboard_provider import PublicScoreboardHistoricalDataSource
+from .providers.rcon_provider import RconLiveDataSource
 from .server_targets import A2SServerTarget, load_a2s_targets
 
 
@@ -89,19 +90,6 @@ class RconHistoricalDataSource:
         max_workers: int,
     ) -> list[dict[str, object]]:
         raise RuntimeError("Historical RCON provider is not implemented yet.")
-
-
-@dataclass(frozen=True, slots=True)
-class RconLiveDataSource:
-    """Placeholder live provider for future production RCON integration."""
-
-    source_kind: str = SOURCE_KIND_RCON
-
-    def collect_snapshots(self, *, persist: bool) -> dict[str, object]:
-        raise RuntimeError("Live RCON provider is not implemented yet.")
-
-    def build_target_index(self) -> dict[str | None, A2SServerTarget]:
-        return {}
 
 
 def get_historical_data_source() -> HistoricalDataSource:

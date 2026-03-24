@@ -12,6 +12,7 @@ DEFAULT_STORAGE_FILENAME = "hll_vietnam_dev.sqlite3"
 DEFAULT_REFRESH_INTERVAL_SECONDS = 300
 DEFAULT_LIVE_DATA_SOURCE = "a2s"
 DEFAULT_HISTORICAL_DATA_SOURCE = "public-scoreboard"
+DEFAULT_RCON_TIMEOUT_SECONDS = 10.0
 DEFAULT_HISTORICAL_CRCON_PAGE_SIZE = 50
 DEFAULT_HISTORICAL_CRCON_TIMEOUT_SECONDS = 15.0
 DEFAULT_HISTORICAL_CRCON_DETAIL_WORKERS = 8
@@ -33,6 +34,8 @@ DEFAULT_ALLOWED_ORIGINS = (
 )
 DEFAULT_A2S_TARGETS_ENV_VAR = "HLL_BACKEND_A2S_TARGETS"
 DEFAULT_A2S_SOURCE_NAME = "community-hispana-a2s"
+DEFAULT_RCON_TARGETS_ENV_VAR = "HLL_BACKEND_RCON_TARGETS"
+DEFAULT_RCON_SOURCE_NAME = "community-hispana-rcon"
 
 
 def get_bind_address() -> tuple[str, int]:
@@ -187,6 +190,18 @@ def get_historical_data_source_kind() -> str:
     return source_kind
 
 
+def get_rcon_request_timeout_seconds() -> float:
+    """Return the timeout used for HLL RCON TCP requests."""
+    configured_value = os.getenv(
+        "HLL_BACKEND_RCON_TIMEOUT_SECONDS",
+        str(DEFAULT_RCON_TIMEOUT_SECONDS),
+    )
+    timeout_seconds = float(configured_value)
+    if timeout_seconds <= 0:
+        raise ValueError("HLL_BACKEND_RCON_TIMEOUT_SECONDS must be positive.")
+    return timeout_seconds
+
+
 def get_historical_refresh_max_retries() -> int:
     """Return the retry count used by the historical refresh loop."""
     configured_value = os.getenv(
@@ -257,6 +272,16 @@ def get_historical_weekly_fallback_max_weekday() -> int:
 def get_a2s_targets_payload() -> str | None:
     """Return the optional JSON payload that overrides local A2S targets."""
     raw_payload = os.getenv(DEFAULT_A2S_TARGETS_ENV_VAR)
+    if raw_payload is None:
+        return None
+
+    normalized = raw_payload.strip()
+    return normalized or None
+
+
+def get_rcon_targets_payload() -> str | None:
+    """Return the optional JSON payload that defines live RCON targets."""
+    raw_payload = os.getenv(DEFAULT_RCON_TARGETS_ENV_VAR)
     if raw_payload is None:
         return None
 

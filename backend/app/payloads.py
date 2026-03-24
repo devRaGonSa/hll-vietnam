@@ -4,7 +4,11 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
-from .config import get_refresh_interval_seconds
+from .config import (
+    get_historical_data_source_kind,
+    get_live_data_source_kind,
+    get_refresh_interval_seconds,
+)
 from .data_sources import get_live_data_source
 from .historical_snapshot_storage import get_historical_snapshot
 from .historical_snapshots import (
@@ -36,6 +40,8 @@ def build_health_payload() -> dict[str, str]:
         "status": "ok",
         "service": "hll-vietnam-backend",
         "phase": "bootstrap",
+        "live_data_source": get_live_data_source_kind(),
+        "historical_data_source": get_historical_data_source_kind(),
     }
 
 
