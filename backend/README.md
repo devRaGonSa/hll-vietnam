@@ -64,6 +64,8 @@ Variables opcionales:
 - `HLL_BACKEND_PORT`
 - `HLL_BACKEND_ALLOWED_ORIGINS`
 - `HLL_BACKEND_REFRESH_INTERVAL_SECONDS`
+- `HLL_BACKEND_LIVE_DATA_SOURCE`
+- `HLL_BACKEND_HISTORICAL_DATA_SOURCE`
 - `HLL_HISTORICAL_CRCON_PAGE_SIZE`
 - `HLL_HISTORICAL_CRCON_TIMEOUT_SECONDS`
 - `HLL_HISTORICAL_CRCON_DETAIL_WORKERS`
@@ -83,6 +85,8 @@ Variables especialmente relevantes para Docker y Compose:
 - `HLL_BACKEND_PORT`
 - `HLL_BACKEND_STORAGE_PATH`
 - `HLL_BACKEND_ALLOWED_ORIGINS`
+- `HLL_BACKEND_LIVE_DATA_SOURCE`
+- `HLL_BACKEND_HISTORICAL_DATA_SOURCE`
 - `HLL_HISTORICAL_CRCON_PAGE_SIZE`
 - `HLL_HISTORICAL_CRCON_TIMEOUT_SECONDS`
 - `HLL_HISTORICAL_CRCON_DETAIL_WORKERS`
@@ -218,6 +222,46 @@ Los endpoints historicos leen la persistencia local SQLite creada por el
 colector. Si todavia no hay snapshots guardados, responden `status: "ok"` con
 `items: []` para mantener un contrato simple en desarrollo.
 
+## Seleccion de fuente de datos
+
+El backend separa ahora la fuente de datos del contrato HTTP del producto.
+Esto permite cambiar proveedores por entorno sin tocar `routes.py`, payloads de
+UI ni el formato consumido por frontend.
+
+Variables nuevas:
+
+- `HLL_BACKEND_LIVE_DATA_SOURCE`
+- `HLL_BACKEND_HISTORICAL_DATA_SOURCE`
+
+Valores soportados en esta fase:
+
+- live:
+  - `a2s` como modo actual de desarrollo
+  - `rcon` reservado para la futura integracion productiva
+- historico:
+  - `public-scoreboard` como modo actual de desarrollo
+  - `rcon` reservado para la futura integracion productiva
+
+Defaults actuales:
+
+- `HLL_BACKEND_LIVE_DATA_SOURCE=a2s`
+- `HLL_BACKEND_HISTORICAL_DATA_SOURCE=public-scoreboard`
+
+La seleccion efectiva se resuelve en `app/data_sources.py`:
+
+- `get_live_data_source()` entrega el proveedor usado por `payloads.py`
+  cuando `/api/servers` necesita un refresh real
+- `get_historical_data_source()` entrega el proveedor usado por
+  `historical_ingestion.py` para bootstrap y refresh incremental
+
+En esta task solo queda implementado el proveedor ya operativo de desarrollo:
+
+- live `a2s`
+- historico `public-scoreboard`
+
+La opcion `rcon` queda preparada como placeholder explicito y hoy responde con
+error controlado si se selecciona antes de implementar su adapter.
+
 ## Criterio de estructura
 
 - `__init__.py` declara el paquete `app` y reexporta las utilidades publicas
@@ -227,6 +271,7 @@ colector. Si todavia no hay snapshots guardados, responden `status: "ok"` con
 - `a2s_client.py` encapsula una consulta minima A2S_INFO por UDP para probar
   servidores reales sin acoplar todavia el backend a una fuente mas compleja.
 - `config.py` centraliza host, puerto y allowlist minima de origenes locales.
+- `data_sources.py` define los contratos y la seleccion por entorno para live e historico.
 - `historical_ingestion.py` consulta la capa JSON publica de CRCON para bootstrap y refresh incremental.
 - `historical_models.py` fija las entidades historicas minimas del dominio.
 - `historical_snapshots.py` fija los tipos y selectores validos de snapshots historicos precalculados.

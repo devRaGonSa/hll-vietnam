@@ -4,8 +4,8 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
-from .collector import collect_server_snapshots
 from .config import get_refresh_interval_seconds
+from .data_sources import get_live_data_source
 from .historical_snapshot_storage import get_historical_snapshot
 from .historical_snapshots import (
     DEFAULT_MONTHLY_SNAPSHOT_WINDOW,
@@ -27,7 +27,6 @@ from .historical_storage import (
     list_weekly_top_kills,
 )
 from .normalizers import normalize_map_name
-from .server_targets import load_a2s_targets
 from .storage import list_latest_snapshots, list_server_history, list_snapshot_history
 
 
@@ -679,11 +678,7 @@ def _build_monthly_mvp_title(*, is_all_servers: bool, snapshot: bool = False) ->
 
 
 def _enrich_server_items(items: list[dict[str, object]]) -> list[dict[str, object]]:
-    target_index = {
-        target.external_server_id: target
-        for target in load_a2s_targets()
-        if target.external_server_id
-    }
+    target_index = get_live_data_source().build_target_index()
     enriched_items: list[dict[str, object]] = []
     for item in items:
         enriched_items.append(_enrich_server_item(item, target_index))
@@ -748,11 +743,7 @@ def _should_refresh_snapshot(
 
 
 def _try_collect_real_time_snapshot() -> tuple[list[dict[str, object]], list[dict[str, object]]]:
-    payload = collect_server_snapshots(
-        source_mode="a2s",
-        allow_controlled_fallback=False,
-        persist=True,
-    )
+    payload = get_live_data_source().collect_snapshots(persist=True)
     snapshots = payload.get("snapshots")
     items = _select_primary_snapshot_items(_enrich_server_items(list(snapshots or [])))
     errors = payload.get("errors")

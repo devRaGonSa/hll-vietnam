@@ -4,21 +4,14 @@ from __future__ import annotations
 
 import argparse
 import json
-import time
-from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from typing import Iterable
-from urllib.error import HTTPError, URLError
-from urllib.parse import urlencode
-from urllib.request import Request, urlopen
 
 from .config import (
     get_historical_crcon_detail_workers,
     get_historical_crcon_page_size,
-    get_historical_crcon_request_retries,
-    get_historical_crcon_request_timeout_seconds,
-    get_historical_crcon_retry_delay_seconds,
 )
+from .data_sources import HistoricalDataSource, get_historical_data_source
 from .historical_snapshots import generate_and_persist_historical_snapshots
 from .historical_storage import (
     finalize_backfill_progress,
@@ -33,11 +26,6 @@ from .historical_storage import (
     start_ingestion_run,
     upsert_historical_match,
 )
-
-
-PUBLIC_INFO_ENDPOINT = "/api/get_public_info"
-MATCH_LIST_ENDPOINT = "/api/get_scoreboard_maps"
-MATCH_DETAIL_ENDPOINT = "/api/get_map_scoreboard"
 
 
 @dataclass(slots=True)
@@ -115,6 +103,7 @@ def _run_ingestion(
 ) -> dict[str, object]:
     initialize_historical_storage()
     stats = IngestionStats()
+    data_source = get_historical_data_source()
     selected_servers = _select_servers(server_slug)
     processed_servers: list[dict[str, object]] = []
     active_runs: dict[str, int] = {}
@@ -143,6 +132,7 @@ def _run_ingestion(
                 mode=mode,
                 run_id=run_id,
                 stats=stats,
+                data_source=data_source,
                 max_pages=max_pages,
                 page_size=page_size,
                 start_page=resolved_start_page,
@@ -202,6 +192,7 @@ def _run_ingestion(
     return {
         "status": "ok",
         "mode": mode,
+        "source_provider": data_source.source_kind,
         "page_size": page_size or get_historical_crcon_page_size(),
         "start_page": start_page,
         "detail_workers": detail_workers or get_historical_crcon_detail_workers(),
@@ -225,6 +216,7 @@ def _ingest_server(
     mode: str,
     run_id: int,
     stats: IngestionStats,
+    data_source: HistoricalDataSource,
     max_pages: int | None,
     page_size: int | None,
     start_page: int,
@@ -236,14 +228,14 @@ def _ingest_server(
     page_limit = max_pages or 1000000
     start_page = max(1, start_page)
     local_stats = IngestionStats()
-    public_info = _fetch_public_info(str(server["scoreboard_base_url"]))
+    public_info = data_source.fetch_public_info(base_url=str(server["scoreboard_base_url"]))
     discovered_total_matches: int | None = None
     last_page_processed: int | None = None
     archive_exhausted = False
 
     for page_number in range(start_page, start_page + page_limit):
-        payload = _fetch_match_page(
-            str(server["scoreboard_base_url"]),
+        payload = data_source.fetch_match_page(
+            base_url=str(server["scoreboard_base_url"]),
             page=page_number,
             limit=resolved_page_size,
         )
@@ -273,9 +265,9 @@ def _ingest_server(
             if match_id:
                 match_ids_to_fetch.append(match_id)
 
-        for detail_payload in _fetch_match_details(
-            str(server["scoreboard_base_url"]),
-            match_ids_to_fetch,
+        for detail_payload in data_source.fetch_match_details(
+            base_url=str(server["scoreboard_base_url"]),
+            match_ids=match_ids_to_fetch,
             max_workers=resolved_detail_workers,
         ):
             delta = upsert_historical_match(
@@ -301,6 +293,7 @@ def _ingest_server(
         "server_slug": server["slug"],
         "public_name": _extract_public_name(public_info),
         "server_number": public_info.get("server_number") or server.get("server_number"),
+        "source_provider": data_source.source_kind,
         "pages_processed": local_stats.pages_processed,
         "matches_seen": local_stats.matches_seen,
         "discovered_total_matches": discovered_total_matches,
@@ -340,120 +333,10 @@ def _select_servers(server_slug: str | None) -> list[dict[str, object]]:
     return selected
 
 
-def _fetch_public_info(base_url: str) -> dict[str, object]:
-    return _fetch_dict_payload(base_url, PUBLIC_INFO_ENDPOINT)
-
-
-def _fetch_match_page(base_url: str, *, page: int, limit: int) -> dict[str, object]:
-    return _fetch_dict_payload(
-        base_url,
-        MATCH_LIST_ENDPOINT,
-        {"page": page, "limit": limit},
-        context=f"page={page}",
-    )
-
-
-def _fetch_match_detail(base_url: str, *, match_id: str) -> dict[str, object]:
-    return _fetch_dict_payload(
-        base_url,
-        MATCH_DETAIL_ENDPOINT,
-        {"map_id": match_id},
-        context=f"match={match_id}",
-    )
-
-
-def _fetch_match_details(
-    base_url: str,
-    match_ids: list[str],
-    *,
-    max_workers: int,
-) -> list[dict[str, object]]:
-    if not match_ids:
-        return []
-    if max_workers <= 1:
-        return [
-            _fetch_match_detail(base_url, match_id=match_id)
-            for match_id in match_ids
-        ]
-
-    with ThreadPoolExecutor(max_workers=max_workers) as executor:
-        futures = [
-            executor.submit(_fetch_match_detail, base_url, match_id=match_id)
-            for match_id in match_ids
-        ]
-        return [future.result() for future in futures]
-
-
-def _fetch_json(
-    base_url: str,
-    endpoint: str,
-    query: dict[str, object] | None = None,
-) -> object:
-    url = f"{base_url}{endpoint}"
-    if query:
-        url = f"{url}?{urlencode(query)}"
-
-    request = Request(
-        url,
-        headers={
-            "Accept": "application/json",
-            "User-Agent": "HLL-Vietnam-Historical-Ingestion/0.1",
-        },
-    )
-    try:
-        with urlopen(
-            request,
-            timeout=get_historical_crcon_request_timeout_seconds(),
-        ) as response:
-            return json.loads(response.read().decode("utf-8"))
-    except HTTPError as exc:
-        raise RuntimeError(f"Historical CRCON request failed: {url} ({exc.code})") from exc
-    except URLError as exc:
-        raise RuntimeError(f"Historical CRCON request failed: {url} ({exc.reason})") from exc
-
-
-def _fetch_dict_payload(
-    base_url: str,
-    endpoint: str,
-    query: dict[str, object] | None = None,
-    *,
-    context: str = "",
-    retries: int | None = None,
-) -> dict[str, object]:
-    resolved_retries = retries or get_historical_crcon_request_retries()
-    base_retry_delay_seconds = get_historical_crcon_retry_delay_seconds()
-    last_error: Exception | None = None
-    for attempt in range(1, resolved_retries + 1):
-        try:
-            payload = _unwrap_result(_fetch_json(base_url, endpoint, query))
-        except Exception as exc:  # pragma: no cover - network path
-            last_error = exc
-        else:
-            if isinstance(payload, dict):
-                return payload
-            last_error = ValueError(
-                f"Unexpected payload type for {base_url}{endpoint} {context}".strip()
-            )
-
-        if attempt < resolved_retries:
-            time.sleep(base_retry_delay_seconds * attempt)
-
-    assert last_error is not None
-    raise last_error
-
-
 def _coerce_match_list(payload: object) -> list[dict[str, object]]:
     if not isinstance(payload, list):
         return []
     return [item for item in payload if isinstance(item, dict)]
-
-
-def _unwrap_result(payload: object) -> object:
-    if not isinstance(payload, dict):
-        return payload
-    if "result" not in payload:
-        return payload
-    return payload.get("result")
 
 
 def _pick_match_timestamp(match_payload: dict[str, object]) -> str | None:

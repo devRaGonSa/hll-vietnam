@@ -10,6 +10,8 @@ DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 8000
 DEFAULT_STORAGE_FILENAME = "hll_vietnam_dev.sqlite3"
 DEFAULT_REFRESH_INTERVAL_SECONDS = 300
+DEFAULT_LIVE_DATA_SOURCE = "a2s"
+DEFAULT_HISTORICAL_DATA_SOURCE = "public-scoreboard"
 DEFAULT_HISTORICAL_CRCON_PAGE_SIZE = 50
 DEFAULT_HISTORICAL_CRCON_TIMEOUT_SECONDS = 15.0
 DEFAULT_HISTORICAL_CRCON_DETAIL_WORKERS = 8
@@ -162,6 +164,27 @@ def get_historical_refresh_interval_seconds() -> int:
         )
 
     return interval_seconds
+
+
+def get_live_data_source_kind() -> str:
+    """Return the live provider kind selected for the current environment."""
+    source_kind = os.getenv("HLL_BACKEND_LIVE_DATA_SOURCE", DEFAULT_LIVE_DATA_SOURCE).strip()
+    if source_kind not in {"a2s", "rcon"}:
+        raise ValueError("HLL_BACKEND_LIVE_DATA_SOURCE must be 'a2s' or 'rcon'.")
+    return source_kind
+
+
+def get_historical_data_source_kind() -> str:
+    """Return the historical provider kind selected for the current environment."""
+    source_kind = os.getenv(
+        "HLL_BACKEND_HISTORICAL_DATA_SOURCE",
+        DEFAULT_HISTORICAL_DATA_SOURCE,
+    ).strip()
+    if source_kind not in {"public-scoreboard", "rcon"}:
+        raise ValueError(
+            "HLL_BACKEND_HISTORICAL_DATA_SOURCE must be 'public-scoreboard' or 'rcon'."
+        )
+    return source_kind
 
 
 def get_historical_refresh_max_retries() -> int:
