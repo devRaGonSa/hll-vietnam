@@ -247,12 +247,15 @@ Defaults actuales:
 - `HLL_BACKEND_LIVE_DATA_SOURCE=a2s`
 - `HLL_BACKEND_HISTORICAL_DATA_SOURCE=public-scoreboard`
 
-La seleccion efectiva se resuelve en `app/data_sources.py`:
+La seleccion efectiva se resuelve en `app/data_sources.py` y en adapters
+dedicados dentro de `app/providers/`:
 
 - `get_live_data_source()` entrega el proveedor usado por `payloads.py`
   cuando `/api/servers` necesita un refresh real
 - `get_historical_data_source()` entrega el proveedor usado por
   `historical_ingestion.py` para bootstrap y refresh incremental
+- `providers/public_scoreboard_provider.py` encapsula la semantica actual del
+  scoreboard/CRCON publico bajo el contrato historico
 
 En esta task solo queda implementado el proveedor ya operativo de desarrollo:
 
