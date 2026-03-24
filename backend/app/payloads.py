@@ -12,6 +12,7 @@ from .historical_snapshots import (
     DEFAULT_SNAPSHOT_WINDOW,
     DEFAULT_WEEKLY_SNAPSHOT_WINDOW,
     SNAPSHOT_TYPE_MONTHLY_LEADERBOARD,
+    SNAPSHOT_TYPE_MONTHLY_MVP,
     SNAPSHOT_TYPE_RECENT_MATCHES,
     SNAPSHOT_TYPE_SERVER_SUMMARY,
     SNAPSHOT_TYPE_WEEKLY_LEADERBOARD,
@@ -326,6 +327,31 @@ def build_recent_historical_matches_payload(
     }
 
 
+def build_monthly_mvp_payload(
+    *,
+    limit: int = 10,
+    server_id: str | None = None,
+) -> dict[str, object]:
+    """Return the precomputed monthly MVP payload through the stable API surface."""
+    snapshot_payload = build_monthly_mvp_snapshot_payload(
+        limit=limit,
+        server_id=server_id,
+    )
+    data = snapshot_payload["data"]
+    return {
+        "status": "ok",
+        "data": {
+            **data,
+            "title": _build_monthly_mvp_title(
+                is_all_servers=server_id == ALL_SERVERS_SLUG,
+                snapshot=False,
+            ),
+            "context": "historical-monthly-mvp",
+            "source": "historical-precomputed-snapshots",
+        },
+    }
+
+
 def build_historical_server_summary_snapshot_payload(
     *,
     server_slug: str | None = None,
@@ -486,6 +512,62 @@ def build_recent_historical_matches_snapshot_payload(
     }
 
 
+def build_monthly_mvp_snapshot_payload(
+    *,
+    limit: int = 10,
+    server_id: str | None = None,
+) -> dict[str, object]:
+    """Return one precomputed monthly MVP snapshot."""
+    snapshot = _get_historical_snapshot_record(
+        server_key=server_id,
+        snapshot_type=SNAPSHOT_TYPE_MONTHLY_MVP,
+        window=DEFAULT_MONTHLY_SNAPSHOT_WINDOW,
+    )
+    payload = snapshot.get("payload") if snapshot else {}
+    items = payload.get("items") if isinstance(payload, dict) else None
+    sliced_items = list(items[:limit]) if isinstance(items, list) else []
+    return {
+        "status": "ok",
+        "data": {
+            "title": _build_monthly_mvp_title(
+                is_all_servers=server_id == ALL_SERVERS_SLUG,
+                snapshot=True,
+            ),
+            "context": "historical-monthly-mvp-snapshot",
+            "source": "historical-precomputed-snapshots",
+            "server_slug": server_id,
+            "timeframe": "monthly",
+            "metric": "mvp",
+            "found": snapshot is not None,
+            **_build_historical_snapshot_metadata(snapshot),
+            "month_key": payload.get("month_key") if isinstance(payload, dict) else None,
+            "window_days": payload.get("window_days") if isinstance(payload, dict) else None,
+            "window_start": payload.get("window_start") if isinstance(payload, dict) else None,
+            "window_end": payload.get("window_end") if isinstance(payload, dict) else None,
+            "window_kind": payload.get("window_kind") if isinstance(payload, dict) else None,
+            "window_label": payload.get("window_label") if isinstance(payload, dict) else None,
+            "uses_fallback": bool(payload.get("uses_fallback")) if isinstance(payload, dict) else False,
+            "selection_reason": payload.get("selection_reason") if isinstance(payload, dict) else None,
+            "current_month_start": payload.get("current_month_start") if isinstance(payload, dict) else None,
+            "current_month_closed_matches": (
+                payload.get("current_month_closed_matches") if isinstance(payload, dict) else None
+            ),
+            "previous_month_closed_matches": (
+                payload.get("previous_month_closed_matches") if isinstance(payload, dict) else None
+            ),
+            "sufficient_sample": payload.get("sufficient_sample") if isinstance(payload, dict) else None,
+            "eligibility": payload.get("eligibility") if isinstance(payload, dict) else None,
+            "ranking_version": payload.get("ranking_version") if isinstance(payload, dict) else None,
+            "eligible_players_count": (
+                payload.get("eligible_players_count") if isinstance(payload, dict) else 0
+            ),
+            "snapshot_limit": payload.get("limit") if isinstance(payload, dict) else None,
+            "limit": limit,
+            "items": sliced_items,
+        },
+    }
+
+
 def build_historical_server_summary_payload(
     *,
     server_slug: str | None = None,
@@ -588,6 +670,12 @@ def _build_leaderboard_title(
     }
     fallback_label = f"{prefix}Ranking {timeframe_label} por servidor".strip()
     return title_by_metric.get(metric, fallback_label)
+
+
+def _build_monthly_mvp_title(*, is_all_servers: bool, snapshot: bool = False) -> str:
+    prefix = "Snapshot " if snapshot else ""
+    scope_label = "global" if is_all_servers else "por servidor"
+    return f"{prefix}Top MVP mensual {scope_label}"
 
 
 def _enrich_server_items(items: list[dict[str, object]]) -> list[dict[str, object]]:

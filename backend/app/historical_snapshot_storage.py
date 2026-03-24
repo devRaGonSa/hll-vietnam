@@ -249,7 +249,7 @@ def _is_effectively_empty_snapshot_payload(
         items = payload.get("items")
         return not isinstance(items, list) or len(items) == 0
 
-    if snapshot_type in {"weekly-leaderboard", "monthly-leaderboard"}:
+    if snapshot_type in {"weekly-leaderboard", "monthly-leaderboard", "monthly-mvp"}:
         items = payload.get("items")
         return not isinstance(items, list) or len(items) == 0
 
@@ -287,6 +287,8 @@ def _build_snapshot_filename(*, snapshot_type: str, metric: str | None) -> str:
     if snapshot_type == "monthly-leaderboard":
         metric_suffix = "matches-over-100-kills" if metric == "matches_over_100_kills" else _slugify(metric or "unknown")
         return f"monthly-{metric_suffix}.json"
+    if snapshot_type == "monthly-mvp":
+        return "monthly-mvp.json"
     metric_suffix = _slugify(metric or "")
     base_name = _slugify(snapshot_type)
     return f"{base_name}-{metric_suffix}.json" if metric_suffix else f"{base_name}.json"

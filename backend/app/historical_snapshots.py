@@ -10,6 +10,7 @@ from .historical_storage import (
     list_historical_server_summaries,
     list_historical_servers,
     list_monthly_leaderboard,
+    list_monthly_mvp_ranking,
     list_recent_historical_matches,
     list_weekly_leaderboard,
 )
@@ -17,6 +18,7 @@ from .historical_storage import (
 SNAPSHOT_TYPE_SERVER_SUMMARY = "server-summary"
 SNAPSHOT_TYPE_WEEKLY_LEADERBOARD = "weekly-leaderboard"
 SNAPSHOT_TYPE_MONTHLY_LEADERBOARD = "monthly-leaderboard"
+SNAPSHOT_TYPE_MONTHLY_MVP = "monthly-mvp"
 SNAPSHOT_TYPE_RECENT_MATCHES = "recent-matches"
 
 SUPPORTED_SNAPSHOT_TYPES = frozenset(
@@ -24,6 +26,7 @@ SUPPORTED_SNAPSHOT_TYPES = frozenset(
         SNAPSHOT_TYPE_SERVER_SUMMARY,
         SNAPSHOT_TYPE_WEEKLY_LEADERBOARD,
         SNAPSHOT_TYPE_MONTHLY_LEADERBOARD,
+        SNAPSHOT_TYPE_MONTHLY_MVP,
         SNAPSHOT_TYPE_RECENT_MATCHES,
     }
 )
@@ -121,7 +124,16 @@ def build_historical_server_snapshots(
                 limit=leaderboard_limit,
                 db_path=db_path,
             )
+    )
+
+    snapshots.append(
+        _build_monthly_mvp_snapshot(
+            server_key,
+            generated_at_value,
+            limit=leaderboard_limit,
+            db_path=db_path,
         )
+    )
 
     snapshots.append(
         _build_recent_matches_snapshot(
@@ -168,6 +180,14 @@ def build_priority_historical_snapshots(
                     db_path=db_path,
                 )
             )
+        snapshots.append(
+            _build_monthly_mvp_snapshot(
+                server_key,
+                generated_at_value,
+                limit=leaderboard_limit,
+                db_path=db_path,
+            )
+        )
         snapshots.append(
             _build_recent_matches_snapshot(
                 server_key,
@@ -396,6 +416,38 @@ def _build_recent_matches_snapshot(
             "limit": limit,
             "generated_at": _to_iso(generated_at),
             "items": items,
+        },
+    }
+
+
+def _build_monthly_mvp_snapshot(
+    server_key: str,
+    generated_at: datetime,
+    *,
+    limit: int,
+    db_path: Path | None = None,
+) -> dict[str, object]:
+    ranking_result = list_monthly_mvp_ranking(
+        limit=limit,
+        server_id=server_key,
+        db_path=db_path,
+    )
+    month_key = str(ranking_result.get("window_start") or "")[:7] or None
+    return {
+        "server_key": server_key,
+        "snapshot_type": SNAPSHOT_TYPE_MONTHLY_MVP,
+        "metric": None,
+        "window": DEFAULT_MONTHLY_SNAPSHOT_WINDOW,
+        "generated_at": generated_at,
+        "source_range_start": _parse_optional_timestamp(ranking_result.get("window_start")),
+        "source_range_end": _parse_optional_timestamp(ranking_result.get("window_end")),
+        "is_stale": False,
+        "payload": {
+            "server_key": server_key,
+            "limit": limit,
+            "month_key": month_key,
+            "generated_at": _to_iso(generated_at),
+            **ranking_result,
         },
     }
 

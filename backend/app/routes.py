@@ -11,8 +11,10 @@ from .payloads import (
     build_error_payload,
     build_health_payload,
     build_historical_leaderboard_payload,
+    build_monthly_mvp_payload,
     build_monthly_leaderboard_payload,
     build_monthly_leaderboard_snapshot_payload,
+    build_monthly_mvp_snapshot_payload,
     build_historical_server_summary_snapshot_payload,
     build_historical_player_profile_payload,
     build_historical_server_summary_payload,
@@ -107,6 +109,16 @@ def resolve_get_payload(path: str) -> tuple[HTTPStatus | None, dict[str, object]
             metric=metric,
         )
 
+    if parsed.path == "/api/historical/monthly-mvp":
+        limit = _parse_limit(parsed.query)
+        if limit is None:
+            return HTTPStatus.BAD_REQUEST, build_error_payload("Invalid limit parameter")
+        server_id = parse_qs(parsed.query).get("server", [None])[0]
+        return HTTPStatus.OK, build_monthly_mvp_payload(
+            limit=limit,
+            server_id=server_id,
+        )
+
     if parsed.path == "/api/historical/snapshots/leaderboard":
         limit = _parse_limit(parsed.query)
         if limit is None:
@@ -139,6 +151,16 @@ def resolve_get_payload(path: str) -> tuple[HTTPStatus | None, dict[str, object]
             limit=limit,
             server_id=server_id,
             metric=metric,
+        )
+
+    if parsed.path == "/api/historical/snapshots/monthly-mvp":
+        limit = _parse_limit(parsed.query)
+        if limit is None:
+            return HTTPStatus.BAD_REQUEST, build_error_payload("Invalid limit parameter")
+        server_id = parse_qs(parsed.query).get("server", [None])[0]
+        return HTTPStatus.OK, build_monthly_mvp_snapshot_payload(
+            limit=limit,
+            server_id=server_id,
         )
 
     if parsed.path == "/api/historical/snapshots/weekly-leaderboard":

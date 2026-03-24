@@ -182,11 +182,13 @@ normaliza espacios y barras finales para mantener la comparacion con el header
 - `GET /api/historical/weekly-top-kills?limit=10&server=comunidad-hispana-01`
 - `GET /api/historical/weekly-leaderboard?metric=kills&limit=10&server=comunidad-hispana-01`
 - `GET /api/historical/leaderboard?timeframe=monthly&metric=kills&limit=10&server=comunidad-hispana-01`
+- `GET /api/historical/monthly-mvp?limit=10&server=comunidad-hispana-01`
 - `GET /api/historical/recent-matches?limit=20&server=comunidad-hispana-01`
 - `GET /api/historical/server-summary?server=comunidad-hispana-01`
 - `GET /api/historical/snapshots/server-summary?server=comunidad-hispana-01`
 - `GET /api/historical/snapshots/weekly-leaderboard?metric=kills&limit=10&server=comunidad-hispana-01`
 - `GET /api/historical/snapshots/leaderboard?timeframe=monthly&metric=kills&limit=10&server=comunidad-hispana-01`
+- `GET /api/historical/snapshots/monthly-mvp?limit=10&server=comunidad-hispana-01`
 - `GET /api/historical/snapshots/recent-matches?limit=6&server=comunidad-hispana-01`
 - `GET /api/historical/player-profile?player=steam%3A76561198000000000`
 
@@ -289,6 +291,7 @@ bruto. Esta capa esta preparada para guardar:
 - `server-summary`
 - `weekly-leaderboard` con metricas `kills`, `deaths`, `support` y `matches_over_100_kills`
 - `monthly-leaderboard` con las mismas metricas semanticas
+- `monthly-mvp`
 - `recent-matches`
 
 Por defecto se escriben bajo:
@@ -309,6 +312,7 @@ Ejemplos:
 - `backend/data/snapshots/comunidad-hispana-01/weekly-kills.json`
 - `backend/data/snapshots/comunidad-hispana-03/recent-matches.json`
 - `backend/data/snapshots/all-servers/weekly-support.json`
+- `backend/data/snapshots/all-servers/monthly-mvp.json`
 
 Cada archivo conserva metadatos operativos minimos:
 
@@ -649,6 +653,10 @@ para servir solo una parte del snapshot persistido.
 La misma capa de snapshots guarda tambien `monthly-leaderboard` por servidor y
 por agregado `all-servers`, con archivos como `monthly-kills.json` y
 `monthly-support.json`.
+
+Tambien persiste `monthly-mvp.json` por servidor y para `all-servers`, listo
+para lectura rapida desde `/api/historical/monthly-mvp` y
+`/api/historical/snapshots/monthly-mvp` sin recalculo pesado en request.
 
 El backend incluye ademas el calculo interno de `monthly MVP V1` en
 `app/monthly_mvp.py`, separado de los leaderboards mensuales simples por
