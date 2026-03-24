@@ -5,6 +5,11 @@ services:
     container_name: hll-vietnam-backend
     env_file:
       - ./backend/.env.example
+    environment:
+      HLL_BACKEND_LIVE_DATA_SOURCE: ${HLL_BACKEND_LIVE_DATA_SOURCE:-a2s}
+      HLL_BACKEND_HISTORICAL_DATA_SOURCE: ${HLL_BACKEND_HISTORICAL_DATA_SOURCE:-public-scoreboard}
+      HLL_BACKEND_RCON_TIMEOUT_SECONDS: ${HLL_BACKEND_RCON_TIMEOUT_SECONDS:-10}
+      HLL_BACKEND_RCON_TARGETS: ${HLL_BACKEND_RCON_TARGETS:-}
     ports:
       - "8000:8000"
     volumes:
@@ -18,6 +23,11 @@ services:
     command: ["python", "-m", "app.historical_runner", "--hourly"]
     env_file:
       - ./backend/.env.example
+    environment:
+      HLL_BACKEND_LIVE_DATA_SOURCE: ${HLL_BACKEND_LIVE_DATA_SOURCE:-a2s}
+      HLL_BACKEND_HISTORICAL_DATA_SOURCE: ${HLL_BACKEND_HISTORICAL_DATA_SOURCE:-public-scoreboard}
+      HLL_BACKEND_RCON_TIMEOUT_SECONDS: ${HLL_BACKEND_RCON_TIMEOUT_SECONDS:-10}
+      HLL_BACKEND_RCON_TARGETS: ${HLL_BACKEND_RCON_TARGETS:-}
     depends_on:
       - backend
     volumes:

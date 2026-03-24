@@ -77,6 +77,20 @@ El repositorio ya incluye:
 - `docker-compose.yml`
 - `backend/.env.example`
 
+SelecciÃ³n de proveedor por entorno hoy:
+
+- desarrollo:
+  - `HLL_BACKEND_LIVE_DATA_SOURCE=a2s`
+  - `HLL_BACKEND_HISTORICAL_DATA_SOURCE=public-scoreboard`
+- producciÃ³n realista en esta fase:
+  - `HLL_BACKEND_LIVE_DATA_SOURCE=rcon`
+  - `HLL_BACKEND_HISTORICAL_DATA_SOURCE=public-scoreboard`
+
+Esto refleja el estado real de la repo: el proveedor RCON ya existe para el
+estado live de `/api/servers`, pero el histÃ³rico sigue dependiendo del
+scoreboard pÃºblico porque no hay todavÃ­a una canalizaciÃ³n persistente basada
+en eventos/logs RCON.
+
 Primer arranque:
 
 ```powershell
@@ -112,6 +126,50 @@ Recreacion de imagenes tras cambios:
 ```powershell
 docker compose up --build
 ```
+
+## Runbook de proveedores
+
+Verificacion minima del proveedor activo:
+
+```powershell
+Invoke-WebRequest http://localhost:8000/health | Select-Object -Expand Content
+```
+
+La respuesta incluye `live_data_source` y `historical_data_source`.
+
+Modo desarrollo recomendado:
+
+```powershell
+docker compose up --build
+```
+
+Modo live con RCON en Docker Compose:
+
+```powershell
+$env:HLL_BACKEND_LIVE_DATA_SOURCE='rcon'
+$env:HLL_BACKEND_HISTORICAL_DATA_SOURCE='public-scoreboard'
+$env:HLL_BACKEND_RCON_TARGETS='[
+  {
+    "name": "Comunidad Hispana #01",
+    "host": "203.0.113.10",
+    "port": 28015,
+    "password": "replace-me",
+    "external_server_id": "comunidad-hispana-01",
+    "region": "ES",
+    "game_port": 7777,
+    "query_port": 7778
+  }
+]'
+docker compose up -d backend frontend
+```
+
+Buenas practicas:
+
+- no versionar credenciales reales en `backend/.env.example`
+- preferir exportarlas como variables de entorno del host o del secreto del
+  despliegue
+- mantener `HLL_BACKEND_HISTORICAL_DATA_SOURCE=public-scoreboard` hasta tener
+  una ingesta historica RCON realmente persistida
 
 ## Operaciones historicas con Docker
 

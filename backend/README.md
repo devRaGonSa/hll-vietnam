@@ -316,6 +316,25 @@ $env:HLL_BACKEND_RCON_TARGETS='[
 ]'
 ```
 
+Runbook operativo minimo:
+
+- desarrollo:
+  - `HLL_BACKEND_LIVE_DATA_SOURCE=a2s`
+  - `HLL_BACKEND_HISTORICAL_DATA_SOURCE=public-scoreboard`
+- produccion live con RCON:
+  - `HLL_BACKEND_LIVE_DATA_SOURCE=rcon`
+  - `HLL_BACKEND_HISTORICAL_DATA_SOURCE=public-scoreboard`
+  - definir `HLL_BACKEND_RCON_TARGETS` fuera de la repo
+
+Verificacion minima del proveedor activo:
+
+```powershell
+Invoke-WebRequest http://127.0.0.1:8000/health | Select-Object -Expand Content
+```
+
+La respuesta incluye `live_data_source` y `historical_data_source`, util para
+confirmar si la instancia esta usando `a2s` o `rcon` para live.
+
 ## Criterio de estructura
 
 - `__init__.py` declara el paquete `app` y reexporta las utilidades publicas
