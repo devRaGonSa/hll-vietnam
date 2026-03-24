@@ -14,6 +14,7 @@ from .config import (
 )
 from .historical_models import HistoricalServerDefinition
 from .monthly_mvp import build_monthly_mvp_rankings
+from .monthly_mvp_v2 import build_monthly_mvp_v2_rankings
 
 
 DEFAULT_HISTORICAL_SERVERS = (
@@ -1567,6 +1568,331 @@ def list_monthly_mvp_ranking(
         "eligible_players_count": ranking_result["eligible_players_count"],
         "items": ranking_result["items"],
     }
+
+
+def list_monthly_mvp_v2_ranking(
+    *,
+    limit: int = 10,
+    server_id: str | None = None,
+    db_path: Path | None = None,
+) -> dict[str, object]:
+    """Return the monthly MVP V2 ranking built from monthly totals plus V2 signals."""
+    resolved_path = initialize_historical_storage(db_path=db_path)
+    aggregate_all_servers = _is_all_servers_selector(server_id)
+    current_time = datetime.now(timezone.utc)
+    current_month_start = _start_of_month(current_time)
+    previous_month_start = _start_of_previous_month(current_month_start)
+    monthly_window = _select_monthly_window(
+        server_id=server_id,
+        current_time=current_time,
+        current_month_start=current_month_start,
+        previous_month_start=previous_month_start,
+        db_path=resolved_path,
+    )
+    window_start = monthly_window["window_start"]
+    window_end = monthly_window["window_end"]
+    month_key = window_start.strftime("%Y-%m")
+    event_coverage = _get_monthly_player_event_coverage(
+        server_id=server_id,
+        month_key=month_key,
+        db_path=resolved_path,
+    )
+    window_days = _calculate_window_days(window_start=window_start, window_end=window_end)
+
+    empty_result = {
+        "timeframe": "monthly",
+        "metric": "mvp-v2",
+        "ranking_version": "v2",
+        "window_start": window_start.isoformat().replace("+00:00", "Z"),
+        "window_end": window_end.isoformat().replace("+00:00", "Z"),
+        "window_days": window_days,
+        "window_kind": monthly_window["window_kind"],
+        "window_label": monthly_window["window_label"],
+        "uses_fallback": monthly_window["uses_fallback"],
+        "selection_reason": monthly_window["selection_reason"],
+        "current_month_start": current_month_start.isoformat().replace("+00:00", "Z"),
+        "current_month_closed_matches": monthly_window["current_month_closed_matches"],
+        "previous_month_closed_matches": monthly_window["previous_month_closed_matches"],
+        "sufficient_sample": {
+            "minimum_closed_matches": monthly_window["minimum_closed_matches"],
+            "current_month_closed_matches": monthly_window["current_month_closed_matches"],
+            "current_month_has_sufficient_sample": monthly_window["current_month_has_sufficient_sample"],
+            "is_early_month": monthly_window["is_early_month"],
+        },
+        "event_coverage": event_coverage,
+    }
+    if not bool(event_coverage["ready"]):
+        return {
+            **empty_result,
+            "eligibility": None,
+            "eligible_players_count": 0,
+            "items": [],
+        }
+
+    where_clauses = [
+        "historical_matches.ended_at IS NOT NULL",
+        "historical_matches.ended_at >= ?",
+        "historical_matches.ended_at < ?",
+    ]
+    params: list[object] = [
+        window_start.isoformat().replace("+00:00", "Z"),
+        window_end.isoformat().replace("+00:00", "Z"),
+    ]
+    if server_id and not aggregate_all_servers:
+        normalized_server_id = server_id.strip()
+        where_clauses.append(
+            "(historical_servers.slug = ? OR CAST(historical_servers.server_number AS TEXT) = ?)"
+        )
+        params.extend([normalized_server_id, normalized_server_id])
+
+    event_scope_sql, event_scope_params = _build_player_event_scope_sql(server_id)
+    server_slug_expression = (
+        f"'{ALL_SERVERS_SLUG}'"
+        if aggregate_all_servers
+        else "historical_servers.slug"
+    )
+    server_name_expression = (
+        f"'{ALL_SERVERS_DISPLAY_NAME}'"
+        if aggregate_all_servers
+        else "historical_servers.display_name"
+    )
+    group_by_expression = (
+        "historical_players.id"
+        if aggregate_all_servers
+        else "historical_servers.slug, historical_players.id"
+    )
+
+    with _connect(resolved_path) as connection:
+        rows = connection.execute(
+            f"""
+            WITH most_killed_pairs AS (
+                SELECT
+                    killer_player_key AS stable_player_key,
+                    victim_player_key,
+                    COALESCE(SUM(event_value), 0) AS total_kills
+                FROM player_event_raw_ledger
+                WHERE event_type = 'player_kill_summary'
+                  AND occurred_at IS NOT NULL
+                  AND substr(occurred_at, 1, 7) = ?
+                  AND {event_scope_sql}
+                  AND killer_player_key IS NOT NULL
+                  AND victim_player_key IS NOT NULL
+                GROUP BY killer_player_key, victim_player_key
+            ),
+            most_killed_by_player AS (
+                SELECT
+                    stable_player_key,
+                    MAX(total_kills) AS most_killed_count
+                FROM most_killed_pairs
+                GROUP BY stable_player_key
+            ),
+            death_by_pairs AS (
+                SELECT
+                    victim_player_key AS stable_player_key,
+                    killer_player_key,
+                    COALESCE(SUM(event_value), 0) AS total_kills
+                FROM player_event_raw_ledger
+                WHERE event_type = 'player_death_summary'
+                  AND occurred_at IS NOT NULL
+                  AND substr(occurred_at, 1, 7) = ?
+                  AND {event_scope_sql}
+                  AND killer_player_key IS NOT NULL
+                  AND victim_player_key IS NOT NULL
+                GROUP BY victim_player_key, killer_player_key
+            ),
+            death_by_player AS (
+                SELECT
+                    stable_player_key,
+                    MAX(total_kills) AS death_by_count
+                FROM death_by_pairs
+                GROUP BY stable_player_key
+            ),
+            duel_pairs AS (
+                SELECT
+                    CASE
+                        WHEN COALESCE(killer_player_key, '') <= COALESCE(victim_player_key, '')
+                        THEN killer_player_key
+                        ELSE victim_player_key
+                    END AS player_a_key,
+                    CASE
+                        WHEN COALESCE(killer_player_key, '') <= COALESCE(victim_player_key, '')
+                        THEN victim_player_key
+                        ELSE killer_player_key
+                    END AS player_b_key,
+                    COALESCE(
+                        SUM(
+                            CASE
+                                WHEN COALESCE(killer_player_key, '') <= COALESCE(victim_player_key, '')
+                                THEN event_value
+                                ELSE -event_value
+                            END
+                        ),
+                        0
+                    ) AS net_duel_value
+                FROM player_event_raw_ledger
+                WHERE event_type = 'player_kill_summary'
+                  AND occurred_at IS NOT NULL
+                  AND substr(occurred_at, 1, 7) = ?
+                  AND {event_scope_sql}
+                  AND killer_player_key IS NOT NULL
+                  AND victim_player_key IS NOT NULL
+                GROUP BY
+                    CASE
+                        WHEN COALESCE(killer_player_key, '') <= COALESCE(victim_player_key, '')
+                        THEN killer_player_key
+                        ELSE victim_player_key
+                    END,
+                    CASE
+                        WHEN COALESCE(killer_player_key, '') <= COALESCE(victim_player_key, '')
+                        THEN victim_player_key
+                        ELSE killer_player_key
+                    END
+            ),
+            duel_player_values AS (
+                SELECT
+                    player_a_key AS stable_player_key,
+                    CASE WHEN net_duel_value > 0 THEN net_duel_value ELSE 0 END AS positive_duel_value
+                FROM duel_pairs
+                UNION ALL
+                SELECT
+                    player_b_key AS stable_player_key,
+                    CASE WHEN net_duel_value < 0 THEN -net_duel_value ELSE 0 END AS positive_duel_value
+                FROM duel_pairs
+            ),
+            ranked_duel_values AS (
+                SELECT
+                    stable_player_key,
+                    positive_duel_value,
+                    ROW_NUMBER() OVER (
+                        PARTITION BY stable_player_key
+                        ORDER BY positive_duel_value DESC
+                    ) AS duel_rank
+                FROM duel_player_values
+                WHERE stable_player_key IS NOT NULL
+                  AND positive_duel_value > 0
+            ),
+            duel_control_by_player AS (
+                SELECT
+                    stable_player_key,
+                    COALESCE(SUM(positive_duel_value), 0) AS duel_control_raw
+                FROM ranked_duel_values
+                WHERE duel_rank <= 3
+                GROUP BY stable_player_key
+            )
+            SELECT
+                {server_slug_expression} AS server_slug,
+                {server_name_expression} AS server_name,
+                historical_players.stable_player_key,
+                historical_players.display_name AS player_name,
+                historical_players.steam_id,
+                COUNT(DISTINCT historical_matches.id) AS matches_count,
+                COALESCE(SUM(historical_player_match_stats.kills), 0) AS total_kills,
+                COALESCE(SUM(historical_player_match_stats.deaths), 0) AS total_deaths,
+                COALESCE(SUM(historical_player_match_stats.support), 0) AS total_support,
+                COALESCE(SUM(historical_player_match_stats.teamkills), 0) AS total_teamkills,
+                COALESCE(SUM(historical_player_match_stats.time_seconds), 0) AS total_time_seconds,
+                COALESCE(MAX(most_killed_by_player.most_killed_count), 0) AS most_killed_count,
+                COALESCE(MAX(death_by_player.death_by_count), 0) AS death_by_count,
+                COALESCE(MAX(duel_control_by_player.duel_control_raw), 0) AS duel_control_raw
+            FROM historical_player_match_stats
+            INNER JOIN historical_matches
+                ON historical_matches.id = historical_player_match_stats.historical_match_id
+            INNER JOIN historical_servers
+                ON historical_servers.id = historical_matches.historical_server_id
+            INNER JOIN historical_players
+                ON historical_players.id = historical_player_match_stats.historical_player_id
+            LEFT JOIN most_killed_by_player
+                ON most_killed_by_player.stable_player_key = historical_players.stable_player_key
+            LEFT JOIN death_by_player
+                ON death_by_player.stable_player_key = historical_players.stable_player_key
+            LEFT JOIN duel_control_by_player
+                ON duel_control_by_player.stable_player_key = historical_players.stable_player_key
+            WHERE {" AND ".join(where_clauses)}
+            GROUP BY {group_by_expression}
+            """,
+            [
+                month_key,
+                *event_scope_params,
+                month_key,
+                *event_scope_params,
+                month_key,
+                *event_scope_params,
+                *params,
+            ],
+        ).fetchall()
+
+    ranking_result = build_monthly_mvp_v2_rankings(
+        [dict(row) for row in rows],
+        limit=limit,
+    )
+    for item in ranking_result["items"]:
+        item["time_range"] = {
+            "start": window_start.isoformat().replace("+00:00", "Z"),
+            "end": window_end.isoformat().replace("+00:00", "Z"),
+            "window_days": window_days,
+        }
+
+    return {
+        **empty_result,
+        "ranking_version": ranking_result["ranking_version"],
+        "eligibility": ranking_result["eligibility"],
+        "eligible_players_count": ranking_result["eligible_players_count"],
+        "items": ranking_result["items"],
+    }
+
+
+def _get_monthly_player_event_coverage(
+    *,
+    server_id: str | None,
+    month_key: str,
+    db_path: Path,
+) -> dict[str, object]:
+    scope_sql, scope_params = _build_player_event_scope_sql(server_id)
+    with _connect(db_path) as connection:
+        latest_row = connection.execute(
+            f"""
+            SELECT MAX(substr(occurred_at, 1, 7)) AS latest_month_key
+            FROM player_event_raw_ledger
+            WHERE occurred_at IS NOT NULL
+              AND {scope_sql}
+            """,
+            scope_params,
+        ).fetchone()
+        month_row = connection.execute(
+            f"""
+            SELECT
+                COUNT(*) AS event_count,
+                MIN(occurred_at) AS source_range_start,
+                MAX(occurred_at) AS source_range_end
+            FROM player_event_raw_ledger
+            WHERE occurred_at IS NOT NULL
+              AND substr(occurred_at, 1, 7) = ?
+              AND {scope_sql}
+            """,
+            [month_key, *scope_params],
+        ).fetchone()
+    latest_month_key = str(latest_row["latest_month_key"]) if latest_row and latest_row["latest_month_key"] else None
+    event_count = int(month_row["event_count"] or 0) if month_row else 0
+    return {
+        "month_key": month_key,
+        "latest_month_key": latest_month_key,
+        "ready": bool(event_count > 0 and latest_month_key == month_key),
+        "event_count": event_count,
+        "source_range_start": month_row["source_range_start"] if month_row else None,
+        "source_range_end": month_row["source_range_end"] if month_row else None,
+        "selection_reason": (
+            "month-key-aligned"
+            if event_count > 0 and latest_month_key == month_key
+            else "player-event-month-mismatch-or-missing"
+        ),
+    }
+
+
+def _build_player_event_scope_sql(server_id: str | None) -> tuple[str, list[object]]:
+    if not server_id or _is_all_servers_selector(server_id):
+        return "1 = 1", []
+    normalized_server_id = server_id.strip()
+    return "server_slug = ?", [normalized_server_id]
 
 
 def _connect(db_path: Path) -> sqlite3.Connection:

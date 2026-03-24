@@ -191,12 +191,16 @@ normaliza espacios y barras finales para mantener la comparacion con el header
 - `GET /api/historical/weekly-leaderboard?metric=kills&limit=10&server=comunidad-hispana-01`
 - `GET /api/historical/leaderboard?timeframe=monthly&metric=kills&limit=10&server=comunidad-hispana-01`
 - `GET /api/historical/monthly-mvp?limit=10&server=comunidad-hispana-01`
+- `GET /api/historical/monthly-mvp-v2?limit=10&server=comunidad-hispana-01`
+- `GET /api/historical/player-events?view=most-killed&limit=10&server=comunidad-hispana-01`
 - `GET /api/historical/recent-matches?limit=20&server=comunidad-hispana-01`
 - `GET /api/historical/server-summary?server=comunidad-hispana-01`
 - `GET /api/historical/snapshots/server-summary?server=comunidad-hispana-01`
 - `GET /api/historical/snapshots/weekly-leaderboard?metric=kills&limit=10&server=comunidad-hispana-01`
 - `GET /api/historical/snapshots/leaderboard?timeframe=monthly&metric=kills&limit=10&server=comunidad-hispana-01`
 - `GET /api/historical/snapshots/monthly-mvp?limit=10&server=comunidad-hispana-01`
+- `GET /api/historical/snapshots/monthly-mvp-v2?limit=10&server=comunidad-hispana-01`
+- `GET /api/historical/snapshots/player-events?view=most-killed&limit=10&server=comunidad-hispana-01`
 - `GET /api/historical/snapshots/recent-matches?limit=6&server=comunidad-hispana-01`
 - `GET /api/historical/player-profile?player=steam%3A76561198000000000`
 
@@ -779,6 +783,34 @@ Tambien persiste `monthly-mvp.json` por servidor y para `all-servers`, listo
 para lectura rapida desde `/api/historical/monthly-mvp` y
 `/api/historical/snapshots/monthly-mvp` sin recalculo pesado en request.
 
+La misma operativa persiste tambien snapshots V2 de eventos de jugador para el
+ultimo mes con datos disponible por servidor y para `all-servers`, listos para
+lectura rapida sin consultas pesadas on-demand:
+
+- `player-events-most-killed.json`
+- `player-events-death-by.json`
+- `player-events-duels.json`
+- `player-events-weapon-kills.json`
+- `player-events-teamkills.json`
+
+Los endpoints `/api/historical/player-events` y
+`/api/historical/snapshots/player-events` aceptan:
+
+- `view=most-killed`
+- `view=death-by`
+- `view=duels`
+- `view=weapon-kills`
+- `view=teamkills`
+
+La respuesta expone metadata operativa alineada con el resto de snapshots:
+
+- `generated_at`
+- `month_key`
+- `source_range_start`
+- `source_range_end`
+- `found`
+- `is_stale`
+
 El backend incluye ademas el calculo interno de `monthly MVP V1` en
 `app/monthly_mvp.py`, separado de los leaderboards mensuales simples por
 metrica. Ese calculo:
@@ -792,6 +824,35 @@ metrica. Ese calculo:
 En esta fase el ranking MVP queda listo para serializar en snapshots o payloads
 sin reemplazar los leaderboards mensuales ya existentes por `kills`, `deaths`,
 `support` y `matches_over_100_kills`.
+
+La repo incluye tambien un calculo backend separado de `monthly MVP V2` en
+`app/monthly_mvp_v2.py`, expuesto de momento por
+`/api/historical/monthly-mvp-v2`.
+
+Esta V2:
+
+- convive sin reemplazar `monthly MVP V1`
+- reusa la misma ventana mensual y la misma elegibilidad base
+- anade `rivalry_edge` y `duel_control` derivados del ledger V2 de eventos
+- aplica una penalizacion de teamkills mas estricta
+- mantiene fuera del score el peso por arma o tipo de kill hasta validar mejor
+  esas senales
+
+Esa capacidad V2 se persiste tambien en snapshots dedicados
+`monthly-mvp-v2.json` por servidor y para `all-servers`, leidos por:
+
+- `/api/historical/monthly-mvp-v2`
+- `/api/historical/snapshots/monthly-mvp-v2`
+
+La lectura HTTP de V2 sigue asi la misma politica de fast path de solo lectura
+que el resto de snapshots historicos, con metadata util como:
+
+- `generated_at`
+- `month_key`
+- `found`
+- `source_range_start`
+- `source_range_end`
+- `event_coverage`
 
 ## Ingesta historica CRCON
 

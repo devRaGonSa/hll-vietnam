@@ -17,6 +17,12 @@ from .historical_snapshots import (
     DEFAULT_WEEKLY_SNAPSHOT_WINDOW,
     SNAPSHOT_TYPE_MONTHLY_LEADERBOARD,
     SNAPSHOT_TYPE_MONTHLY_MVP,
+    SNAPSHOT_TYPE_MONTHLY_MVP_V2,
+    SNAPSHOT_TYPE_PLAYER_EVENT_DEATH_BY,
+    SNAPSHOT_TYPE_PLAYER_EVENT_DUELS,
+    SNAPSHOT_TYPE_PLAYER_EVENT_MOST_KILLED,
+    SNAPSHOT_TYPE_PLAYER_EVENT_TEAMKILLS,
+    SNAPSHOT_TYPE_PLAYER_EVENT_WEAPON_KILLS,
     SNAPSHOT_TYPE_RECENT_MATCHES,
     SNAPSHOT_TYPE_SERVER_SUMMARY,
     SNAPSHOT_TYPE_WEEKLY_LEADERBOARD,
@@ -357,6 +363,59 @@ def build_monthly_mvp_payload(
     }
 
 
+def build_player_event_payload(
+    *,
+    limit: int = 10,
+    server_id: str | None = None,
+    view: str = "most-killed",
+) -> dict[str, object]:
+    """Return one V2 player-event payload through the stable API surface."""
+    snapshot_payload = build_player_event_snapshot_payload(
+        limit=limit,
+        server_id=server_id,
+        view=view,
+    )
+    data = snapshot_payload["data"]
+    return {
+        "status": "ok",
+        "data": {
+            **data,
+            "title": _build_player_event_title(
+                view=view,
+                is_all_servers=server_id == ALL_SERVERS_SLUG,
+                snapshot=False,
+            ),
+            "context": "historical-player-events",
+            "source": "historical-precomputed-player-event-snapshots",
+        },
+    }
+
+
+def build_monthly_mvp_v2_payload(
+    *,
+    limit: int = 10,
+    server_id: str | None = None,
+) -> dict[str, object]:
+    """Return the precomputed monthly MVP V2 payload through the stable API surface."""
+    snapshot_payload = build_monthly_mvp_v2_snapshot_payload(
+        limit=limit,
+        server_id=server_id,
+    )
+    data = snapshot_payload["data"]
+    return {
+        "status": "ok",
+        "data": {
+            **data,
+            "title": _build_monthly_mvp_v2_title(
+                is_all_servers=server_id == ALL_SERVERS_SLUG,
+                snapshot=False,
+            ),
+            "context": "historical-monthly-mvp-v2",
+            "source": "historical-precomputed-snapshots",
+        },
+    }
+
+
 def build_historical_server_summary_snapshot_payload(
     *,
     server_slug: str | None = None,
@@ -573,6 +632,105 @@ def build_monthly_mvp_snapshot_payload(
     }
 
 
+def build_monthly_mvp_v2_snapshot_payload(
+    *,
+    limit: int = 10,
+    server_id: str | None = None,
+) -> dict[str, object]:
+    """Return one precomputed monthly MVP V2 snapshot."""
+    snapshot = _get_historical_snapshot_record(
+        server_key=server_id,
+        snapshot_type=SNAPSHOT_TYPE_MONTHLY_MVP_V2,
+        window=DEFAULT_MONTHLY_SNAPSHOT_WINDOW,
+    )
+    payload = snapshot.get("payload") if snapshot else {}
+    items = payload.get("items") if isinstance(payload, dict) else None
+    sliced_items = list(items[:limit]) if isinstance(items, list) else []
+    found = bool(payload.get("found")) if isinstance(payload, dict) else False
+    return {
+        "status": "ok",
+        "data": {
+            "title": _build_monthly_mvp_v2_title(
+                is_all_servers=server_id == ALL_SERVERS_SLUG,
+                snapshot=True,
+            ),
+            "context": "historical-monthly-mvp-v2-snapshot",
+            "source": "historical-precomputed-snapshots",
+            "server_slug": server_id,
+            "timeframe": "monthly",
+            "metric": "mvp-v2",
+            "found": snapshot is not None and found,
+            **_build_historical_snapshot_metadata(snapshot),
+            "month_key": payload.get("month_key") if isinstance(payload, dict) else None,
+            "window_days": payload.get("window_days") if isinstance(payload, dict) else None,
+            "window_start": payload.get("window_start") if isinstance(payload, dict) else None,
+            "window_end": payload.get("window_end") if isinstance(payload, dict) else None,
+            "window_kind": payload.get("window_kind") if isinstance(payload, dict) else None,
+            "window_label": payload.get("window_label") if isinstance(payload, dict) else None,
+            "uses_fallback": bool(payload.get("uses_fallback")) if isinstance(payload, dict) else False,
+            "selection_reason": payload.get("selection_reason") if isinstance(payload, dict) else None,
+            "current_month_start": payload.get("current_month_start") if isinstance(payload, dict) else None,
+            "current_month_closed_matches": (
+                payload.get("current_month_closed_matches") if isinstance(payload, dict) else None
+            ),
+            "previous_month_closed_matches": (
+                payload.get("previous_month_closed_matches") if isinstance(payload, dict) else None
+            ),
+            "sufficient_sample": payload.get("sufficient_sample") if isinstance(payload, dict) else None,
+            "eligibility": payload.get("eligibility") if isinstance(payload, dict) else None,
+            "ranking_version": payload.get("ranking_version") if isinstance(payload, dict) else None,
+            "event_coverage": payload.get("event_coverage") if isinstance(payload, dict) else None,
+            "eligible_players_count": (
+                payload.get("eligible_players_count") if isinstance(payload, dict) else 0
+            ),
+            "snapshot_limit": payload.get("limit") if isinstance(payload, dict) else None,
+            "limit": limit,
+            "items": sliced_items,
+        },
+    }
+
+
+def build_player_event_snapshot_payload(
+    *,
+    limit: int = 10,
+    server_id: str | None = None,
+    view: str = "most-killed",
+) -> dict[str, object]:
+    """Return one precomputed V2 player-event snapshot."""
+    snapshot_type = _resolve_player_event_snapshot_type(view)
+    snapshot = _get_historical_snapshot_record(
+        server_key=server_id,
+        snapshot_type=snapshot_type,
+        window=DEFAULT_MONTHLY_SNAPSHOT_WINDOW,
+    )
+    payload = snapshot.get("payload") if snapshot else {}
+    items = payload.get("items") if isinstance(payload, dict) else None
+    sliced_items = list(items[:limit]) if isinstance(items, list) else []
+    found = bool(payload.get("found")) if isinstance(payload, dict) else False
+    return {
+        "status": "ok",
+        "data": {
+            "title": _build_player_event_title(
+                view=view,
+                is_all_servers=server_id == ALL_SERVERS_SLUG,
+                snapshot=True,
+            ),
+            "context": "historical-player-events-snapshot",
+            "source": "historical-precomputed-player-event-snapshots",
+            "server_slug": server_id,
+            "timeframe": "monthly",
+            "metric": view,
+            "found": snapshot is not None and found,
+            **_build_historical_snapshot_metadata(snapshot),
+            "period": payload.get("period") if isinstance(payload, dict) else "monthly",
+            "month_key": payload.get("month_key") if isinstance(payload, dict) else None,
+            "snapshot_limit": payload.get("limit") if isinstance(payload, dict) else None,
+            "limit": limit,
+            "items": sliced_items,
+        },
+    }
+
+
 def build_historical_server_summary_payload(
     *,
     server_slug: str | None = None,
@@ -681,6 +839,42 @@ def _build_monthly_mvp_title(*, is_all_servers: bool, snapshot: bool = False) ->
     prefix = "Snapshot " if snapshot else ""
     scope_label = "global" if is_all_servers else "por servidor"
     return f"{prefix}Top MVP mensual {scope_label}"
+
+
+def _build_monthly_mvp_v2_title(*, is_all_servers: bool, snapshot: bool = False) -> str:
+    prefix = "Snapshot " if snapshot else ""
+    scope_label = "global" if is_all_servers else "por servidor"
+    return f"{prefix}Top MVP mensual V2 {scope_label}"
+
+
+def _build_player_event_title(
+    *,
+    view: str,
+    is_all_servers: bool,
+    snapshot: bool = False,
+) -> str:
+    prefix = "Snapshot " if snapshot else ""
+    scope_label = "global" if is_all_servers else "por servidor"
+    title_by_view = {
+        "most-killed": f"{prefix}Most killed mensual {scope_label}",
+        "death-by": f"{prefix}Death by mensual {scope_label}",
+        "duels": f"{prefix}Duelos netos mensuales {scope_label}",
+        "weapon-kills": f"{prefix}Kills por arma mensuales {scope_label}",
+        "teamkills": f"{prefix}Teamkills mensuales {scope_label}",
+    }
+    return title_by_view.get(view, f"{prefix}Metricas V2 mensuales {scope_label}")
+
+
+def _resolve_player_event_snapshot_type(view: str) -> str:
+    normalized_view = view.strip().lower() if isinstance(view, str) else "most-killed"
+    snapshot_type_by_view = {
+        "most-killed": SNAPSHOT_TYPE_PLAYER_EVENT_MOST_KILLED,
+        "death-by": SNAPSHOT_TYPE_PLAYER_EVENT_DEATH_BY,
+        "duels": SNAPSHOT_TYPE_PLAYER_EVENT_DUELS,
+        "weapon-kills": SNAPSHOT_TYPE_PLAYER_EVENT_WEAPON_KILLS,
+        "teamkills": SNAPSHOT_TYPE_PLAYER_EVENT_TEAMKILLS,
+    }
+    return snapshot_type_by_view.get(normalized_view, SNAPSHOT_TYPE_PLAYER_EVENT_MOST_KILLED)
 
 
 def _enrich_server_items(items: list[dict[str, object]]) -> list[dict[str, object]]:

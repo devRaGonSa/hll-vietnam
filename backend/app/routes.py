@@ -12,9 +12,13 @@ from .payloads import (
     build_health_payload,
     build_historical_leaderboard_payload,
     build_monthly_mvp_payload,
+    build_monthly_mvp_v2_payload,
     build_monthly_leaderboard_payload,
     build_monthly_leaderboard_snapshot_payload,
     build_monthly_mvp_snapshot_payload,
+    build_monthly_mvp_v2_snapshot_payload,
+    build_player_event_payload,
+    build_player_event_snapshot_payload,
     build_historical_server_summary_snapshot_payload,
     build_historical_player_profile_payload,
     build_historical_server_summary_payload,
@@ -119,6 +123,31 @@ def resolve_get_payload(path: str) -> tuple[HTTPStatus | None, dict[str, object]
             server_id=server_id,
         )
 
+    if parsed.path == "/api/historical/monthly-mvp-v2":
+        limit = _parse_limit(parsed.query)
+        if limit is None:
+            return HTTPStatus.BAD_REQUEST, build_error_payload("Invalid limit parameter")
+        server_id = parse_qs(parsed.query).get("server", [None])[0]
+        return HTTPStatus.OK, build_monthly_mvp_v2_payload(
+            limit=limit,
+            server_id=server_id,
+        )
+
+    if parsed.path == "/api/historical/player-events":
+        limit = _parse_limit(parsed.query)
+        if limit is None:
+            return HTTPStatus.BAD_REQUEST, build_error_payload("Invalid limit parameter")
+        params = parse_qs(parsed.query)
+        server_id = params.get("server", [None])[0]
+        view = params.get("view", ["most-killed"])[0]
+        if view not in {"most-killed", "death-by", "duels", "weapon-kills", "teamkills"}:
+            return HTTPStatus.BAD_REQUEST, build_error_payload("Invalid view parameter")
+        return HTTPStatus.OK, build_player_event_payload(
+            limit=limit,
+            server_id=server_id,
+            view=view,
+        )
+
     if parsed.path == "/api/historical/snapshots/leaderboard":
         limit = _parse_limit(parsed.query)
         if limit is None:
@@ -161,6 +190,31 @@ def resolve_get_payload(path: str) -> tuple[HTTPStatus | None, dict[str, object]
         return HTTPStatus.OK, build_monthly_mvp_snapshot_payload(
             limit=limit,
             server_id=server_id,
+        )
+
+    if parsed.path == "/api/historical/snapshots/monthly-mvp-v2":
+        limit = _parse_limit(parsed.query)
+        if limit is None:
+            return HTTPStatus.BAD_REQUEST, build_error_payload("Invalid limit parameter")
+        server_id = parse_qs(parsed.query).get("server", [None])[0]
+        return HTTPStatus.OK, build_monthly_mvp_v2_snapshot_payload(
+            limit=limit,
+            server_id=server_id,
+        )
+
+    if parsed.path == "/api/historical/snapshots/player-events":
+        limit = _parse_limit(parsed.query)
+        if limit is None:
+            return HTTPStatus.BAD_REQUEST, build_error_payload("Invalid limit parameter")
+        params = parse_qs(parsed.query)
+        server_id = params.get("server", [None])[0]
+        view = params.get("view", ["most-killed"])[0]
+        if view not in {"most-killed", "death-by", "duels", "weapon-kills", "teamkills"}:
+            return HTTPStatus.BAD_REQUEST, build_error_payload("Invalid view parameter")
+        return HTTPStatus.OK, build_player_event_snapshot_payload(
+            limit=limit,
+            server_id=server_id,
+            view=view,
         )
 
     if parsed.path == "/api/historical/snapshots/weekly-leaderboard":

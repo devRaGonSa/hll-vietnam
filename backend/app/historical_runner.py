@@ -142,6 +142,7 @@ def generate_historical_snapshots(
         "full_snapshot_every_runs": full_snapshot_every_runs,
         "prewarm_only": not should_run_full_refresh,
         "refresh_interval_seconds": get_historical_refresh_interval_seconds(),
+        "includes_monthly_mvp_v2": True,
     }
 
 
