@@ -71,5 +71,6 @@ Community website repository with a static landing in the current phase and a pl
 - The validated discovery for those historical sources is documented in `docs/historical-crcon-source-discovery.md`.
 - The persisted historical domain model for CRCON matches, players and ingestion runs is documented in `docs/historical-domain-model.md`.
 - The V1 monthly MVP scoring proposal for persisted historical player metrics is documented in `docs/monthly-mvp-ranking-scoring-design.md`.
+- The audited boundary between direct live RCON and future event-driven RCON metrics is documented in `docs/rcon-data-capability-audit.md`.
 - Frontend data consumption should remain progressive, endpoint by endpoint, with static fallbacks preserved during migration.
 - The frontend integration strategy is documented in `docs/frontend-data-consumption-plan.md`.
