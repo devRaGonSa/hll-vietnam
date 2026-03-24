@@ -998,6 +998,91 @@ sin tocar endpoints ni payloads.
 
 Esta separacion mantiene el backend simple y deja una base clara para futuras tasks sin introducir integraciones reales todavia.
 
+## Fuente y ledger de eventos de jugador V2
+
+La repo incluye ahora una primera base V2 separada del historico `historical_*`
+para preparar metricas avanzadas de duelos, armas y teamkills sin tocar todavia
+la UI ni el scoring final.
+
+Fuente minima elegida en esta fase:
+
+- detalle de partida `GET /api/get_map_scoreboard?map_id={id}` del scoreboard CRCON
+
+Importante:
+
+- esta fuente no es un feed raw por kill
+- el adaptador actual normaliza solo senales parciales ya visibles en el
+  resumen de partida:
+  - `most_killed`
+  - `death_by`
+  - `weapons`
+  - `death_by_weapons`
+  - `teamkills`
+- `occurred_at` usa el timestamp de cierre o inicio de la partida, no el
+  instante exacto del kill
+- el ledger raw es append-only y deduplica por `event_id`
+- la persistencia queda separada de `historical_matches` y
+  `historical_player_match_stats` aunque comparte el mismo SQLite de desarrollo
+
+Contrato minimo normalizado por evento:
+
+- `event_id`
+- `event_type`
+- `occurred_at`
+- `server_slug`
+- `external_match_id`
+- `source_kind`
+- `source_ref`
+- `killer_player_key`
+- `victim_player_key`
+- `weapon_name`
+- `kill_category`
+- `is_teamkill`
+- `event_value`
+
+Tablas nuevas:
+
+- `player_event_raw_ledger`
+- `player_event_ingestion_runs`
+- `player_event_backfill_progress`
+
+Comandos manuales desde `backend/`:
+
+```powershell
+python -m app.player_event_worker refresh
+python -m app.player_event_worker refresh --server comunidad-hispana-01 --max-pages 1
+python -m app.player_event_worker loop --interval 1800
+```
+
+Variables opcionales del worker:
+
+- `HLL_PLAYER_EVENT_REFRESH_INTERVAL_SECONDS`
+- `HLL_PLAYER_EVENT_REFRESH_MAX_RETRIES`
+- `HLL_PLAYER_EVENT_REFRESH_RETRY_DELAY_SECONDS`
+
+Politica operativa minima:
+
+- el worker corre fuera del request path HTTP
+- reusa la capa historica `public-scoreboard` solo como fuente de detalle
+- persiste checkpoints por servidor y pagina
+- la reejecucion es segura porque el ledger usa insercion idempotente por
+  `event_id`
+
+Agregados V2 ya disponibles desde codigo:
+
+- `list_most_killed()`
+- `list_death_by()`
+- `list_net_duel_summaries()`
+- `list_weapon_kills()`
+- `list_teamkill_summaries()`
+
+Limitaciones actuales de esta fase:
+
+- no existe todavia un ledger raw por kill individual
+- los agregados de duelos y armas son parciales, porque dependen del mejor
+  resumen disponible por jugador en CRCON y no de todos los encounters del match
+- la V2 no expone aun endpoints HTTP ni snapshots propios
+
 ## Alcance
 
 Esta fase no implementa:

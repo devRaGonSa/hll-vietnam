@@ -25,6 +25,9 @@ DEFAULT_HISTORICAL_REFRESH_RETRY_DELAY_SECONDS = 30
 DEFAULT_HISTORICAL_FULL_SNAPSHOT_EVERY_RUNS = 4
 DEFAULT_HISTORICAL_WEEKLY_FALLBACK_MIN_MATCHES = 3
 DEFAULT_HISTORICAL_WEEKLY_FALLBACK_MAX_WEEKDAY = 2
+DEFAULT_PLAYER_EVENT_REFRESH_INTERVAL_SECONDS = 1800
+DEFAULT_PLAYER_EVENT_REFRESH_MAX_RETRIES = 2
+DEFAULT_PLAYER_EVENT_REFRESH_RETRY_DELAY_SECONDS = 30
 DEFAULT_ALLOWED_ORIGINS = (
     "null",
     "http://127.0.0.1:5500",
@@ -267,6 +270,44 @@ def get_historical_weekly_fallback_max_weekday() -> int:
         raise ValueError("HLL_HISTORICAL_WEEKLY_FALLBACK_MAX_WEEKDAY must be between 0 and 6.")
 
     return max_weekday
+
+
+def get_player_event_refresh_interval_seconds() -> int:
+    """Return the default interval used by the player event refresh loop."""
+    configured_value = os.getenv(
+        "HLL_PLAYER_EVENT_REFRESH_INTERVAL_SECONDS",
+        str(DEFAULT_PLAYER_EVENT_REFRESH_INTERVAL_SECONDS),
+    )
+    interval_seconds = int(configured_value)
+    if interval_seconds <= 0:
+        raise ValueError("HLL_PLAYER_EVENT_REFRESH_INTERVAL_SECONDS must be positive.")
+    return interval_seconds
+
+
+def get_player_event_refresh_max_retries() -> int:
+    """Return the retry count used by the player event refresh loop."""
+    configured_value = os.getenv(
+        "HLL_PLAYER_EVENT_REFRESH_MAX_RETRIES",
+        str(DEFAULT_PLAYER_EVENT_REFRESH_MAX_RETRIES),
+    )
+    max_retries = int(configured_value)
+    if max_retries < 0:
+        raise ValueError("HLL_PLAYER_EVENT_REFRESH_MAX_RETRIES must be zero or positive.")
+    return max_retries
+
+
+def get_player_event_refresh_retry_delay_seconds() -> int:
+    """Return the wait time between player event refresh retries."""
+    configured_value = os.getenv(
+        "HLL_PLAYER_EVENT_REFRESH_RETRY_DELAY_SECONDS",
+        str(DEFAULT_PLAYER_EVENT_REFRESH_RETRY_DELAY_SECONDS),
+    )
+    retry_delay_seconds = int(configured_value)
+    if retry_delay_seconds < 0:
+        raise ValueError(
+            "HLL_PLAYER_EVENT_REFRESH_RETRY_DELAY_SECONDS must be zero or positive."
+        )
+    return retry_delay_seconds
 
 
 def get_a2s_targets_payload() -> str | None:
