@@ -5,14 +5,21 @@ from __future__ import annotations
 import argparse
 import json
 from dataclasses import dataclass
-from typing import Iterable
+from typing import Callable, Iterable
 
 from .config import (
     get_historical_crcon_detail_workers,
     get_historical_crcon_page_size,
+    get_historical_data_source_kind,
     get_historical_refresh_overlap_hours,
 )
-from .data_sources import HistoricalDataSource, resolve_historical_ingestion_data_source
+from .data_sources import (
+    SOURCE_KIND_PUBLIC_SCOREBOARD,
+    SOURCE_KIND_RCON,
+    HistoricalDataSource,
+    build_historical_runtime_source_policy,
+    resolve_historical_ingestion_data_source,
+)
 from .elo_mmr_engine import rebuild_elo_mmr_models
 from .historical_snapshots import generate_and_persist_historical_snapshots
 from .historical_storage import (
@@ -28,7 +35,11 @@ from .historical_storage import (
     start_ingestion_run,
     upsert_historical_match,
 )
+from .rcon_historical_worker import run_rcon_historical_capture_unlocked
 from .writer_lock import backend_writer_lock, build_writer_lock_holder
+
+
+ProgressCallback = Callable[[dict[str, object]], None]
 
 
 @dataclass(slots=True)
@@ -57,6 +68,7 @@ def run_bootstrap(
     start_page: int | None = None,
     detail_workers: int | None = None,
     rebuild_snapshots: bool = True,
+    progress_callback: ProgressCallback | None = None,
 ) -> dict[str, object]:
     """Run a first full historical import against one or all configured servers."""
     with backend_writer_lock(
@@ -74,6 +86,7 @@ def run_bootstrap(
             overlap_hours=None,
             incremental=False,
             rebuild_snapshots=rebuild_snapshots,
+            progress_callback=progress_callback,
         )
 
 
@@ -86,6 +99,7 @@ def run_incremental_refresh(
     detail_workers: int | None = None,
     overlap_hours: int | None = None,
     rebuild_snapshots: bool = True,
+    progress_callback: ProgressCallback | None = None,
 ) -> dict[str, object]:
     """Refresh recent historical pages without replaying the whole archive."""
     with backend_writer_lock(
@@ -103,6 +117,7 @@ def run_incremental_refresh(
             overlap_hours=overlap_hours,
             incremental=True,
             rebuild_snapshots=rebuild_snapshots,
+            progress_callback=progress_callback,
         )
 
 
@@ -117,10 +132,11 @@ def _run_ingestion(
     overlap_hours: int | None,
     incremental: bool,
     rebuild_snapshots: bool,
+    progress_callback: ProgressCallback | None,
 ) -> dict[str, object]:
     initialize_historical_storage()
     stats = IngestionStats()
-    data_source, source_policy = resolve_historical_ingestion_data_source()
+    fallback_data_source, fallback_source_policy = resolve_historical_ingestion_data_source()
     selected_servers = _select_servers(server_slug)
     processed_servers: list[dict[str, object]] = []
     active_runs: dict[str, int] = {}
@@ -132,60 +148,86 @@ def _run_ingestion(
     if resolved_overlap_hours < 0:
         raise ValueError("--overlap-hours must be zero or positive.")
 
+    primary_writer_result = _attempt_primary_rcon_writer(
+        mode=mode,
+        server_slug=server_slug,
+        selected_servers=selected_servers,
+        progress_callback=progress_callback,
+    )
+    source_policy = _resolve_ingestion_source_policy(
+        fallback_source_policy=fallback_source_policy,
+        primary_writer_result=primary_writer_result,
+    )
+    use_classic_fallback = _should_use_classic_fallback(primary_writer_result)
+    _emit_progress(
+        progress_callback,
+        {
+            "event": "historical-ingestion-source-selected",
+            "mode": mode,
+            "primary_source": source_policy.get("primary_source"),
+            "selected_source": source_policy.get("selected_source"),
+            "fallback_used": bool(source_policy.get("fallback_used")),
+            "fallback_reason": source_policy.get("fallback_reason"),
+        },
+    )
+
     try:
-        for server in selected_servers:
-            run_id = start_ingestion_run(mode=mode, target_server_slug=str(server["slug"]))
-            active_runs[str(server["slug"])] = run_id
-            mark_backfill_progress_started(
-                server_slug=str(server["slug"]),
-                mode=mode,
-                run_id=run_id,
-            )
-            cutoff = (
-                get_refresh_cutoff_for_server(
-                    str(server["slug"]),
-                    overlap_hours=resolved_overlap_hours,
+        if use_classic_fallback:
+            for server in selected_servers:
+                run_id = start_ingestion_run(mode=mode, target_server_slug=str(server["slug"]))
+                active_runs[str(server["slug"])] = run_id
+                mark_backfill_progress_started(
+                    server_slug=str(server["slug"]),
+                    mode=mode,
+                    run_id=run_id,
                 )
-                if incremental
-                else None
-            )
-            resolved_start_page = _resolve_start_page(
-                start_page=start_page,
-                server_slug=str(server["slug"]),
-                mode=mode,
-            )
-            server_stats = _ingest_server(
-                server=server,
-                mode=mode,
-                run_id=run_id,
-                stats=stats,
-                data_source=data_source,
-                max_pages=max_pages,
-                page_size=page_size,
-                start_page=resolved_start_page,
-                detail_workers=detail_workers,
-                cutoff=cutoff,
-            )
-            processed_servers.append(server_stats)
-            finalize_ingestion_run(
-                run_id,
-                status="success",
-                pages_processed=server_stats["pages_processed"],
-                matches_seen=server_stats["matches_seen"],
-                matches_inserted=server_stats["matches_inserted"],
-                matches_updated=server_stats["matches_updated"],
-                player_rows_inserted=server_stats["player_rows_inserted"],
-                player_rows_updated=server_stats["player_rows_updated"],
-                notes=f"public_name={server_stats['public_name']}",
-            )
-            finalize_backfill_progress(
-                server_slug=str(server["slug"]),
-                mode=mode,
-                run_id=run_id,
-                status="success",
-                archive_exhausted=bool(server_stats["archive_exhausted"]),
-            )
-            active_runs.pop(str(server["slug"]), None)
+                cutoff = (
+                    get_refresh_cutoff_for_server(
+                        str(server["slug"]),
+                        overlap_hours=resolved_overlap_hours,
+                    )
+                    if incremental
+                    else None
+                )
+                resolved_start_page = _resolve_start_page(
+                    start_page=start_page,
+                    server_slug=str(server["slug"]),
+                    mode=mode,
+                )
+                server_stats = _ingest_server(
+                    server=server,
+                    mode=mode,
+                    run_id=run_id,
+                    stats=stats,
+                    data_source=fallback_data_source,
+                    max_pages=max_pages,
+                    page_size=page_size,
+                    start_page=resolved_start_page,
+                    detail_workers=detail_workers,
+                    cutoff=cutoff,
+                    progress_callback=progress_callback,
+                    source_policy=source_policy,
+                )
+                processed_servers.append(server_stats)
+                finalize_ingestion_run(
+                    run_id,
+                    status="success",
+                    pages_processed=server_stats["pages_processed"],
+                    matches_seen=server_stats["matches_seen"],
+                    matches_inserted=server_stats["matches_inserted"],
+                    matches_updated=server_stats["matches_updated"],
+                    player_rows_inserted=server_stats["player_rows_inserted"],
+                    player_rows_updated=server_stats["player_rows_updated"],
+                    notes=f"public_name={server_stats['public_name']}",
+                )
+                finalize_backfill_progress(
+                    server_slug=str(server["slug"]),
+                    mode=mode,
+                    run_id=run_id,
+                    status="success",
+                    archive_exhausted=bool(server_stats["archive_exhausted"]),
+                )
+                active_runs.pop(str(server["slug"]), None)
         if rebuild_snapshots:
             snapshot_result = generate_and_persist_historical_snapshots(server_key=server_slug)
             elo_mmr_result = rebuild_elo_mmr_models()
@@ -224,8 +266,9 @@ def _run_ingestion(
     return {
         "status": "ok",
         "mode": mode,
-        "source_provider": data_source.source_kind,
+        "source_provider": source_policy.get("selected_source"),
         "source_policy": source_policy,
+        "primary_writer_result": primary_writer_result,
         "page_size": page_size or get_historical_crcon_page_size(),
         "start_page": start_page,
         "detail_workers": detail_workers or get_historical_crcon_detail_workers(),
@@ -257,6 +300,8 @@ def _ingest_server(
     start_page: int,
     detail_workers: int | None,
     cutoff: str | None,
+    progress_callback: ProgressCallback | None,
+    source_policy: dict[str, object],
 ) -> dict[str, object]:
     resolved_page_size = page_size or get_historical_crcon_page_size()
     resolved_detail_workers = detail_workers or get_historical_crcon_detail_workers()
@@ -267,6 +312,18 @@ def _ingest_server(
     discovered_total_matches: int | None = None
     last_page_processed: int | None = None
     archive_exhausted = False
+    _emit_progress(
+        progress_callback,
+        {
+            "event": "historical-ingestion-server-started",
+            "mode": mode,
+            "server_slug": server["slug"],
+            "selected_source": source_policy.get("selected_source"),
+            "fallback_used": bool(source_policy.get("fallback_used")),
+            "start_page": start_page,
+            "cutoff": cutoff,
+        },
+    )
 
     for page_number in range(start_page, start_page + page_limit):
         payload = data_source.fetch_match_page(
@@ -299,6 +356,20 @@ def _ingest_server(
             match_id = _stringify(match_summary.get("id"))
             if match_id:
                 match_ids_to_fetch.append(match_id)
+
+        _emit_progress(
+            progress_callback,
+            {
+                "event": "historical-ingestion-page-loaded",
+                "mode": mode,
+                "server_slug": server["slug"],
+                "page": page_number,
+                "selected_source": source_policy.get("selected_source"),
+                "match_ids_to_detail": len(match_ids_to_fetch),
+                "page_matches": len(page_matches),
+                "cutoff_reached": stop_after_page,
+            },
+        )
 
         for detail_payload in data_source.fetch_match_details(
             base_url=str(server["scoreboard_base_url"]),
@@ -354,6 +425,162 @@ def _resolve_start_page(
     if mode != "bootstrap":
         return 1
     return get_backfill_resume_page(server_slug, mode=mode)
+
+
+def _attempt_primary_rcon_writer(
+    *,
+    mode: str,
+    server_slug: str | None,
+    selected_servers: list[dict[str, object]],
+    progress_callback: ProgressCallback | None,
+) -> dict[str, object]:
+    configured_kind = get_historical_data_source_kind()
+    if configured_kind != SOURCE_KIND_RCON:
+        result = {
+            "attempted": False,
+            "status": "skipped",
+            "primary_source": SOURCE_KIND_PUBLIC_SCOREBOARD,
+            "selected_source": SOURCE_KIND_PUBLIC_SCOREBOARD,
+            "fallback_used": False,
+            "fallback_reason": None,
+            "source_attempts": [],
+        }
+        _emit_progress(
+            progress_callback,
+            {
+                "event": "historical-ingestion-rcon-primary-skipped",
+                "mode": mode,
+                "reason": "historical-data-source-configured-for-public-scoreboard",
+            },
+        )
+        return result
+
+    target_scope = server_slug or "all-configured-rcon-targets"
+    _emit_progress(
+        progress_callback,
+        {
+            "event": "historical-ingestion-rcon-primary-started",
+            "mode": mode,
+            "target_scope": target_scope,
+            "servers": [str(server["slug"]) for server in selected_servers],
+        },
+    )
+    try:
+        capture_result = run_rcon_historical_capture_unlocked(target_key=server_slug)
+    except Exception as exc:  # noqa: BLE001 - fallback remains explicit and controlled
+        result = {
+            "attempted": True,
+            "status": "error",
+            "primary_source": SOURCE_KIND_RCON,
+            "selected_source": SOURCE_KIND_PUBLIC_SCOREBOARD,
+            "fallback_used": True,
+            "fallback_reason": "rcon-historical-writer-request-failed",
+            "message": str(exc),
+        }
+        _emit_progress(
+            progress_callback,
+            {
+                "event": "historical-ingestion-rcon-primary-failed",
+                "mode": mode,
+                "target_scope": target_scope,
+                "message": str(exc),
+            },
+        )
+        return result
+
+    capture_run_status = str(capture_result.get("run_status") or capture_result.get("status") or "unknown")
+    targets = list(capture_result.get("targets") or [])
+    errors = list(capture_result.get("errors") or [])
+    if targets:
+        result = {
+            "attempted": True,
+            "status": "partial",
+            "primary_source": SOURCE_KIND_RCON,
+            "selected_source": SOURCE_KIND_PUBLIC_SCOREBOARD,
+            "fallback_used": True,
+            "fallback_reason": "rcon-primary-writer-succeeded-but-classic-match-archive-still-needs-fallback",
+            "capture_result": capture_result,
+        }
+        _emit_progress(
+            progress_callback,
+            {
+                "event": "historical-ingestion-rcon-primary-succeeded",
+                "mode": mode,
+                "target_scope": target_scope,
+                "captured_targets": len(targets),
+                "run_status": capture_run_status,
+                "next_step": "classic-public-scoreboard-fallback-required",
+            },
+        )
+        return result
+
+    result = {
+        "attempted": True,
+        "status": "empty",
+        "primary_source": SOURCE_KIND_RCON,
+        "selected_source": SOURCE_KIND_PUBLIC_SCOREBOARD,
+        "fallback_used": True,
+        "fallback_reason": "rcon-historical-writer-returned-no-usable-samples",
+        "capture_result": capture_result,
+        "message": json.dumps(errors, separators=(",", ":")) if errors else None,
+    }
+    _emit_progress(
+        progress_callback,
+        {
+            "event": "historical-ingestion-rcon-primary-empty",
+            "mode": mode,
+            "target_scope": target_scope,
+            "run_status": capture_run_status,
+            "errors": len(errors),
+        },
+    )
+    return result
+
+
+def _should_use_classic_fallback(primary_writer_result: dict[str, object]) -> bool:
+    selected_source = str(primary_writer_result.get("selected_source") or "")
+    return selected_source == SOURCE_KIND_PUBLIC_SCOREBOARD
+
+
+def _resolve_ingestion_source_policy(
+    *,
+    fallback_source_policy: dict[str, object],
+    primary_writer_result: dict[str, object],
+) -> dict[str, object]:
+    configured_kind = get_historical_data_source_kind()
+    if configured_kind != SOURCE_KIND_RCON:
+        return fallback_source_policy
+
+    status = str(primary_writer_result.get("status") or "error")
+    selected_source = str(
+        primary_writer_result.get("selected_source") or SOURCE_KIND_PUBLIC_SCOREBOARD
+    )
+    fallback_reason = primary_writer_result.get("fallback_reason")
+    message = primary_writer_result.get("message")
+    if (
+        fallback_reason
+        == "rcon-primary-writer-succeeded-but-classic-match-archive-still-needs-fallback"
+    ):
+        message = (
+            "RCON prospective capture succeeded first, but the classic historical_* "
+            "archive still requires public-scoreboard for match-page import."
+        )
+    return build_historical_runtime_source_policy(
+        operation="historical-ingestion",
+        rcon_status=status,
+        fallback_reason=str(fallback_reason) if fallback_reason else None,
+        selected_source=selected_source,
+        rcon_message=message if isinstance(message, str) else None,
+    )
+
+
+def _emit_progress(
+    callback: ProgressCallback | None,
+    payload: dict[str, object],
+) -> None:
+    if callback is None:
+        return
+    callback(payload)
 
 
 def _select_servers(server_slug: str | None) -> list[dict[str, object]]:
@@ -456,6 +683,9 @@ def main(argv: Iterable[str] | None = None) -> int:
     parser = build_arg_parser()
     args = parser.parse_args(list(argv) if argv is not None else None)
 
+    def _print_progress(payload: dict[str, object]) -> None:
+        print(json.dumps(payload, ensure_ascii=True))
+
     if args.mode == "bootstrap":
         result = run_bootstrap(
             server_slug=args.server_slug,
@@ -463,6 +693,7 @@ def main(argv: Iterable[str] | None = None) -> int:
             page_size=args.page_size,
             start_page=args.start_page,
             detail_workers=args.detail_workers,
+            progress_callback=_print_progress,
         )
     else:
         result = run_incremental_refresh(
@@ -472,6 +703,7 @@ def main(argv: Iterable[str] | None = None) -> int:
             start_page=args.start_page,
             detail_workers=args.detail_workers,
             overlap_hours=args.overlap_hours,
+            progress_callback=_print_progress,
         )
 
     print(json.dumps(result, indent=2))

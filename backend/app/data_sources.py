@@ -327,45 +327,46 @@ def build_historical_runtime_source_policy(
 
 
 def resolve_historical_ingestion_data_source() -> tuple[HistoricalDataSource, dict[str, object]]:
-    """Resolve the writer-oriented historical provider with safe fallback semantics."""
+    """Resolve the fallback provider used when classic scoreboard import is required."""
     configured_kind = get_historical_data_source_kind()
-    if configured_kind == SOURCE_KIND_PUBLIC_SCOREBOARD:
-        return (
-            PublicScoreboardHistoricalDataSource(),
-            build_source_policy(
-                primary_source=SOURCE_KIND_PUBLIC_SCOREBOARD,
-                selected_source=SOURCE_KIND_PUBLIC_SCOREBOARD,
-                source_attempts=[
-                    build_source_attempt(
-                        source=SOURCE_KIND_PUBLIC_SCOREBOARD,
-                        role="primary",
-                        status="success",
-                    )
-                ],
-            ),
+    if configured_kind in {SOURCE_KIND_PUBLIC_SCOREBOARD, SOURCE_KIND_RCON}:
+        primary_source = (
+            SOURCE_KIND_PUBLIC_SCOREBOARD
+            if configured_kind == SOURCE_KIND_PUBLIC_SCOREBOARD
+            else SOURCE_KIND_RCON
         )
-
-    if configured_kind == SOURCE_KIND_RCON:
+        fallback_used = configured_kind == SOURCE_KIND_RCON
+        fallback_reason = (
+            "classic-historical-import-requires-public-scoreboard-fallback"
+            if fallback_used
+            else None
+        )
+        attempts = []
+        if configured_kind == SOURCE_KIND_RCON:
+            attempts.append(
+                build_source_attempt(
+                    source=SOURCE_KIND_RCON,
+                    role="primary",
+                    status="deferred",
+                    reason="rcon-primary-writer-attempt-is-handled-by-historical-ingestion",
+                )
+            )
+        attempts.append(
+            build_source_attempt(
+                source=SOURCE_KIND_PUBLIC_SCOREBOARD,
+                role="fallback" if fallback_used else "primary",
+                status="ready",
+                reason="classic-historical-import-provider-ready",
+            )
+        )
         return (
             PublicScoreboardHistoricalDataSource(),
             build_source_policy(
-                primary_source=SOURCE_KIND_RCON,
+                primary_source=primary_source,
                 selected_source=SOURCE_KIND_PUBLIC_SCOREBOARD,
-                fallback_used=True,
-                fallback_reason="rcon-historical-ingestion-not-supported-yet",
-                source_attempts=[
-                    build_source_attempt(
-                        source=SOURCE_KIND_RCON,
-                        role="primary",
-                        status="unsupported",
-                        reason="rcon-historical-ingestion-not-supported-yet",
-                    ),
-                    build_source_attempt(
-                        source=SOURCE_KIND_PUBLIC_SCOREBOARD,
-                        role="fallback",
-                        status="success",
-                    ),
-                ],
+                fallback_used=fallback_used,
+                fallback_reason=fallback_reason,
+                source_attempts=attempts,
             ),
         )
 

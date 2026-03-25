@@ -272,7 +272,7 @@ Valores soportados en esta fase:
   - `rcon` como camino primario recomendado
   - `a2s` como fallback legacy o override explicito
 - historico:
-  - `rcon` como camino primario recomendado para captura y lectura minima
+  - `rcon` como camino primario recomendado para captura y writer path primario
   - `public-scoreboard` como fallback legacy o override explicito
 
 Defaults actuales:
@@ -309,18 +309,14 @@ Politica funcional actual:
   - `public-scoreboard` solo si RCON no soporta aun esa operacion concreta o
     falla la captura primaria
 
-Limitacion actual de `rcon`:
-
-- el backend puede usar `rcon` para `/api/servers`
-- la ingesta historica competitiva por `historical_ingestion.py` sigue cayendo a
-  `public-scoreboard`, porque la repo todavia no incluye una canalizacion
-  retroactiva RCON capaz de reconstruir partidas cerradas con paridad completa
-
 Estado real de "historico por RCON" en esta repo:
 
 - no existe backfill retroactivo por RCON con el cliente actual
 - la viabilidad documentada hoy es solo para captura prospectiva separada
-- `public-scoreboard` sigue siendo la fuente historica principal
+- `historical_ingestion.py` intenta primero el writer path prospectivo RCON
+- la persistencia competitiva `historical_*` sigue necesitando fallback a
+  `public-scoreboard` mientras RCON no exponga pagina historica/detalle de
+  match cerrada con paridad suficiente
 - el diseno tecnico de esa linea prospectiva queda en
   `docs/rcon-historical-ingestion-design.md`
 
@@ -473,7 +469,8 @@ respuesta deja trazabilidad con `primary_source`, `selected_source`,
   consultas live de produccion.
 - `config.py` centraliza host, puerto y allowlist minima de origenes locales.
 - `data_sources.py` define los contratos y la seleccion por entorno para live e historico.
-- `historical_ingestion.py` consulta la capa JSON publica de CRCON para bootstrap y refresh incremental.
+- `historical_ingestion.py` intenta primero el writer path RCON y, si hace falta
+  poblar `historical_*`, cae de forma explicita a la capa JSON publica de CRCON.
 - `historical_models.py` fija las entidades historicas minimas del dominio.
 - `historical_snapshots.py` fija los tipos y selectores validos de snapshots historicos precalculados.
 - `historical_snapshot_storage.py` persiste snapshots historicos precalculados listos para lectura rapida.
@@ -1039,6 +1036,25 @@ Si la recomposicion se lanza para un servidor fisico concreto, el backend
 rehace tambien el agregado logico `all-servers` para mantener `Todos`
 alineado con `#01` y `#02` aunque `#03` siga sin bootstrap.
 
+En esta fase, el comando muestra progreso operativo util sin saturar stdout:
+
+- intento primario RCON
+- fuente finalmente seleccionada
+- servidor actual
+- pagina actual
+- `match_ids_to_detail` de cada pagina
+
+Si RCON no puede cubrir la operacion competitiva real, el fallback a
+`public-scoreboard` queda visible tanto durante la ejecucion como en el JSON
+final mediante:
+
+- `primary_source`
+- `selected_source`
+- `fallback_used`
+- `fallback_reason`
+- `source_attempts`
+- `primary_writer_result`
+
 El comando devuelve ademas un resumen de cobertura persistida por servidor. Esto
 ayuda a validar rapidamente cuantos matches reales quedaron importados, el rango
 temporal cubierto y si la carga ya supera la ultima semana movil que usa la UI.
@@ -1079,6 +1095,16 @@ La primera pasada relee 48 horas sobre los tres servidores historicos ya
 registrados. La segunda sirve para validar un solo servidor con alcance
 acotado. La tercera recompone snapshots despues de una pasada manual cuando se
 quiere confirmar que la capa precalculada vuelve a quedar alineada.
+
+Interpretacion operativa recomendada:
+
+- si aparece `historical-ingestion-rcon-primary-succeeded`, RCON se intento de
+  verdad primero y la captura prospectiva quedo registrada
+- si despues `selected_source` termina en `public-scoreboard`, eso significa
+  que la reconstruccion del archivo competitivo `historical_*` siguio
+  necesitando fallback clasico
+- si RCON falla por red, auth o timeout, el motivo queda visible en
+  `fallback_reason` y en `source_attempts`
 
 Los reintentos de cada request JSON pueden ajustarse sin tocar codigo con:
 
@@ -1392,9 +1418,11 @@ El backend queda orientado a `RCON-first` tambien para historico:
   - `rcon` primero
   - `a2s` solo como fallback
 - historico:
-  - `rcon` primero para la capa de lectura/cobertura soportada hoy
+  - `rcon` primero tanto para lectura minima como para el writer path primario
+    de `historical_ingestion`
   - `public-scoreboard` solo como fallback cuando RCON no cubre una operacion
-    competitiva concreta o no tiene cobertura suficiente
+    competitiva concreta, no tiene cobertura suficiente o falla la captura
+    primaria
 
 Metadata observable en payloads historicos:
 
@@ -1407,6 +1435,8 @@ Metadata observable en payloads historicos:
 Estado real a fecha de esta fase:
 
 - el read model historico RCON soporta cobertura y actividad reciente
+- `historical_ingestion` intenta primero una captura writer-oriented por RCON y
+  deja esa tentativa visible en su salida
 - rankings competitivos, MVP y Elo/MMR siguen necesitando fallback a
   `public-scoreboard` porque el read model RCON actual no expone aun detalle
   historico competitivo suficiente
