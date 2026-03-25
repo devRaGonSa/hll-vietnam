@@ -158,9 +158,16 @@
   gap: 14px;
 }
 
+.historical-elo-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 260px), 1fr));
+  gap: 14px;
+}
+
 .historical-stat-card,
 .historical-match-card,
-.historical-mvp-card {
+.historical-mvp-card,
+.historical-elo-card {
   position: relative;
   overflow: hidden;
   padding: 18px;
@@ -177,7 +184,10 @@
 .historical-match-card strong,
 .historical-mvp-card p,
 .historical-mvp-card strong,
-.historical-mvp-card span {
+.historical-mvp-card span,
+.historical-elo-card p,
+.historical-elo-card strong,
+.historical-elo-card span {
   margin: 0;
 }
 
@@ -296,6 +306,91 @@
 .historical-mvp-card__signals {
   display: grid;
   gap: 10px;
+}
+
+.historical-elo-card {
+  display: grid;
+  gap: 16px;
+  border-color: rgba(96, 150, 124, 0.24);
+  background:
+    radial-gradient(circle at top right, rgba(96, 150, 124, 0.12), transparent 40%),
+    linear-gradient(180deg, rgba(21, 32, 27, 0.96), rgba(12, 15, 11, 0.98));
+}
+
+.historical-elo-card__top {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.historical-elo-card__rank {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 42px;
+  min-height: 42px;
+  padding: 0 12px;
+  border: 1px solid rgba(96, 150, 124, 0.28);
+  border-radius: 999px;
+  color: #a8d4bf;
+  font-size: 0.76rem;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.historical-elo-card__accuracy {
+  display: inline-flex;
+  align-items: center;
+  min-height: 28px;
+  padding: 0 10px;
+  border: 1px solid rgba(96, 150, 124, 0.24);
+  border-radius: 999px;
+  color: #a8d4bf;
+  font-size: 0.68rem;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.historical-elo-card__meta,
+.historical-elo-card__scores {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.historical-elo-card__meta article,
+.historical-elo-card__scores article {
+  padding: 10px 12px;
+  border: 1px solid rgba(96, 150, 124, 0.14);
+  border-radius: 14px;
+  background: rgba(13, 17, 12, 0.42);
+}
+
+.historical-elo-card__meta span,
+.historical-elo-card__scores span {
+  display: block;
+  margin-bottom: 6px;
+  color: var(--muted);
+  font-size: 0.7rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.historical-elo-card__summary {
+  color: var(--text-soft);
+  font-size: 0.9rem;
+  line-height: 1.5;
+}
+
+.historical-elo-card__footer {
+  padding-top: 12px;
+  border-top: 1px solid rgba(159, 168, 141, 0.12);
+  color: var(--text-soft);
+  font-size: 0.88rem;
+  line-height: 1.5;
 }
 
 .historical-mvp-card__signal-summary {

@@ -15,6 +15,7 @@ from .config import (
     get_historical_refresh_retry_delay_seconds,
     get_historical_data_source_kind,
 )
+from .elo_mmr_engine import rebuild_elo_mmr_models
 from .historical_ingestion import run_incremental_refresh
 from .historical_snapshots import (
     generate_and_persist_historical_snapshots,
@@ -116,6 +117,7 @@ def _run_refresh_with_retries(
                         server_slug=server_slug,
                         run_number=run_number,
                     )
+                    elo_mmr_result = rebuild_elo_mmr_models()
                 else:
                     refresh_result = {
                         "status": "skipped",
@@ -126,6 +128,10 @@ def _run_refresh_with_retries(
                         "reason": "rcon-primary-cycle-no-classic-fallback-needed",
                         "generation_policy": "classic-historical-fallback-only",
                     }
+                    elo_mmr_result = {
+                        "status": "skipped",
+                        "reason": "rcon-primary-cycle-no-classic-fallback-needed",
+                    }
             return {
                 "status": "ok",
                 "attempts_used": attempt,
@@ -135,6 +141,7 @@ def _run_refresh_with_retries(
                 "classic_fallback_reason": classic_fallback_reason,
                 "refresh_result": refresh_result,
                 "snapshot_result": snapshot_result,
+                "elo_mmr_result": elo_mmr_result,
             }
         except Exception as exc:
             if attempt > max_retries:

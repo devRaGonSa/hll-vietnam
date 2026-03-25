@@ -110,6 +110,10 @@ document.addEventListener("DOMContentLoaded", () => {
   const comparisonStateNode = document.getElementById("mvp-comparison-state");
   const comparisonListNode = document.getElementById("mvp-comparison-list");
   const comparisonNoteNode = document.getElementById("mvp-comparison-note");
+  const eloMmrStateNode = document.getElementById("elo-mmr-state");
+  const eloMmrListNode = document.getElementById("elo-mmr-list");
+  const eloMmrNoteNode = document.getElementById("elo-mmr-note");
+  const eloMmrMetaNode = document.getElementById("elo-mmr-meta");
   const weeklyValueHeadingNode = document.getElementById("weekly-leaderboard-value-heading");
   const weeklyWindowNoteNode = document.getElementById("weekly-window-note");
   const weeklySnapshotMetaNode = document.getElementById(
@@ -134,6 +138,7 @@ document.addEventListener("DOMContentLoaded", () => {
   const leaderboardCache = new Map();
   const monthlyMvpCache = new Map();
   const monthlyMvpV2Cache = new Map();
+  const eloMmrCache = new Map();
   const pendingRequestCache = new Map();
   let latestMonthlyMvpResult = null;
   let latestMonthlyMvpV2Result = null;
@@ -176,6 +181,14 @@ document.addEventListener("DOMContentLoaded", () => {
       pendingRequestCache,
       buildMonthlyMvpV2SnapshotKey(serverSlug),
       `${backendBaseUrl}/api/historical/snapshots/monthly-mvp-v2?server=${encodeURIComponent(serverSlug)}&limit=3`,
+    );
+
+  const getEloMmrLeaderboard = (serverSlug) =>
+    getCachedJson(
+      eloMmrCache,
+      pendingRequestCache,
+      buildEloMmrSnapshotKey(serverSlug),
+      `${backendBaseUrl}/api/historical/elo-mmr/leaderboard?server=${encodeURIComponent(serverSlug)}&limit=5`,
     );
 
   const refreshServerContent = async () => {
@@ -227,6 +240,10 @@ document.addEventListener("DOMContentLoaded", () => {
     comparisonNoteNode.textContent =
       "Cargando comparativa entre los rankings mensuales V1 y V2...";
     setState(comparisonStateNode, "Preparando comparativa V1 vs V2...");
+    eloMmrListNode.innerHTML = "";
+    eloMmrNoteNode.textContent = "Cargando lectura del rating persistente y score mensual...";
+    setState(eloMmrStateNode, "Cargando leaderboard Elo/MMR...");
+    setSnapshotMeta(eloMmrMetaNode, "Cargando metadata de Elo/MMR...");
     weeklyWindowNoteNode.textContent = "Cargando snapshot del ranking activo...";
     setSnapshotMeta(
       weeklySnapshotMetaNode,
@@ -294,6 +311,20 @@ document.addEventListener("DOMContentLoaded", () => {
         comparisonStateNode,
         comparisonListNode,
         comparisonNoteNode,
+      );
+    }
+
+    const cachedEloMmrPayload = readCachedPayload(
+      eloMmrCache,
+      buildEloMmrSnapshotKey(activeServerSlug),
+    );
+    if (cachedEloMmrPayload) {
+      hydrateEloMmr(
+        { status: "fulfilled", value: cachedEloMmrPayload },
+        eloMmrStateNode,
+        eloMmrListNode,
+        eloMmrNoteNode,
+        eloMmrMetaNode,
       );
     }
 
@@ -469,6 +500,27 @@ document.addEventListener("DOMContentLoaded", () => {
         comparisonStateNode,
         comparisonListNode,
         comparisonNoteNode,
+      );
+    });
+
+    void settlePromise(getEloMmrLeaderboard(targetServerSlug)).then((eloMmrResult) => {
+      if (
+        !isActiveServerRequest(
+          requestId,
+          targetServerSlug,
+          targetTimeframe,
+          targetMetric,
+        )
+      ) {
+        return;
+      }
+
+      hydrateEloMmr(
+        eloMmrResult,
+        eloMmrStateNode,
+        eloMmrListNode,
+        eloMmrNoteNode,
+        eloMmrMetaNode,
       );
     });
   };
@@ -1166,6 +1218,89 @@ function renderMvpComparisonCard(item) {
   `;
 }
 
+function hydrateEloMmr(result, stateNode, listNode, noteNode, metaNode) {
+  if (result?.status !== "fulfilled") {
+    setState(stateNode, "No se pudo cargar el leaderboard Elo/MMR.", true);
+    listNode.innerHTML = "";
+    noteNode.textContent =
+      "El sistema Elo/MMR sigue disponible solo cuando existe rebuild persistido.";
+    setSnapshotMeta(metaNode, "Error al cargar metadata de Elo/MMR.");
+    return;
+  }
+
+  const payload = result.value?.data;
+  const items = Array.isArray(payload?.items) ? payload.items : [];
+  if (!payload?.found || !items.length) {
+    setState(
+      stateNode,
+      "Todavia no hay leaderboard Elo/MMR mensual listo para este alcance.",
+    );
+    listNode.innerHTML = "";
+    noteNode.textContent =
+      "El bloque aparece cuando existe un rebuild persistido con jugadores elegibles.";
+    setSnapshotMeta(
+      metaNode,
+      buildEloMmrMeta(payload),
+    );
+    return;
+  }
+
+  stateNode.hidden = true;
+  noteNode.textContent = buildEloMmrNote(payload);
+  setSnapshotMeta(metaNode, buildEloMmrMeta(payload));
+  listNode.innerHTML = items.map((item) => renderEloMmrCard(item, payload)).join("");
+}
+
+function renderEloMmrCard(item, payload) {
+  return `
+    <article class="historical-elo-card">
+      <div class="historical-elo-card__top">
+        <div>
+          <span class="historical-elo-card__rank">#${escapeHtml(item?.ranking_position || "-")}</span>
+        </div>
+        <div>
+          <span class="historical-elo-card__accuracy">${escapeHtml(formatAccuracyMode(item?.accuracy_mode))}</span>
+        </div>
+      </div>
+      <div>
+        <strong class="historical-mvp-card__player">${escapeHtml(
+          item?.player?.name || "Jugador no identificado",
+        )}</strong>
+      </div>
+      <div class="historical-elo-card__scores">
+        <article>
+          <span>Score mensual</span>
+          <strong>${escapeHtml(formatDecimal(item?.monthly_rank_score, 2))}</strong>
+        </article>
+        <article>
+          <span>MMR persistente</span>
+          <strong>${escapeHtml(formatDecimal(item?.persistent_rating?.mmr, 1))}</strong>
+        </article>
+      </div>
+      <div class="historical-elo-card__meta">
+        <article>
+          <span>MMR gain</span>
+          <strong>${escapeHtml(formatSignedDecimal(item?.persistent_rating?.mmr_gain, 1))}</strong>
+        </article>
+        <article>
+          <span>Elegibilidad</span>
+          <strong>${escapeHtml(item?.eligible ? "Elegible" : "Parcial")}</strong>
+        </article>
+        <article>
+          <span>Partidas validas</span>
+          <strong>${escapeHtml(formatNumber(item?.valid_matches))}</strong>
+        </article>
+        <article>
+          <span>Confidence</span>
+          <strong>${escapeHtml(formatDecimal(item?.components?.confidence, 1))}</strong>
+        </article>
+      </div>
+      <p class="historical-elo-card__summary">${escapeHtml(buildEloMmrSummary(item))}</p>
+      <p class="historical-elo-card__footer">${escapeHtml(buildEloMmrFooter(item, payload))}</p>
+    </article>
+  `;
+}
+
 function setState(node, message, isError = false) {
   node.textContent = message;
   node.hidden = false;
@@ -1273,6 +1408,10 @@ function buildMonthlyMvpSnapshotKey(serverSlug) {
 
 function buildMonthlyMvpV2SnapshotKey(serverSlug) {
   return `monthly-mvp-v2:${serverSlug}`;
+}
+
+function buildEloMmrSnapshotKey(serverSlug) {
+  return `elo-mmr:${serverSlug}`;
 }
 
 function buildRangeLabel(start, end) {
@@ -1412,6 +1551,31 @@ function buildMonthlyMvpV2Footer(item, payload) {
   return `${monthLabel || "Mes activo"} · ${formatNumber(
     item?.matches_considered,
   )} partidas · ${formatDecimal(hoursPlayed, 1)} h jugadas`;
+}
+
+function buildEloMmrNote(payload) {
+  const monthLabel = formatMonthKey(payload?.month_key);
+  const exactRatio = Number(payload?.capabilities_summary?.exact_ratio || 0);
+  const approximateRatio = Number(payload?.capabilities_summary?.approximate_ratio || 0);
+  return `${monthLabel || "Mes activo"}. Rating persistente + score mensual con ${formatPercent(exactRatio)} de senal exacta y ${formatPercent(approximateRatio)} de senal aproximada en este corte.`;
+}
+
+function buildEloMmrMeta(payload) {
+  const sourceLabel = payload?.selected_source || payload?.source || "origen no disponible";
+  const fallbackLabel = payload?.fallback_used
+    ? `fallback ${payload?.fallback_reason || "activo"}`
+    : "sin fallback";
+  return `Generado ${formatTimestamp(payload?.generated_at)} · fuente ${sourceLabel} · ${fallbackLabel}`;
+}
+
+function buildEloMmrSummary(item) {
+  return `AvgMatchScore ${formatDecimal(item?.components?.avg_match_score, 1)}, actividad ${formatDecimal(item?.components?.activity, 1)} y strength-of-schedule ${formatDecimal(item?.components?.strength_of_schedule, 1)}.`;
+}
+
+function buildEloMmrFooter(item, payload) {
+  const monthLabel = formatMonthKey(payload?.month_key);
+  const hoursPlayed = Number(item?.total_time_seconds) / 3600;
+  return `${monthLabel || "Mes activo"} · ${formatNumber(item?.valid_matches)} validas / ${formatNumber(item?.total_matches)} totales · ${formatDecimal(hoursPlayed, 1)} h`;
 }
 
 function buildMvpComparisonItems(v1Items, v2Items) {
@@ -1610,6 +1774,28 @@ function formatPercent(value) {
   return `${new Intl.NumberFormat("es-ES", {
     maximumFractionDigits: 0,
   }).format(parsedValue * 100)} %`;
+}
+
+function formatSignedDecimal(value, fractionDigits = 1) {
+  const parsedValue = Number(value);
+  if (!Number.isFinite(parsedValue)) {
+    return "0";
+  }
+  const prefix = parsedValue > 0 ? "+" : "";
+  return `${prefix}${formatDecimal(parsedValue, fractionDigits)}`;
+}
+
+function formatAccuracyMode(mode) {
+  if (mode === "exact") {
+    return "Exacto";
+  }
+  if (mode === "approximate") {
+    return "Aproximado";
+  }
+  if (mode === "partial") {
+    return "Parcial";
+  }
+  return "Mixto";
 }
 
 function formatMonthKey(monthKey) {

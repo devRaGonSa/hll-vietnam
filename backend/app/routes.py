@@ -8,6 +8,8 @@ from urllib.parse import parse_qs, urlparse
 from .payloads import (
     build_community_payload,
     build_discord_payload,
+    build_elo_mmr_leaderboard_payload,
+    build_elo_mmr_player_payload,
     build_error_payload,
     build_health_payload,
     build_historical_leaderboard_payload,
@@ -267,6 +269,27 @@ def resolve_get_payload(path: str) -> tuple[HTTPStatus | None, dict[str, object]
         if not player_id:
             return HTTPStatus.BAD_REQUEST, build_error_payload("Player parameter is required")
         return HTTPStatus.OK, build_historical_player_profile_payload(player_id)
+
+    if parsed.path == "/api/historical/elo-mmr/leaderboard":
+        limit = _parse_limit(parsed.query)
+        if limit is None:
+            return HTTPStatus.BAD_REQUEST, build_error_payload("Invalid limit parameter")
+        server_id = parse_qs(parsed.query).get("server", [None])[0]
+        return HTTPStatus.OK, build_elo_mmr_leaderboard_payload(
+            limit=limit,
+            server_id=server_id,
+        )
+
+    if parsed.path == "/api/historical/elo-mmr/player":
+        params = parse_qs(parsed.query)
+        player_id = params.get("player", [None])[0]
+        if not player_id:
+            return HTTPStatus.BAD_REQUEST, build_error_payload("Player parameter is required")
+        server_id = params.get("server", [None])[0]
+        return HTTPStatus.OK, build_elo_mmr_player_payload(
+            player_id=player_id,
+            server_id=server_id,
+        )
 
     builder = GET_ROUTES.get(parsed.path)
     if builder is None:

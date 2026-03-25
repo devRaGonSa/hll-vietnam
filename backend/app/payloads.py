@@ -15,8 +15,14 @@ from .data_sources import (
     SOURCE_KIND_RCON,
     build_source_attempt,
     build_source_policy,
+    build_historical_runtime_source_policy,
+    describe_historical_runtime_policy,
     get_live_data_source,
     get_rcon_historical_read_model,
+)
+from .elo_mmr_engine import (
+    get_elo_mmr_player_payload,
+    list_elo_mmr_leaderboard_payload,
 )
 from .historical_snapshot_storage import get_historical_snapshot
 from .historical_snapshots import (
@@ -57,6 +63,12 @@ def build_health_payload() -> dict[str, str]:
         "phase": "bootstrap",
         "live_data_source": get_live_data_source_kind(),
         "historical_data_source": get_historical_data_source_kind(),
+        "historical_runtime_policy": describe_historical_runtime_policy()["mode"],
+        "live_runtime_policy": (
+            "rcon-first-with-a2s-fallback"
+            if get_live_data_source_kind() == SOURCE_KIND_RCON
+            else "a2s-primary"
+        ),
     }
 
 
@@ -905,6 +917,64 @@ def build_historical_player_profile_payload(player_id: str) -> dict[str, object]
     }
 
 
+def build_elo_mmr_leaderboard_payload(
+    *,
+    limit: int = 10,
+    server_id: str | None = None,
+) -> dict[str, object]:
+    """Return the current Elo/MMR monthly leaderboard."""
+    payload = list_elo_mmr_leaderboard_payload(server_id=server_id, limit=limit)
+    is_all_servers = server_id == ALL_SERVERS_SLUG
+    return {
+        "status": "ok",
+        "data": {
+            "title": (
+                "Leaderboard mensual Elo/MMR global"
+                if is_all_servers
+                else "Leaderboard mensual Elo/MMR por servidor"
+            ),
+            "context": "historical-elo-mmr-leaderboard",
+            "source": "elo-mmr-persisted-read-model",
+            "server_slug": server_id,
+            "month_key": payload.get("month_key"),
+            "found": bool(payload.get("found")),
+            "generated_at": payload.get("generated_at"),
+            "limit": limit,
+            **(payload.get("source_policy") or _resolve_historical_fallback_policy(
+                operation="elo-mmr-leaderboard",
+                fallback_reason="elo-mmr-source-policy-missing",
+            )),
+            "capabilities_summary": payload.get("capabilities_summary"),
+            "items": payload.get("items") or [],
+        },
+    }
+
+
+def build_elo_mmr_player_payload(
+    *,
+    player_id: str,
+    server_id: str | None = None,
+) -> dict[str, object]:
+    """Return one Elo/MMR player profile."""
+    profile = get_elo_mmr_player_payload(player_id=player_id, server_id=server_id)
+    return {
+        "status": "ok",
+        "data": {
+            "title": "Perfil Elo/MMR de jugador",
+            "context": "historical-elo-mmr-player",
+            "source": "elo-mmr-persisted-read-model",
+            "player_id": player_id,
+            "server_slug": server_id,
+            "found": profile is not None,
+            **_resolve_historical_fallback_policy(
+                operation="elo-mmr-player",
+                fallback_reason="rcon-historical-read-model-does-not-support-elo-mmr-competitive-calculations-yet",
+            ),
+            "profile": profile,
+        },
+    }
+
+
 def _get_historical_snapshot_record(
     *,
     server_key: str | None,
@@ -1164,38 +1234,15 @@ def _to_snapshot_age_minutes(snapshot_age_seconds: int | None) -> int | None:
     return snapshot_age_seconds // 60
 
 
-def _resolve_historical_fallback_policy(*, fallback_reason: str) -> dict[str, object]:
-    if get_historical_data_source_kind() != SOURCE_KIND_RCON:
-        return build_source_policy(
-            primary_source=SOURCE_KIND_PUBLIC_SCOREBOARD,
-            selected_source=SOURCE_KIND_PUBLIC_SCOREBOARD,
-            source_attempts=[
-                build_source_attempt(
-                    source=SOURCE_KIND_PUBLIC_SCOREBOARD,
-                    role="primary",
-                    status="success",
-                )
-            ],
-        )
-
-    return build_source_policy(
-        primary_source=SOURCE_KIND_RCON,
-        selected_source=SOURCE_KIND_PUBLIC_SCOREBOARD,
-        fallback_used=True,
+def _resolve_historical_fallback_policy(
+    *,
+    fallback_reason: str,
+    operation: str = "historical-read",
+) -> dict[str, object]:
+    return build_historical_runtime_source_policy(
+        operation=operation,
+        rcon_status="unsupported",
         fallback_reason=fallback_reason,
-        source_attempts=[
-            build_source_attempt(
-                source=SOURCE_KIND_RCON,
-                role="primary",
-                status="unsupported",
-                reason=fallback_reason,
-            ),
-            build_source_attempt(
-                source=SOURCE_KIND_PUBLIC_SCOREBOARD,
-                role="fallback",
-                status="success",
-            ),
-        ],
     )
 
 

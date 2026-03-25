@@ -64,6 +64,8 @@ def describe_rcon_historical_read_model() -> dict[str, object]:
             "/api/historical/leaderboard",
             "/api/historical/monthly-mvp",
             "/api/historical/monthly-mvp-v2",
+            "/api/historical/elo-mmr/leaderboard",
+            "/api/historical/elo-mmr/player",
             "/api/historical/player-events",
             "/api/historical/player-profile",
             "/api/historical/snapshots/*",

@@ -1384,6 +1384,63 @@ Limitaciones actuales de esta fase:
   resumen disponible por jugador en CRCON y no de todos los encounters del match
 - la V2 no expone aun endpoints HTTP ni snapshots propios
 
+## Historical Runtime Policy
+
+El backend queda orientado a `RCON-first` tambien para historico:
+
+- live:
+  - `rcon` primero
+  - `a2s` solo como fallback
+- historico:
+  - `rcon` primero para la capa de lectura/cobertura soportada hoy
+  - `public-scoreboard` solo como fallback cuando RCON no cubre una operacion
+    competitiva concreta o no tiene cobertura suficiente
+
+Metadata observable en payloads historicos:
+
+- `primary_source`
+- `selected_source`
+- `fallback_used`
+- `fallback_reason`
+- `source_attempts`
+
+Estado real a fecha de esta fase:
+
+- el read model historico RCON soporta cobertura y actividad reciente
+- rankings competitivos, MVP y Elo/MMR siguen necesitando fallback a
+  `public-scoreboard` porque el read model RCON actual no expone aun detalle
+  historico competitivo suficiente
+
+## Elo/MMR Monthly Ranking
+
+Se añade una primera base operativa inspirada en el documento
+`sistema_elo_mensual_hll.pdf`, pero adaptada a la telemetria real disponible.
+
+Superficies nuevas:
+
+- `python -m app.elo_mmr_engine rebuild`
+- `python -m app.elo_mmr_engine leaderboard --server all-servers --limit 10`
+- `python -m app.elo_mmr_engine player --server all-servers --player <stable_player_key>`
+- `/api/historical/elo-mmr/leaderboard`
+- `/api/historical/elo-mmr/player`
+
+Persistencia nueva en SQLite:
+
+- `elo_mmr_player_ratings`
+- `elo_mmr_match_results`
+- `elo_mmr_monthly_rankings`
+- `elo_mmr_monthly_checkpoints`
+
+Politica de exactitud:
+
+- `exact`: outcome, combat, utility, disciplina por teamkills, MMR persistente
+- `approximate`: role bucket, objective index, strength of schedule
+- `not_available`: leadership y tacticas finas no persistidas
+
+La especificacion detallada y el mapa de capabilities quedan en:
+
+- `docs/elo-mmr-monthly-ranking-design.md`
+
 ## Alcance
 
 Esta fase no implementa:

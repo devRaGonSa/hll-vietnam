@@ -244,6 +244,88 @@ def get_rcon_historical_read_model() -> RconHistoricalDataSource | None:
     return RconHistoricalDataSource()
 
 
+def describe_historical_runtime_policy() -> dict[str, object]:
+    """Describe the effective historical runtime policy for the current environment."""
+    if get_historical_data_source_kind() != SOURCE_KIND_RCON:
+        return {
+            "mode": "public-scoreboard-primary",
+            "primary_source": SOURCE_KIND_PUBLIC_SCOREBOARD,
+            "fallback_source": None,
+            "summary": "Historical runtime uses public-scoreboard directly.",
+        }
+    return {
+        "mode": "rcon-first-with-public-scoreboard-fallback",
+        "primary_source": SOURCE_KIND_RCON,
+        "fallback_source": SOURCE_KIND_PUBLIC_SCOREBOARD,
+        "summary": (
+            "Historical runtime attempts the persisted RCON read model first and falls "
+            "back to public-scoreboard when the requested operation is unsupported, has "
+            "no coverage yet, or the primary path fails."
+        ),
+    }
+
+
+def build_historical_runtime_source_policy(
+    *,
+    operation: str,
+    rcon_status: str,
+    fallback_reason: str | None = None,
+    selected_source: str | None = None,
+    rcon_message: str | None = None,
+) -> dict[str, object]:
+    """Build one normalized source-policy block for historical runtime reads."""
+    configured_kind = get_historical_data_source_kind()
+    if configured_kind != SOURCE_KIND_RCON:
+        return build_source_policy(
+            primary_source=SOURCE_KIND_PUBLIC_SCOREBOARD,
+            selected_source=SOURCE_KIND_PUBLIC_SCOREBOARD,
+            source_attempts=[
+                build_source_attempt(
+                    source=SOURCE_KIND_PUBLIC_SCOREBOARD,
+                    role="primary",
+                    status="success",
+                    reason=f"{operation}-served-by-public-scoreboard",
+                )
+            ],
+        )
+
+    if rcon_status == "success":
+        return build_source_policy(
+            primary_source=SOURCE_KIND_RCON,
+            selected_source=selected_source or SOURCE_KIND_RCON,
+            source_attempts=[
+                build_source_attempt(
+                    source=SOURCE_KIND_RCON,
+                    role="primary",
+                    status="success",
+                    reason=f"{operation}-served-by-rcon",
+                )
+            ],
+        )
+
+    return build_source_policy(
+        primary_source=SOURCE_KIND_RCON,
+        selected_source=selected_source or SOURCE_KIND_PUBLIC_SCOREBOARD,
+        fallback_used=True,
+        fallback_reason=fallback_reason,
+        source_attempts=[
+            build_source_attempt(
+                source=SOURCE_KIND_RCON,
+                role="primary",
+                status=rcon_status,
+                reason=fallback_reason,
+                message=rcon_message,
+            ),
+            build_source_attempt(
+                source=SOURCE_KIND_PUBLIC_SCOREBOARD,
+                role="fallback",
+                status="success",
+                reason=f"{operation}-served-by-public-scoreboard-fallback",
+            ),
+        ],
+    )
+
+
 def resolve_historical_ingestion_data_source() -> tuple[HistoricalDataSource, dict[str, object]]:
     """Resolve the writer-oriented historical provider with safe fallback semantics."""
     configured_kind = get_historical_data_source_kind()
