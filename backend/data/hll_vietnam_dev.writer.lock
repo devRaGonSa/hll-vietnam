@@ -1,8 +1,0 @@
-{
-  "lock_token": "3b2e9b3e3e614fefa86d9e14e4e820ad",
-  "holder": "app.historical_runner refresh:all-servers [/app/app/historical_runner.py --hourly]",
-  "started_at": "2026-03-25T11:23:47.790251Z",
-  "hostname": "2a2c611b2eca",
-  "pid": 1,
-  "cwd": "/app"
-}

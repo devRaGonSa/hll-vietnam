@@ -2,9 +2,16 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import Protocol
 
 from .config import get_historical_data_source_kind
+from .data_sources import (
+    SOURCE_KIND_PUBLIC_SCOREBOARD,
+    SOURCE_KIND_RCON,
+    build_source_attempt,
+    build_source_policy,
+)
 from .player_event_models import PlayerEventRecord
 from .providers.player_event_source_provider import PublicScoreboardPlayerEventSource
 
@@ -52,11 +59,53 @@ class RconPlayerEventSource:
         }
 
 
-def get_player_event_source() -> PlayerEventSource:
-    """Select the event adapter that best matches the configured historical source."""
+@dataclass(frozen=True, slots=True)
+class PlayerEventSourceSelection:
+    """Resolved player-event adapter plus source-policy metadata."""
+
+    source: PlayerEventSource
+    source_policy: dict[str, object]
+
+
+def resolve_player_event_source() -> PlayerEventSourceSelection:
+    """Select the event adapter with safe fallback when raw RCON events are unavailable."""
     source_kind = get_historical_data_source_kind()
-    if source_kind == "public-scoreboard":
-        return PublicScoreboardPlayerEventSource()
-    if source_kind == "rcon":
-        return RconPlayerEventSource()
+    if source_kind == SOURCE_KIND_PUBLIC_SCOREBOARD:
+        return PlayerEventSourceSelection(
+            source=PublicScoreboardPlayerEventSource(),
+            source_policy=build_source_policy(
+                primary_source=SOURCE_KIND_PUBLIC_SCOREBOARD,
+                selected_source="public-scoreboard-match-summary",
+                source_attempts=[
+                    build_source_attempt(
+                        source=SOURCE_KIND_PUBLIC_SCOREBOARD,
+                        role="primary",
+                        status="success",
+                    )
+                ],
+            ),
+        )
+    if source_kind == SOURCE_KIND_RCON:
+        return PlayerEventSourceSelection(
+            source=PublicScoreboardPlayerEventSource(),
+            source_policy=build_source_policy(
+                primary_source=SOURCE_KIND_RCON,
+                selected_source="public-scoreboard-match-summary",
+                fallback_used=True,
+                fallback_reason="rcon-player-events-not-implemented-yet",
+                source_attempts=[
+                    build_source_attempt(
+                        source=SOURCE_KIND_RCON,
+                        role="primary",
+                        status="unsupported",
+                        reason="rcon-player-events-not-implemented-yet",
+                    ),
+                    build_source_attempt(
+                        source="public-scoreboard-match-summary",
+                        role="fallback",
+                        status="success",
+                    ),
+                ],
+            ),
+        )
     raise ValueError(f"Unsupported player event source: {source_kind}")

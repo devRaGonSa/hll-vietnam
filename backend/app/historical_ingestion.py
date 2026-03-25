@@ -12,7 +12,7 @@ from .config import (
     get_historical_crcon_page_size,
     get_historical_refresh_overlap_hours,
 )
-from .data_sources import HistoricalDataSource, get_historical_data_source
+from .data_sources import HistoricalDataSource, resolve_historical_ingestion_data_source
 from .historical_snapshots import generate_and_persist_historical_snapshots
 from .historical_storage import (
     finalize_backfill_progress,
@@ -119,7 +119,7 @@ def _run_ingestion(
 ) -> dict[str, object]:
     initialize_historical_storage()
     stats = IngestionStats()
-    data_source = get_historical_data_source()
+    data_source, source_policy = resolve_historical_ingestion_data_source()
     selected_servers = _select_servers(server_slug)
     processed_servers: list[dict[str, object]] = []
     active_runs: dict[str, int] = {}
@@ -219,6 +219,7 @@ def _run_ingestion(
         "status": "ok",
         "mode": mode,
         "source_provider": data_source.source_kind,
+        "source_policy": source_policy,
         "page_size": page_size or get_historical_crcon_page_size(),
         "start_page": start_page,
         "detail_workers": detail_workers or get_historical_crcon_detail_workers(),

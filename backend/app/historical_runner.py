@@ -13,12 +13,14 @@ from .config import (
     get_historical_refresh_interval_seconds,
     get_historical_refresh_max_retries,
     get_historical_refresh_retry_delay_seconds,
+    get_historical_data_source_kind,
 )
 from .historical_ingestion import run_incremental_refresh
 from .historical_snapshots import (
     generate_and_persist_historical_snapshots,
     generate_and_persist_priority_historical_snapshots,
 )
+from .rcon_historical_worker import run_rcon_historical_capture
 from .writer_lock import backend_writer_lock, build_writer_lock_holder
 
 HOURLY_INTERVAL_SECONDS = 3600
@@ -95,20 +97,42 @@ def _run_refresh_with_retries(
                     f"app.historical_runner refresh:{server_slug or 'all-servers'}"
                 )
             ):
-                refresh_result = run_incremental_refresh(
-                    server_slug=server_slug,
-                    max_pages=max_pages,
-                    page_size=page_size,
-                    rebuild_snapshots=False,
+                rcon_capture_result = _run_primary_rcon_capture()
+                should_run_classic_fallback, classic_fallback_reason = (
+                    _resolve_classic_fallback_policy(
+                        server_slug=server_slug,
+                        run_number=run_number,
+                        rcon_capture_result=rcon_capture_result,
+                    )
                 )
-                snapshot_result = generate_historical_snapshots(
-                    server_slug=server_slug,
-                    run_number=run_number,
-                )
+                if should_run_classic_fallback:
+                    refresh_result = run_incremental_refresh(
+                        server_slug=server_slug,
+                        max_pages=max_pages,
+                        page_size=page_size,
+                        rebuild_snapshots=False,
+                    )
+                    snapshot_result = generate_historical_snapshots(
+                        server_slug=server_slug,
+                        run_number=run_number,
+                    )
+                else:
+                    refresh_result = {
+                        "status": "skipped",
+                        "reason": "rcon-primary-cycle-no-classic-fallback-needed",
+                    }
+                    snapshot_result = {
+                        "status": "skipped",
+                        "reason": "rcon-primary-cycle-no-classic-fallback-needed",
+                        "generation_policy": "classic-historical-fallback-only",
+                    }
             return {
                 "status": "ok",
                 "attempts_used": attempt,
                 "max_retries": max_retries,
+                "rcon_capture_result": rcon_capture_result,
+                "classic_fallback_used": should_run_classic_fallback,
+                "classic_fallback_reason": classic_fallback_reason,
                 "refresh_result": refresh_result,
                 "snapshot_result": snapshot_result,
             }
@@ -162,6 +186,43 @@ def _describe_snapshot_scope(server_slug: str | None) -> list[str]:
     if server_slug:
         return [server_slug, "all-servers"]
     return [*DEFAULT_HISTORICAL_SERVER_SCOPE, "all-servers"]
+
+
+def _run_primary_rcon_capture() -> dict[str, Any]:
+    if get_historical_data_source_kind() != "rcon":
+        return {
+            "status": "skipped",
+            "reason": "historical-data-source-configured-without-rcon-primary",
+        }
+    return run_rcon_historical_capture()
+
+
+def _resolve_classic_fallback_policy(
+    *,
+    server_slug: str | None,
+    run_number: int,
+    rcon_capture_result: dict[str, Any],
+) -> tuple[bool, str]:
+    if get_historical_data_source_kind() != "rcon":
+        return True, "public-scoreboard-configured-as-primary-historical-source"
+
+    if not _rcon_capture_has_usable_results(rcon_capture_result):
+        return True, "rcon-historical-capture-failed-or-returned-no-usable-targets"
+
+    if server_slug:
+        return True, "manual-server-scope-still-needs-classic-historical-fallback"
+
+    if run_number % get_historical_full_snapshot_every_runs() == 0:
+        return True, "periodic-classic-fallback-for-competitive-historical-coverage"
+
+    return False, "rcon-primary-cycle-succeeded-without-needing-classic-fallback"
+
+
+def _rcon_capture_has_usable_results(rcon_capture_result: dict[str, Any]) -> bool:
+    if rcon_capture_result.get("status") != "ok":
+        return False
+    targets = rcon_capture_result.get("targets")
+    return isinstance(targets, list) and len(targets) > 0
 
 
 def main() -> None:

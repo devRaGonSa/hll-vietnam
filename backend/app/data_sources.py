@@ -18,6 +18,7 @@ from .server_targets import A2SServerTarget, load_a2s_targets
 
 
 LIVE_SOURCE_A2S = "a2s"
+SOURCE_KIND_PUBLIC_SCOREBOARD = "public-scoreboard"
 SOURCE_KIND_RCON = "rcon"
 
 
@@ -50,7 +51,7 @@ class LiveDataSource(Protocol):
     def collect_snapshots(self, *, persist: bool) -> dict[str, object]:
         """Collect one live snapshot batch."""
 
-    def build_target_index(self) -> dict[str | None, A2SServerTarget]:
+    def build_target_index(self) -> dict[str | None, object]:
         """Return optional server connection metadata keyed by external id."""
 
 
@@ -73,6 +74,102 @@ class A2SLiveDataSource:
             for target in load_a2s_targets()
             if target.external_server_id
         }
+
+
+@dataclass(frozen=True, slots=True)
+class RconFirstLiveDataSource:
+    """Live source arbitration with RCON as primary and A2S as controlled fallback."""
+
+    primary_source: RconLiveDataSource = RconLiveDataSource()
+    fallback_source: A2SLiveDataSource = A2SLiveDataSource()
+    source_kind: str = SOURCE_KIND_RCON
+
+    def collect_snapshots(self, *, persist: bool) -> dict[str, object]:
+        attempts: list[dict[str, object]] = []
+        fallback_reason: str | None = None
+
+        try:
+            primary_payload = self.primary_source.collect_snapshots(persist=persist)
+        except Exception as error:  # noqa: BLE001 - source arbitration keeps fallback controlled
+            attempts.append(
+                build_source_attempt(
+                    source=SOURCE_KIND_RCON,
+                    role="primary",
+                    status="error",
+                    reason="rcon-live-request-failed",
+                    message=str(error),
+                )
+            )
+            fallback_reason = "rcon-live-request-failed"
+        else:
+            primary_success_count = int(primary_payload.get("success_count") or 0)
+            primary_snapshots = list(primary_payload.get("snapshots") or [])
+            if primary_success_count > 0 and primary_snapshots:
+                attempts.append(
+                    build_source_attempt(
+                        source=SOURCE_KIND_RCON,
+                        role="primary",
+                        status="success",
+                    )
+                )
+                return attach_source_policy(
+                    primary_payload,
+                    build_source_policy(
+                        primary_source=SOURCE_KIND_RCON,
+                        selected_source=SOURCE_KIND_RCON,
+                        source_attempts=attempts,
+                    ),
+                )
+
+            attempts.append(
+                build_source_attempt(
+                    source=SOURCE_KIND_RCON,
+                    role="primary",
+                    status="empty",
+                    reason="rcon-live-returned-no-usable-snapshots",
+                    message=f"success_count={primary_success_count}",
+                )
+            )
+            fallback_reason = "rcon-live-returned-no-usable-snapshots"
+
+        try:
+            fallback_payload = self.fallback_source.collect_snapshots(persist=persist)
+        except Exception as error:  # noqa: BLE001 - keep combined failure explicit
+            attempts.append(
+                build_source_attempt(
+                    source=LIVE_SOURCE_A2S,
+                    role="fallback",
+                    status="error",
+                    reason="a2s-live-fallback-failed",
+                    message=str(error),
+                )
+            )
+            raise RuntimeError(
+                "RCON-first live collection failed and A2S fallback also failed."
+            ) from error
+
+        attempts.append(
+            build_source_attempt(
+                source=LIVE_SOURCE_A2S,
+                role="fallback",
+                status="success",
+            )
+        )
+        return attach_source_policy(
+            fallback_payload,
+            build_source_policy(
+                primary_source=SOURCE_KIND_RCON,
+                selected_source=LIVE_SOURCE_A2S,
+                fallback_used=True,
+                fallback_reason=fallback_reason,
+                source_attempts=attempts,
+            ),
+        )
+
+    def build_target_index(self) -> dict[str | None, object]:
+        target_index = dict(self.fallback_source.build_target_index())
+        target_index.update(self.primary_source.build_target_index())
+        return target_index
 
 
 @dataclass(frozen=True, slots=True)
@@ -123,7 +220,7 @@ class RconHistoricalDataSource:
 def get_historical_data_source() -> HistoricalDataSource:
     """Select the historical provider configured for the current environment."""
     source_kind = get_historical_data_source_kind()
-    if source_kind == "public-scoreboard":
+    if source_kind == SOURCE_KIND_PUBLIC_SCOREBOARD:
         return PublicScoreboardHistoricalDataSource()
     if source_kind == SOURCE_KIND_RCON:
         return RconHistoricalDataSource()
@@ -136,5 +233,104 @@ def get_live_data_source() -> LiveDataSource:
     if source_kind == LIVE_SOURCE_A2S:
         return A2SLiveDataSource()
     if source_kind == SOURCE_KIND_RCON:
-        return RconLiveDataSource()
+        return RconFirstLiveDataSource()
     raise ValueError(f"Unsupported live data source: {source_kind}")
+
+
+def get_rcon_historical_read_model() -> RconHistoricalDataSource | None:
+    """Return the minimal persisted RCON historical read model when selected."""
+    if get_historical_data_source_kind() != SOURCE_KIND_RCON:
+        return None
+    return RconHistoricalDataSource()
+
+
+def resolve_historical_ingestion_data_source() -> tuple[HistoricalDataSource, dict[str, object]]:
+    """Resolve the writer-oriented historical provider with safe fallback semantics."""
+    configured_kind = get_historical_data_source_kind()
+    if configured_kind == SOURCE_KIND_PUBLIC_SCOREBOARD:
+        return (
+            PublicScoreboardHistoricalDataSource(),
+            build_source_policy(
+                primary_source=SOURCE_KIND_PUBLIC_SCOREBOARD,
+                selected_source=SOURCE_KIND_PUBLIC_SCOREBOARD,
+                source_attempts=[
+                    build_source_attempt(
+                        source=SOURCE_KIND_PUBLIC_SCOREBOARD,
+                        role="primary",
+                        status="success",
+                    )
+                ],
+            ),
+        )
+
+    if configured_kind == SOURCE_KIND_RCON:
+        return (
+            PublicScoreboardHistoricalDataSource(),
+            build_source_policy(
+                primary_source=SOURCE_KIND_RCON,
+                selected_source=SOURCE_KIND_PUBLIC_SCOREBOARD,
+                fallback_used=True,
+                fallback_reason="rcon-historical-ingestion-not-supported-yet",
+                source_attempts=[
+                    build_source_attempt(
+                        source=SOURCE_KIND_RCON,
+                        role="primary",
+                        status="unsupported",
+                        reason="rcon-historical-ingestion-not-supported-yet",
+                    ),
+                    build_source_attempt(
+                        source=SOURCE_KIND_PUBLIC_SCOREBOARD,
+                        role="fallback",
+                        status="success",
+                    ),
+                ],
+            ),
+        )
+
+    raise ValueError(f"Unsupported historical data source: {configured_kind}")
+
+
+def build_source_attempt(
+    *,
+    source: str,
+    role: str,
+    status: str,
+    reason: str | None = None,
+    message: str | None = None,
+) -> dict[str, object]:
+    """Build one normalized trace entry for source arbitration."""
+    return {
+        "source": source,
+        "role": role,
+        "status": status,
+        "reason": reason,
+        "message": message,
+    }
+
+
+def build_source_policy(
+    *,
+    primary_source: str,
+    selected_source: str,
+    fallback_used: bool = False,
+    fallback_reason: str | None = None,
+    source_attempts: list[dict[str, object]] | None = None,
+) -> dict[str, object]:
+    """Build one small source-policy block for API responses and worker output."""
+    return {
+        "primary_source": primary_source,
+        "selected_source": selected_source,
+        "fallback_used": fallback_used,
+        "fallback_reason": fallback_reason,
+        "source_attempts": list(source_attempts or []),
+    }
+
+
+def attach_source_policy(
+    payload: dict[str, object],
+    source_policy: dict[str, object],
+) -> dict[str, object]:
+    """Attach normalized source-policy metadata to an existing payload."""
+    enriched = dict(payload)
+    enriched.update(source_policy)
+    return enriched

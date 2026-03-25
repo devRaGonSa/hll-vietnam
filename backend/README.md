@@ -224,8 +224,9 @@ normaliza espacios y barras finales para mantener la comparacion con el header
 
 `GET /api/servers` trata el ultimo snapshot persistido como cache local y lo
 reutiliza solo si sigue dentro del objetivo de `120` segundos. Si ese snapshot
-esta vencido, el endpoint intenta una consulta A2S real inmediata contra los 2
-servidores configurados antes de responder.
+esta vencido, el endpoint intenta primero una consulta RCON real inmediata
+contra los targets configurados. Solo si RCON falla o no devuelve snapshots
+utilizables, cae a A2S de forma controlada antes de responder.
 
 La respuesta incluye metadata de frescura pensada para frontend:
 
@@ -238,11 +239,17 @@ La respuesta incluye metadata de frescura pensada para frontend:
 - `source`
 - `refresh_attempted`
 - `refresh_status`
+- `primary_source`
+- `selected_source`
+- `fallback_used`
+- `fallback_reason`
+- `source_attempts`
 
 Si la consulta real falla, `/api/servers` devuelve el ultimo snapshot valido
 disponible marcado como stale. Si no existe ningun snapshot valido, responde
 `items: []` en lugar de reintroducir servidores de respaldo ajenos a la
-comunidad.
+comunidad. Cada respuesta deja tambien trazabilidad de arbitraje de fuente para
+que sea visible si se sirvio RCON directo o si hubo fallback a A2S.
 
 Los endpoints historicos leen la persistencia local SQLite creada por el
 colector. Si todavia no hay snapshots guardados, responden `status: "ok"` con
@@ -262,16 +269,16 @@ Variables nuevas:
 Valores soportados en esta fase:
 
 - live:
-  - `a2s` como modo actual de desarrollo
-  - `rcon` como modo productivo para estado live via acceso directo al servidor
+  - `rcon` como camino primario recomendado
+  - `a2s` como fallback legacy o override explicito
 - historico:
-  - `public-scoreboard` como modo actual de desarrollo
-  - `rcon` seleccionado pero todavia sin ingesta historica operativa en esta repo
+  - `rcon` como camino primario recomendado para captura y lectura minima
+  - `public-scoreboard` como fallback legacy o override explicito
 
 Defaults actuales:
 
-- `HLL_BACKEND_LIVE_DATA_SOURCE=a2s`
-- `HLL_BACKEND_HISTORICAL_DATA_SOURCE=public-scoreboard`
+- `HLL_BACKEND_LIVE_DATA_SOURCE=rcon`
+- `HLL_BACKEND_HISTORICAL_DATA_SOURCE=rcon`
 
 La seleccion efectiva se resuelve en `app/data_sources.py` y en adapters
 dedicados dentro de `app/providers/`:
@@ -287,16 +294,27 @@ dedicados dentro de `app/providers/`:
 
 Proveedores operativos en esta fase:
 
-- live `a2s`
 - live `rcon`
+- live `a2s`
+- historico `rcon` solo para read model minimo y captura prospectiva
 - historico `public-scoreboard`
+
+Politica funcional actual:
+
+- live:
+  - RCON primero
+  - A2S solo si RCON falla o no devuelve snapshots utilizables
+- historico/recopilacion:
+  - RCON primero
+  - `public-scoreboard` solo si RCON no soporta aun esa operacion concreta o
+    falla la captura primaria
 
 Limitacion actual de `rcon`:
 
 - el backend puede usar `rcon` para `/api/servers`
-- la ingesta historica por `historical_ingestion.py` sigue requiriendo
+- la ingesta historica competitiva por `historical_ingestion.py` sigue cayendo a
   `public-scoreboard`, porque la repo todavia no incluye una canalizacion
-  persistente de eventos o logs RCON para reconstruir partidas cerradas
+  retroactiva RCON capaz de reconstruir partidas cerradas con paridad completa
 
 Estado real de "historico por RCON" en esta repo:
 
@@ -349,13 +367,13 @@ $env:HLL_BACKEND_RCON_TARGETS='[
 
 Runbook operativo minimo:
 
-- desarrollo:
+- modo recomendado por defecto:
+  - `HLL_BACKEND_LIVE_DATA_SOURCE=rcon`
+  - `HLL_BACKEND_HISTORICAL_DATA_SOURCE=rcon`
+  - definir `HLL_BACKEND_RCON_TARGETS` fuera de la repo
+- override legacy completo:
   - `HLL_BACKEND_LIVE_DATA_SOURCE=a2s`
   - `HLL_BACKEND_HISTORICAL_DATA_SOURCE=public-scoreboard`
-- produccion live con RCON:
-  - `HLL_BACKEND_LIVE_DATA_SOURCE=rcon`
-  - `HLL_BACKEND_HISTORICAL_DATA_SOURCE=public-scoreboard`
-  - definir `HLL_BACKEND_RCON_TARGETS` fuera de la repo
 
 Verificacion minima del proveedor activo:
 
@@ -418,15 +436,15 @@ La persistencia queda separada del historico `historical_*` actual y usa:
 
 Lectura historica minima cuando `HLL_BACKEND_HISTORICAL_DATA_SOURCE=rcon`:
 
-- endpoints soportados hoy:
+- endpoints soportados hoy directamente por RCON persistido:
   - `GET /api/historical/server-summary`
   - `GET /api/historical/recent-matches`
 - lo que devuelven:
   - cobertura por target RCON configurado
   - frescura del ultimo capture exitoso
   - actividad reciente persistida
-- endpoints que siguen dependiendo de `public-scoreboard` para el contrato
-  completo:
+- endpoints que hoy caen automaticamente a `public-scoreboard` para mantener el
+  contrato completo:
   - `GET /api/historical/weekly-top-kills`
   - `GET /api/historical/weekly-leaderboard`
   - `GET /api/historical/leaderboard`
@@ -437,8 +455,10 @@ Lectura historica minima cuando `HLL_BACKEND_HISTORICAL_DATA_SOURCE=rcon`:
   - `GET /api/historical/snapshots/*`
 
 Cuando esos endpoints se consultan con `historical_data_source=rcon`, el backend
-devuelve un payload coherente con `supported: false` y deja claro que esa parte
-del contrato todavia requiere `public-scoreboard`.
+intenta primero RCON para la operacion soportada y, si no hay cobertura o la
+capacidad aun no existe, cae automaticamente a `public-scoreboard`. La
+respuesta deja trazabilidad con `primary_source`, `selected_source`,
+`fallback_used`, `fallback_reason` y `source_attempts`.
 
 ## Criterio de estructura
 
@@ -1065,11 +1085,15 @@ Los reintentos de cada request JSON pueden ajustarse sin tocar codigo con:
 - `HLL_HISTORICAL_CRCON_REQUEST_RETRIES`
 - `HLL_HISTORICAL_CRCON_RETRY_DELAY_SECONDS`
 
-El runner `python -m app.historical_runner` deja ese refresh incremental listo
-para ejecucion local repetida sin depender de infraestructura externa y
-mantiene calientes los snapshots historicos mas visibles tras cada refresh
-correcto. Por defecto:
+El runner `python -m app.historical_runner` deja ahora una orquestacion
+RCON-first lista para ejecucion local repetida sin depender de infraestructura
+externa y mantiene calientes los snapshots historicos mas visibles cuando el
+fallback clasico entra de forma controlada. Por defecto:
 
+- intenta primero una captura prospectiva RCON en cada ciclo
+- solo lanza el refresh historico clasico cuando RCON falla, cuando se pide un
+  scope manual que sigue requiriendo cobertura competitiva, o en la cadencia
+  periodica de fallback para mantener rankings y snapshots clasicos
 - refresca cada `900` segundos
 - prewarmea en cada ciclo:
   - `server-summary` para `comunidad-hispana-01`, `comunidad-hispana-02`, `comunidad-hispana-03` y `all-servers`
@@ -1109,8 +1133,10 @@ Sin `--server`, ese runner refresca:
 - `comunidad-hispana-02`
 - `comunidad-hispana-03`
 
-Despues de cada refresh correcto, recompone snapshots para los servidores
-afectados y vuelve a alinear el agregado `all-servers`.
+Despues de cada fallback clasico correcto, recompone snapshots para los
+servidores afectados y vuelve a alinear el agregado `all-servers`. Si el ciclo
+RCON primario fue suficiente y no hizo falta el fallback clasico, el runner
+deja constancia explicita de ese motivo en su salida JSON.
 
 Para regenerar snapshots de forma puntual dentro del contenedor sin dejar un
 bucle permanente, la validacion operativa minima es:

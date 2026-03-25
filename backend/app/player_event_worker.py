@@ -16,9 +16,9 @@ from .config import (
     get_player_event_refresh_overlap_hours,
     get_player_event_refresh_retry_delay_seconds,
 )
-from .data_sources import get_historical_data_source
+from .data_sources import resolve_historical_ingestion_data_source
 from .historical_storage import list_historical_servers
-from .player_event_source import get_player_event_source
+from .player_event_source import resolve_player_event_source
 from .player_event_storage import (
     finalize_player_event_ingestion_run,
     finalize_player_event_progress,
@@ -62,8 +62,9 @@ def run_player_event_refresh(
         )
     ):
         initialize_player_event_storage()
-        data_source = get_historical_data_source()
-        event_source = get_player_event_source()
+        data_source, data_source_policy = resolve_historical_ingestion_data_source()
+        event_source_selection = resolve_player_event_source()
+        event_source = event_source_selection.source
         resolved_page_size = page_size or get_historical_crcon_page_size()
         resolved_detail_workers = detail_workers or get_historical_crcon_detail_workers()
         resolved_overlap_hours = (
@@ -153,7 +154,9 @@ def run_player_event_refresh(
             "status": "ok",
             "mode": "refresh",
             "source_provider": data_source.source_kind,
+            "source_policy": data_source_policy,
             "event_adapter": event_source.source_kind,
+            "event_source_policy": event_source_selection.source_policy,
             "page_size": resolved_page_size,
             "detail_workers": resolved_detail_workers,
             "overlap_hours": resolved_overlap_hours,

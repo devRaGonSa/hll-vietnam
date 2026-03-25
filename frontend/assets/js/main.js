@@ -1,8 +1,9 @@
 // Progressive enhancement for local frontend-backend checks.
 const DEFAULT_SERVER_POLL_INTERVAL_MS = 300 * 1000;
-const SERVER_HISTORY_URLS = Object.freeze({
+const SERVER_HISTORY_URLS_FALLBACK = Object.freeze({
   "comunidad-hispana-01": "https://scoreboard.comunidadhll.es/games",
   "comunidad-hispana-02": "https://scoreboard.comunidadhll.es:5443/games",
+  "comunidad-hispana-03": "https://scoreboard.comunidadhll.es:3443/games",
 });
 const COMMUNITY_CLANS = Object.freeze([
   {
@@ -244,13 +245,14 @@ function renderServerStatsCard(server) {
   const statusLabel = formatServerStatus(server.status);
   const stateClass =
     server.status === "online" ? "server-state--online" : "server-state--offline";
-  const isRealSnapshot = server.snapshot_origin === "real-a2s";
+  const isRealSnapshot = isRealLiveSnapshot(server);
   const currentMap = server.current_map || "Sin mapa disponible";
   const region = server.region || "Region pendiente";
   const players = Number.isFinite(server.players) ? server.players : 0;
   const maxPlayers = Number.isFinite(server.max_players) ? server.max_players : 0;
   const actionMarkup = renderServerAction(server);
   const cardVariantClass = isRealSnapshot ? "server-card--real" : "server-card--reference";
+  const eyebrowLabel = isRealSnapshot ? "Servidor de comunidad" : "Referencia actual";
   const quickFacts = renderQuickFacts([
     { label: "Mapa", value: currentMap, valueClassName: "server-card__quickfact-value--map" },
     { label: "Region", value: region },
@@ -260,7 +262,7 @@ function renderServerStatsCard(server) {
     <article class="server-card server-card--stats ${cardVariantClass}">
       <div class="server-card__top server-card__top--stats">
         <div class="server-card__identity">
-          <p class="server-card__eyebrow">${isRealSnapshot ? "Servidor de comunidad" : "Referencia actual"}</p>
+          <p class="server-card__eyebrow">${escapeHtml(eyebrowLabel)}</p>
           <h3>${escapeHtml(serverName)}</h3>
         </div>
         <div class="server-card__status-column">
@@ -279,7 +281,21 @@ function renderServerSections(latestItems) {
 }
 
 function renderServerAction(server) {
-  const historyUrl = getServerHistoryUrl(server);
+  const historyState = getServerHistoryState(server);
+  if (!historyState.available) {
+    return `
+      <div class="server-card__actions">
+        <span
+          class="server-action-link server-action-link--disabled"
+          aria-disabled="true"
+        >
+          Historico no disponible
+        </span>
+      </div>
+    `;
+  }
+
+  const historyUrl = historyState.url;
   if (!historyUrl) {
     return "";
   }
@@ -396,6 +412,10 @@ function renderQuickFacts(items) {
 }
 
 function getServerHistoryUrl(server) {
+  if (typeof server?.community_history_url === "string" && server.community_history_url.trim()) {
+    return server.community_history_url.trim();
+  }
+
   const externalServerId =
     typeof server?.external_server_id === "string"
       ? server.external_server_id.trim()
@@ -404,7 +424,15 @@ function getServerHistoryUrl(server) {
     return "";
   }
 
-  return SERVER_HISTORY_URLS[externalServerId] || "";
+  return SERVER_HISTORY_URLS_FALLBACK[externalServerId] || "";
+}
+
+function getServerHistoryState(server) {
+  const historyUrl = getServerHistoryUrl(server);
+  return {
+    available: Boolean(historyUrl),
+    url: historyUrl,
+  };
 }
 
 function selectPrimaryServerItems(items) {
@@ -412,12 +440,12 @@ function selectPrimaryServerItems(items) {
     return [];
   }
 
-  const realItems = items.filter(isRealA2SSnapshot);
+  const realItems = items.filter(isRealLiveSnapshot);
   return realItems.length > 0 ? realItems : items;
 }
 
-function isRealA2SSnapshot(item) {
-  return item?.snapshot_origin === "real-a2s";
+function isRealLiveSnapshot(item) {
+  return item?.snapshot_origin === "real-a2s" || item?.snapshot_origin === "real-rcon";
 }
 
 function deriveSnapshotState(serversData) {

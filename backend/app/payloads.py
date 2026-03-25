@@ -9,7 +9,15 @@ from .config import (
     get_live_data_source_kind,
     get_refresh_interval_seconds,
 )
-from .data_sources import RconHistoricalDataSource, get_historical_data_source, get_live_data_source
+from .data_sources import (
+    LIVE_SOURCE_A2S,
+    SOURCE_KIND_PUBLIC_SCOREBOARD,
+    SOURCE_KIND_RCON,
+    build_source_attempt,
+    build_source_policy,
+    get_live_data_source,
+    get_rcon_historical_read_model,
+)
 from .historical_snapshot_storage import get_historical_snapshot
 from .historical_snapshots import (
     DEFAULT_MONTHLY_SNAPSHOT_WINDOW,
@@ -29,6 +37,7 @@ from .historical_snapshots import (
 )
 from .historical_storage import (
     ALL_SERVERS_SLUG,
+    DEFAULT_HISTORICAL_SERVERS,
     get_historical_player_profile,
     list_historical_server_summaries,
     list_monthly_leaderboard,
@@ -102,21 +111,28 @@ def build_servers_payload() -> dict[str, object]:
         max_snapshot_age_seconds,
     )
     refresh_errors: list[dict[str, object]] = []
+    refresh_source_policy = build_source_policy(
+        primary_source=get_live_data_source_kind(),
+        selected_source="none",
+        fallback_reason=None,
+        source_attempts=[],
+    )
 
     if refresh_attempted:
-        refreshed_items, refresh_errors = _try_collect_real_time_snapshot()
+        refreshed_items, refresh_errors, refresh_source_policy = _try_collect_real_time_snapshot()
         if refreshed_items:
             refreshed_snapshot_at = _resolve_last_snapshot_at(refreshed_items)
             refreshed_snapshot_age_seconds = _calculate_snapshot_age_seconds(refreshed_snapshot_at)
             return _build_servers_response(
                 items=refreshed_items,
-                response_source="real-time-a2s-refresh",
+                response_source=_build_live_response_source(refresh_source_policy),
                 last_snapshot_at=refreshed_snapshot_at,
                 snapshot_age_seconds=refreshed_snapshot_age_seconds,
                 max_snapshot_age_seconds=max_snapshot_age_seconds,
                 refresh_attempted=True,
                 refresh_status="success",
                 refresh_errors=refresh_errors,
+                source_policy=refresh_source_policy,
             )
 
     if persisted_items:
@@ -133,6 +149,11 @@ def build_servers_payload() -> dict[str, object]:
             refresh_attempted=refresh_attempted,
             refresh_status=refresh_status,
             refresh_errors=refresh_errors,
+            source_policy=_infer_live_source_policy_from_items(
+                persisted_items,
+                refresh_attempted=refresh_attempted,
+                refresh_errors=refresh_errors,
+            ),
         )
 
     return {
@@ -150,6 +171,7 @@ def build_servers_payload() -> dict[str, object]:
             "refresh_attempted": refresh_attempted,
             "refresh_status": "failed" if refresh_attempted else "not-needed",
             "refresh_errors": refresh_errors,
+            **refresh_source_policy,
             "items": [],
         },
     }
@@ -219,14 +241,6 @@ def build_weekly_top_kills_payload(
     server_id: str | None = None,
 ) -> dict[str, object]:
     """Return weekly top kills grouped by real community server."""
-    rcon_payload = _build_rcon_historical_unsupported_payload(
-        title="Top kills semanales por servidor",
-        context="historical-top-kills",
-        server_key=server_id,
-        limit=limit,
-    )
-    if rcon_payload is not None:
-        return rcon_payload
     result = list_weekly_top_kills(limit=limit, server_id=server_id)
     return {
         "status": "ok",
@@ -239,6 +253,9 @@ def build_weekly_top_kills_payload(
             "window_start": result["window_start"],
             "window_end": result["window_end"],
             "limit": limit,
+            **_resolve_historical_fallback_policy(
+                fallback_reason="rcon-historical-read-model-does-not-support-weekly-top-kills",
+            ),
             "items": result["items"],
         },
     }
@@ -252,16 +269,6 @@ def build_historical_leaderboard_payload(
     timeframe: str = "weekly",
 ) -> dict[str, object]:
     """Return one historical leaderboard for the requested timeframe and metric."""
-    rcon_payload = _build_rcon_historical_unsupported_payload(
-        title="Ranking historico",
-        context="historical-leaderboard",
-        server_key=server_id,
-        limit=limit,
-        metric=metric,
-        timeframe=timeframe,
-    )
-    if rcon_payload is not None:
-        return rcon_payload
     normalized_timeframe = timeframe.strip().lower() if isinstance(timeframe, str) else "weekly"
     if normalized_timeframe == "monthly":
         result = list_monthly_leaderboard(limit=limit, server_id=server_id, metric=metric)
@@ -301,6 +308,9 @@ def build_historical_leaderboard_payload(
             "previous_month_closed_matches": result.get("previous_month_closed_matches"),
             "sufficient_sample": result.get("sufficient_sample"),
             "limit": limit,
+            **_resolve_historical_fallback_policy(
+                fallback_reason="rcon-historical-read-model-does-not-support-competitive-leaderboards",
+            ),
             "items": result["items"],
         },
     }
@@ -343,25 +353,37 @@ def build_recent_historical_matches_payload(
 ) -> dict[str, object]:
     """Return recent historical matches from persisted CRCON data."""
     if get_historical_data_source_kind() == "rcon":
-        data_source = get_historical_data_source()
-        if isinstance(data_source, RconHistoricalDataSource):
+        data_source = get_rcon_historical_read_model()
+        if data_source is not None:
             items = data_source.list_recent_activity(server_key=server_slug, limit=limit)
             capabilities = data_source.describe_capabilities()
-            return {
-                "status": "ok",
-                "data": {
-                    "title": "Actividad reciente capturada por RCON",
-                    "context": "historical-recent-matches",
-                    "source": "rcon-historical-read-model",
-                    "historical_data_source": "rcon",
-                    "supported": True,
-                    "coverage_basis": "prospective-rcon-samples",
-                    "limit": limit,
-                    "server_slug": server_slug,
-                    "items": items,
-                    "capabilities": capabilities,
-                },
-            }
+            if items:
+                return {
+                    "status": "ok",
+                    "data": {
+                        "title": "Actividad reciente capturada por RCON",
+                        "context": "historical-recent-matches",
+                        "source": "rcon-historical-read-model",
+                        "historical_data_source": "rcon",
+                        "supported": True,
+                        "coverage_basis": "prospective-rcon-samples",
+                        "limit": limit,
+                        "server_slug": server_slug,
+                        **build_source_policy(
+                            primary_source=SOURCE_KIND_RCON,
+                            selected_source=SOURCE_KIND_RCON,
+                            source_attempts=[
+                                build_source_attempt(
+                                    source=SOURCE_KIND_RCON,
+                                    role="primary",
+                                    status="success",
+                                )
+                            ],
+                        ),
+                        "items": items,
+                        "capabilities": capabilities,
+                    },
+                }
     items = list_recent_historical_matches(limit=limit, server_slug=server_slug)
     return {
         "status": "ok",
@@ -371,6 +393,9 @@ def build_recent_historical_matches_payload(
             "source": "historical-crcon-storage",
             "limit": limit,
             "server_slug": server_slug,
+            **_resolve_historical_fallback_policy(
+                fallback_reason="rcon-historical-read-model-has-no-recent-activity",
+            ),
             "items": items,
         },
     }
@@ -382,14 +407,6 @@ def build_monthly_mvp_payload(
     server_id: str | None = None,
 ) -> dict[str, object]:
     """Return the precomputed monthly MVP payload through the stable API surface."""
-    rcon_payload = _build_rcon_historical_unsupported_payload(
-        title="Top MVP mensual",
-        context="historical-monthly-mvp",
-        server_key=server_id,
-        limit=limit,
-    )
-    if rcon_payload is not None:
-        return rcon_payload
     snapshot_payload = build_monthly_mvp_snapshot_payload(
         limit=limit,
         server_id=server_id,
@@ -405,6 +422,9 @@ def build_monthly_mvp_payload(
             ),
             "context": "historical-monthly-mvp",
             "source": "historical-precomputed-snapshots",
+            **_resolve_historical_fallback_policy(
+                fallback_reason="rcon-historical-read-model-does-not-support-monthly-mvp-yet",
+            ),
         },
     }
 
@@ -416,15 +436,6 @@ def build_player_event_payload(
     view: str = "most-killed",
 ) -> dict[str, object]:
     """Return one V2 player-event payload through the stable API surface."""
-    rcon_payload = _build_rcon_historical_unsupported_payload(
-        title="Metricas V2 mensuales",
-        context="historical-player-events",
-        server_key=server_id,
-        limit=limit,
-        metric=view,
-    )
-    if rcon_payload is not None:
-        return rcon_payload
     snapshot_payload = build_player_event_snapshot_payload(
         limit=limit,
         server_id=server_id,
@@ -442,6 +453,9 @@ def build_player_event_payload(
             ),
             "context": "historical-player-events",
             "source": "historical-precomputed-player-event-snapshots",
+            **_resolve_historical_fallback_policy(
+                fallback_reason="rcon-historical-read-model-does-not-support-player-events-yet",
+            ),
         },
     }
 
@@ -452,14 +466,6 @@ def build_monthly_mvp_v2_payload(
     server_id: str | None = None,
 ) -> dict[str, object]:
     """Return the precomputed monthly MVP V2 payload through the stable API surface."""
-    rcon_payload = _build_rcon_historical_unsupported_payload(
-        title="Top MVP mensual V2",
-        context="historical-monthly-mvp-v2",
-        server_key=server_id,
-        limit=limit,
-    )
-    if rcon_payload is not None:
-        return rcon_payload
     snapshot_payload = build_monthly_mvp_v2_snapshot_payload(
         limit=limit,
         server_id=server_id,
@@ -475,6 +481,9 @@ def build_monthly_mvp_v2_payload(
             ),
             "context": "historical-monthly-mvp-v2",
             "source": "historical-precomputed-snapshots",
+            **_resolve_historical_fallback_policy(
+                fallback_reason="rcon-historical-read-model-does-not-support-monthly-mvp-v2-yet",
+            ),
         },
     }
 
@@ -484,13 +493,6 @@ def build_historical_server_summary_snapshot_payload(
     server_slug: str | None = None,
 ) -> dict[str, object]:
     """Return one precomputed summary snapshot without recalculating aggregates."""
-    rcon_payload = _build_rcon_historical_unsupported_payload(
-        title="Snapshot historico de resumen por servidor",
-        context="historical-server-summary-snapshot",
-        server_key=server_slug,
-    )
-    if rcon_payload is not None:
-        return rcon_payload
     snapshot = _get_historical_snapshot_record(
         server_key=server_slug,
         snapshot_type=SNAPSHOT_TYPE_SERVER_SUMMARY,
@@ -506,6 +508,9 @@ def build_historical_server_summary_snapshot_payload(
             "source": "historical-precomputed-snapshots",
             "server_slug": server_slug,
             "found": snapshot is not None and isinstance(item, dict),
+            **_resolve_historical_fallback_policy(
+                fallback_reason="rcon-historical-read-model-does-not-support-historical-snapshots-yet",
+            ),
             **_build_historical_snapshot_metadata(snapshot),
             "item": item if isinstance(item, dict) else None,
         },
@@ -520,16 +525,6 @@ def build_leaderboard_snapshot_payload(
     timeframe: str = "weekly",
 ) -> dict[str, object]:
     """Return one precomputed leaderboard snapshot for the requested timeframe."""
-    rcon_payload = _build_rcon_historical_unsupported_payload(
-        title="Snapshot historico de leaderboard",
-        context="historical-leaderboard-snapshot",
-        server_key=server_id,
-        limit=limit,
-        metric=metric,
-        timeframe=timeframe,
-    )
-    if rcon_payload is not None:
-        return rcon_payload
     normalized_timeframe = timeframe.strip().lower() if isinstance(timeframe, str) else "weekly"
     if normalized_timeframe == "monthly":
         snapshot_type = SNAPSHOT_TYPE_MONTHLY_LEADERBOARD
@@ -591,6 +586,9 @@ def build_leaderboard_snapshot_payload(
             "sufficient_sample": payload.get("sufficient_sample") if isinstance(payload, dict) else None,
             "snapshot_limit": payload.get("limit") if isinstance(payload, dict) else None,
             "limit": limit,
+            **_resolve_historical_fallback_policy(
+                fallback_reason="rcon-historical-read-model-does-not-support-historical-snapshots-yet",
+            ),
             "items": sliced_items,
         },
     }
@@ -632,14 +630,6 @@ def build_recent_historical_matches_snapshot_payload(
     server_slug: str | None = None,
 ) -> dict[str, object]:
     """Return one precomputed recent-matches snapshot."""
-    rcon_payload = _build_rcon_historical_unsupported_payload(
-        title="Snapshot historico de actividad reciente por servidor",
-        context="historical-recent-matches-snapshot",
-        server_key=server_slug,
-        limit=limit,
-    )
-    if rcon_payload is not None:
-        return rcon_payload
     snapshot = _get_historical_snapshot_record(
         server_key=server_slug,
         snapshot_type=SNAPSHOT_TYPE_RECENT_MATCHES,
@@ -659,6 +649,9 @@ def build_recent_historical_matches_snapshot_payload(
             **_build_historical_snapshot_metadata(snapshot),
             "snapshot_limit": payload.get("limit") if isinstance(payload, dict) else None,
             "limit": limit,
+            **_resolve_historical_fallback_policy(
+                fallback_reason="rcon-historical-read-model-does-not-support-historical-snapshots-yet",
+            ),
             "items": sliced_items,
         },
     }
@@ -670,14 +663,6 @@ def build_monthly_mvp_snapshot_payload(
     server_id: str | None = None,
 ) -> dict[str, object]:
     """Return one precomputed monthly MVP snapshot."""
-    rcon_payload = _build_rcon_historical_unsupported_payload(
-        title="Snapshot top MVP mensual",
-        context="historical-monthly-mvp-snapshot",
-        server_key=server_id,
-        limit=limit,
-    )
-    if rcon_payload is not None:
-        return rcon_payload
     snapshot = _get_historical_snapshot_record(
         server_key=server_id,
         snapshot_type=SNAPSHOT_TYPE_MONTHLY_MVP,
@@ -723,6 +708,9 @@ def build_monthly_mvp_snapshot_payload(
             ),
             "snapshot_limit": payload.get("limit") if isinstance(payload, dict) else None,
             "limit": limit,
+            **_resolve_historical_fallback_policy(
+                fallback_reason="rcon-historical-read-model-does-not-support-historical-snapshots-yet",
+            ),
             "items": sliced_items,
         },
     }
@@ -734,14 +722,6 @@ def build_monthly_mvp_v2_snapshot_payload(
     server_id: str | None = None,
 ) -> dict[str, object]:
     """Return one precomputed monthly MVP V2 snapshot."""
-    rcon_payload = _build_rcon_historical_unsupported_payload(
-        title="Snapshot top MVP mensual V2",
-        context="historical-monthly-mvp-v2-snapshot",
-        server_key=server_id,
-        limit=limit,
-    )
-    if rcon_payload is not None:
-        return rcon_payload
     snapshot = _get_historical_snapshot_record(
         server_key=server_id,
         snapshot_type=SNAPSHOT_TYPE_MONTHLY_MVP_V2,
@@ -789,6 +769,9 @@ def build_monthly_mvp_v2_snapshot_payload(
             ),
             "snapshot_limit": payload.get("limit") if isinstance(payload, dict) else None,
             "limit": limit,
+            **_resolve_historical_fallback_policy(
+                fallback_reason="rcon-historical-read-model-does-not-support-historical-snapshots-yet",
+            ),
             "items": sliced_items,
         },
     }
@@ -801,15 +784,6 @@ def build_player_event_snapshot_payload(
     view: str = "most-killed",
 ) -> dict[str, object]:
     """Return one precomputed V2 player-event snapshot."""
-    rcon_payload = _build_rcon_historical_unsupported_payload(
-        title="Snapshot metricas V2 mensuales",
-        context="historical-player-events-snapshot",
-        server_key=server_id,
-        limit=limit,
-        metric=view,
-    )
-    if rcon_payload is not None:
-        return rcon_payload
     snapshot_type = _resolve_player_event_snapshot_type(view)
     snapshot = _get_historical_snapshot_record(
         server_key=server_id,
@@ -839,6 +813,9 @@ def build_player_event_snapshot_payload(
             "month_key": payload.get("month_key") if isinstance(payload, dict) else None,
             "snapshot_limit": payload.get("limit") if isinstance(payload, dict) else None,
             "limit": limit,
+            **_resolve_historical_fallback_policy(
+                fallback_reason="rcon-historical-read-model-does-not-support-historical-snapshots-yet",
+            ),
             "items": sliced_items,
         },
     }
@@ -850,28 +827,43 @@ def build_historical_server_summary_payload(
 ) -> dict[str, object]:
     """Return aggregated historical metrics per server."""
     if get_historical_data_source_kind() == "rcon":
-        data_source = get_historical_data_source()
-        if isinstance(data_source, RconHistoricalDataSource):
+        data_source = get_rcon_historical_read_model()
+        if data_source is not None:
             items = data_source.list_server_summaries(server_key=server_slug)
             capabilities = data_source.describe_capabilities()
-            return {
-                "status": "ok",
-                "data": {
-                    "title": (
-                        "Cobertura historica minima por RCON"
-                        if server_slug != ALL_SERVERS_SLUG
-                        else "Cobertura historica minima RCON agregada"
-                    ),
-                    "context": "historical-server-summary",
-                    "source": "rcon-historical-read-model",
-                    "historical_data_source": "rcon",
-                    "summary_basis": "prospective-rcon-samples",
-                    "server_slug": server_slug,
-                    "supported": True,
-                    "items": items,
-                    "capabilities": capabilities,
-                },
-            }
+            if items and any(
+                item.get("coverage", {}).get("status") != "empty"
+                for item in items
+            ):
+                return {
+                    "status": "ok",
+                    "data": {
+                        "title": (
+                            "Cobertura historica minima por RCON"
+                            if server_slug != ALL_SERVERS_SLUG
+                            else "Cobertura historica minima RCON agregada"
+                        ),
+                        "context": "historical-server-summary",
+                        "source": "rcon-historical-read-model",
+                        "historical_data_source": "rcon",
+                        "summary_basis": "prospective-rcon-samples",
+                        "server_slug": server_slug,
+                        "supported": True,
+                        **build_source_policy(
+                            primary_source=SOURCE_KIND_RCON,
+                            selected_source=SOURCE_KIND_RCON,
+                            source_attempts=[
+                                build_source_attempt(
+                                    source=SOURCE_KIND_RCON,
+                                    role="primary",
+                                    status="success",
+                                )
+                            ],
+                        ),
+                        "items": items,
+                        "capabilities": capabilities,
+                    },
+                }
     items = list_historical_server_summaries(server_slug=server_slug)
     return {
         "status": "ok",
@@ -886,6 +878,9 @@ def build_historical_server_summary_payload(
             "summary_basis": "persisted-import",
             "weekly_ranking_window_days": 7,
             "server_slug": server_slug,
+            **_resolve_historical_fallback_policy(
+                fallback_reason="rcon-historical-read-model-has-no-summary-coverage",
+            ),
             "items": items,
         },
     }
@@ -893,13 +888,6 @@ def build_historical_server_summary_payload(
 
 def build_historical_player_profile_payload(player_id: str) -> dict[str, object]:
     """Return aggregate historical metrics for one player identity."""
-    rcon_payload = _build_rcon_historical_unsupported_payload(
-        title="Perfil historico de jugador",
-        context="historical-player-profile",
-        server_key=player_id,
-    )
-    if rcon_payload is not None:
-        return rcon_payload
     profile = get_historical_player_profile(player_id)
     return {
         "status": "ok",
@@ -909,6 +897,9 @@ def build_historical_player_profile_payload(player_id: str) -> dict[str, object]
             "source": "historical-crcon-storage",
             "player_id": player_id,
             "found": profile is not None,
+            **_resolve_historical_fallback_policy(
+                fallback_reason="rcon-historical-read-model-does-not-support-player-profile-yet",
+            ),
             "profile": profile,
         },
     }
@@ -929,45 +920,6 @@ def _get_historical_snapshot_record(
         metric=metric,
         window=window,
     )
-
-
-def _build_rcon_historical_unsupported_payload(
-    *,
-    title: str,
-    context: str,
-    server_key: str | None = None,
-    limit: int | None = None,
-    metric: str | None = None,
-    timeframe: str | None = None,
-) -> dict[str, object] | None:
-    if get_historical_data_source_kind() != "rcon":
-        return None
-
-    data_source = get_historical_data_source()
-    if not isinstance(data_source, RconHistoricalDataSource):
-        return None
-
-    return {
-        "status": "ok",
-        "data": {
-            "title": title,
-            "context": context,
-            "source": "rcon-historical-read-model",
-            "historical_data_source": "rcon",
-            "supported": False,
-            "server_slug": server_key,
-            "limit": limit,
-            "metric": metric,
-            "timeframe": timeframe,
-            "items": [],
-            "item": None,
-            "profile": None,
-            "found": False,
-            "missing_reason": "rcon-minimal-read-model-does-not-support-this-endpoint-yet",
-            "supported_historical_source_for_full_contract": "public-scoreboard",
-            "capabilities": data_source.describe_capabilities(),
-        },
-    }
 
 
 def _build_historical_snapshot_metadata(snapshot: dict[str, object] | None) -> dict[str, object]:
@@ -1087,11 +1039,14 @@ def _enrich_server_item(
 ) -> dict[str, object]:
     enriched = dict(item)
     enriched["current_map"] = normalize_map_name(enriched.get("current_map"))
+    history_url = _resolve_community_history_url(enriched.get("external_server_id"))
+    enriched["community_history_url"] = history_url
+    enriched["community_history_available"] = bool(history_url)
     external_server_id = enriched.get("external_server_id")
     snapshot_origin = enriched.get("snapshot_origin")
     target = target_index.get(external_server_id)
 
-    if not target or snapshot_origin != "real-a2s":
+    if not target or snapshot_origin not in {"real-a2s", "real-rcon"}:
         enriched["host"] = None
         enriched["query_port"] = None
         enriched["game_port"] = None
@@ -1129,12 +1084,26 @@ def _should_refresh_snapshot(
     return snapshot_age_seconds > max_snapshot_age_seconds
 
 
-def _try_collect_real_time_snapshot() -> tuple[list[dict[str, object]], list[dict[str, object]]]:
+def _try_collect_real_time_snapshot() -> tuple[
+    list[dict[str, object]],
+    list[dict[str, object]],
+    dict[str, object],
+]:
     payload = get_live_data_source().collect_snapshots(persist=False)
     snapshots = payload.get("snapshots")
     items = _select_primary_snapshot_items(_enrich_server_items(list(snapshots or [])))
     errors = payload.get("errors")
-    return items, list(errors or [])
+    return (
+        items,
+        list(errors or []),
+        {
+            "primary_source": payload.get("primary_source"),
+            "selected_source": payload.get("selected_source"),
+            "fallback_used": bool(payload.get("fallback_used")),
+            "fallback_reason": payload.get("fallback_reason"),
+            "source_attempts": list(payload.get("source_attempts") or []),
+        },
+    )
 
 
 def _build_servers_response(
@@ -1147,6 +1116,7 @@ def _build_servers_response(
     refresh_attempted: bool,
     refresh_status: str,
     refresh_errors: list[dict[str, object]],
+    source_policy: dict[str, object],
 ) -> dict[str, object]:
     freshness = (
         "fresh"
@@ -1168,6 +1138,7 @@ def _build_servers_response(
             "refresh_attempted": refresh_attempted,
             "refresh_status": refresh_status,
             "refresh_errors": refresh_errors,
+            **source_policy,
             "items": items,
         },
     }
@@ -1191,3 +1162,100 @@ def _to_snapshot_age_minutes(snapshot_age_seconds: int | None) -> int | None:
         return None
 
     return snapshot_age_seconds // 60
+
+
+def _resolve_historical_fallback_policy(*, fallback_reason: str) -> dict[str, object]:
+    if get_historical_data_source_kind() != SOURCE_KIND_RCON:
+        return build_source_policy(
+            primary_source=SOURCE_KIND_PUBLIC_SCOREBOARD,
+            selected_source=SOURCE_KIND_PUBLIC_SCOREBOARD,
+            source_attempts=[
+                build_source_attempt(
+                    source=SOURCE_KIND_PUBLIC_SCOREBOARD,
+                    role="primary",
+                    status="success",
+                )
+            ],
+        )
+
+    return build_source_policy(
+        primary_source=SOURCE_KIND_RCON,
+        selected_source=SOURCE_KIND_PUBLIC_SCOREBOARD,
+        fallback_used=True,
+        fallback_reason=fallback_reason,
+        source_attempts=[
+            build_source_attempt(
+                source=SOURCE_KIND_RCON,
+                role="primary",
+                status="unsupported",
+                reason=fallback_reason,
+            ),
+            build_source_attempt(
+                source=SOURCE_KIND_PUBLIC_SCOREBOARD,
+                role="fallback",
+                status="success",
+            ),
+        ],
+    )
+
+
+def _infer_live_source_policy_from_items(
+    items: list[dict[str, object]],
+    *,
+    refresh_attempted: bool,
+    refresh_errors: list[dict[str, object]],
+) -> dict[str, object]:
+    selected_source = "persisted-snapshot"
+    fallback_used = False
+    fallback_reason = None
+    snapshot_origins = {
+        str(item.get("snapshot_origin") or "").strip()
+        for item in items
+        if item.get("snapshot_origin")
+    }
+    if "real-rcon" in snapshot_origins:
+        selected_source = SOURCE_KIND_RCON
+    elif "real-a2s" in snapshot_origins:
+        selected_source = LIVE_SOURCE_A2S
+        if get_live_data_source_kind() == SOURCE_KIND_RCON:
+            fallback_used = True
+            fallback_reason = "persisted-live-snapshot-came-from-a2s"
+
+    attempt_status = "success" if items else ("error" if refresh_attempted else "cached")
+    attempt_reason = None if items else "no-live-snapshot-items"
+    if refresh_errors and attempt_reason is None:
+        attempt_reason = "live-refresh-errors-present"
+
+    return build_source_policy(
+        primary_source=get_live_data_source_kind(),
+        selected_source=selected_source,
+        fallback_used=fallback_used,
+        fallback_reason=fallback_reason,
+        source_attempts=[
+            build_source_attempt(
+                source=selected_source,
+                role="served-response",
+                status=attempt_status,
+                reason=attempt_reason,
+            )
+        ],
+    )
+
+
+def _build_live_response_source(source_policy: dict[str, object]) -> str:
+    selected_source = str(source_policy.get("selected_source") or "")
+    if selected_source == SOURCE_KIND_RCON:
+        return "real-time-rcon-refresh"
+    if selected_source == LIVE_SOURCE_A2S:
+        return "real-time-a2s-fallback"
+    return "real-time-refresh"
+
+
+def _resolve_community_history_url(external_server_id: object) -> str | None:
+    normalized_server_id = str(external_server_id or "").strip()
+    if not normalized_server_id:
+        return None
+    for server in DEFAULT_HISTORICAL_SERVERS:
+        if server.slug == normalized_server_id:
+            return f"{server.scoreboard_base_url}/games"
+    return None
