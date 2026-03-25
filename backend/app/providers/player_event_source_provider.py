@@ -45,11 +45,12 @@ class PublicScoreboardPlayerEventSource:
             if actor is None:
                 continue
 
-            top_victim_name, top_victim_count = _extract_named_count(player_row.get("most_killed"))
-            top_weapon_name, _ = _extract_named_count(player_row.get("weapons"))
-            top_kill_type_name, _ = _extract_named_count(player_row.get("kills_by_type"))
-            victim = _find_identity_by_name(identity_index, top_victim_name)
-            if victim is not None and top_victim_count > 0:
+            top_kill_type_name = _extract_primary_name(player_row.get("kills_by_type"))
+
+            for victim_name, victim_count in _extract_named_counts(player_row.get("most_killed")):
+                victim = _find_identity_by_name(identity_index, victim_name)
+                if victim is None or victim_count <= 0:
+                    continue
                 events.append(
                     _build_event(
                         event_type="player_kill_summary",
@@ -58,20 +59,22 @@ class PublicScoreboardPlayerEventSource:
                         match_id=match_id,
                         source_kind=self.source_kind,
                         source_ref=source_ref,
-                        raw_event_ref=f"match:{match_id}:player:{actor.stable_player_key}:most-killed",
+                        raw_event_ref=(
+                            f"match:{match_id}:player:{actor.stable_player_key}:most-killed:{victim.stable_player_key}"
+                        ),
                         killer=actor,
                         victim=victim,
-                        weapon_name=top_weapon_name,
+                        weapon_name=None,
                         kill_category=top_kill_type_name,
                         is_teamkill=False,
-                        event_value=top_victim_count,
+                        event_value=victim_count,
                     )
                 )
 
-            top_killer_name, top_killer_count = _extract_named_count(player_row.get("death_by"))
-            death_weapon_name, _ = _extract_named_count(player_row.get("death_by_weapons"))
-            killer = _find_identity_by_name(identity_index, top_killer_name)
-            if killer is not None and top_killer_count > 0:
+            for killer_name, killer_count in _extract_named_counts(player_row.get("death_by")):
+                killer = _find_identity_by_name(identity_index, killer_name)
+                if killer is None or killer_count <= 0:
+                    continue
                 events.append(
                     _build_event(
                         event_type="player_death_summary",
@@ -80,13 +83,57 @@ class PublicScoreboardPlayerEventSource:
                         match_id=match_id,
                         source_kind=self.source_kind,
                         source_ref=source_ref,
-                        raw_event_ref=f"match:{match_id}:player:{actor.stable_player_key}:death-by",
+                        raw_event_ref=(
+                            f"match:{match_id}:player:{actor.stable_player_key}:death-by:{killer.stable_player_key}"
+                        ),
                         killer=killer,
                         victim=actor,
-                        weapon_name=death_weapon_name,
+                        weapon_name=None,
                         kill_category=None,
                         is_teamkill=False,
-                        event_value=top_killer_count,
+                        event_value=killer_count,
+                    )
+                )
+
+            for weapon_name, weapon_count in _extract_named_counts(player_row.get("weapons")):
+                events.append(
+                    _build_event(
+                        event_type="player_weapon_kill_summary",
+                        occurred_at=occurred_at,
+                        server_slug=server_slug,
+                        match_id=match_id,
+                        source_kind=self.source_kind,
+                        source_ref=source_ref,
+                        raw_event_ref=(
+                            f"match:{match_id}:player:{actor.stable_player_key}:weapons:{weapon_name}"
+                        ),
+                        killer=actor,
+                        victim=None,
+                        weapon_name=weapon_name,
+                        kill_category=top_kill_type_name,
+                        is_teamkill=False,
+                        event_value=weapon_count,
+                    )
+                )
+
+            for weapon_name, weapon_count in _extract_named_counts(player_row.get("death_by_weapons")):
+                events.append(
+                    _build_event(
+                        event_type="player_weapon_death_summary",
+                        occurred_at=occurred_at,
+                        server_slug=server_slug,
+                        match_id=match_id,
+                        source_kind=self.source_kind,
+                        source_ref=source_ref,
+                        raw_event_ref=(
+                            f"match:{match_id}:player:{actor.stable_player_key}:death-by-weapons:{weapon_name}"
+                        ),
+                        killer=None,
+                        victim=actor,
+                        weapon_name=weapon_name,
+                        kill_category=None,
+                        is_teamkill=False,
+                        event_value=weapon_count,
                     )
                 )
 
@@ -103,7 +150,7 @@ class PublicScoreboardPlayerEventSource:
                         raw_event_ref=f"match:{match_id}:player:{actor.stable_player_key}:teamkills",
                         killer=actor,
                         victim=None,
-                        weapon_name=top_weapon_name,
+                        weapon_name=None,
                         kill_category=top_kill_type_name,
                         is_teamkill=True,
                         event_value=teamkills,
@@ -117,15 +164,16 @@ class PublicScoreboardPlayerEventSource:
             "source_kind": self.source_kind,
             "supports_raw_kill_events": False,
             "captures": [
-                "Top victim per player from most_killed",
-                "Top killer per player from death_by",
-                "Top weapon hints from weapons and death_by_weapons",
+                "Encounter summaries per player from most_killed",
+                "Death summaries per player from death_by",
+                "Weapon kill summaries per player from weapons",
+                "Weapon death summaries per player from death_by_weapons",
                 "Aggregated teamkills per player and match",
             ],
             "limitations": [
                 "The current source is match-summary data, not a true per-kill event feed.",
                 "occurred_at uses the match end/start timestamp, not the exact kill timestamp.",
-                "Only the strongest encounter and weapon signals available in the CRCON detail payload are normalized.",
+                "Only summary counters exposed by the CRCON detail payload are normalized.",
                 "Full killer->victim ledgers, complete weapon breakdowns, and exact per-event teamkills still require a dedicated raw event/log source.",
             ],
         }
@@ -247,36 +295,75 @@ def _pick_match_timestamp(match_payload: Mapping[str, object]) -> str | None:
     return None
 
 
-def _extract_named_count(value: object) -> tuple[str | None, int]:
+def _extract_primary_name(value: object) -> str | None:
+    named_counts = _extract_named_counts(value)
+    if not named_counts:
+        return None
+    return named_counts[0][0]
+
+
+def _extract_named_counts(value: object) -> list[tuple[str, int]]:
+    aggregated: dict[str, tuple[str, int]] = {}
+    for name, count in _iter_named_counts(value):
+        normalized_name = _normalize_name(name)
+        existing = aggregated.get(normalized_name)
+        if existing is None:
+            aggregated[normalized_name] = (name, count)
+            continue
+        aggregated[normalized_name] = (existing[0], existing[1] + count)
+    return sorted(
+        aggregated.values(),
+        key=lambda item: (-item[1], item[0].casefold()),
+    )
+
+
+def _iter_named_counts(value: object) -> list[tuple[str, int]]:
     if isinstance(value, str):
-        return _stringify(value), 1
+        name = _stringify(value)
+        return [(name, 1)] if name else []
     if isinstance(value, Mapping):
-        nested_name = None
-        nested_player = value.get("player")
-        if isinstance(nested_player, Mapping):
-            nested_name = _stringify(nested_player.get("name")) or _stringify(nested_player.get("player"))
-        name = (
-            _stringify(value.get("name"))
-            or _stringify(value.get("player"))
-            or _stringify(value.get("victim"))
-            or _stringify(value.get("killer"))
-            or nested_name
-        )
-        count = (
-            _coerce_int(value.get("count"))
-            or _coerce_int(value.get("kills"))
-            or _coerce_int(value.get("deaths"))
-            or _coerce_int(value.get("value"))
-            or _coerce_int(value.get("total"))
-            or 1
-        )
-        return name, max(1, count)
+        named_count = _extract_named_count_mapping(value)
+        if named_count is not None:
+            return [named_count]
+
+        items: list[tuple[str, int]] = []
+        for raw_name, raw_count in value.items():
+            name = _stringify(raw_name)
+            count = _coerce_int(raw_count)
+            if name and count and count > 0:
+                items.append((name, count))
+        return items
     if isinstance(value, list):
+        items: list[tuple[str, int]] = []
         for item in value:
-            name, count = _extract_named_count(item)
-            if name:
-                return name, count
-    return None, 0
+            items.extend(_iter_named_counts(item))
+        return items
+    return []
+
+
+def _extract_named_count_mapping(value: Mapping[str, object]) -> tuple[str, int] | None:
+    nested_name = None
+    nested_player = value.get("player")
+    if isinstance(nested_player, Mapping):
+        nested_name = _stringify(nested_player.get("name")) or _stringify(nested_player.get("player"))
+    name = (
+        _stringify(value.get("name"))
+        or _stringify(value.get("player"))
+        or _stringify(value.get("victim"))
+        or _stringify(value.get("killer"))
+        or nested_name
+    )
+    if not name:
+        return None
+    count = (
+        _coerce_int(value.get("count"))
+        or _coerce_int(value.get("kills"))
+        or _coerce_int(value.get("deaths"))
+        or _coerce_int(value.get("value"))
+        or _coerce_int(value.get("total"))
+        or 1
+    )
+    return name, max(1, count)
 
 
 def _extract_steam_id(value: object) -> str | None:

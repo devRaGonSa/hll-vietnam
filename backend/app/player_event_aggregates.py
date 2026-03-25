@@ -127,7 +127,7 @@ def list_weapon_kills(
     """Return partial weapon summaries derived from top kill events."""
     resolved_path = initialize_player_event_storage(db_path=db_path)
     where_sql, params = _build_common_where(
-        event_type="player_kill_summary",
+        event_type="player_weapon_kill_summary",
         server_slug=server_slug,
         month=month,
         external_match_id=external_match_id,
