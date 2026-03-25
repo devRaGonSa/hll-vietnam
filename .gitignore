@@ -17,3 +17,6 @@ backend/data/*.sqlite3
 !backend/data/.gitkeep
 backend/data/snapshots/**
 !backend/data/snapshots/.gitkeep
+.env
+backend/data/*.sqlite3-shm
+backend/data/*.sqlite3-wal
