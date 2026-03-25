@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Mapping
 
 from .config import (
+    get_historical_refresh_overlap_hours,
     get_historical_weekly_fallback_max_weekday,
     get_historical_weekly_fallback_min_matches,
     get_storage_path,
@@ -40,7 +41,6 @@ DEFAULT_HISTORICAL_SERVERS = (
 ALL_SERVERS_SLUG = "all-servers"
 ALL_SERVERS_DISPLAY_NAME = "Todos"
 DEFAULT_WEEKLY_WINDOW_DAYS = 7
-DEFAULT_REFRESH_OVERLAP_HOURS = 12
 SUPPORTED_WEEKLY_LEADERBOARD_METRICS = frozenset(
     {
         "kills",
@@ -707,10 +707,17 @@ def upsert_historical_match(
 def get_refresh_cutoff_for_server(
     server_slug: str,
     *,
-    overlap_hours: int = DEFAULT_REFRESH_OVERLAP_HOURS,
+    overlap_hours: int | None = None,
     db_path: Path | None = None,
 ) -> str | None:
     """Return the timestamp used to stop incremental scans once older pages appear."""
+    resolved_overlap_hours = (
+        get_historical_refresh_overlap_hours()
+        if overlap_hours is None
+        else overlap_hours
+    )
+    if resolved_overlap_hours < 0:
+        raise ValueError("overlap_hours must be zero or positive.")
     resolved_path = initialize_historical_storage(db_path=db_path)
     with _connect(resolved_path) as connection:
         server_row = _resolve_historical_server(connection, server_slug)
@@ -726,7 +733,7 @@ def get_refresh_cutoff_for_server(
     if not latest_seen_at:
         return None
 
-    cutoff = _parse_timestamp(latest_seen_at) - timedelta(hours=overlap_hours)
+    cutoff = _parse_timestamp(latest_seen_at) - timedelta(hours=resolved_overlap_hours)
     return cutoff.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
 
 

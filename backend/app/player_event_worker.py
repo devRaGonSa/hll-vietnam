@@ -13,6 +13,7 @@ from .config import (
     get_historical_crcon_page_size,
     get_player_event_refresh_interval_seconds,
     get_player_event_refresh_max_retries,
+    get_player_event_refresh_overlap_hours,
     get_player_event_refresh_retry_delay_seconds,
 )
 from .data_sources import get_historical_data_source
@@ -51,6 +52,7 @@ def run_player_event_refresh(
     page_size: int | None = None,
     start_page: int | None = None,
     detail_workers: int | None = None,
+    overlap_hours: int | None = None,
 ) -> dict[str, object]:
     """Refresh recent player event summaries from the configured historical source."""
     initialize_player_event_storage()
@@ -58,6 +60,13 @@ def run_player_event_refresh(
     event_source = get_player_event_source()
     resolved_page_size = page_size or get_historical_crcon_page_size()
     resolved_detail_workers = detail_workers or get_historical_crcon_detail_workers()
+    resolved_overlap_hours = (
+        get_player_event_refresh_overlap_hours()
+        if overlap_hours is None
+        else overlap_hours
+    )
+    if resolved_overlap_hours < 0:
+        raise ValueError("--overlap-hours must be zero or positive.")
     selected_servers = _select_servers(server_slug)
     processed_servers: list[dict[str, object]] = []
     active_runs: dict[str, int] = {}
@@ -70,7 +79,10 @@ def run_player_event_refresh(
                 target_server_slug=current_server_slug,
             )
             active_runs[current_server_slug] = run_id
-            cutoff = get_player_event_refresh_cutoff_for_server(current_server_slug)
+            cutoff = get_player_event_refresh_cutoff_for_server(
+                current_server_slug,
+                overlap_hours=resolved_overlap_hours,
+            )
             mark_player_event_progress_started(
                 server_slug=current_server_slug,
                 mode="refresh",
@@ -138,6 +150,7 @@ def run_player_event_refresh(
         "event_adapter": event_source.source_kind,
         "page_size": resolved_page_size,
         "detail_workers": resolved_detail_workers,
+        "overlap_hours": resolved_overlap_hours,
         "scope": event_source.describe_scope(),
         "servers": processed_servers,
     }
@@ -395,6 +408,11 @@ def build_arg_parser() -> argparse.ArgumentParser:
         help="parallel worker count for per-match detail requests",
     )
     parser.add_argument(
+        "--overlap-hours",
+        type=int,
+        help="override the incremental overlap window in hours",
+    )
+    parser.add_argument(
         "--interval",
         type=int,
         default=get_player_event_refresh_interval_seconds(),
@@ -432,6 +450,7 @@ def main(argv: Iterable[str] | None = None) -> int:
             page_size=args.page_size,
             start_page=args.start_page,
             detail_workers=args.detail_workers,
+            overlap_hours=args.overlap_hours,
         )
         print(json.dumps(result, indent=2))
         return 0

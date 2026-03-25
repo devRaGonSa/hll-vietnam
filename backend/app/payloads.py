@@ -9,7 +9,7 @@ from .config import (
     get_live_data_source_kind,
     get_refresh_interval_seconds,
 )
-from .data_sources import get_live_data_source
+from .data_sources import RconHistoricalDataSource, get_historical_data_source, get_live_data_source
 from .historical_snapshot_storage import get_historical_snapshot
 from .historical_snapshots import (
     DEFAULT_MONTHLY_SNAPSHOT_WINDOW,
@@ -219,6 +219,14 @@ def build_weekly_top_kills_payload(
     server_id: str | None = None,
 ) -> dict[str, object]:
     """Return weekly top kills grouped by real community server."""
+    rcon_payload = _build_rcon_historical_unsupported_payload(
+        title="Top kills semanales por servidor",
+        context="historical-top-kills",
+        server_key=server_id,
+        limit=limit,
+    )
+    if rcon_payload is not None:
+        return rcon_payload
     result = list_weekly_top_kills(limit=limit, server_id=server_id)
     return {
         "status": "ok",
@@ -244,6 +252,16 @@ def build_historical_leaderboard_payload(
     timeframe: str = "weekly",
 ) -> dict[str, object]:
     """Return one historical leaderboard for the requested timeframe and metric."""
+    rcon_payload = _build_rcon_historical_unsupported_payload(
+        title="Ranking historico",
+        context="historical-leaderboard",
+        server_key=server_id,
+        limit=limit,
+        metric=metric,
+        timeframe=timeframe,
+    )
+    if rcon_payload is not None:
+        return rcon_payload
     normalized_timeframe = timeframe.strip().lower() if isinstance(timeframe, str) else "weekly"
     if normalized_timeframe == "monthly":
         result = list_monthly_leaderboard(limit=limit, server_id=server_id, metric=metric)
@@ -324,6 +342,26 @@ def build_recent_historical_matches_payload(
     server_slug: str | None = None,
 ) -> dict[str, object]:
     """Return recent historical matches from persisted CRCON data."""
+    if get_historical_data_source_kind() == "rcon":
+        data_source = get_historical_data_source()
+        if isinstance(data_source, RconHistoricalDataSource):
+            items = data_source.list_recent_activity(server_key=server_slug, limit=limit)
+            capabilities = data_source.describe_capabilities()
+            return {
+                "status": "ok",
+                "data": {
+                    "title": "Actividad reciente capturada por RCON",
+                    "context": "historical-recent-matches",
+                    "source": "rcon-historical-read-model",
+                    "historical_data_source": "rcon",
+                    "supported": True,
+                    "coverage_basis": "prospective-rcon-samples",
+                    "limit": limit,
+                    "server_slug": server_slug,
+                    "items": items,
+                    "capabilities": capabilities,
+                },
+            }
     items = list_recent_historical_matches(limit=limit, server_slug=server_slug)
     return {
         "status": "ok",
@@ -344,6 +382,14 @@ def build_monthly_mvp_payload(
     server_id: str | None = None,
 ) -> dict[str, object]:
     """Return the precomputed monthly MVP payload through the stable API surface."""
+    rcon_payload = _build_rcon_historical_unsupported_payload(
+        title="Top MVP mensual",
+        context="historical-monthly-mvp",
+        server_key=server_id,
+        limit=limit,
+    )
+    if rcon_payload is not None:
+        return rcon_payload
     snapshot_payload = build_monthly_mvp_snapshot_payload(
         limit=limit,
         server_id=server_id,
@@ -370,6 +416,15 @@ def build_player_event_payload(
     view: str = "most-killed",
 ) -> dict[str, object]:
     """Return one V2 player-event payload through the stable API surface."""
+    rcon_payload = _build_rcon_historical_unsupported_payload(
+        title="Metricas V2 mensuales",
+        context="historical-player-events",
+        server_key=server_id,
+        limit=limit,
+        metric=view,
+    )
+    if rcon_payload is not None:
+        return rcon_payload
     snapshot_payload = build_player_event_snapshot_payload(
         limit=limit,
         server_id=server_id,
@@ -397,6 +452,14 @@ def build_monthly_mvp_v2_payload(
     server_id: str | None = None,
 ) -> dict[str, object]:
     """Return the precomputed monthly MVP V2 payload through the stable API surface."""
+    rcon_payload = _build_rcon_historical_unsupported_payload(
+        title="Top MVP mensual V2",
+        context="historical-monthly-mvp-v2",
+        server_key=server_id,
+        limit=limit,
+    )
+    if rcon_payload is not None:
+        return rcon_payload
     snapshot_payload = build_monthly_mvp_v2_snapshot_payload(
         limit=limit,
         server_id=server_id,
@@ -421,6 +484,13 @@ def build_historical_server_summary_snapshot_payload(
     server_slug: str | None = None,
 ) -> dict[str, object]:
     """Return one precomputed summary snapshot without recalculating aggregates."""
+    rcon_payload = _build_rcon_historical_unsupported_payload(
+        title="Snapshot historico de resumen por servidor",
+        context="historical-server-summary-snapshot",
+        server_key=server_slug,
+    )
+    if rcon_payload is not None:
+        return rcon_payload
     snapshot = _get_historical_snapshot_record(
         server_key=server_slug,
         snapshot_type=SNAPSHOT_TYPE_SERVER_SUMMARY,
@@ -450,6 +520,16 @@ def build_leaderboard_snapshot_payload(
     timeframe: str = "weekly",
 ) -> dict[str, object]:
     """Return one precomputed leaderboard snapshot for the requested timeframe."""
+    rcon_payload = _build_rcon_historical_unsupported_payload(
+        title="Snapshot historico de leaderboard",
+        context="historical-leaderboard-snapshot",
+        server_key=server_id,
+        limit=limit,
+        metric=metric,
+        timeframe=timeframe,
+    )
+    if rcon_payload is not None:
+        return rcon_payload
     normalized_timeframe = timeframe.strip().lower() if isinstance(timeframe, str) else "weekly"
     if normalized_timeframe == "monthly":
         snapshot_type = SNAPSHOT_TYPE_MONTHLY_LEADERBOARD
@@ -552,6 +632,14 @@ def build_recent_historical_matches_snapshot_payload(
     server_slug: str | None = None,
 ) -> dict[str, object]:
     """Return one precomputed recent-matches snapshot."""
+    rcon_payload = _build_rcon_historical_unsupported_payload(
+        title="Snapshot historico de actividad reciente por servidor",
+        context="historical-recent-matches-snapshot",
+        server_key=server_slug,
+        limit=limit,
+    )
+    if rcon_payload is not None:
+        return rcon_payload
     snapshot = _get_historical_snapshot_record(
         server_key=server_slug,
         snapshot_type=SNAPSHOT_TYPE_RECENT_MATCHES,
@@ -582,6 +670,14 @@ def build_monthly_mvp_snapshot_payload(
     server_id: str | None = None,
 ) -> dict[str, object]:
     """Return one precomputed monthly MVP snapshot."""
+    rcon_payload = _build_rcon_historical_unsupported_payload(
+        title="Snapshot top MVP mensual",
+        context="historical-monthly-mvp-snapshot",
+        server_key=server_id,
+        limit=limit,
+    )
+    if rcon_payload is not None:
+        return rcon_payload
     snapshot = _get_historical_snapshot_record(
         server_key=server_id,
         snapshot_type=SNAPSHOT_TYPE_MONTHLY_MVP,
@@ -638,6 +734,14 @@ def build_monthly_mvp_v2_snapshot_payload(
     server_id: str | None = None,
 ) -> dict[str, object]:
     """Return one precomputed monthly MVP V2 snapshot."""
+    rcon_payload = _build_rcon_historical_unsupported_payload(
+        title="Snapshot top MVP mensual V2",
+        context="historical-monthly-mvp-v2-snapshot",
+        server_key=server_id,
+        limit=limit,
+    )
+    if rcon_payload is not None:
+        return rcon_payload
     snapshot = _get_historical_snapshot_record(
         server_key=server_id,
         snapshot_type=SNAPSHOT_TYPE_MONTHLY_MVP_V2,
@@ -697,6 +801,15 @@ def build_player_event_snapshot_payload(
     view: str = "most-killed",
 ) -> dict[str, object]:
     """Return one precomputed V2 player-event snapshot."""
+    rcon_payload = _build_rcon_historical_unsupported_payload(
+        title="Snapshot metricas V2 mensuales",
+        context="historical-player-events-snapshot",
+        server_key=server_id,
+        limit=limit,
+        metric=view,
+    )
+    if rcon_payload is not None:
+        return rcon_payload
     snapshot_type = _resolve_player_event_snapshot_type(view)
     snapshot = _get_historical_snapshot_record(
         server_key=server_id,
@@ -736,6 +849,29 @@ def build_historical_server_summary_payload(
     server_slug: str | None = None,
 ) -> dict[str, object]:
     """Return aggregated historical metrics per server."""
+    if get_historical_data_source_kind() == "rcon":
+        data_source = get_historical_data_source()
+        if isinstance(data_source, RconHistoricalDataSource):
+            items = data_source.list_server_summaries(server_key=server_slug)
+            capabilities = data_source.describe_capabilities()
+            return {
+                "status": "ok",
+                "data": {
+                    "title": (
+                        "Cobertura historica minima por RCON"
+                        if server_slug != ALL_SERVERS_SLUG
+                        else "Cobertura historica minima RCON agregada"
+                    ),
+                    "context": "historical-server-summary",
+                    "source": "rcon-historical-read-model",
+                    "historical_data_source": "rcon",
+                    "summary_basis": "prospective-rcon-samples",
+                    "server_slug": server_slug,
+                    "supported": True,
+                    "items": items,
+                    "capabilities": capabilities,
+                },
+            }
     items = list_historical_server_summaries(server_slug=server_slug)
     return {
         "status": "ok",
@@ -757,6 +893,13 @@ def build_historical_server_summary_payload(
 
 def build_historical_player_profile_payload(player_id: str) -> dict[str, object]:
     """Return aggregate historical metrics for one player identity."""
+    rcon_payload = _build_rcon_historical_unsupported_payload(
+        title="Perfil historico de jugador",
+        context="historical-player-profile",
+        server_key=player_id,
+    )
+    if rcon_payload is not None:
+        return rcon_payload
     profile = get_historical_player_profile(player_id)
     return {
         "status": "ok",
@@ -786,6 +929,45 @@ def _get_historical_snapshot_record(
         metric=metric,
         window=window,
     )
+
+
+def _build_rcon_historical_unsupported_payload(
+    *,
+    title: str,
+    context: str,
+    server_key: str | None = None,
+    limit: int | None = None,
+    metric: str | None = None,
+    timeframe: str | None = None,
+) -> dict[str, object] | None:
+    if get_historical_data_source_kind() != "rcon":
+        return None
+
+    data_source = get_historical_data_source()
+    if not isinstance(data_source, RconHistoricalDataSource):
+        return None
+
+    return {
+        "status": "ok",
+        "data": {
+            "title": title,
+            "context": context,
+            "source": "rcon-historical-read-model",
+            "historical_data_source": "rcon",
+            "supported": False,
+            "server_slug": server_key,
+            "limit": limit,
+            "metric": metric,
+            "timeframe": timeframe,
+            "items": [],
+            "item": None,
+            "profile": None,
+            "found": False,
+            "missing_reason": "rcon-minimal-read-model-does-not-support-this-endpoint-yet",
+            "supported_historical_source_for_full_contract": "public-scoreboard",
+            "capabilities": data_source.describe_capabilities(),
+        },
+    }
 
 
 def _build_historical_snapshot_metadata(snapshot: dict[str, object] | None) -> dict[str, object]:

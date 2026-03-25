@@ -19,6 +19,7 @@ DEFAULT_HISTORICAL_CRCON_DETAIL_WORKERS = 8
 DEFAULT_HISTORICAL_CRCON_REQUEST_RETRIES = 3
 DEFAULT_HISTORICAL_CRCON_RETRY_DELAY_SECONDS = 0.5
 DEFAULT_HISTORICAL_REFRESH_INTERVAL_SECONDS = 1800
+DEFAULT_HISTORICAL_REFRESH_OVERLAP_HOURS = 12
 DEFAULT_HISTORICAL_SNAPSHOT_REFRESH_INTERVAL_SECONDS = 900
 DEFAULT_HISTORICAL_REFRESH_MAX_RETRIES = 2
 DEFAULT_HISTORICAL_REFRESH_RETRY_DELAY_SECONDS = 30
@@ -26,8 +27,12 @@ DEFAULT_HISTORICAL_FULL_SNAPSHOT_EVERY_RUNS = 4
 DEFAULT_HISTORICAL_WEEKLY_FALLBACK_MIN_MATCHES = 3
 DEFAULT_HISTORICAL_WEEKLY_FALLBACK_MAX_WEEKDAY = 2
 DEFAULT_PLAYER_EVENT_REFRESH_INTERVAL_SECONDS = 1800
+DEFAULT_PLAYER_EVENT_REFRESH_OVERLAP_HOURS = 12
 DEFAULT_PLAYER_EVENT_REFRESH_MAX_RETRIES = 2
 DEFAULT_PLAYER_EVENT_REFRESH_RETRY_DELAY_SECONDS = 30
+DEFAULT_RCON_HISTORICAL_CAPTURE_INTERVAL_SECONDS = 120
+DEFAULT_RCON_HISTORICAL_CAPTURE_MAX_RETRIES = 2
+DEFAULT_RCON_HISTORICAL_CAPTURE_RETRY_DELAY_SECONDS = 15
 DEFAULT_ALLOWED_ORIGINS = (
     "null",
     "http://127.0.0.1:5500",
@@ -172,6 +177,19 @@ def get_historical_refresh_interval_seconds() -> int:
     return interval_seconds
 
 
+def get_historical_refresh_overlap_hours() -> int:
+    """Return the overlap window used by incremental historical refreshes."""
+    configured_value = os.getenv(
+        "HLL_HISTORICAL_REFRESH_OVERLAP_HOURS",
+        str(DEFAULT_HISTORICAL_REFRESH_OVERLAP_HOURS),
+    )
+    overlap_hours = int(configured_value)
+    if overlap_hours < 0:
+        raise ValueError("HLL_HISTORICAL_REFRESH_OVERLAP_HOURS must be zero or positive.")
+
+    return overlap_hours
+
+
 def get_live_data_source_kind() -> str:
     """Return the live provider kind selected for the current environment."""
     source_kind = os.getenv("HLL_BACKEND_LIVE_DATA_SOURCE", DEFAULT_LIVE_DATA_SOURCE).strip()
@@ -284,6 +302,18 @@ def get_player_event_refresh_interval_seconds() -> int:
     return interval_seconds
 
 
+def get_player_event_refresh_overlap_hours() -> int:
+    """Return the overlap window used by player event refresh runs."""
+    configured_value = os.getenv(
+        "HLL_PLAYER_EVENT_REFRESH_OVERLAP_HOURS",
+        str(DEFAULT_PLAYER_EVENT_REFRESH_OVERLAP_HOURS),
+    )
+    overlap_hours = int(configured_value)
+    if overlap_hours < 0:
+        raise ValueError("HLL_PLAYER_EVENT_REFRESH_OVERLAP_HOURS must be zero or positive.")
+    return overlap_hours
+
+
 def get_player_event_refresh_max_retries() -> int:
     """Return the retry count used by the player event refresh loop."""
     configured_value = os.getenv(
@@ -306,6 +336,44 @@ def get_player_event_refresh_retry_delay_seconds() -> int:
     if retry_delay_seconds < 0:
         raise ValueError(
             "HLL_PLAYER_EVENT_REFRESH_RETRY_DELAY_SECONDS must be zero or positive."
+        )
+    return retry_delay_seconds
+
+
+def get_rcon_historical_capture_interval_seconds() -> int:
+    """Return the default interval used by the prospective RCON capture loop."""
+    configured_value = os.getenv(
+        "HLL_RCON_HISTORICAL_CAPTURE_INTERVAL_SECONDS",
+        str(DEFAULT_RCON_HISTORICAL_CAPTURE_INTERVAL_SECONDS),
+    )
+    interval_seconds = int(configured_value)
+    if interval_seconds <= 0:
+        raise ValueError("HLL_RCON_HISTORICAL_CAPTURE_INTERVAL_SECONDS must be positive.")
+    return interval_seconds
+
+
+def get_rcon_historical_capture_max_retries() -> int:
+    """Return the retry count used by the prospective RCON capture loop."""
+    configured_value = os.getenv(
+        "HLL_RCON_HISTORICAL_CAPTURE_MAX_RETRIES",
+        str(DEFAULT_RCON_HISTORICAL_CAPTURE_MAX_RETRIES),
+    )
+    max_retries = int(configured_value)
+    if max_retries < 0:
+        raise ValueError("HLL_RCON_HISTORICAL_CAPTURE_MAX_RETRIES must be zero or positive.")
+    return max_retries
+
+
+def get_rcon_historical_capture_retry_delay_seconds() -> int:
+    """Return the wait time between failed prospective RCON capture attempts."""
+    configured_value = os.getenv(
+        "HLL_RCON_HISTORICAL_CAPTURE_RETRY_DELAY_SECONDS",
+        str(DEFAULT_RCON_HISTORICAL_CAPTURE_RETRY_DELAY_SECONDS),
+    )
+    retry_delay_seconds = int(configured_value)
+    if retry_delay_seconds < 0:
+        raise ValueError(
+            "HLL_RCON_HISTORICAL_CAPTURE_RETRY_DELAY_SECONDS must be zero or positive."
         )
     return retry_delay_seconds
 

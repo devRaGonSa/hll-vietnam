@@ -68,12 +68,16 @@ Variables opcionales:
 - `HLL_BACKEND_HISTORICAL_DATA_SOURCE`
 - `HLL_BACKEND_RCON_TIMEOUT_SECONDS`
 - `HLL_BACKEND_RCON_TARGETS`
+- `HLL_RCON_HISTORICAL_CAPTURE_INTERVAL_SECONDS`
+- `HLL_RCON_HISTORICAL_CAPTURE_MAX_RETRIES`
+- `HLL_RCON_HISTORICAL_CAPTURE_RETRY_DELAY_SECONDS`
 - `HLL_HISTORICAL_CRCON_PAGE_SIZE`
 - `HLL_HISTORICAL_CRCON_TIMEOUT_SECONDS`
 - `HLL_HISTORICAL_CRCON_DETAIL_WORKERS`
 - `HLL_HISTORICAL_CRCON_REQUEST_RETRIES`
 - `HLL_HISTORICAL_CRCON_RETRY_DELAY_SECONDS`
 - `HLL_HISTORICAL_REFRESH_INTERVAL_SECONDS`
+- `HLL_HISTORICAL_REFRESH_OVERLAP_HOURS`
 - `HLL_HISTORICAL_SNAPSHOT_REFRESH_INTERVAL_SECONDS`
 - `HLL_HISTORICAL_FULL_SNAPSHOT_EVERY_RUNS`
 - `HLL_HISTORICAL_REFRESH_MAX_RETRIES`
@@ -96,6 +100,7 @@ Variables especialmente relevantes para Docker y Compose:
 - `HLL_HISTORICAL_CRCON_DETAIL_WORKERS`
 - `HLL_HISTORICAL_CRCON_REQUEST_RETRIES`
 - `HLL_HISTORICAL_CRCON_RETRY_DELAY_SECONDS`
+- `HLL_HISTORICAL_REFRESH_OVERLAP_HOURS`
 - `HLL_HISTORICAL_SNAPSHOT_REFRESH_INTERVAL_SECONDS`
 - `HLL_HISTORICAL_FULL_SNAPSHOT_EVERY_RUNS`
 - `HLL_HISTORICAL_REFRESH_MAX_RETRIES`
@@ -285,10 +290,24 @@ Limitacion actual de `rcon`:
   `public-scoreboard`, porque la repo todavia no incluye una canalizacion
   persistente de eventos o logs RCON para reconstruir partidas cerradas
 
+Estado real de "historico por RCON" en esta repo:
+
+- no existe backfill retroactivo por RCON con el cliente actual
+- la viabilidad documentada hoy es solo para captura prospectiva separada
+- `public-scoreboard` sigue siendo la fuente historica principal
+- el diseno tecnico de esa linea prospectiva queda en
+  `docs/rcon-historical-ingestion-design.md`
+
 Variables especificas de RCON live:
 
 - `HLL_BACKEND_RCON_TIMEOUT_SECONDS`
 - `HLL_BACKEND_RCON_TARGETS`
+
+Variables especificas de captura historica prospectiva RCON:
+
+- `HLL_RCON_HISTORICAL_CAPTURE_INTERVAL_SECONDS`
+- `HLL_RCON_HISTORICAL_CAPTURE_MAX_RETRIES`
+- `HLL_RCON_HISTORICAL_CAPTURE_RETRY_DELAY_SECONDS`
 
 `HLL_BACKEND_RCON_TARGETS` acepta un array JSON con:
 
@@ -338,6 +357,80 @@ Invoke-WebRequest http://127.0.0.1:8000/health | Select-Object -Expand Content
 
 La respuesta incluye `live_data_source` y `historical_data_source`, util para
 confirmar si la instancia esta usando `a2s` o `rcon` para live.
+
+Captura historica prospectiva por RCON:
+
+- se ejecuta fuera del request path HTTP
+- persiste muestras live hacia delante en tablas `rcon_historical_*`
+- no sustituye todavia el historico competitivo basado en `public-scoreboard`
+- no promete backfill retroactivo de matches ya perdidos
+
+Comandos manuales desde `backend/`:
+
+```powershell
+python -m app.rcon_historical_worker capture
+python -m app.rcon_historical_worker capture --target comunidad-hispana-01
+python -m app.rcon_historical_worker loop --interval 120
+```
+
+Runbook minimo:
+
+- una pasada manual sobre todos los targets RCON configurados:
+
+  ```powershell
+  python -m app.rcon_historical_worker capture
+  ```
+
+- una validacion acotada sobre un target concreto:
+
+  ```powershell
+  python -m app.rcon_historical_worker capture --target comunidad-hispana-01
+  ```
+
+- un worker local en bucle:
+
+  ```powershell
+  python -m app.rcon_historical_worker loop --interval 120 --max-runs 1
+  ```
+
+La salida del worker incluye:
+
+- `target_scope`
+- `captured_at`
+- `targets`
+- `errors`
+- `storage_status`
+
+La persistencia queda separada del historico `historical_*` actual y usa:
+
+- `rcon_historical_targets`
+- `rcon_historical_capture_runs`
+- `rcon_historical_samples`
+- `rcon_historical_checkpoints`
+
+Lectura historica minima cuando `HLL_BACKEND_HISTORICAL_DATA_SOURCE=rcon`:
+
+- endpoints soportados hoy:
+  - `GET /api/historical/server-summary`
+  - `GET /api/historical/recent-matches`
+- lo que devuelven:
+  - cobertura por target RCON configurado
+  - frescura del ultimo capture exitoso
+  - actividad reciente persistida
+- endpoints que siguen dependiendo de `public-scoreboard` para el contrato
+  completo:
+  - `GET /api/historical/weekly-top-kills`
+  - `GET /api/historical/weekly-leaderboard`
+  - `GET /api/historical/leaderboard`
+  - `GET /api/historical/monthly-mvp`
+  - `GET /api/historical/monthly-mvp-v2`
+  - `GET /api/historical/player-events`
+  - `GET /api/historical/player-profile`
+  - `GET /api/historical/snapshots/*`
+
+Cuando esos endpoints se consultan con `historical_data_source=rcon`, el backend
+devuelve un payload coherente con `supported: false` y deja claro que esa parte
+del contrato todavia requiere `public-scoreboard`.
 
 ## Criterio de estructura
 
@@ -886,6 +979,7 @@ Flags utiles:
 
 - `--server comunidad-hispana-01` para limitar a un servidor
 - `--server comunidad-hispana-03` para validar solo el tercer scoreboard historico
+- `--overlap-hours 48` para releer una ventana reciente mayor sin relanzar bootstrap
 - `--max-pages 2` para validacion local acotada
 - `--page-size 25` para ajustar paginacion
 - `--start-page 4` para forzar una pagina concreta en bootstraps largos
@@ -928,6 +1022,19 @@ La segunda invocacion reutiliza automaticamente el checkpoint persistido en
 la sesion anterior se corta por tiempo disponible o por inestabilidad puntual
 del origen. `--start-page` queda como override manual cuando se quiera
 reprocesar o inspeccionar un tramo concreto.
+
+Runbook operativo para overlap manual:
+
+```powershell
+python -m app.historical_ingestion refresh --overlap-hours 48
+python -m app.historical_ingestion refresh --server comunidad-hispana-01 --overlap-hours 48 --max-pages 2
+python -m app.historical_runner --max-runs 1
+```
+
+La primera pasada relee 48 horas sobre los tres servidores historicos ya
+registrados. La segunda sirve para validar un solo servidor con alcance
+acotado. La tercera recompone snapshots despues de una pasada manual cuando se
+quiere confirmar que la capa precalculada vuelve a quedar alineada.
 
 Los reintentos de cada request JSON pueden ajustarse sin tocar codigo con:
 
@@ -1017,6 +1124,14 @@ Comprobaciones utiles con Compose:
 - `docker compose ps historical-runner`
 - `docker compose logs -f historical-runner`
 - `docker compose exec backend python -m app.historical_runner --max-runs 1`
+
+Compose para captura prospectiva RCON:
+
+```powershell
+docker compose up -d rcon-historical-worker
+docker compose logs -f rcon-historical-worker
+docker compose exec backend python -m app.rcon_historical_worker capture
+```
 
 Variables utiles del runner:
 
@@ -1118,8 +1233,22 @@ python -m app.player_event_worker loop --interval 1800
 Variables opcionales del worker:
 
 - `HLL_PLAYER_EVENT_REFRESH_INTERVAL_SECONDS`
+- `HLL_PLAYER_EVENT_REFRESH_OVERLAP_HOURS`
 - `HLL_PLAYER_EVENT_REFRESH_MAX_RETRIES`
 - `HLL_PLAYER_EVENT_REFRESH_RETRY_DELAY_SECONDS`
+
+Flags utiles del worker:
+
+- `--server comunidad-hispana-01` para validar un solo servidor
+- `--overlap-hours 48` para releer una ventana reciente mayor
+- `--max-pages 1` para una comprobacion acotada
+
+Ejemplos operativos:
+
+```powershell
+python -m app.player_event_worker refresh --overlap-hours 48
+python -m app.player_event_worker refresh --server comunidad-hispana-01 --overlap-hours 48 --max-pages 1
+```
 
 Politica operativa minima:
 

@@ -4,10 +4,10 @@ from __future__ import annotations
 
 import sqlite3
 from collections.abc import Iterable
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from .config import get_storage_path
+from .config import get_player_event_refresh_overlap_hours, get_storage_path
 from .player_event_models import PlayerEventRecord
 
 
@@ -386,9 +386,17 @@ def get_player_event_resume_page(
 def get_player_event_refresh_cutoff_for_server(
     server_slug: str,
     *,
+    overlap_hours: int | None = None,
     db_path: Path | None = None,
 ) -> str | None:
     """Return the latest occurred_at already persisted for one server."""
+    resolved_overlap_hours = (
+        get_player_event_refresh_overlap_hours()
+        if overlap_hours is None
+        else overlap_hours
+    )
+    if resolved_overlap_hours < 0:
+        raise ValueError("overlap_hours must be zero or positive.")
     resolved_path = initialize_player_event_storage(db_path=db_path)
     with _connect(resolved_path) as connection:
         row = connection.execute(
@@ -399,7 +407,12 @@ def get_player_event_refresh_cutoff_for_server(
             """,
             (server_slug,),
         ).fetchone()
-    return str(row["latest_occurred_at"]) if row and row["latest_occurred_at"] else None
+    latest_occurred_at = str(row["latest_occurred_at"]) if row and row["latest_occurred_at"] else None
+    if not latest_occurred_at:
+        return None
+
+    cutoff = _parse_timestamp(latest_occurred_at) - timedelta(hours=resolved_overlap_hours)
+    return cutoff.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
 
 
 def _connect(db_path: Path) -> sqlite3.Connection:
@@ -411,3 +424,11 @@ def _connect(db_path: Path) -> sqlite3.Connection:
 
 def _utc_now_iso() -> str:
     return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+def _parse_timestamp(value: str) -> datetime:
+    normalized = value.strip().replace("Z", "+00:00")
+    parsed = datetime.fromisoformat(normalized)
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed

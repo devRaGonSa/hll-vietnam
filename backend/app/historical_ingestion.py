@@ -10,6 +10,7 @@ from typing import Iterable
 from .config import (
     get_historical_crcon_detail_workers,
     get_historical_crcon_page_size,
+    get_historical_refresh_overlap_hours,
 )
 from .data_sources import HistoricalDataSource, get_historical_data_source
 from .historical_snapshots import generate_and_persist_historical_snapshots
@@ -75,6 +76,7 @@ def run_incremental_refresh(
     page_size: int | None = None,
     start_page: int | None = None,
     detail_workers: int | None = None,
+    overlap_hours: int | None = None,
     rebuild_snapshots: bool = True,
 ) -> dict[str, object]:
     """Refresh recent historical pages without replaying the whole archive."""
@@ -85,6 +87,7 @@ def run_incremental_refresh(
         page_size=page_size,
         start_page=start_page,
         detail_workers=detail_workers,
+        overlap_hours=overlap_hours,
         incremental=True,
         rebuild_snapshots=rebuild_snapshots,
     )
@@ -98,6 +101,7 @@ def _run_ingestion(
     page_size: int | None,
     start_page: int | None,
     detail_workers: int | None,
+    overlap_hours: int | None,
     incremental: bool,
     rebuild_snapshots: bool,
 ) -> dict[str, object]:
@@ -107,6 +111,13 @@ def _run_ingestion(
     selected_servers = _select_servers(server_slug)
     processed_servers: list[dict[str, object]] = []
     active_runs: dict[str, int] = {}
+    resolved_overlap_hours = (
+        get_historical_refresh_overlap_hours()
+        if overlap_hours is None
+        else overlap_hours
+    )
+    if resolved_overlap_hours < 0:
+        raise ValueError("--overlap-hours must be zero or positive.")
 
     try:
         for server in selected_servers:
@@ -118,7 +129,10 @@ def _run_ingestion(
                 run_id=run_id,
             )
             cutoff = (
-                get_refresh_cutoff_for_server(str(server["slug"]))
+                get_refresh_cutoff_for_server(
+                    str(server["slug"]),
+                    overlap_hours=resolved_overlap_hours,
+                )
                 if incremental
                 else None
             )
@@ -196,6 +210,7 @@ def _run_ingestion(
         "page_size": page_size or get_historical_crcon_page_size(),
         "start_page": start_page,
         "detail_workers": detail_workers or get_historical_crcon_detail_workers(),
+        "overlap_hours": resolved_overlap_hours if incremental else None,
         "servers": processed_servers,
         "coverage": list_historical_coverage_report(server_slug=server_slug),
         "snapshot_result": snapshot_result,
@@ -408,6 +423,11 @@ def build_arg_parser() -> argparse.ArgumentParser:
         type=int,
         help="parallel worker count for per-match detail requests",
     )
+    parser.add_argument(
+        "--overlap-hours",
+        type=int,
+        help="override the incremental overlap window in hours",
+    )
     return parser
 
 
@@ -431,6 +451,7 @@ def main(argv: Iterable[str] | None = None) -> int:
             page_size=args.page_size,
             start_page=args.start_page,
             detail_workers=args.detail_workers,
+            overlap_hours=args.overlap_hours,
         )
 
     print(json.dumps(result, indent=2))

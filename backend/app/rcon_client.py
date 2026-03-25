@@ -192,6 +192,16 @@ def query_live_server_state(
     timeout_seconds: float | None = None,
 ) -> dict[str, object]:
     """Query one HLL server via RCON and normalize it to the live snapshot shape."""
+    sample = query_live_server_sample(target, timeout_seconds=timeout_seconds)
+    return dict(sample["normalized"])
+
+
+def query_live_server_sample(
+    target: RconServerTarget,
+    *,
+    timeout_seconds: float | None = None,
+) -> dict[str, object]:
+    """Query one HLL server and return both normalized and raw session data."""
     resolved_timeout = timeout_seconds or get_rcon_request_timeout_seconds()
     with HllRconConnection(timeout_seconds=resolved_timeout) as connection:
         connection.connect(host=target.host, port=target.port, password=target.password)
@@ -202,17 +212,41 @@ def query_live_server_state(
 
     resolved_external_id = target.external_server_id or f"rcon:{target.host}:{target.port}"
     return {
-        "external_server_id": resolved_external_id,
-        "server_name": _string_or_none(session.get("serverName")) or target.name,
-        "status": "online",
-        "players": _coerce_optional_int(session.get("playerCount")),
-        "max_players": _coerce_optional_int(session.get("maxPlayerCount")),
-        "current_map": _string_or_none(session.get("mapId")) or _string_or_none(session.get("mapName")),
-        "region": target.region,
-        "source_name": target.source_name,
-        "snapshot_origin": "real-rcon",
-        "source_ref": f"rcon://{target.host}:{target.port}",
+        "target": {
+            "target_key": build_rcon_target_key(target),
+            "name": target.name,
+            "host": target.host,
+            "port": target.port,
+            "external_server_id": target.external_server_id,
+            "region": target.region,
+            "game_port": target.game_port,
+            "query_port": target.query_port,
+            "source_name": target.source_name,
+        },
+        "normalized": {
+            "external_server_id": resolved_external_id,
+            "server_name": _string_or_none(session.get("serverName")) or target.name,
+            "status": "online",
+            "players": _coerce_optional_int(session.get("playerCount")),
+            "max_players": _coerce_optional_int(session.get("maxPlayerCount")),
+            "current_map": (
+                _string_or_none(session.get("mapId")) or _string_or_none(session.get("mapName"))
+            ),
+            "region": target.region,
+            "source_name": target.source_name,
+            "snapshot_origin": "real-rcon",
+            "source_ref": f"rcon://{target.host}:{target.port}",
+        },
+        "raw_session": session,
     }
+
+
+def build_rcon_target_key(target: RconServerTarget) -> str:
+    """Build a stable local key for one configured RCON target."""
+    external_server_id = _string_or_none(target.external_server_id)
+    if external_server_id:
+        return external_server_id
+    return f"rcon:{target.host}:{target.port}"
 
 
 def _coerce_rcon_target(raw_target: dict[str, object]) -> RconServerTarget:

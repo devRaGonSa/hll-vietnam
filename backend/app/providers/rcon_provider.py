@@ -4,7 +4,11 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from ..rcon_client import RconServerTarget, load_rcon_targets, query_live_server_state
+from ..rcon_client import (
+    RconServerTarget,
+    load_rcon_targets,
+    query_live_server_sample,
+)
 from ..snapshots import build_snapshot_batch, utc_now
 from ..storage import persist_snapshot_batch
 
@@ -26,7 +30,7 @@ class RconLiveDataSource:
 
         for target in configured_targets:
             try:
-                normalized_records.append(query_live_server_state(target))
+                normalized_records.append(query_live_server_sample(target)["normalized"])
             except Exception as error:  # noqa: BLE001 - keep provider failures controlled
                 errors.append(
                     {
