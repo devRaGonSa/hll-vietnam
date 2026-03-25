@@ -71,6 +71,10 @@ Variables opcionales:
 - `HLL_RCON_HISTORICAL_CAPTURE_INTERVAL_SECONDS`
 - `HLL_RCON_HISTORICAL_CAPTURE_MAX_RETRIES`
 - `HLL_RCON_HISTORICAL_CAPTURE_RETRY_DELAY_SECONDS`
+- `HLL_BACKEND_SQLITE_WRITER_TIMEOUT_SECONDS`
+- `HLL_BACKEND_SQLITE_BUSY_TIMEOUT_MS`
+- `HLL_BACKEND_WRITER_LOCK_TIMEOUT_SECONDS`
+- `HLL_BACKEND_WRITER_LOCK_POLL_INTERVAL_SECONDS`
 - `HLL_HISTORICAL_CRCON_PAGE_SIZE`
 - `HLL_HISTORICAL_CRCON_TIMEOUT_SECONDS`
 - `HLL_HISTORICAL_CRCON_DETAIL_WORKERS`
@@ -82,6 +86,10 @@ Variables opcionales:
 - `HLL_HISTORICAL_FULL_SNAPSHOT_EVERY_RUNS`
 - `HLL_HISTORICAL_REFRESH_MAX_RETRIES`
 - `HLL_HISTORICAL_REFRESH_RETRY_DELAY_SECONDS`
+- `HLL_BACKEND_SQLITE_WRITER_TIMEOUT_SECONDS`
+- `HLL_BACKEND_SQLITE_BUSY_TIMEOUT_MS`
+- `HLL_BACKEND_WRITER_LOCK_TIMEOUT_SECONDS`
+- `HLL_BACKEND_WRITER_LOCK_POLL_INTERVAL_SECONDS`
 - `HLL_HISTORICAL_WEEKLY_FALLBACK_MIN_MATCHES`
 - `HLL_HISTORICAL_WEEKLY_FALLBACK_MAX_WEEKDAY`
 
@@ -489,6 +497,22 @@ En Docker, ese mismo rol de persistencia debe montarse fuera del contenedor en:
 ```text
 /app/data/hll_vietnam_dev.sqlite3
 ```
+
+Politica comun SQLite para writers:
+
+- `timeout` explicito compartido
+- `PRAGMA foreign_keys = ON`
+- `PRAGMA journal_mode = WAL`
+- `PRAGMA busy_timeout`
+- `row_factory = sqlite3.Row`
+
+Esta politica se aplica de forma uniforme a las capas writer-capable que
+comparten el mismo SQLite, incluyendo:
+
+- `historical_storage.py`
+- `player_event_storage.py`
+- `rcon_historical_storage.py`
+- `storage.py`
 
 Variable opcional:
 
@@ -1118,6 +1142,67 @@ docker compose up -d backend historical-runner frontend
 El servicio `historical-runner` usa el mismo volumen persistente `./backend/data`
 y ejecuta `python -m app.historical_runner --hourly` como bucle operativo
 dedicado, sin mezclar el scheduler con el proceso HTTP principal.
+
+## Coordinacion single-writer para automatizaciones y CLI
+
+Todos los procesos writer-oriented que comparten el mismo SQLite usan ahora un
+lock comun derivado de `HLL_BACKEND_STORAGE_PATH` y persistido junto al volumen
+de datos compartido. Ese lock coordina:
+
+- `app.historical_ingestion`
+- `app.historical_runner`
+- `app.player_event_worker`
+- `app.rcon_historical_worker`
+
+Rutas HTTP read-only como `/api/historical/snapshots/*`, `/api/servers` en modo
+cache local y el read model minimo RCON no adquieren este lock.
+
+Variables operativas:
+
+- `HLL_BACKEND_WRITER_LOCK_TIMEOUT_SECONDS`
+- `HLL_BACKEND_WRITER_LOCK_POLL_INTERVAL_SECONDS`
+
+Comportamiento:
+
+- si un writer ya esta ejecutandose, el siguiente espera de forma controlada
+  hasta agotar el timeout configurado
+- si no puede adquirir el lock, falla con un error claro indicando:
+  - lock path
+  - holder
+  - `started_at`
+  - host
+  - pid
+- la coordinacion principal es este single-writer lock; WAL y `busy_timeout`
+  quedan como endurecimiento complementario, no como solucion unica
+
+Runbook minimo:
+
+- pasada manual del historico base mientras el runner automatico existe:
+
+  ```powershell
+  docker compose exec backend python -m app.historical_ingestion refresh --overlap-hours 48
+  ```
+
+  Si el lock esta ocupado, el comando esperara hasta el timeout configurado y,
+  si no se libera, terminara con un mensaje claro de lock ocupado.
+
+- pasada manual de player-events:
+
+  ```powershell
+  docker compose exec backend python -m app.player_event_worker refresh --overlap-hours 48
+  ```
+
+- pasada manual de captura prospectiva RCON:
+
+  ```powershell
+  docker compose exec backend python -m app.rcon_historical_worker capture
+  ```
+
+- convivencia recomendada con automatizaciones:
+  - no hace falta parar contenedores por defecto
+  - dejar que el lock coordine la exclusión mutua
+  - usar `--max-runs 1` o comandos manuales puntuales cuando se quiera una
+    pasada controlada
 
 Comprobaciones utiles con Compose:
 

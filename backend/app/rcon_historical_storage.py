@@ -9,6 +9,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from .config import get_storage_path
+from .sqlite_utils import connect_sqlite_writer
 
 
 def initialize_rcon_historical_storage(*, db_path: Path | None = None) -> Path:
@@ -354,10 +355,7 @@ def list_recent_rcon_historical_samples(
 
 
 def _connect(db_path: Path) -> sqlite3.Connection:
-    connection = sqlite3.connect(db_path)
-    connection.row_factory = sqlite3.Row
-    connection.execute("PRAGMA foreign_keys = ON")
-    return connection
+    return connect_sqlite_writer(db_path)
 
 
 def _upsert_target(connection: sqlite3.Connection, *, target: Mapping[str, object]) -> int:

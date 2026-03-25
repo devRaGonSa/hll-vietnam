@@ -33,6 +33,10 @@ DEFAULT_PLAYER_EVENT_REFRESH_RETRY_DELAY_SECONDS = 30
 DEFAULT_RCON_HISTORICAL_CAPTURE_INTERVAL_SECONDS = 120
 DEFAULT_RCON_HISTORICAL_CAPTURE_MAX_RETRIES = 2
 DEFAULT_RCON_HISTORICAL_CAPTURE_RETRY_DELAY_SECONDS = 15
+DEFAULT_SQLITE_WRITER_TIMEOUT_SECONDS = 30.0
+DEFAULT_SQLITE_BUSY_TIMEOUT_MS = 30000
+DEFAULT_WRITER_LOCK_TIMEOUT_SECONDS = 120.0
+DEFAULT_WRITER_LOCK_POLL_INTERVAL_SECONDS = 1.0
 DEFAULT_ALLOWED_ORIGINS = (
     "null",
     "http://127.0.0.1:5500",
@@ -77,6 +81,56 @@ def get_storage_path() -> Path:
     default_path = Path(__file__).resolve().parent.parent / "data" / DEFAULT_STORAGE_FILENAME
     configured_path = os.getenv("HLL_BACKEND_STORAGE_PATH")
     return Path(configured_path) if configured_path else default_path
+
+
+def get_sqlite_writer_timeout_seconds() -> float:
+    """Return the SQLite connection timeout shared by writer-capable storage layers."""
+    configured_value = os.getenv(
+        "HLL_BACKEND_SQLITE_WRITER_TIMEOUT_SECONDS",
+        str(DEFAULT_SQLITE_WRITER_TIMEOUT_SECONDS),
+    )
+    timeout_seconds = float(configured_value)
+    if timeout_seconds <= 0:
+        raise ValueError("HLL_BACKEND_SQLITE_WRITER_TIMEOUT_SECONDS must be positive.")
+    return timeout_seconds
+
+
+def get_sqlite_busy_timeout_ms() -> int:
+    """Return the SQLite busy_timeout shared by writer-capable storage layers."""
+    configured_value = os.getenv(
+        "HLL_BACKEND_SQLITE_BUSY_TIMEOUT_MS",
+        str(DEFAULT_SQLITE_BUSY_TIMEOUT_MS),
+    )
+    busy_timeout_ms = int(configured_value)
+    if busy_timeout_ms <= 0:
+        raise ValueError("HLL_BACKEND_SQLITE_BUSY_TIMEOUT_MS must be positive.")
+    return busy_timeout_ms
+
+
+def get_writer_lock_timeout_seconds() -> float:
+    """Return how long writer jobs should wait for the shared backend writer lock."""
+    configured_value = os.getenv(
+        "HLL_BACKEND_WRITER_LOCK_TIMEOUT_SECONDS",
+        str(DEFAULT_WRITER_LOCK_TIMEOUT_SECONDS),
+    )
+    timeout_seconds = float(configured_value)
+    if timeout_seconds < 0:
+        raise ValueError("HLL_BACKEND_WRITER_LOCK_TIMEOUT_SECONDS must be zero or positive.")
+    return timeout_seconds
+
+
+def get_writer_lock_poll_interval_seconds() -> float:
+    """Return how often writer jobs should poll the shared backend writer lock."""
+    configured_value = os.getenv(
+        "HLL_BACKEND_WRITER_LOCK_POLL_INTERVAL_SECONDS",
+        str(DEFAULT_WRITER_LOCK_POLL_INTERVAL_SECONDS),
+    )
+    poll_interval_seconds = float(configured_value)
+    if poll_interval_seconds <= 0:
+        raise ValueError(
+            "HLL_BACKEND_WRITER_LOCK_POLL_INTERVAL_SECONDS must be positive."
+        )
+    return poll_interval_seconds
 
 
 def get_refresh_interval_seconds() -> int:

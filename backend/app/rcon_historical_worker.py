@@ -23,6 +23,7 @@ from .rcon_historical_storage import (
     start_rcon_historical_capture_run,
 )
 from .snapshots import utc_now
+from .writer_lock import backend_writer_lock, build_writer_lock_holder
 
 
 @dataclass(slots=True)
@@ -38,93 +39,98 @@ def run_rcon_historical_capture(
     target_key: str | None = None,
 ) -> dict[str, object]:
     """Capture one prospective RCON sample for one or all configured targets."""
-    initialize_rcon_historical_storage()
-    selected_targets = _select_targets(target_key)
-    captured_at = utc_now().isoformat().replace("+00:00", "Z")
-    target_scope = target_key or "all-configured-rcon-targets"
-    run_id = start_rcon_historical_capture_run(mode="capture", target_scope=target_scope)
-    stats = RconHistoricalCaptureStats()
-    items: list[dict[str, object]] = []
-    errors: list[dict[str, object]] = []
-
-    try:
-        for target in selected_targets:
-            target_metadata = _serialize_target(target)
-            stats.targets_seen += 1
-            try:
-                sample = query_live_server_sample(target)
-                delta = persist_rcon_historical_sample(
-                    run_id=run_id,
-                    captured_at=captured_at,
-                    target=target_metadata,
-                    normalized_payload=sample["normalized"],
-                    raw_payload=sample["raw_session"],
-                )
-                stats.samples_inserted += int(delta["samples_inserted"])
-                stats.duplicate_samples += int(delta["duplicate_samples"])
-                items.append(
-                    {
-                        "target_key": target_metadata["target_key"],
-                        "external_server_id": target.external_server_id,
-                        "captured_at": captured_at,
-                        "sample_inserted": bool(delta["samples_inserted"]),
-                        "normalized": sample["normalized"],
-                    }
-                )
-            except Exception as exc:  # noqa: BLE001 - controlled worker failures
-                stats.failed_targets += 1
-                mark_rcon_historical_capture_failure(
-                    run_id=run_id,
-                    target=target_metadata,
-                    error_message=str(exc),
-                )
-                errors.append(
-                    {
-                        "target_key": target_metadata["target_key"],
-                        "name": target.name,
-                        "host": target.host,
-                        "port": target.port,
-                        "message": str(exc),
-                    }
-                )
-
-        status = "success" if not errors else ("partial" if items else "failed")
-        finalize_rcon_historical_capture_run(
-            run_id,
-            status=status,
-            targets_seen=stats.targets_seen,
-            samples_inserted=stats.samples_inserted,
-            duplicate_samples=stats.duplicate_samples,
-            failed_targets=stats.failed_targets,
-            notes=None if not errors else json.dumps(errors, separators=(",", ":")),
+    with backend_writer_lock(
+        holder=build_writer_lock_holder(
+            f"app.rcon_historical_worker capture:{target_key or 'all-targets'}"
         )
-    except Exception as exc:
-        finalize_rcon_historical_capture_run(
-            run_id,
-            status="failed",
-            targets_seen=stats.targets_seen,
-            samples_inserted=stats.samples_inserted,
-            duplicate_samples=stats.duplicate_samples,
-            failed_targets=max(1, stats.failed_targets),
-            notes=str(exc),
-        )
-        raise
+    ):
+        initialize_rcon_historical_storage()
+        selected_targets = _select_targets(target_key)
+        captured_at = utc_now().isoformat().replace("+00:00", "Z")
+        target_scope = target_key or "all-configured-rcon-targets"
+        run_id = start_rcon_historical_capture_run(mode="capture", target_scope=target_scope)
+        stats = RconHistoricalCaptureStats()
+        items: list[dict[str, object]] = []
+        errors: list[dict[str, object]] = []
 
-    return {
-        "status": "ok" if items else "error",
-        "run_status": status,
-        "captured_at": captured_at,
-        "target_scope": target_scope,
-        "targets": items,
-        "errors": errors,
-        "storage_status": list_rcon_historical_target_statuses(),
-        "totals": {
-            "targets_seen": stats.targets_seen,
-            "samples_inserted": stats.samples_inserted,
-            "duplicate_samples": stats.duplicate_samples,
-            "failed_targets": stats.failed_targets,
-        },
-    }
+        try:
+            for target in selected_targets:
+                target_metadata = _serialize_target(target)
+                stats.targets_seen += 1
+                try:
+                    sample = query_live_server_sample(target)
+                    delta = persist_rcon_historical_sample(
+                        run_id=run_id,
+                        captured_at=captured_at,
+                        target=target_metadata,
+                        normalized_payload=sample["normalized"],
+                        raw_payload=sample["raw_session"],
+                    )
+                    stats.samples_inserted += int(delta["samples_inserted"])
+                    stats.duplicate_samples += int(delta["duplicate_samples"])
+                    items.append(
+                        {
+                            "target_key": target_metadata["target_key"],
+                            "external_server_id": target.external_server_id,
+                            "captured_at": captured_at,
+                            "sample_inserted": bool(delta["samples_inserted"]),
+                            "normalized": sample["normalized"],
+                        }
+                    )
+                except Exception as exc:  # noqa: BLE001 - controlled worker failures
+                    stats.failed_targets += 1
+                    mark_rcon_historical_capture_failure(
+                        run_id=run_id,
+                        target=target_metadata,
+                        error_message=str(exc),
+                    )
+                    errors.append(
+                        {
+                            "target_key": target_metadata["target_key"],
+                            "name": target.name,
+                            "host": target.host,
+                            "port": target.port,
+                            "message": str(exc),
+                        }
+                    )
+
+            status = "success" if not errors else ("partial" if items else "failed")
+            finalize_rcon_historical_capture_run(
+                run_id,
+                status=status,
+                targets_seen=stats.targets_seen,
+                samples_inserted=stats.samples_inserted,
+                duplicate_samples=stats.duplicate_samples,
+                failed_targets=stats.failed_targets,
+                notes=None if not errors else json.dumps(errors, separators=(",", ":")),
+            )
+        except Exception as exc:
+            finalize_rcon_historical_capture_run(
+                run_id,
+                status="failed",
+                targets_seen=stats.targets_seen,
+                samples_inserted=stats.samples_inserted,
+                duplicate_samples=stats.duplicate_samples,
+                failed_targets=max(1, stats.failed_targets),
+                notes=str(exc),
+            )
+            raise
+
+        return {
+            "status": "ok" if items else "error",
+            "run_status": status,
+            "captured_at": captured_at,
+            "target_scope": target_scope,
+            "targets": items,
+            "errors": errors,
+            "storage_status": list_rcon_historical_target_statuses(),
+            "totals": {
+                "targets_seen": stats.targets_seen,
+                "samples_inserted": stats.samples_inserted,
+                "duplicate_samples": stats.duplicate_samples,
+                "failed_targets": stats.failed_targets,
+            },
+        }
 
 
 def run_periodic_rcon_historical_capture(

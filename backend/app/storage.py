@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Iterable, Mapping
 
 from .config import get_storage_path
+from .sqlite_utils import connect_sqlite_readonly, connect_sqlite_writer
 
 
 DEFAULT_GAME_SOURCE = {
@@ -265,15 +266,11 @@ def list_server_history(
 
 
 def _connect(db_path: Path) -> sqlite3.Connection:
-    connection = sqlite3.connect(db_path)
-    connection.row_factory = sqlite3.Row
-    return connection
+    return connect_sqlite_writer(db_path)
 
 
 def _connect_readonly(db_path: Path) -> sqlite3.Connection:
-    connection = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
-    connection.row_factory = sqlite3.Row
-    return connection
+    return connect_sqlite_readonly(db_path)
 
 
 def _upsert_game_source(

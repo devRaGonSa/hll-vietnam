@@ -27,6 +27,7 @@ from .historical_storage import (
     start_ingestion_run,
     upsert_historical_match,
 )
+from .writer_lock import backend_writer_lock, build_writer_lock_holder
 
 
 @dataclass(slots=True)
@@ -57,16 +58,22 @@ def run_bootstrap(
     rebuild_snapshots: bool = True,
 ) -> dict[str, object]:
     """Run a first full historical import against one or all configured servers."""
-    return _run_ingestion(
-        mode="bootstrap",
-        server_slug=server_slug,
-        max_pages=max_pages,
-        page_size=page_size,
-        start_page=start_page,
-        detail_workers=detail_workers,
-        incremental=False,
-        rebuild_snapshots=rebuild_snapshots,
-    )
+    with backend_writer_lock(
+        holder=build_writer_lock_holder(
+            f"app.historical_ingestion bootstrap:{server_slug or 'all-servers'}"
+        )
+    ):
+        return _run_ingestion(
+            mode="bootstrap",
+            server_slug=server_slug,
+            max_pages=max_pages,
+            page_size=page_size,
+            start_page=start_page,
+            detail_workers=detail_workers,
+            overlap_hours=None,
+            incremental=False,
+            rebuild_snapshots=rebuild_snapshots,
+        )
 
 
 def run_incremental_refresh(
@@ -80,17 +87,22 @@ def run_incremental_refresh(
     rebuild_snapshots: bool = True,
 ) -> dict[str, object]:
     """Refresh recent historical pages without replaying the whole archive."""
-    return _run_ingestion(
-        mode="incremental",
-        server_slug=server_slug,
-        max_pages=max_pages,
-        page_size=page_size,
-        start_page=start_page,
-        detail_workers=detail_workers,
-        overlap_hours=overlap_hours,
-        incremental=True,
-        rebuild_snapshots=rebuild_snapshots,
-    )
+    with backend_writer_lock(
+        holder=build_writer_lock_holder(
+            f"app.historical_ingestion refresh:{server_slug or 'all-servers'}"
+        )
+    ):
+        return _run_ingestion(
+            mode="incremental",
+            server_slug=server_slug,
+            max_pages=max_pages,
+            page_size=page_size,
+            start_page=start_page,
+            detail_workers=detail_workers,
+            overlap_hours=overlap_hours,
+            incremental=True,
+            rebuild_snapshots=rebuild_snapshots,
+        )
 
 
 def _run_ingestion(

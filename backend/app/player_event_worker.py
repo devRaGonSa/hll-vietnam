@@ -30,6 +30,7 @@ from .player_event_storage import (
     start_player_event_ingestion_run,
     upsert_player_events,
 )
+from .writer_lock import backend_writer_lock, build_writer_lock_holder
 
 
 @dataclass(slots=True)
@@ -55,105 +56,110 @@ def run_player_event_refresh(
     overlap_hours: int | None = None,
 ) -> dict[str, object]:
     """Refresh recent player event summaries from the configured historical source."""
-    initialize_player_event_storage()
-    data_source = get_historical_data_source()
-    event_source = get_player_event_source()
-    resolved_page_size = page_size or get_historical_crcon_page_size()
-    resolved_detail_workers = detail_workers or get_historical_crcon_detail_workers()
-    resolved_overlap_hours = (
-        get_player_event_refresh_overlap_hours()
-        if overlap_hours is None
-        else overlap_hours
-    )
-    if resolved_overlap_hours < 0:
-        raise ValueError("--overlap-hours must be zero or positive.")
-    selected_servers = _select_servers(server_slug)
-    processed_servers: list[dict[str, object]] = []
-    active_runs: dict[str, int] = {}
+    with backend_writer_lock(
+        holder=build_writer_lock_holder(
+            f"app.player_event_worker refresh:{server_slug or 'all-servers'}"
+        )
+    ):
+        initialize_player_event_storage()
+        data_source = get_historical_data_source()
+        event_source = get_player_event_source()
+        resolved_page_size = page_size or get_historical_crcon_page_size()
+        resolved_detail_workers = detail_workers or get_historical_crcon_detail_workers()
+        resolved_overlap_hours = (
+            get_player_event_refresh_overlap_hours()
+            if overlap_hours is None
+            else overlap_hours
+        )
+        if resolved_overlap_hours < 0:
+            raise ValueError("--overlap-hours must be zero or positive.")
+        selected_servers = _select_servers(server_slug)
+        processed_servers: list[dict[str, object]] = []
+        active_runs: dict[str, int] = {}
 
-    try:
-        for server in selected_servers:
-            current_server_slug = str(server["slug"])
-            run_id = start_player_event_ingestion_run(
-                mode="refresh",
-                target_server_slug=current_server_slug,
-            )
-            active_runs[current_server_slug] = run_id
-            cutoff = get_player_event_refresh_cutoff_for_server(
-                current_server_slug,
-                overlap_hours=resolved_overlap_hours,
-            )
-            mark_player_event_progress_started(
-                server_slug=current_server_slug,
-                mode="refresh",
-                run_id=run_id,
-                cutoff_occurred_at=cutoff,
-            )
-            server_stats = _ingest_server(
-                server=server,
-                run_id=run_id,
-                data_source=data_source,
-                event_source=event_source,
-                page_size=resolved_page_size,
-                max_pages=max_pages,
-                start_page=_resolve_start_page(
+        try:
+            for server in selected_servers:
+                current_server_slug = str(server["slug"])
+                run_id = start_player_event_ingestion_run(
+                    mode="refresh",
+                    target_server_slug=current_server_slug,
+                )
+                active_runs[current_server_slug] = run_id
+                cutoff = get_player_event_refresh_cutoff_for_server(
+                    current_server_slug,
+                    overlap_hours=resolved_overlap_hours,
+                )
+                mark_player_event_progress_started(
                     server_slug=current_server_slug,
-                    start_page=start_page,
-                ),
-                detail_workers=resolved_detail_workers,
-                cutoff=cutoff,
-            )
-            finalize_player_event_ingestion_run(
-                run_id,
-                status="success",
-                pages_processed=server_stats["pages_processed"],
-                matches_seen=server_stats["matches_seen"],
-                matches_fetched=server_stats["matches_fetched"],
-                events_inserted=server_stats["events_inserted"],
-                duplicate_events=server_stats["duplicate_events"],
-                notes=f"source={data_source.source_kind};adapter={event_source.source_kind}",
-            )
-            finalize_player_event_progress(
-                server_slug=current_server_slug,
-                mode="refresh",
-                run_id=run_id,
-                status="success",
-                archive_exhausted=bool(server_stats["archive_exhausted"]),
-            )
-            processed_servers.append(server_stats)
-            active_runs.pop(current_server_slug, None)
-    except Exception as exc:
-        for active_server_slug, run_id in active_runs.items():
-            finalize_player_event_ingestion_run(
-                run_id,
-                status="failed",
-                pages_processed=0,
-                matches_seen=0,
-                matches_fetched=0,
-                events_inserted=0,
-                duplicate_events=0,
-                notes=str(exc),
-            )
-            finalize_player_event_progress(
-                server_slug=active_server_slug,
-                mode="refresh",
-                run_id=run_id,
-                status="failed",
-                error_message=str(exc),
-            )
-        raise
+                    mode="refresh",
+                    run_id=run_id,
+                    cutoff_occurred_at=cutoff,
+                )
+                server_stats = _ingest_server(
+                    server=server,
+                    run_id=run_id,
+                    data_source=data_source,
+                    event_source=event_source,
+                    page_size=resolved_page_size,
+                    max_pages=max_pages,
+                    start_page=_resolve_start_page(
+                        server_slug=current_server_slug,
+                        start_page=start_page,
+                    ),
+                    detail_workers=resolved_detail_workers,
+                    cutoff=cutoff,
+                )
+                finalize_player_event_ingestion_run(
+                    run_id,
+                    status="success",
+                    pages_processed=server_stats["pages_processed"],
+                    matches_seen=server_stats["matches_seen"],
+                    matches_fetched=server_stats["matches_fetched"],
+                    events_inserted=server_stats["events_inserted"],
+                    duplicate_events=server_stats["duplicate_events"],
+                    notes=f"source={data_source.source_kind};adapter={event_source.source_kind}",
+                )
+                finalize_player_event_progress(
+                    server_slug=current_server_slug,
+                    mode="refresh",
+                    run_id=run_id,
+                    status="success",
+                    archive_exhausted=bool(server_stats["archive_exhausted"]),
+                )
+                processed_servers.append(server_stats)
+                active_runs.pop(current_server_slug, None)
+        except Exception as exc:
+            for active_server_slug, run_id in active_runs.items():
+                finalize_player_event_ingestion_run(
+                    run_id,
+                    status="failed",
+                    pages_processed=0,
+                    matches_seen=0,
+                    matches_fetched=0,
+                    events_inserted=0,
+                    duplicate_events=0,
+                    notes=str(exc),
+                )
+                finalize_player_event_progress(
+                    server_slug=active_server_slug,
+                    mode="refresh",
+                    run_id=run_id,
+                    status="failed",
+                    error_message=str(exc),
+                )
+            raise
 
-    return {
-        "status": "ok",
-        "mode": "refresh",
-        "source_provider": data_source.source_kind,
-        "event_adapter": event_source.source_kind,
-        "page_size": resolved_page_size,
-        "detail_workers": resolved_detail_workers,
-        "overlap_hours": resolved_overlap_hours,
-        "scope": event_source.describe_scope(),
-        "servers": processed_servers,
-    }
+        return {
+            "status": "ok",
+            "mode": "refresh",
+            "source_provider": data_source.source_kind,
+            "event_adapter": event_source.source_kind,
+            "page_size": resolved_page_size,
+            "detail_workers": resolved_detail_workers,
+            "overlap_hours": resolved_overlap_hours,
+            "scope": event_source.describe_scope(),
+            "servers": processed_servers,
+        }
 
 
 def run_periodic_player_event_refresh(

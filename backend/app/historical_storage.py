@@ -16,6 +16,7 @@ from .config import (
 from .historical_models import HistoricalServerDefinition
 from .monthly_mvp import build_monthly_mvp_rankings
 from .monthly_mvp_v2 import build_monthly_mvp_v2_rankings
+from .sqlite_utils import connect_sqlite_writer
 
 
 DEFAULT_HISTORICAL_SERVERS = (
@@ -1903,11 +1904,7 @@ def _build_player_event_scope_sql(server_id: str | None) -> tuple[str, list[obje
 
 
 def _connect(db_path: Path) -> sqlite3.Connection:
-    connection = sqlite3.connect(db_path, timeout=30.0)
-    connection.row_factory = sqlite3.Row
-    connection.execute("PRAGMA journal_mode=WAL")
-    connection.execute("PRAGMA busy_timeout = 30000")
-    return connection
+    return connect_sqlite_writer(db_path)
 
 
 def _resolve_match_winner(allied_score: object, axis_score: object) -> str | None:

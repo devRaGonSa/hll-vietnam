@@ -9,6 +9,7 @@ from pathlib import Path
 
 from .config import get_player_event_refresh_overlap_hours, get_storage_path
 from .player_event_models import PlayerEventRecord
+from .sqlite_utils import connect_sqlite_writer
 
 
 def initialize_player_event_storage(*, db_path: Path | None = None) -> Path:
@@ -416,10 +417,7 @@ def get_player_event_refresh_cutoff_for_server(
 
 
 def _connect(db_path: Path) -> sqlite3.Connection:
-    connection = sqlite3.connect(db_path)
-    connection.row_factory = sqlite3.Row
-    connection.execute("PRAGMA foreign_keys = ON")
-    return connection
+    return connect_sqlite_writer(db_path)
 
 
 def _utc_now_iso() -> str:

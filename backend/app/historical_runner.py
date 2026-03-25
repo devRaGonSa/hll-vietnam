@@ -19,6 +19,7 @@ from .historical_snapshots import (
     generate_and_persist_historical_snapshots,
     generate_and_persist_priority_historical_snapshots,
 )
+from .writer_lock import backend_writer_lock, build_writer_lock_holder
 
 HOURLY_INTERVAL_SECONDS = 3600
 DEFAULT_HISTORICAL_SERVER_SCOPE = (
@@ -89,16 +90,21 @@ def _run_refresh_with_retries(
     while True:
         attempt += 1
         try:
-            refresh_result = run_incremental_refresh(
-                server_slug=server_slug,
-                max_pages=max_pages,
-                page_size=page_size,
-                rebuild_snapshots=False,
-            )
-            snapshot_result = generate_historical_snapshots(
-                server_slug=server_slug,
-                run_number=run_number,
-            )
+            with backend_writer_lock(
+                holder=build_writer_lock_holder(
+                    f"app.historical_runner refresh:{server_slug or 'all-servers'}"
+                )
+            ):
+                refresh_result = run_incremental_refresh(
+                    server_slug=server_slug,
+                    max_pages=max_pages,
+                    page_size=page_size,
+                    rebuild_snapshots=False,
+                )
+                snapshot_result = generate_historical_snapshots(
+                    server_slug=server_slug,
+                    run_number=run_number,
+                )
             return {
                 "status": "ok",
                 "attempts_used": attempt,
