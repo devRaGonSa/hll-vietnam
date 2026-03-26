@@ -1100,6 +1100,10 @@ def build_elo_mmr_leaderboard_payload(
     payload = list_elo_mmr_leaderboard_payload(server_id=server_id, limit=limit)
     is_all_servers = server_id == ALL_SERVERS_SLUG
     accuracy_contract = _build_elo_accuracy_contract(payload.get("capabilities_summary"))
+    model_contract = _build_elo_model_contract(
+        accuracy_contract,
+        monthly_context=payload,
+    )
     return {
         "status": "ok",
         "data": {
@@ -1114,6 +1118,9 @@ def build_elo_mmr_leaderboard_payload(
             "month_key": payload.get("month_key"),
             "found": bool(payload.get("found")),
             "generated_at": payload.get("generated_at"),
+            "model_version": payload.get("model_version"),
+            "formula_version": payload.get("formula_version"),
+            "contract_version": payload.get("contract_version"),
             "limit": limit,
             **(payload.get("source_policy") or _resolve_historical_fallback_policy(
                 operation="elo-mmr-leaderboard",
@@ -1121,7 +1128,7 @@ def build_elo_mmr_leaderboard_payload(
             )),
             "capabilities_summary": payload.get("capabilities_summary"),
             "accuracy_contract": accuracy_contract,
-            "model_contract": _build_elo_model_contract(accuracy_contract),
+            "model_contract": model_contract,
             "items": [
                 _enrich_elo_leaderboard_item(item, accuracy_contract=accuracy_contract)
                 for item in (payload.get("items") or [])
@@ -1140,6 +1147,10 @@ def build_elo_mmr_player_payload(
     profile = get_elo_mmr_player_payload(player_id=player_id, server_id=server_id)
     source_policy = list_elo_mmr_leaderboard_payload(server_id=server_id, limit=1).get("source_policy")
     accuracy_contract = _build_elo_player_accuracy_contract(profile)
+    model_contract = _build_elo_model_contract(
+        accuracy_contract,
+        player_profile=profile,
+    )
     return {
         "status": "ok",
         "data": {
@@ -1154,7 +1165,7 @@ def build_elo_mmr_player_payload(
                 fallback_reason="elo-mmr-player-source-policy-missing",
             )),
             "accuracy_contract": accuracy_contract,
-            "model_contract": _build_elo_model_contract(accuracy_contract),
+            "model_contract": model_contract,
             "profile": _enrich_elo_profile(profile, accuracy_contract=accuracy_contract),
         },
     }
@@ -1198,16 +1209,55 @@ def _build_elo_accuracy_contract(summary: dict[str, object] | None) -> dict[str,
     }
 
 
-def _build_elo_model_contract(accuracy_contract: dict[str, object]) -> dict[str, object]:
+def _build_elo_model_contract(
+    accuracy_contract: dict[str, object],
+    *,
+    monthly_context: dict[str, object] | None = None,
+    player_profile: dict[str, object] | None = None,
+) -> dict[str, object]:
     blocked_components = accuracy_contract.get("blocked_components")
+    persistent_rating = (
+        player_profile.get("persistent_rating")
+        if isinstance(player_profile, dict) and isinstance(player_profile.get("persistent_rating"), dict)
+        else None
+    )
+    monthly_ranking = (
+        player_profile.get("monthly_ranking")
+        if isinstance(player_profile, dict) and isinstance(player_profile.get("monthly_ranking"), dict)
+        else None
+    )
     return {
         "persistent_rating": {
             "meaning": "long-lived competitive rating rebuilt from persisted matches for the selected scope",
             "primary_field": "persistent_rating.mmr",
+            "model_version": persistent_rating.get("model_version") if isinstance(persistent_rating, dict) else None,
+            "formula_version": persistent_rating.get("formula_version") if isinstance(persistent_rating, dict) else None,
+            "contract_version": persistent_rating.get("contract_version") if isinstance(persistent_rating, dict) else None,
         },
         "monthly_rank_score": {
             "meaning": "monthly leaderboard ordering score that combines rating movement, match quality, activity and confidence",
             "primary_field": "monthly_rank_score",
+            "model_version": (
+                monthly_context.get("model_version")
+                if isinstance(monthly_context, dict)
+                else monthly_ranking.get("model_version")
+                if isinstance(monthly_ranking, dict)
+                else None
+            ),
+            "formula_version": (
+                monthly_context.get("formula_version")
+                if isinstance(monthly_context, dict)
+                else monthly_ranking.get("formula_version")
+                if isinstance(monthly_ranking, dict)
+                else None
+            ),
+            "contract_version": (
+                monthly_context.get("contract_version")
+                if isinstance(monthly_context, dict)
+                else monthly_ranking.get("contract_version")
+                if isinstance(monthly_ranking, dict)
+                else None
+            ),
         },
         "elo_core": {
             "meaning": "competitive rating movement driven by expected-vs-actual outcome against opponent rating pressure",

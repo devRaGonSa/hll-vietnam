@@ -81,41 +81,46 @@ This refactor should consume canonical match/player facts instead of depending o
 
 ## Outcome
 
-- Status: reopened after audit
-- Progress already delivered:
-  - the persistent MMR rebuild consumes canonical Elo facts rather than querying historical tables directly
-  - per-match rating state is materially persisted with:
-  - `mmr_before`
-  - `mmr_after`
-  - `delta_mmr`
+- Status: completed on 2026-03-26
+- Closure summary:
+  - the persistent rebuild now stamps explicit persisted contracts for player ratings, match results and monthly read compatibility
+  - match-result rows now carry canonical fact lineage with:
+  - `canonical_match_key`
+  - `fact_schema_version`
+  - `source_input_version`
+  - exact contract stamps for:
+  - `model_version`
+  - `formula_version`
+  - `contract_version`
+  - the rating delta split is now materially separated as:
   - `elo_core_delta`
-  - `performance_modifier_delta`
-  - `proxy_modifier_delta`
-- payload compatibility still resolves through the current leaderboard/profile enrichment layer
+  - `performance_modifier_delta` for exact bounded modifiers
+  - `proxy_modifier_delta` for proxy-only bounded modifiers
+  - leaderboard/profile payload compatibility remains intact and now exposes versioned model contracts without overstating telemetry
 
 ### Modified Files
 
 - `backend/app/elo_mmr_models.py`
 - `backend/app/elo_mmr_storage.py`
 - `backend/app/elo_mmr_engine.py`
+- `backend/app/payloads.py`
 
 ### Validations Run
 
 - `python -m compileall app`
-- scoped rebuild against `backend/data/elo_mmr_task001_validation.sqlite3`
-- payload smoke validation using `HLL_BACKEND_STORAGE_PATH=data/elo_mmr_task001_validation.sqlite3`
+- `HLL_BACKEND_STORAGE_PATH=backend/data/elo_mmr_task001_validation.sqlite3 python -m app.elo_mmr_engine rebuild`
+- SQLite verification of persisted canonical lineage, contract-version coverage and delta balancing
+- payload smoke validation using `HLL_BACKEND_STORAGE_PATH=backend/data/elo_mmr_task001_validation.sqlite3`
 
 ### Validation Results
 
 - scoped rebuild succeeded from canonical facts
-- persisted match-result rows trace explicit before/after and component deltas: `7222`
-- persisted rating rows joined back to canonical facts successfully: `7222`
-- leaderboard payload resolved with accuracy and model contracts
-- player payload resolved with `rating_breakdown`
+- persisted match-result rows with canonical lineage and v2 contract stamps: `7222`
+- persisted match-result rows with balanced `delta_mmr = elo_core_delta + performance_modifier_delta + proxy_modifier_delta`: `7222`
+- persisted player-rating rows with explicit version stamps: `3030`
+- leaderboard payload resolved with versioned model contracts and separated delta sources
+- player payload resolved with `rating_breakdown` and persistent/monthly contract metadata
 
 ### Notes
 
-- Audit correction:
-  - this task was reopened because the published branch does not clearly prove that the promised persistent-engine refactor is fully closed end to end
-  - formula-version and contract-version handling are not yet demonstrated as a fully closed persisted engine contract
-  - the implementation also remains mixed with payload compatibility work and broader branch scope, so a conservative audit should not leave it in `done`
+- No integration test script exists for this Elo/MMR scope, so validation stayed at compile, rebuild, SQLite contract checks and payload smoke checks.

@@ -81,36 +81,38 @@ This should replace opportunistic API-only composition and tighten the separatio
 
 ## Outcome
 
-- Status: reopened after audit
-- Progress already delivered:
-  - monthly ranking remains distinct from persistent MMR in storage terms and rebuilds on top of:
-  - canonical persisted match facts
-  - materialized per-match rating movement
-  - explicit eligibility, confidence, activity, consistency and penalty fields
-- checkpoint metadata and payload contracts remain explainable
+- Status: completed on 2026-03-26
+- Closure summary:
+  - monthly aggregation is now materialized through a dedicated monthly-ranking builder boundary instead of being implied by the persistent match-scoring loop
+  - monthly ranking rows remain distinct from persistent player ratings and now stamp explicit:
+  - `model_version`
+  - `formula_version`
+  - `contract_version`
+  - monthly checkpoints now persist auditable generation contracts and capability summaries with an embedded aggregation contract description
+  - leaderboard/profile payloads still resolve while exposing the monthly model boundary more clearly
 
 ### Modified Files
 
 - `backend/app/elo_mmr_storage.py`
 - `backend/app/elo_mmr_engine.py`
+- `backend/app/payloads.py`
+- `backend/app/elo_mmr_models.py`
 
 ### Validations Run
 
 - `python -m compileall app`
-- scoped rebuild against `backend/data/elo_mmr_task001_validation.sqlite3`
+- `HLL_BACKEND_STORAGE_PATH=backend/data/elo_mmr_task001_validation.sqlite3 python -m app.elo_mmr_engine rebuild`
+- SQLite verification of monthly ranking rows, checkpoint contract stamps and explicit eligibility outputs
 - leaderboard/profile payload smoke validation using the scoped validation DB
 
 ### Validation Results
 
 - monthly rebuild succeeded from persisted model state
-- monthly ranking rows with explicit eligibility outcome: `3030`
-- monthly checkpoint rows with generated metadata and source policy: `2`
-- leaderboard payload resolved from the persisted monthly model
+- monthly ranking rows with explicit eligibility outcome and version stamps: `3030`
+- monthly checkpoint rows with generated metadata, source policy and v2 checkpoint contract: `2`
+- leaderboard payload resolved from the persisted monthly model with separated persistent/monthly contracts
 - player profile payload resolved with monthly `rating_breakdown`
 
 ### Notes
 
-- Audit correction:
-  - this task was reopened because the published branch does not clearly demonstrate that the monthly aggregation refactor is fully closed as a distinct internal layer
-  - the monthly ranking logic is still embedded inside the Elo engine rather than shown as a clearly separated aggregation boundary
-  - the branch evidence is sufficient to show progress, but not sufficient to justify leaving the task in `done` under a conservative audit standard
+- No integration test script exists for this Elo/MMR scope, so validation stayed at compile, rebuild, SQLite contract checks and payload smoke checks.

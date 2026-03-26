@@ -33,6 +33,9 @@ def initialize_elo_mmr_storage(*, db_path: Path | None = None) -> Path:
                 losses INTEGER NOT NULL DEFAULT 0,
                 last_match_id TEXT,
                 last_match_ended_at TEXT,
+                model_version TEXT NOT NULL DEFAULT '',
+                formula_version TEXT NOT NULL DEFAULT '',
+                contract_version TEXT NOT NULL DEFAULT '',
                 accuracy_mode TEXT NOT NULL,
                 capabilities_json TEXT NOT NULL,
                 updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -42,6 +45,7 @@ def initialize_elo_mmr_storage(*, db_path: Path | None = None) -> Path:
             CREATE TABLE IF NOT EXISTS elo_mmr_match_results (
                 scope_key TEXT NOT NULL,
                 month_key TEXT NOT NULL,
+                canonical_match_key TEXT NOT NULL DEFAULT '',
                 external_match_id TEXT NOT NULL,
                 stable_player_key TEXT NOT NULL,
                 player_name TEXT NOT NULL,
@@ -49,6 +53,11 @@ def initialize_elo_mmr_storage(*, db_path: Path | None = None) -> Path:
                 server_slug TEXT NOT NULL,
                 server_name TEXT NOT NULL,
                 match_ended_at TEXT NOT NULL,
+                fact_schema_version TEXT NOT NULL DEFAULT '',
+                source_input_version TEXT NOT NULL DEFAULT '',
+                model_version TEXT NOT NULL DEFAULT '',
+                formula_version TEXT NOT NULL DEFAULT '',
+                contract_version TEXT NOT NULL DEFAULT '',
                 match_valid INTEGER NOT NULL,
                 quality_factor REAL NOT NULL,
                 quality_bucket TEXT NOT NULL,
@@ -81,6 +90,9 @@ def initialize_elo_mmr_storage(*, db_path: Path | None = None) -> Path:
                 stable_player_key TEXT NOT NULL,
                 player_name TEXT NOT NULL,
                 steam_id TEXT,
+                model_version TEXT NOT NULL DEFAULT '',
+                formula_version TEXT NOT NULL DEFAULT '',
+                contract_version TEXT NOT NULL DEFAULT '',
                 current_mmr REAL NOT NULL,
                 baseline_mmr REAL NOT NULL,
                 mmr_gain REAL NOT NULL,
@@ -107,6 +119,9 @@ def initialize_elo_mmr_storage(*, db_path: Path | None = None) -> Path:
                 scope_key TEXT NOT NULL,
                 month_key TEXT NOT NULL,
                 generated_at TEXT NOT NULL,
+                model_version TEXT NOT NULL DEFAULT '',
+                formula_version TEXT NOT NULL DEFAULT '',
+                contract_version TEXT NOT NULL DEFAULT '',
                 player_count INTEGER NOT NULL,
                 eligible_player_count INTEGER NOT NULL,
                 source_policy_json TEXT NOT NULL,
@@ -217,9 +232,12 @@ def replace_elo_mmr_state(
                 losses,
                 last_match_id,
                 last_match_ended_at,
+                model_version,
+                formula_version,
+                contract_version,
                 accuracy_mode,
                 capabilities_json
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             [
                 (
@@ -234,6 +252,9 @@ def replace_elo_mmr_state(
                     row["losses"],
                     row.get("last_match_id"),
                     row.get("last_match_ended_at"),
+                    row.get("model_version", ""),
+                    row.get("formula_version", ""),
+                    row.get("contract_version", ""),
                     row["accuracy_mode"],
                     json.dumps(row["capabilities"], ensure_ascii=True, separators=(",", ":")),
                 )
@@ -246,6 +267,7 @@ def replace_elo_mmr_state(
             INSERT INTO elo_mmr_match_results (
                 scope_key,
                 month_key,
+                canonical_match_key,
                 external_match_id,
                 stable_player_key,
                 player_name,
@@ -253,6 +275,11 @@ def replace_elo_mmr_state(
                 server_slug,
                 server_name,
                 match_ended_at,
+                fact_schema_version,
+                source_input_version,
+                model_version,
+                formula_version,
+                contract_version,
                 match_valid,
                 quality_factor,
                 quality_bucket,
@@ -284,12 +311,13 @@ def replace_elo_mmr_state(
                 performance_modifier_delta,
                 proxy_modifier_delta,
                 capabilities_json
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             [
                 (
                     row["scope_key"],
                     row["month_key"],
+                    row.get("canonical_match_key", ""),
                     row["external_match_id"],
                     row["stable_player_key"],
                     row["player_name"],
@@ -297,6 +325,11 @@ def replace_elo_mmr_state(
                     row["server_slug"],
                     row["server_name"],
                     row["match_ended_at"],
+                    row.get("fact_schema_version", ""),
+                    row.get("source_input_version", ""),
+                    row.get("model_version", ""),
+                    row.get("formula_version", ""),
+                    row.get("contract_version", ""),
                     1 if row["match_valid"] else 0,
                     row["quality_factor"],
                     row["quality_bucket"],
@@ -341,6 +374,9 @@ def replace_elo_mmr_state(
                 stable_player_key,
                 player_name,
                 steam_id,
+                model_version,
+                formula_version,
+                contract_version,
                 current_mmr,
                 baseline_mmr,
                 mmr_gain,
@@ -360,7 +396,7 @@ def replace_elo_mmr_state(
                 accuracy_mode,
                 capabilities_json,
                 component_scores_json
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             [
                 (
@@ -369,6 +405,9 @@ def replace_elo_mmr_state(
                     row["stable_player_key"],
                     row["player_name"],
                     row.get("steam_id"),
+                    row.get("model_version", ""),
+                    row.get("formula_version", ""),
+                    row.get("contract_version", ""),
                     row["current_mmr"],
                     row["baseline_mmr"],
                     row["mmr_gain"],
@@ -399,17 +438,23 @@ def replace_elo_mmr_state(
                 scope_key,
                 month_key,
                 generated_at,
+                model_version,
+                formula_version,
+                contract_version,
                 player_count,
                 eligible_player_count,
                 source_policy_json,
                 capabilities_summary_json
-            ) VALUES (?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             [
                 (
                     row["scope_key"],
                     row["month_key"],
                     row["generated_at"],
+                    row.get("model_version", ""),
+                    row.get("formula_version", ""),
+                    row.get("contract_version", ""),
                     row["player_count"],
                     row["eligible_player_count"],
                     json.dumps(row["source_policy"], ensure_ascii=True, separators=(",", ":")),
@@ -694,7 +739,13 @@ def list_elo_mmr_monthly_rankings(
         with _connect_readonly(resolved_path) as connection:
             checkpoint_row = connection.execute(
                 """
-                SELECT generated_at, source_policy_json, capabilities_summary_json
+                SELECT
+                    generated_at,
+                    model_version,
+                    formula_version,
+                    contract_version,
+                    source_policy_json,
+                    capabilities_summary_json
                 FROM elo_mmr_monthly_checkpoints
                 WHERE scope_key = ? AND month_key = ?
                 """,
@@ -721,6 +772,7 @@ def list_elo_mmr_monthly_rankings(
         }
     items = []
     for index, row in enumerate(rows, start=1):
+        component_scores = json.loads(row["component_scores_json"])
         items.append(
             {
                 "ranking_position": index,
@@ -733,9 +785,15 @@ def list_elo_mmr_monthly_rankings(
                     "mmr": round(float(row["current_mmr"] or 0.0), 3),
                     "baseline_mmr": round(float(row["baseline_mmr"] or 0.0), 3),
                     "mmr_gain": round(float(row["mmr_gain"] or 0.0), 3),
+                    "model_version": component_scores.get("persistent_rating_model_version"),
+                    "formula_version": component_scores.get("persistent_rating_formula_version"),
+                    "contract_version": component_scores.get("persistent_rating_contract_version"),
                 },
                 "monthly_rank_score": round(float(row["monthly_rank_score"] or 0.0), 3),
-                "components": json.loads(row["component_scores_json"]),
+                "components": component_scores,
+                "model_version": row["model_version"],
+                "formula_version": row["formula_version"],
+                "contract_version": row["contract_version"],
                 "valid_matches": int(row["valid_matches"] or 0),
                 "total_matches": int(row["total_matches"] or 0),
                 "total_time_seconds": int(row["total_time_seconds"] or 0),
@@ -749,6 +807,9 @@ def list_elo_mmr_monthly_rankings(
         "month_key": resolved_month_key,
         "found": bool(items),
         "generated_at": checkpoint_row["generated_at"] if checkpoint_row else None,
+        "model_version": checkpoint_row["model_version"] if checkpoint_row else None,
+        "formula_version": checkpoint_row["formula_version"] if checkpoint_row else None,
+        "contract_version": checkpoint_row["contract_version"] if checkpoint_row else None,
         "items": items,
         "source_policy": json.loads(checkpoint_row["source_policy_json"])
         if checkpoint_row
@@ -822,6 +883,9 @@ def get_elo_mmr_player_profile(
                 "losses": int(rating_row["losses"] or 0),
                 "last_match_id": rating_row["last_match_id"],
                 "last_match_ended_at": rating_row["last_match_ended_at"],
+                "model_version": rating_row["model_version"],
+                "formula_version": rating_row["formula_version"],
+                "contract_version": rating_row["contract_version"],
                 "accuracy_mode": rating_row["accuracy_mode"],
                 "capabilities": json.loads(rating_row["capabilities_json"]),
             }
@@ -834,6 +898,9 @@ def get_elo_mmr_player_profile(
                 "current_mmr": round(float(monthly_row["current_mmr"] or 0.0), 3),
                 "baseline_mmr": round(float(monthly_row["baseline_mmr"] or 0.0), 3),
                 "mmr_gain": round(float(monthly_row["mmr_gain"] or 0.0), 3),
+                "model_version": monthly_row["model_version"],
+                "formula_version": monthly_row["formula_version"],
+                "contract_version": monthly_row["contract_version"],
                 "valid_matches": int(monthly_row["valid_matches"] or 0),
                 "total_matches": int(monthly_row["total_matches"] or 0),
                 "total_time_seconds": int(monthly_row["total_time_seconds"] or 0),
@@ -893,8 +960,23 @@ def get_latest_elo_mmr_generated_at(*, db_path: Path | None = None) -> datetime 
 def _ensure_schema_extensions(connection: sqlite3.Connection) -> None:
     _ensure_table_columns(
         connection,
+        "elo_mmr_player_ratings",
+        {
+            "model_version": "TEXT NOT NULL DEFAULT ''",
+            "formula_version": "TEXT NOT NULL DEFAULT ''",
+            "contract_version": "TEXT NOT NULL DEFAULT ''",
+        },
+    )
+    _ensure_table_columns(
+        connection,
         "elo_mmr_match_results",
         {
+            "canonical_match_key": "TEXT NOT NULL DEFAULT ''",
+            "fact_schema_version": "TEXT NOT NULL DEFAULT ''",
+            "source_input_version": "TEXT NOT NULL DEFAULT ''",
+            "model_version": "TEXT NOT NULL DEFAULT ''",
+            "formula_version": "TEXT NOT NULL DEFAULT ''",
+            "contract_version": "TEXT NOT NULL DEFAULT ''",
             "time_seconds": "INTEGER NOT NULL DEFAULT 0",
             "participation_ratio": "REAL NOT NULL DEFAULT 0",
             "strength_of_schedule_match": "REAL NOT NULL DEFAULT 0",
@@ -910,7 +992,19 @@ def _ensure_schema_extensions(connection: sqlite3.Connection) -> None:
         connection,
         "elo_mmr_monthly_rankings",
         {
+            "model_version": "TEXT NOT NULL DEFAULT ''",
+            "formula_version": "TEXT NOT NULL DEFAULT ''",
+            "contract_version": "TEXT NOT NULL DEFAULT ''",
             "avg_participation_ratio": "REAL NOT NULL DEFAULT 0",
+        },
+    )
+    _ensure_table_columns(
+        connection,
+        "elo_mmr_monthly_checkpoints",
+        {
+            "model_version": "TEXT NOT NULL DEFAULT ''",
+            "formula_version": "TEXT NOT NULL DEFAULT ''",
+            "contract_version": "TEXT NOT NULL DEFAULT ''",
         },
     )
 

@@ -25,14 +25,22 @@ from .elo_mmr_models import (
     ELO_K_FACTOR,
     FULL_QUALITY_DURATION_SECONDS,
     FULL_QUALITY_PLAYER_COUNT,
+    MATCH_RESULT_CONTRACT_VERSION,
     MIN_VALID_MATCH_DURATION_SECONDS,
     MIN_VALID_PLAYER_PARTICIPATION_RATIO,
     MIN_VALID_PLAYER_PARTICIPATION_SECONDS,
     MIN_VALID_MATCH_PLAYERS,
     MONTHLY_ACTIVITY_TARGET_HOURS,
     MONTHLY_ACTIVITY_TARGET_MATCHES,
+    MONTHLY_CHECKPOINT_CONTRACT_VERSION,
     MONTHLY_MIN_TIME_SECONDS,
     MONTHLY_MIN_VALID_MATCHES,
+    MONTHLY_RANKING_CONTRACT_VERSION,
+    MONTHLY_RANKING_FORMULA_VERSION,
+    MONTHLY_RANKING_MODEL_VERSION,
+    PERSISTENT_RATING_CONTRACT_VERSION,
+    PERSISTENT_RATING_FORMULA_VERSION,
+    PERSISTENT_RATING_MODEL_VERSION,
     build_signal,
     summarize_accuracy,
 )
@@ -125,48 +133,12 @@ def rebuild_elo_mmr_models(*, db_path=None) -> dict[str, object]:
         for scope_ratings in ratings_by_scope.values():
             player_ratings.extend(scope_ratings.values())
 
-        monthly_rankings = _build_monthly_rankings(match_results)
-        checkpoint_groups: dict[tuple[str, str], list[dict[str, object]]] = defaultdict(list)
-        for row in monthly_rankings:
-            checkpoint_groups[(row["scope_key"], row["month_key"])].append(row)
-        generated_at = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
-        for (scope_key, month_key), rows in checkpoint_groups.items():
-            eligible_count = sum(1 for row in rows if row["eligible"])
-            exact_ratio = round(
-                sum(float(row["capabilities"]["exact_ratio"]) for row in rows) / max(1, len(rows)),
-                3,
-            )
-            approximate_ratio = round(
-                sum(float(row["capabilities"]["approximate_ratio"]) for row in rows) / max(1, len(rows)),
-                3,
-            )
-            unavailable_ratio = round(
-                sum(float(row["capabilities"]["unavailable_ratio"]) for row in rows) / max(1, len(rows)),
-                3,
-            )
-            partial_count = sum(1 for row in rows if row["accuracy_mode"] == "partial")
-            monthly_checkpoints.append(
-                {
-                    "scope_key": scope_key,
-                    "month_key": month_key,
-                    "generated_at": generated_at,
-                    "player_count": len(rows),
-                    "eligible_player_count": eligible_count,
-                    "source_policy": historical_source_policy,
-                    "capabilities_summary": {
-                        "accuracy_mode": "partial" if partial_count > 0 else "approximate" if approximate_ratio > 0 else "exact",
-                        "exact_ratio": exact_ratio,
-                        "approximate_ratio": approximate_ratio,
-                        "unavailable_ratio": unavailable_ratio,
-                        "partial_count": partial_count,
-                        "notes": [
-                            "Outcome, combat, utility, match validity and player participation use real stored signals.",
-                            "ObjectiveIndex, role bucket, discipline and strength of schedule rely partly on honest proxies.",
-                            "LeadershipIndex is not available with the current repository telemetry.",
-                        ],
-                    },
-                }
-            )
+        monthly_aggregation = _build_monthly_ranking_materialization(
+            match_results=match_results,
+            historical_source_policy=historical_source_policy,
+        )
+        monthly_rankings = monthly_aggregation["monthly_rankings"]
+        monthly_checkpoints = monthly_aggregation["monthly_checkpoints"]
 
         replace_elo_mmr_state(
             player_ratings=player_ratings,
@@ -182,6 +154,8 @@ def rebuild_elo_mmr_models(*, db_path=None) -> dict[str, object]:
             "status": "ok",
             "canonical_fact_layer": canonical_fact_layer,
             "historical_source_policy": historical_source_policy,
+            "persistent_rating_contract": _build_persistent_rating_contract_metadata(),
+            "monthly_ranking_contract": _build_monthly_ranking_contract_metadata(),
             "totals": {
                 "matches_scored": len({(row["scope_key"], row["external_match_id"]) for row in match_results}),
                 "player_ratings": len(player_ratings),
@@ -202,6 +176,9 @@ def list_elo_mmr_leaderboard_payload(*, server_id: str | None, limit: int) -> di
         "month_key": result["month_key"],
         "found": result["found"],
         "generated_at": result["generated_at"],
+        "model_version": result.get("model_version"),
+        "formula_version": result.get("formula_version"),
+        "contract_version": result.get("contract_version"),
         "items": result["items"],
         "source_policy": result["source_policy"] or _build_historical_source_policy_for_elo(),
         "capabilities_summary": result["capabilities_summary"],
@@ -329,6 +306,9 @@ def _score_match_for_scope(
                 "losses": 0,
                 "last_match_id": None,
                 "last_match_ended_at": None,
+                "model_version": PERSISTENT_RATING_MODEL_VERSION,
+                "formula_version": PERSISTENT_RATING_FORMULA_VERSION,
+                "contract_version": PERSISTENT_RATING_CONTRACT_VERSION,
                 "accuracy_mode": "partial",
                 "capabilities": summarize_accuracy([]),
             },
@@ -494,11 +474,8 @@ def _score_match_for_scope(
                 ELO_K_FACTOR * quality_factor * PROXY_MODIFIER_K_SHARE * proxy_modifier_edge,
                 3,
             )
-            performance_modifier_delta = round(
-                exact_modifier_delta + proxy_modifier_delta,
-                3,
-            )
-            delta_mmr = round(elo_core_delta + performance_modifier_delta, 3)
+            performance_modifier_delta = exact_modifier_delta
+            delta_mmr = round(elo_core_delta + performance_modifier_delta + proxy_modifier_delta, 3)
             match_score = round(effective_score * quality_factor, 3)
             signals.append(build_signal("DeltaMMR", CAPABILITY_APPROXIMATE, "Uses Elo-like expected-vs-actual movement plus bounded HLL performance modifiers and honest proxy boundaries."))
             signals.append(build_signal("MatchScore", CAPABILITY_APPROXIMATE, "Uses outcome-first competitive scoring with bounded HLL impact and schedule context, then scales by match quality."))
@@ -509,6 +486,7 @@ def _score_match_for_scope(
             {
                 "scope_key": scope_key,
                 "month_key": month_key,
+                "canonical_match_key": match_group.get("canonical_match_key"),
                 "external_match_id": match_group["external_match_id"],
                 "stable_player_key": stable_player_key,
                 "player_name": player["player_name"],
@@ -516,6 +494,11 @@ def _score_match_for_scope(
                 "server_slug": match_group["server_slug"],
                 "server_name": match_group["server_name"],
                 "match_ended_at": match_group["ended_at"],
+                "fact_schema_version": match_group.get("fact_schema_version"),
+                "source_input_version": match_group.get("source_input_version"),
+                "model_version": PERSISTENT_RATING_MODEL_VERSION,
+                "formula_version": PERSISTENT_RATING_FORMULA_VERSION,
+                "contract_version": MATCH_RESULT_CONTRACT_VERSION,
                 "match_valid": player_match_valid,
                 "quality_factor": quality_factor,
                 "quality_bucket": quality_bucket,
@@ -553,6 +536,9 @@ def _score_match_for_scope(
         rating_row["matches_processed"] = int(rating_row["matches_processed"]) + 1
         rating_row["last_match_id"] = match_group["external_match_id"]
         rating_row["last_match_ended_at"] = match_group["ended_at"]
+        rating_row["model_version"] = PERSISTENT_RATING_MODEL_VERSION
+        rating_row["formula_version"] = PERSISTENT_RATING_FORMULA_VERSION
+        rating_row["contract_version"] = PERSISTENT_RATING_CONTRACT_VERSION
         rating_row["accuracy_mode"] = capability_summary["accuracy_mode"]
         rating_row["capabilities"] = capability_summary
         if team_outcome == "win":
@@ -631,6 +617,9 @@ def _build_monthly_rankings(match_results: list[dict[str, object]]) -> list[dict
                 "stable_player_key": stable_player_key,
                 "player_name": rows[-1]["player_name"],
                 "steam_id": rows[-1].get("steam_id"),
+                "model_version": MONTHLY_RANKING_MODEL_VERSION,
+                "formula_version": MONTHLY_RANKING_FORMULA_VERSION,
+                "contract_version": MONTHLY_RANKING_CONTRACT_VERSION,
                 "current_mmr": current_mmr,
                 "baseline_mmr": baseline_mmr,
                 "mmr_gain": mmr_gain,
@@ -665,8 +654,13 @@ def _build_monthly_rankings(match_results: list[dict[str, object]]) -> list[dict
                     ],
                 },
                 "component_scores": {
-                    "model_version": "elo-v3-competitive",
-                    "ranking_formula_version": "elo-v3-competitive-balanced-v1",
+                    "model_version": MONTHLY_RANKING_MODEL_VERSION,
+                    "ranking_formula_version": MONTHLY_RANKING_FORMULA_VERSION,
+                    "persistent_rating_model_version": PERSISTENT_RATING_MODEL_VERSION,
+                    "persistent_rating_formula_version": PERSISTENT_RATING_FORMULA_VERSION,
+                    "persistent_rating_contract_version": PERSISTENT_RATING_CONTRACT_VERSION,
+                    "match_result_contract_version": MATCH_RESULT_CONTRACT_VERSION,
+                    "monthly_ranking_contract_version": MONTHLY_RANKING_CONTRACT_VERSION,
                     "avg_match_score": avg_match_score,
                     "mmr_gain_raw": mmr_gain,
                     "elo_core_gain": elo_core_gain,
@@ -714,6 +708,86 @@ def _build_monthly_rankings(match_results: list[dict[str, object]]) -> list[dict
             )
             rankings.append(row)
     return rankings
+
+
+def _build_monthly_ranking_materialization(
+    *,
+    match_results: list[dict[str, object]],
+    historical_source_policy: dict[str, object],
+) -> dict[str, list[dict[str, object]]]:
+    monthly_rankings = _build_monthly_rankings(match_results)
+    checkpoint_groups: dict[tuple[str, str], list[dict[str, object]]] = defaultdict(list)
+    for row in monthly_rankings:
+        checkpoint_groups[(row["scope_key"], row["month_key"])].append(row)
+
+    generated_at = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+    monthly_checkpoints: list[dict[str, object]] = []
+    for (scope_key, month_key), rows in checkpoint_groups.items():
+        eligible_count = sum(1 for row in rows if row["eligible"])
+        exact_ratio = round(
+            sum(float(row["capabilities"]["exact_ratio"]) for row in rows) / max(1, len(rows)),
+            3,
+        )
+        approximate_ratio = round(
+            sum(float(row["capabilities"]["approximate_ratio"]) for row in rows) / max(1, len(rows)),
+            3,
+        )
+        unavailable_ratio = round(
+            sum(float(row["capabilities"]["unavailable_ratio"]) for row in rows) / max(1, len(rows)),
+            3,
+        )
+        partial_count = sum(1 for row in rows if row["accuracy_mode"] == "partial")
+        monthly_checkpoints.append(
+            {
+                "scope_key": scope_key,
+                "month_key": month_key,
+                "generated_at": generated_at,
+                "model_version": MONTHLY_RANKING_MODEL_VERSION,
+                "formula_version": MONTHLY_RANKING_FORMULA_VERSION,
+                "contract_version": MONTHLY_CHECKPOINT_CONTRACT_VERSION,
+                "player_count": len(rows),
+                "eligible_player_count": eligible_count,
+                "source_policy": historical_source_policy,
+                "capabilities_summary": {
+                    "accuracy_mode": "partial" if partial_count > 0 else "approximate" if approximate_ratio > 0 else "exact",
+                    "exact_ratio": exact_ratio,
+                    "approximate_ratio": approximate_ratio,
+                    "unavailable_ratio": unavailable_ratio,
+                    "partial_count": partial_count,
+                    "aggregation_contract": _build_monthly_ranking_contract_metadata(),
+                    "notes": [
+                        "Outcome, combat, utility, match validity and player participation use real stored signals.",
+                        "ObjectiveIndex, role bucket, discipline and strength of schedule rely partly on honest proxies.",
+                        "LeadershipIndex is not available with the current repository telemetry.",
+                    ],
+                },
+            }
+        )
+    return {
+        "monthly_rankings": monthly_rankings,
+        "monthly_checkpoints": monthly_checkpoints,
+    }
+
+
+def _build_persistent_rating_contract_metadata() -> dict[str, object]:
+    return {
+        "model_version": PERSISTENT_RATING_MODEL_VERSION,
+        "formula_version": PERSISTENT_RATING_FORMULA_VERSION,
+        "contract_version": PERSISTENT_RATING_CONTRACT_VERSION,
+        "match_result_contract_version": MATCH_RESULT_CONTRACT_VERSION,
+    }
+
+
+def _build_monthly_ranking_contract_metadata() -> dict[str, object]:
+    return {
+        "model_version": MONTHLY_RANKING_MODEL_VERSION,
+        "formula_version": MONTHLY_RANKING_FORMULA_VERSION,
+        "contract_version": MONTHLY_RANKING_CONTRACT_VERSION,
+        "checkpoint_contract_version": MONTHLY_CHECKPOINT_CONTRACT_VERSION,
+        "persistent_rating_model_version": PERSISTENT_RATING_MODEL_VERSION,
+        "persistent_rating_formula_version": PERSISTENT_RATING_FORMULA_VERSION,
+        "match_result_contract_version": MATCH_RESULT_CONTRACT_VERSION,
+    }
 
 
 def _build_historical_source_policy_for_elo() -> dict[str, object]:
