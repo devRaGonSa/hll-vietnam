@@ -39,12 +39,13 @@ from .elo_mmr_models import (
 from .elo_mmr_storage import (
     get_elo_mmr_player_profile,
     initialize_elo_mmr_storage,
+    list_elo_mmr_canonical_match_rows,
     list_elo_mmr_monthly_rankings,
+    rebuild_elo_mmr_canonical_facts,
     replace_elo_mmr_state,
 )
 from .historical_storage import ALL_SERVERS_SLUG, initialize_historical_storage
 from .rcon_historical_read_model import get_rcon_historical_competitive_match_context
-from .sqlite_utils import connect_sqlite_readonly
 from .writer_lock import backend_writer_lock, build_writer_lock_holder
 
 
@@ -81,9 +82,10 @@ def rebuild_elo_mmr_models(*, db_path=None) -> dict[str, object]:
     with backend_writer_lock(holder=build_writer_lock_holder("app.elo_mmr_engine rebuild")):
         resolved_path = initialize_historical_storage(db_path=db_path)
         initialize_elo_mmr_storage(db_path=resolved_path)
+        canonical_fact_layer = rebuild_elo_mmr_canonical_facts(db_path=resolved_path)
         historical_source_policy = _build_historical_source_policy_for_elo()
         rcon_read_model = get_rcon_historical_read_model()
-        match_rows = _load_closed_match_rows(db_path=resolved_path)
+        match_rows = list_elo_mmr_canonical_match_rows(db_path=resolved_path)
         grouped_matches = _group_match_rows(match_rows)
         rcon_match_context_cache: dict[tuple[str, str | None, str | None], dict[str, object] | None] = {}
 
@@ -178,6 +180,7 @@ def rebuild_elo_mmr_models(*, db_path=None) -> dict[str, object]:
         }
         return {
             "status": "ok",
+            "canonical_fact_layer": canonical_fact_layer,
             "historical_source_policy": historical_source_policy,
             "totals": {
                 "matches_scored": len({(row["scope_key"], row["external_match_id"]) for row in match_results}),
@@ -245,45 +248,6 @@ def main(argv: Iterable[str] | None = None) -> int:
     return 0
 
 
-def _load_closed_match_rows(*, db_path) -> list[dict[str, object]]:
-    with connect_sqlite_readonly(db_path) as connection:
-        rows = connection.execute(
-            """
-            SELECT
-                historical_servers.slug AS server_slug,
-                historical_servers.display_name AS server_name,
-                historical_matches.external_match_id,
-                historical_matches.started_at,
-                historical_matches.ended_at,
-                historical_matches.game_mode,
-                historical_matches.allied_score,
-                historical_matches.axis_score,
-                historical_players.stable_player_key,
-                historical_players.display_name AS player_name,
-                historical_players.steam_id,
-                historical_player_match_stats.team_side,
-                historical_player_match_stats.kills,
-                historical_player_match_stats.deaths,
-                historical_player_match_stats.teamkills,
-                historical_player_match_stats.time_seconds,
-                historical_player_match_stats.combat,
-                historical_player_match_stats.offense,
-                historical_player_match_stats.defense,
-                historical_player_match_stats.support
-            FROM historical_player_match_stats
-            INNER JOIN historical_matches
-                ON historical_matches.id = historical_player_match_stats.historical_match_id
-            INNER JOIN historical_servers
-                ON historical_servers.id = historical_matches.historical_server_id
-            INNER JOIN historical_players
-                ON historical_players.id = historical_player_match_stats.historical_player_id
-            WHERE historical_matches.ended_at IS NOT NULL
-            ORDER BY historical_matches.ended_at ASC, historical_matches.id ASC, historical_players.id ASC
-            """
-        ).fetchall()
-    return [dict(row) for row in rows]
-
-
 def _group_match_rows(rows: list[dict[str, object]]) -> list[dict[str, object]]:
     grouped: dict[tuple[str, str], list[dict[str, object]]] = defaultdict(list)
     for row in rows:
@@ -295,12 +259,16 @@ def _group_match_rows(rows: list[dict[str, object]]) -> list[dict[str, object]]:
             {
                 "server_slug": server_slug,
                 "server_name": first["server_name"],
+                "canonical_match_key": first.get("canonical_match_key"),
                 "external_match_id": match_id,
                 "started_at": first["started_at"],
                 "ended_at": first["ended_at"],
                 "game_mode": first["game_mode"],
                 "allied_score": _safe_int(first["allied_score"]),
                 "axis_score": _safe_int(first["axis_score"]),
+                "match_capability_status": first.get("match_capability_status"),
+                "fact_schema_version": first.get("fact_schema_version"),
+                "source_input_version": first.get("source_input_version"),
                 "players": players,
             }
         )

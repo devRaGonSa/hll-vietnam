@@ -10,6 +10,9 @@ from pathlib import Path
 from .config import get_storage_path
 from .sqlite_utils import connect_sqlite_readonly, connect_sqlite_writer
 
+ELO_MMR_CANONICAL_FACT_SCHEMA_VERSION = "elo-canonical-v1"
+ELO_MMR_CANONICAL_SOURCE_INPUT_VERSION = "historical-closed-match-v1"
+
 
 def initialize_elo_mmr_storage(*, db_path: Path | None = None) -> Path:
     """Create the Elo/MMR persistence tables in the shared backend SQLite."""
@@ -112,13 +115,75 @@ def initialize_elo_mmr_storage(*, db_path: Path | None = None) -> Path:
                 PRIMARY KEY (scope_key, month_key)
             );
 
+            CREATE TABLE IF NOT EXISTS elo_mmr_canonical_players (
+                stable_player_key TEXT NOT NULL PRIMARY KEY,
+                player_name TEXT NOT NULL,
+                steam_id TEXT,
+                identity_capability_status TEXT NOT NULL,
+                identity_source TEXT NOT NULL,
+                first_seen_at TEXT,
+                last_seen_at TEXT,
+                fact_schema_version TEXT NOT NULL,
+                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+            );
+
+            CREATE TABLE IF NOT EXISTS elo_mmr_canonical_matches (
+                canonical_match_key TEXT NOT NULL PRIMARY KEY,
+                server_slug TEXT NOT NULL,
+                server_name TEXT NOT NULL,
+                external_match_id TEXT NOT NULL,
+                started_at TEXT,
+                ended_at TEXT NOT NULL,
+                game_mode TEXT,
+                allied_score INTEGER,
+                axis_score INTEGER,
+                match_capability_status TEXT NOT NULL,
+                source_kind TEXT NOT NULL,
+                fact_schema_version TEXT NOT NULL,
+                source_input_version TEXT NOT NULL,
+                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE (server_slug, external_match_id)
+            );
+
+            CREATE TABLE IF NOT EXISTS elo_mmr_canonical_player_match_facts (
+                canonical_match_key TEXT NOT NULL,
+                stable_player_key TEXT NOT NULL,
+                server_slug TEXT NOT NULL,
+                external_match_id TEXT NOT NULL,
+                player_name TEXT NOT NULL,
+                steam_id TEXT,
+                team_side TEXT,
+                kills INTEGER NOT NULL DEFAULT 0,
+                deaths INTEGER NOT NULL DEFAULT 0,
+                teamkills INTEGER NOT NULL DEFAULT 0,
+                time_seconds INTEGER NOT NULL DEFAULT 0,
+                combat INTEGER NOT NULL DEFAULT 0,
+                offense INTEGER NOT NULL DEFAULT 0,
+                defense INTEGER NOT NULL DEFAULT 0,
+                support INTEGER NOT NULL DEFAULT 0,
+                fact_capability_status TEXT NOT NULL,
+                fact_schema_version TEXT NOT NULL,
+                source_input_version TEXT NOT NULL,
+                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                PRIMARY KEY (canonical_match_key, stable_player_key),
+                FOREIGN KEY (canonical_match_key) REFERENCES elo_mmr_canonical_matches(canonical_match_key),
+                FOREIGN KEY (stable_player_key) REFERENCES elo_mmr_canonical_players(stable_player_key)
+            );
+
             CREATE INDEX IF NOT EXISTS idx_elo_mmr_monthly_rankings_scope_month
             ON elo_mmr_monthly_rankings(scope_key, month_key, eligible, monthly_rank_score DESC);
 
             CREATE INDEX IF NOT EXISTS idx_elo_mmr_player_ratings_scope
             ON elo_mmr_player_ratings(scope_key, current_mmr DESC);
+
+            CREATE INDEX IF NOT EXISTS idx_elo_mmr_canonical_matches_server
+            ON elo_mmr_canonical_matches(server_slug, ended_at, external_match_id);
+
+            CREATE INDEX IF NOT EXISTS idx_elo_mmr_canonical_facts_server_match
+            ON elo_mmr_canonical_player_match_facts(server_slug, external_match_id, stable_player_key);
             """
         )
+        _ensure_schema_extensions(connection)
     return resolved_path
 
 
@@ -209,8 +274,17 @@ def replace_elo_mmr_state(
                 mmr_after,
                 match_score,
                 penalty_points,
+                time_seconds,
+                participation_ratio,
+                strength_of_schedule_match,
+                team_outcome,
+                expected_result,
+                actual_result,
+                elo_core_delta,
+                performance_modifier_delta,
+                proxy_modifier_delta,
                 capabilities_json
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             [
                 (
@@ -244,6 +318,15 @@ def replace_elo_mmr_state(
                     row["mmr_after"],
                     row["match_score"],
                     row["penalty_points"],
+                    row.get("time_seconds", 0),
+                    row.get("participation_ratio", 0.0),
+                    row.get("strength_of_schedule_match", 0.0),
+                    row.get("team_outcome"),
+                    row.get("expected_result", 0.0),
+                    row.get("actual_result", 0.0),
+                    row.get("elo_core_delta", 0.0),
+                    row.get("performance_modifier_delta", 0.0),
+                    row.get("proxy_modifier_delta", 0.0),
                     json.dumps(row["capabilities"], ensure_ascii=True, separators=(",", ":")),
                 )
                 for row in match_results
@@ -271,12 +354,13 @@ def replace_elo_mmr_state(
                 valid_matches,
                 total_matches,
                 total_time_seconds,
+                avg_participation_ratio,
                 eligible,
                 eligibility_reason,
                 accuracy_mode,
                 capabilities_json,
                 component_scores_json
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             [
                 (
@@ -298,6 +382,7 @@ def replace_elo_mmr_state(
                     row["valid_matches"],
                     row["total_matches"],
                     row["total_time_seconds"],
+                    row.get("avg_participation_ratio", 0.0),
                     1 if row["eligible"] else 0,
                     row.get("eligibility_reason"),
                     row["accuracy_mode"],
@@ -338,6 +423,245 @@ def replace_elo_mmr_state(
             ],
         )
     return resolved_path
+
+
+def rebuild_elo_mmr_canonical_facts(*, db_path: Path | None = None) -> dict[str, object]:
+    """Materialize the canonical Elo fact layer from persisted historical closed matches."""
+    resolved_path = initialize_elo_mmr_storage(db_path=db_path)
+    with _connect_writer(resolved_path) as connection:
+        connection.execute("DELETE FROM elo_mmr_canonical_player_match_facts")
+        connection.execute("DELETE FROM elo_mmr_canonical_matches")
+        connection.execute("DELETE FROM elo_mmr_canonical_players")
+
+        connection.execute(
+            """
+            INSERT INTO elo_mmr_canonical_players (
+                stable_player_key,
+                player_name,
+                steam_id,
+                identity_capability_status,
+                identity_source,
+                first_seen_at,
+                last_seen_at,
+                fact_schema_version
+            )
+            SELECT
+                historical_players.stable_player_key,
+                MAX(COALESCE(NULLIF(historical_players.display_name, ''), 'Unknown player')) AS player_name,
+                MAX(NULLIF(historical_players.steam_id, '')) AS steam_id,
+                CASE
+                    WHEN MAX(NULLIF(historical_players.steam_id, '')) IS NOT NULL THEN 'exact'
+                    WHEN MAX(NULLIF(historical_players.source_player_id, '')) IS NOT NULL THEN 'approximate'
+                    ELSE 'not_available'
+                END AS identity_capability_status,
+                CASE
+                    WHEN MAX(NULLIF(historical_players.steam_id, '')) IS NOT NULL THEN 'steam-id'
+                    WHEN MAX(NULLIF(historical_players.source_player_id, '')) IS NOT NULL THEN 'source-player-id'
+                    ELSE 'stable-player-key-only'
+                END AS identity_source,
+                MIN(historical_matches.ended_at) AS first_seen_at,
+                MAX(historical_matches.ended_at) AS last_seen_at,
+                ? AS fact_schema_version
+            FROM historical_players
+            LEFT JOIN historical_player_match_stats
+                ON historical_player_match_stats.historical_player_id = historical_players.id
+            LEFT JOIN historical_matches
+                ON historical_matches.id = historical_player_match_stats.historical_match_id
+               AND historical_matches.ended_at IS NOT NULL
+            GROUP BY historical_players.stable_player_key
+            """,
+            (ELO_MMR_CANONICAL_FACT_SCHEMA_VERSION,),
+        )
+
+        connection.execute(
+            """
+            INSERT INTO elo_mmr_canonical_matches (
+                canonical_match_key,
+                server_slug,
+                server_name,
+                external_match_id,
+                started_at,
+                ended_at,
+                game_mode,
+                allied_score,
+                axis_score,
+                match_capability_status,
+                source_kind,
+                fact_schema_version,
+                source_input_version
+            )
+            SELECT
+                historical_servers.slug || ':' || historical_matches.external_match_id AS canonical_match_key,
+                historical_servers.slug AS server_slug,
+                historical_servers.display_name AS server_name,
+                historical_matches.external_match_id,
+                historical_matches.started_at,
+                historical_matches.ended_at,
+                historical_matches.game_mode,
+                historical_matches.allied_score,
+                historical_matches.axis_score,
+                CASE
+                    WHEN historical_matches.started_at IS NOT NULL
+                     AND historical_matches.allied_score IS NOT NULL
+                     AND historical_matches.axis_score IS NOT NULL THEN 'exact'
+                    WHEN historical_matches.started_at IS NOT NULL
+                      OR historical_matches.allied_score IS NOT NULL
+                      OR historical_matches.axis_score IS NOT NULL THEN 'approximate'
+                    ELSE 'not_available'
+                END AS match_capability_status,
+                'historical-closed-match' AS source_kind,
+                ? AS fact_schema_version,
+                ? AS source_input_version
+            FROM historical_matches
+            INNER JOIN historical_servers
+                ON historical_servers.id = historical_matches.historical_server_id
+            WHERE historical_matches.ended_at IS NOT NULL
+            """,
+            (
+                ELO_MMR_CANONICAL_FACT_SCHEMA_VERSION,
+                ELO_MMR_CANONICAL_SOURCE_INPUT_VERSION,
+            ),
+        )
+
+        connection.execute(
+            """
+            INSERT INTO elo_mmr_canonical_player_match_facts (
+                canonical_match_key,
+                stable_player_key,
+                server_slug,
+                external_match_id,
+                player_name,
+                steam_id,
+                team_side,
+                kills,
+                deaths,
+                teamkills,
+                time_seconds,
+                combat,
+                offense,
+                defense,
+                support,
+                fact_capability_status,
+                fact_schema_version,
+                source_input_version
+            )
+            SELECT
+                historical_servers.slug || ':' || historical_matches.external_match_id AS canonical_match_key,
+                historical_players.stable_player_key,
+                historical_servers.slug AS server_slug,
+                historical_matches.external_match_id,
+                COALESCE(NULLIF(historical_players.display_name, ''), canonical_players.player_name, 'Unknown player') AS player_name,
+                NULLIF(historical_players.steam_id, '') AS steam_id,
+                historical_player_match_stats.team_side,
+                COALESCE(historical_player_match_stats.kills, 0) AS kills,
+                COALESCE(historical_player_match_stats.deaths, 0) AS deaths,
+                COALESCE(historical_player_match_stats.teamkills, 0) AS teamkills,
+                COALESCE(historical_player_match_stats.time_seconds, 0) AS time_seconds,
+                COALESCE(historical_player_match_stats.combat, 0) AS combat,
+                COALESCE(historical_player_match_stats.offense, 0) AS offense,
+                COALESCE(historical_player_match_stats.defense, 0) AS defense,
+                COALESCE(historical_player_match_stats.support, 0) AS support,
+                CASE
+                    WHEN historical_player_match_stats.team_side IS NOT NULL
+                     AND COALESCE(historical_player_match_stats.time_seconds, 0) > 0 THEN 'exact'
+                    WHEN COALESCE(historical_player_match_stats.kills, 0) > 0
+                      OR COALESCE(historical_player_match_stats.deaths, 0) > 0
+                      OR COALESCE(historical_player_match_stats.teamkills, 0) > 0
+                      OR COALESCE(historical_player_match_stats.time_seconds, 0) > 0
+                      OR COALESCE(historical_player_match_stats.combat, 0) > 0
+                      OR COALESCE(historical_player_match_stats.offense, 0) > 0
+                      OR COALESCE(historical_player_match_stats.defense, 0) > 0
+                      OR COALESCE(historical_player_match_stats.support, 0) > 0 THEN 'approximate'
+                    ELSE 'not_available'
+                END AS fact_capability_status,
+                ? AS fact_schema_version,
+                ? AS source_input_version
+            FROM historical_player_match_stats
+            INNER JOIN historical_matches
+                ON historical_matches.id = historical_player_match_stats.historical_match_id
+            INNER JOIN historical_servers
+                ON historical_servers.id = historical_matches.historical_server_id
+            INNER JOIN historical_players
+                ON historical_players.id = historical_player_match_stats.historical_player_id
+            INNER JOIN elo_mmr_canonical_players AS canonical_players
+                ON canonical_players.stable_player_key = historical_players.stable_player_key
+            WHERE historical_matches.ended_at IS NOT NULL
+            """,
+            (
+                ELO_MMR_CANONICAL_FACT_SCHEMA_VERSION,
+                ELO_MMR_CANONICAL_SOURCE_INPUT_VERSION,
+            ),
+        )
+
+        totals_row = connection.execute(
+            """
+            SELECT
+                (SELECT COUNT(*) FROM elo_mmr_canonical_players) AS players_count,
+                (SELECT COUNT(*) FROM elo_mmr_canonical_matches) AS matches_count,
+                (SELECT COUNT(*) FROM elo_mmr_canonical_player_match_facts) AS player_match_facts_count
+            """
+        ).fetchone()
+    return {
+        "status": "ok",
+        "fact_schema_version": ELO_MMR_CANONICAL_FACT_SCHEMA_VERSION,
+        "source_input_version": ELO_MMR_CANONICAL_SOURCE_INPUT_VERSION,
+        "source_kind": "historical-closed-match",
+        "totals": {
+            "players": int(totals_row["players_count"] or 0),
+            "matches": int(totals_row["matches_count"] or 0),
+            "player_match_facts": int(totals_row["player_match_facts_count"] or 0),
+        },
+    }
+
+
+def list_elo_mmr_canonical_match_rows(*, db_path: Path | None = None) -> list[dict[str, object]]:
+    """Return canonical player-match fact rows ordered for deterministic rebuilds."""
+    resolved_path = _resolve_db_path(db_path)
+    try:
+        with _connect_readonly(resolved_path) as connection:
+            rows = connection.execute(
+                """
+                SELECT
+                    canonical_matches.canonical_match_key,
+                    canonical_matches.server_slug,
+                    canonical_matches.server_name,
+                    canonical_matches.external_match_id,
+                    canonical_matches.started_at,
+                    canonical_matches.ended_at,
+                    canonical_matches.game_mode,
+                    canonical_matches.allied_score,
+                    canonical_matches.axis_score,
+                    canonical_matches.match_capability_status,
+                    canonical_matches.fact_schema_version,
+                    canonical_matches.source_input_version,
+                    canonical_facts.stable_player_key,
+                    canonical_facts.player_name,
+                    canonical_facts.steam_id,
+                    canonical_facts.team_side,
+                    canonical_facts.kills,
+                    canonical_facts.deaths,
+                    canonical_facts.teamkills,
+                    canonical_facts.time_seconds,
+                    canonical_facts.combat,
+                    canonical_facts.offense,
+                    canonical_facts.defense,
+                    canonical_facts.support,
+                    canonical_facts.fact_capability_status,
+                    canonical_players.identity_capability_status
+                FROM elo_mmr_canonical_player_match_facts AS canonical_facts
+                INNER JOIN elo_mmr_canonical_matches AS canonical_matches
+                    ON canonical_matches.canonical_match_key = canonical_facts.canonical_match_key
+                INNER JOIN elo_mmr_canonical_players AS canonical_players
+                    ON canonical_players.stable_player_key = canonical_facts.stable_player_key
+                ORDER BY
+                    canonical_matches.ended_at ASC,
+                    canonical_matches.canonical_match_key ASC,
+                    canonical_facts.stable_player_key ASC
+                """
+            ).fetchall()
+    except sqlite3.OperationalError:
+        return []
+    return [dict(row) for row in rows]
 
 
 def list_elo_mmr_monthly_rankings(
@@ -564,6 +888,48 @@ def get_latest_elo_mmr_generated_at(*, db_path: Path | None = None) -> datetime 
     if not latest_generated_at:
         return None
     return datetime.fromisoformat(latest_generated_at.replace("Z", "+00:00"))
+
+
+def _ensure_schema_extensions(connection: sqlite3.Connection) -> None:
+    _ensure_table_columns(
+        connection,
+        "elo_mmr_match_results",
+        {
+            "time_seconds": "INTEGER NOT NULL DEFAULT 0",
+            "participation_ratio": "REAL NOT NULL DEFAULT 0",
+            "strength_of_schedule_match": "REAL NOT NULL DEFAULT 0",
+            "team_outcome": "TEXT",
+            "expected_result": "REAL NOT NULL DEFAULT 0",
+            "actual_result": "REAL NOT NULL DEFAULT 0",
+            "elo_core_delta": "REAL NOT NULL DEFAULT 0",
+            "performance_modifier_delta": "REAL NOT NULL DEFAULT 0",
+            "proxy_modifier_delta": "REAL NOT NULL DEFAULT 0",
+        },
+    )
+    _ensure_table_columns(
+        connection,
+        "elo_mmr_monthly_rankings",
+        {
+            "avg_participation_ratio": "REAL NOT NULL DEFAULT 0",
+        },
+    )
+
+
+def _ensure_table_columns(
+    connection: sqlite3.Connection,
+    table_name: str,
+    columns: dict[str, str],
+) -> None:
+    existing_columns = {
+        str(row["name"])
+        for row in connection.execute(f"PRAGMA table_info({table_name})").fetchall()
+    }
+    for column_name, column_sql in columns.items():
+        if column_name in existing_columns:
+            continue
+        connection.execute(
+            f"ALTER TABLE {table_name} ADD COLUMN {column_name} {column_sql}"
+        )
 
 
 def _connect_writer(db_path: Path):
