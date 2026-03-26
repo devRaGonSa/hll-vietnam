@@ -12,8 +12,14 @@ from .config import (
     get_rcon_historical_capture_interval_seconds,
     get_rcon_historical_capture_max_retries,
     get_rcon_historical_capture_retry_delay_seconds,
+    get_rcon_request_timeout_seconds,
 )
-from .rcon_client import build_rcon_target_key, load_rcon_targets, query_live_server_sample
+from .rcon_client import (
+    RconQueryError,
+    build_rcon_target_key,
+    load_rcon_targets,
+    query_live_server_sample,
+)
 from .rcon_historical_storage import (
     finalize_rcon_historical_capture_run,
     initialize_rcon_historical_storage,
@@ -60,13 +66,17 @@ def run_rcon_historical_capture_unlocked(
     stats = RconHistoricalCaptureStats()
     items: list[dict[str, object]] = []
     errors: list[dict[str, object]] = []
+    timeout_seconds = get_rcon_request_timeout_seconds()
 
     try:
         for target in selected_targets:
             target_metadata = _serialize_target(target)
             stats.targets_seen += 1
             try:
-                sample = query_live_server_sample(target)
+                sample = query_live_server_sample(
+                    target,
+                    timeout_seconds=timeout_seconds,
+                )
                 delta = persist_rcon_historical_sample(
                     run_id=run_id,
                     captured_at=captured_at,
@@ -80,6 +90,10 @@ def run_rcon_historical_capture_unlocked(
                     {
                         "target_key": target_metadata["target_key"],
                         "external_server_id": target.external_server_id,
+                        "name": target.name,
+                        "host": target.host,
+                        "port": target.port,
+                        "timeout_seconds": timeout_seconds,
                         "captured_at": captured_at,
                         "sample_inserted": bool(delta["samples_inserted"]),
                         "normalized": sample["normalized"],
@@ -90,17 +104,9 @@ def run_rcon_historical_capture_unlocked(
                 mark_rcon_historical_capture_failure(
                     run_id=run_id,
                     target=target_metadata,
-                    error_message=str(exc),
+                    error_message=_format_error_message(exc),
                 )
-                errors.append(
-                    {
-                        "target_key": target_metadata["target_key"],
-                        "name": target.name,
-                        "host": target.host,
-                        "port": target.port,
-                        "message": str(exc),
-                    }
-                )
+                errors.append(_serialize_capture_error(target, exc, timeout_seconds=timeout_seconds))
 
         status = "success" if not errors else ("partial" if items else "failed")
         finalize_rcon_historical_capture_run(
@@ -237,6 +243,44 @@ def _serialize_target(target: object) -> dict[str, object]:
         "query_port": target.query_port,
         "source_name": target.source_name,
     }
+
+
+def _serialize_capture_error(
+    target: object,
+    error: Exception,
+    *,
+    timeout_seconds: float,
+) -> dict[str, object]:
+    error_type = _classify_capture_error_type(error)
+    return {
+        "target_key": build_rcon_target_key(target),
+        "external_server_id": target.external_server_id,
+        "name": target.name,
+        "host": target.host,
+        "port": target.port,
+        "timeout_seconds": timeout_seconds,
+        "error_type": error_type,
+        "message": str(error),
+    }
+
+
+def _classify_capture_error_type(error: Exception) -> str:
+    if isinstance(error, RconQueryError):
+        return error.error_type
+    message = str(error).lower()
+    if "timed out" in message or "timeout" in message:
+        return "timeout"
+    if "401" in message or "403" in message or "login" in message or "auth" in message:
+        return "auth/login"
+    if "refused" in message:
+        return "connection-refused"
+    if "payload" in message or "json" in message or "malformed" in message:
+        return "payload-invalid"
+    return "other-error"
+
+
+def _format_error_message(error: Exception) -> str:
+    return f"[{_classify_capture_error_type(error)}] {error}"
 
 
 def build_arg_parser() -> argparse.ArgumentParser:

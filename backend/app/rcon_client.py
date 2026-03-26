@@ -7,6 +7,7 @@ import itertools
 import json
 import socket
 import struct
+from collections.abc import Mapping
 from dataclasses import dataclass
 
 from .config import (
@@ -34,6 +35,14 @@ class RconServerTarget:
     region: str | None = None
     game_port: int | None = None
     query_port: int | None = None
+
+
+class RconQueryError(RuntimeError):
+    """Normalized RCON query failure with a machine-readable error type."""
+
+    def __init__(self, error_type: str, message: str) -> None:
+        super().__init__(message)
+        self.error_type = error_type
 
 
 class HllRconConnection:
@@ -203,12 +212,35 @@ def query_live_server_sample(
 ) -> dict[str, object]:
     """Query one HLL server and return both normalized and raw session data."""
     resolved_timeout = timeout_seconds or get_rcon_request_timeout_seconds()
-    with HllRconConnection(timeout_seconds=resolved_timeout) as connection:
-        connection.connect(host=target.host, port=target.port, password=target.password)
-        session = connection.execute_json(
-            "GetServerInformation",
-            {"Name": "session", "Value": ""},
-        )
+    try:
+        with HllRconConnection(timeout_seconds=resolved_timeout) as connection:
+            connection.connect(host=target.host, port=target.port, password=target.password)
+            session = connection.execute_json(
+                "GetServerInformation",
+                {"Name": "session", "Value": ""},
+            )
+    except RconQueryError:
+        raise
+    except (TimeoutError, socket.timeout) as error:
+        raise RconQueryError(
+            "timeout",
+            f"Timed out after {resolved_timeout:.1f}s while querying {target.host}:{target.port}.",
+        ) from error
+    except ConnectionRefusedError as error:
+        raise RconQueryError(
+            "connection-refused",
+            f"Connection refused by {target.host}:{target.port}.",
+        ) from error
+    except OSError as error:
+        raise RconQueryError(
+            _classify_socket_error_type(error),
+            f"RCON socket error against {target.host}:{target.port}: {error}",
+        ) from error
+    except RuntimeError as error:
+        raise RconQueryError(
+            _classify_runtime_error_type(error),
+            str(error),
+        ) from error
 
     resolved_external_id = target.external_server_id or f"rcon:{target.host}:{target.port}"
     return {
@@ -250,17 +282,19 @@ def build_rcon_target_key(target: RconServerTarget) -> str:
 
 
 def _coerce_rcon_target(raw_target: dict[str, object]) -> RconServerTarget:
-    name = str(raw_target.get("name") or "Unnamed RCON target").strip()
-    host = str(raw_target.get("host") or "").strip()
-    password = str(raw_target.get("password") or "").strip()
-    source_name = str(raw_target.get("source_name") or DEFAULT_RCON_SOURCE_NAME).strip()
-    port = int(raw_target.get("port") or 0)
+    slug = _string_or_none(raw_target.get("slug"))
+    external_server_id = _string_or_none(raw_target.get("external_server_id")) or slug
+    name = _string_or_none(raw_target.get("name")) or _slug_to_display_name(slug) or "Unnamed RCON target"
+    host = _required_string(raw_target, "host")
+    password = _required_string(raw_target, "password")
+    source_name = _string_or_none(raw_target.get("source_name")) or DEFAULT_RCON_SOURCE_NAME
+    port = _required_positive_int(raw_target, "port")
     if not host:
-        raise ValueError("Each RCON target must define a non-empty host.")
+        raise ValueError("Each RCON target must define a non-empty 'host'.")
     if port <= 0:
-        raise ValueError("Each RCON target must define a valid port.")
+        raise ValueError("Each RCON target must define a positive 'port'.")
     if not password:
-        raise ValueError("Each RCON target must define a non-empty password.")
+        raise ValueError("Each RCON target must define a non-empty 'password'.")
 
     return RconServerTarget(
         name=name,
@@ -268,7 +302,7 @@ def _coerce_rcon_target(raw_target: dict[str, object]) -> RconServerTarget:
         port=port,
         password=password,
         source_name=source_name or DEFAULT_RCON_SOURCE_NAME,
-        external_server_id=_string_or_none(raw_target.get("external_server_id")),
+        external_server_id=external_server_id,
         region=_string_or_none(raw_target.get("region")),
         game_port=_coerce_optional_positive_int(raw_target.get("game_port")),
         query_port=_coerce_optional_positive_int(raw_target.get("query_port")),
@@ -280,6 +314,11 @@ def _raise_for_status(response: dict[str, object], *, command_name: str) -> None
     if status_code == 200:
         return
     status_message = _string_or_none(response.get("statusMessage")) or "Unknown RCON error."
+    if command_name == "Login" and status_code in {401, 403}:
+        raise RconQueryError(
+            "auth/login",
+            f"{command_name} failed with RCON status {status_code}: {status_message}",
+        )
     raise RuntimeError(f"{command_name} failed with RCON status {status_code}: {status_message}")
 
 
@@ -313,3 +352,64 @@ def _coerce_optional_positive_int(value: object) -> int | None:
     if coerced <= 0:
         raise ValueError("Configured RCON target ports must be positive when defined.")
     return coerced
+
+
+def _required_string(raw_target: Mapping[str, object], field_name: str) -> str:
+    value = _string_or_none(raw_target.get(field_name))
+    if value is None:
+        available_fields = ", ".join(sorted(raw_target.keys()))
+        raise ValueError(
+            f"Each RCON target must define a non-empty '{field_name}'. "
+            f"Available fields: {available_fields or 'none'}."
+        )
+    return value
+
+
+def _required_positive_int(raw_target: Mapping[str, object], field_name: str) -> int:
+    raw_value = raw_target.get(field_name)
+    try:
+        value = int(raw_value)
+    except (TypeError, ValueError) as error:
+        available_fields = ", ".join(sorted(raw_target.keys()))
+        raise ValueError(
+            f"Each RCON target must define a valid integer '{field_name}'. "
+            f"Available fields: {available_fields or 'none'}."
+        ) from error
+    if value <= 0:
+        raise ValueError(f"Each RCON target must define a positive '{field_name}'.")
+    return value
+
+
+def _slug_to_display_name(slug: str | None) -> str | None:
+    normalized_slug = _string_or_none(slug)
+    if normalized_slug is None:
+        return None
+    if normalized_slug.startswith("comunidad-hispana-"):
+        suffix = normalized_slug.removeprefix("comunidad-hispana-")
+        if suffix.isdigit():
+            return f"Comunidad Hispana #{suffix.zfill(2)}"
+    parts = [part for part in normalized_slug.replace("_", "-").split("-") if part]
+    if not parts:
+        return None
+    return " ".join(part.upper() if part.isdigit() else part.capitalize() for part in parts)
+
+
+def _classify_socket_error_type(error: OSError) -> str:
+    if isinstance(error, TimeoutError):
+        return "timeout"
+    if isinstance(error, ConnectionRefusedError):
+        return "connection-refused"
+    if getattr(error, "errno", None) in {10060, 110, 60}:
+        return "timeout"
+    return "other-error"
+
+
+def _classify_runtime_error_type(error: RuntimeError) -> str:
+    message = str(error).lower()
+    if "auth token" in message or "login failed" in message or "status 401" in message or "status 403" in message:
+        return "auth/login"
+    if "invalid json" in message or "unexpected payload" in message or "malformed" in message or "invalid rcon" in message:
+        return "payload-invalid"
+    if "timed out" in message:
+        return "timeout"
+    return "other-error"

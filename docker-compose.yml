@@ -8,8 +8,9 @@ services:
     environment:
       HLL_BACKEND_LIVE_DATA_SOURCE: ${HLL_BACKEND_LIVE_DATA_SOURCE:-rcon}
       HLL_BACKEND_HISTORICAL_DATA_SOURCE: ${HLL_BACKEND_HISTORICAL_DATA_SOURCE:-rcon}
-      HLL_BACKEND_RCON_TIMEOUT_SECONDS: ${HLL_BACKEND_RCON_TIMEOUT_SECONDS:-10}
-      HLL_BACKEND_RCON_TARGETS: ${HLL_BACKEND_RCON_TARGETS:-}
+      HLL_BACKEND_RCON_TIMEOUT_SECONDS: ${HLL_BACKEND_RCON_TIMEOUT_SECONDS:-20}
+      HLL_BACKEND_RCON_TARGETS: >-
+        ${HLL_BACKEND_RCON_TARGETS:-[{"name":"Comunidad Hispana #01","slug":"comunidad-hispana-01","external_server_id":"comunidad-hispana-01","host":"152.114.195.174","port":7779,"password":"replace-me-01","source_name":"community-hispana-rcon","region":"ES","game_port":null,"query_port":null},{"name":"Comunidad Hispana #02","slug":"comunidad-hispana-02","external_server_id":"comunidad-hispana-02","host":"152.114.195.150","port":7879,"password":"replace-me-02","source_name":"community-hispana-rcon","region":"ES","game_port":null,"query_port":null},{"name":"Comunidad Hispana #03","slug":"comunidad-hispana-03","external_server_id":"comunidad-hispana-03","host":"5.196.78.45","port":27230,"password":"replace-me-03","source_name":"community-hispana-rcon","region":"ES","game_port":null,"query_port":null}]}
     ports:
       - "8000:8000"
     volumes:
@@ -26,8 +27,9 @@ services:
     environment:
       HLL_BACKEND_LIVE_DATA_SOURCE: ${HLL_BACKEND_LIVE_DATA_SOURCE:-rcon}
       HLL_BACKEND_HISTORICAL_DATA_SOURCE: ${HLL_BACKEND_HISTORICAL_DATA_SOURCE:-rcon}
-      HLL_BACKEND_RCON_TIMEOUT_SECONDS: ${HLL_BACKEND_RCON_TIMEOUT_SECONDS:-10}
-      HLL_BACKEND_RCON_TARGETS: ${HLL_BACKEND_RCON_TARGETS:-}
+      HLL_BACKEND_RCON_TIMEOUT_SECONDS: ${HLL_BACKEND_RCON_TIMEOUT_SECONDS:-20}
+      HLL_BACKEND_RCON_TARGETS: >-
+        ${HLL_BACKEND_RCON_TARGETS:-[{"name":"Comunidad Hispana #01","slug":"comunidad-hispana-01","external_server_id":"comunidad-hispana-01","host":"152.114.195.174","port":7779,"password":"replace-me-01","source_name":"community-hispana-rcon","region":"ES","game_port":null,"query_port":null},{"name":"Comunidad Hispana #02","slug":"comunidad-hispana-02","external_server_id":"comunidad-hispana-02","host":"152.114.195.150","port":7879,"password":"replace-me-02","source_name":"community-hispana-rcon","region":"ES","game_port":null,"query_port":null},{"name":"Comunidad Hispana #03","slug":"comunidad-hispana-03","external_server_id":"comunidad-hispana-03","host":"5.196.78.45","port":27230,"password":"replace-me-03","source_name":"community-hispana-rcon","region":"ES","game_port":null,"query_port":null}]}
     depends_on:
       - backend
     volumes:
@@ -44,8 +46,9 @@ services:
     environment:
       HLL_BACKEND_LIVE_DATA_SOURCE: ${HLL_BACKEND_LIVE_DATA_SOURCE:-rcon}
       HLL_BACKEND_HISTORICAL_DATA_SOURCE: ${HLL_BACKEND_HISTORICAL_DATA_SOURCE:-rcon}
-      HLL_BACKEND_RCON_TIMEOUT_SECONDS: ${HLL_BACKEND_RCON_TIMEOUT_SECONDS:-10}
-      HLL_BACKEND_RCON_TARGETS: ${HLL_BACKEND_RCON_TARGETS:-}
+      HLL_BACKEND_RCON_TIMEOUT_SECONDS: ${HLL_BACKEND_RCON_TIMEOUT_SECONDS:-20}
+      HLL_BACKEND_RCON_TARGETS: >-
+        ${HLL_BACKEND_RCON_TARGETS:-[{"name":"Comunidad Hispana #01","slug":"comunidad-hispana-01","external_server_id":"comunidad-hispana-01","host":"152.114.195.174","port":7779,"password":"replace-me-01","source_name":"community-hispana-rcon","region":"ES","game_port":null,"query_port":null},{"name":"Comunidad Hispana #02","slug":"comunidad-hispana-02","external_server_id":"comunidad-hispana-02","host":"152.114.195.150","port":7879,"password":"replace-me-02","source_name":"community-hispana-rcon","region":"ES","game_port":null,"query_port":null},{"name":"Comunidad Hispana #03","slug":"comunidad-hispana-03","external_server_id":"comunidad-hispana-03","host":"5.196.78.45","port":27230,"password":"replace-me-03","source_name":"community-hispana-rcon","region":"ES","game_port":null,"query_port":null}]}
       HLL_RCON_HISTORICAL_CAPTURE_INTERVAL_SECONDS: ${HLL_RCON_HISTORICAL_CAPTURE_INTERVAL_SECONDS:-600}
       HLL_RCON_HISTORICAL_CAPTURE_MAX_RETRIES: ${HLL_RCON_HISTORICAL_CAPTURE_MAX_RETRIES:-2}
       HLL_RCON_HISTORICAL_CAPTURE_RETRY_DELAY_SECONDS: ${HLL_RCON_HISTORICAL_CAPTURE_RETRY_DELAY_SECONDS:-15}
