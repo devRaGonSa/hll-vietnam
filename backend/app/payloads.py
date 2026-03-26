@@ -367,9 +367,78 @@ def build_recent_historical_matches_payload(
     if get_historical_data_source_kind() == "rcon":
         data_source = get_rcon_historical_read_model()
         if data_source is not None:
-            items = data_source.list_recent_activity(server_key=server_slug, limit=limit)
             capabilities = data_source.describe_capabilities()
-            if items:
+            try:
+                items = data_source.list_recent_activity(server_key=server_slug, limit=limit)
+            except Exception as error:  # noqa: BLE001 - explicit runtime fallback boundary
+                items = []
+                rcon_source_policy = build_historical_runtime_source_policy(
+                    operation="historical-recent-matches",
+                    rcon_status="error",
+                    fallback_reason="rcon-historical-read-model-request-failed",
+                    rcon_message=str(error),
+                )
+            else:
+                rcon_source_policy = build_historical_runtime_source_policy(
+                    operation="historical-recent-matches",
+                    rcon_status=(
+                        "success"
+                        if data_source.has_recent_activity_coverage(items)
+                        else "empty"
+                    ),
+                    fallback_reason="rcon-historical-read-model-has-no-recent-activity",
+                )
+
+            if not bool(rcon_source_policy.get("fallback_used")):
+                if 0 < len(items) < limit:
+                    fallback_items = list_recent_historical_matches(limit=limit, server_slug=server_slug)
+                    merged_items = _merge_recent_match_items(
+                        primary_items=items,
+                        fallback_items=fallback_items,
+                        limit=limit,
+                    )
+                    if len(merged_items) > len(items):
+                        return {
+                            "status": "ok",
+                            "data": {
+                                "title": "Actividad competitiva reciente capturada por RCON",
+                                "context": "historical-recent-matches",
+                                "source": "hybrid-rcon-plus-public-scoreboard",
+                                "historical_data_source": "rcon",
+                                "supported": True,
+                                "coverage_basis": "rcon-competitive-windows-plus-public-scoreboard-fallback",
+                                "limit": limit,
+                                "server_slug": server_slug,
+                                **build_source_policy(
+                                    primary_source=SOURCE_KIND_RCON,
+                                    selected_source="hybrid-rcon-plus-public-scoreboard",
+                                    fallback_used=True,
+                                    fallback_reason=(
+                                        "rcon-historical-recent-matches-did-not-reach-requested-limit"
+                                    ),
+                                    source_attempts=[
+                                        build_source_attempt(
+                                            source=SOURCE_KIND_RCON,
+                                            role="primary",
+                                            status="success",
+                                            reason="historical-recent-matches-served-by-rcon",
+                                        ),
+                                        build_source_attempt(
+                                            source=SOURCE_KIND_PUBLIC_SCOREBOARD,
+                                            role="fallback",
+                                            status="success",
+                                            reason="historical-recent-matches-completed-from-public-scoreboard",
+                                            message=(
+                                                f"RCON returned {len(items)} items, completed to "
+                                                f"{len(merged_items)} of requested {limit}."
+                                            ),
+                                        ),
+                                    ],
+                                ),
+                                "items": merged_items,
+                                "capabilities": capabilities,
+                            },
+                        }
                 return {
                     "status": "ok",
                     "data": {
@@ -381,17 +450,7 @@ def build_recent_historical_matches_payload(
                         "coverage_basis": "rcon-competitive-windows",
                         "limit": limit,
                         "server_slug": server_slug,
-                        **build_source_policy(
-                            primary_source=SOURCE_KIND_RCON,
-                            selected_source=SOURCE_KIND_RCON,
-                            source_attempts=[
-                                build_source_attempt(
-                                    source=SOURCE_KIND_RCON,
-                                    role="primary",
-                                    status="success",
-                                )
-                            ],
-                        ),
+                        **rcon_source_policy,
                         "items": items,
                         "capabilities": capabilities,
                     },
@@ -405,8 +464,13 @@ def build_recent_historical_matches_payload(
             "source": "historical-crcon-storage",
             "limit": limit,
             "server_slug": server_slug,
-            **_resolve_historical_fallback_policy(
-                fallback_reason="rcon-historical-read-model-has-no-recent-activity",
+            **(
+                rcon_source_policy
+                if get_historical_data_source_kind() == "rcon"
+                and "rcon_source_policy" in locals()
+                else _resolve_historical_fallback_policy(
+                    fallback_reason="rcon-historical-read-model-has-no-recent-activity",
+                )
             ),
             "items": items,
         },
@@ -665,6 +729,55 @@ def build_recent_historical_matches_snapshot_payload(
     payload = snapshot.get("payload") if snapshot else {}
     items = payload.get("items") if isinstance(payload, dict) else None
     sliced_items = list(items[:limit]) if isinstance(items, list) else []
+    if (
+        get_historical_data_source_kind() == SOURCE_KIND_RCON
+        and 0 < len(sliced_items) < limit
+    ):
+        fallback_items = list_recent_historical_matches(limit=limit, server_slug=server_slug)
+        merged_items = _merge_recent_match_items(
+            primary_items=sliced_items,
+            fallback_items=fallback_items,
+            limit=limit,
+        )
+        if len(merged_items) > len(sliced_items):
+            return {
+                "status": "ok",
+                "data": {
+                    "title": "Snapshot historico de partidas recientes por servidor",
+                    "context": "historical-recent-matches-snapshot",
+                    "source": "historical-precomputed-snapshots",
+                    "server_slug": server_slug,
+                    "found": snapshot is not None,
+                    **_build_historical_snapshot_metadata(snapshot),
+                    "snapshot_limit": payload.get("limit") if isinstance(payload, dict) else None,
+                    "limit": limit,
+                    **build_source_policy(
+                        primary_source=SOURCE_KIND_RCON,
+                        selected_source="hybrid-rcon-plus-public-scoreboard",
+                        fallback_used=True,
+                        fallback_reason="rcon-historical-recent-matches-did-not-reach-requested-limit",
+                        source_attempts=[
+                            build_source_attempt(
+                                source=SOURCE_KIND_RCON,
+                                role="primary",
+                                status="success",
+                                reason="recent-matches-snapshot-served-by-rcon-competitive-model",
+                            ),
+                            build_source_attempt(
+                                source=SOURCE_KIND_PUBLIC_SCOREBOARD,
+                                role="fallback",
+                                status="success",
+                                reason="recent-matches-snapshot-completed-from-public-scoreboard",
+                                message=(
+                                    f"RCON snapshot returned {len(sliced_items)} items, completed to "
+                                    f"{len(merged_items)} of requested {limit}."
+                                ),
+                            ),
+                        ],
+                    ),
+                    "items": merged_items,
+                },
+            }
     return {
         "status": "ok",
         "data": {
@@ -1275,6 +1388,52 @@ def _resolve_historical_fallback_policy(
         rcon_status="unsupported",
         fallback_reason=fallback_reason,
     )
+
+
+def _merge_recent_match_items(
+    *,
+    primary_items: list[dict[str, object]],
+    fallback_items: list[dict[str, object]],
+    limit: int,
+) -> list[dict[str, object]]:
+    merged: list[dict[str, object]] = []
+    seen_keys: set[str] = set()
+    for item in list(primary_items) + list(fallback_items):
+        if not isinstance(item, dict):
+            continue
+        dedupe_key = _build_recent_match_dedupe_key(item)
+        if dedupe_key in seen_keys:
+            continue
+        seen_keys.add(dedupe_key)
+        merged.append(item)
+    merged.sort(key=_recent_match_sort_key, reverse=True)
+    return merged[:limit]
+
+
+def _build_recent_match_dedupe_key(item: dict[str, object]) -> str:
+    server = item.get("server") if isinstance(item.get("server"), dict) else {}
+    map_payload = item.get("map") if isinstance(item.get("map"), dict) else {}
+    match_id = str(item.get("match_id") or "").strip()
+    server_slug = str(server.get("slug") or server.get("external_server_id") or "").strip()
+    map_name = str(map_payload.get("name") or map_payload.get("pretty_name") or "").strip().lower()
+    closed_at = _truncate_recent_match_timestamp(
+        item.get("closed_at") or item.get("ended_at")
+    )
+    started_at = _truncate_recent_match_timestamp(item.get("started_at"))
+    if match_id and match_id.isdigit():
+        return f"scoreboard:{server_slug}:{match_id}"
+    return f"recent:{server_slug}:{map_name}:{started_at}:{closed_at}"
+
+
+def _truncate_recent_match_timestamp(value: object) -> str:
+    normalized = str(value or "").strip()
+    return normalized[:16] if normalized else ""
+
+
+def _recent_match_sort_key(item: dict[str, object]) -> tuple[str, str]:
+    closed_at = str(item.get("closed_at") or item.get("ended_at") or "").strip()
+    started_at = str(item.get("started_at") or "").strip()
+    return (closed_at, started_at)
 
 
 def _infer_live_source_policy_from_items(
