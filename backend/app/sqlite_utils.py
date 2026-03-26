@@ -36,6 +36,11 @@ def connect_sqlite_writer(
 
 def connect_sqlite_readonly(db_path: Path) -> sqlite3.Connection:
     """Open one read-only SQLite connection with row access enabled."""
-    connection = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
+    connection = sqlite3.connect(
+        f"file:{db_path.as_posix()}?mode=ro",
+        uri=True,
+        timeout=get_sqlite_writer_timeout_seconds(),
+    )
     connection.row_factory = sqlite3.Row
+    connection.execute(f"PRAGMA busy_timeout = {get_sqlite_busy_timeout_ms()}")
     return connection

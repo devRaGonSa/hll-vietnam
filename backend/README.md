@@ -360,6 +360,13 @@ Timeout recomendado por defecto:
 Diagnostico operativo del cliente RCON:
 
 - el cliente informa ahora el stage exacto del fallo cuando puede distinguirlo
+- los timeouts de lectura indican tambien si el socket se quedo esperando:
+  - `response header` con `0/8 bytes received` -> TCP abierto pero sin ningun
+    primer frame util de RCON tras `ServerConnect`
+  - `response header` con bytes parciales -> respuesta truncada o
+    intermediario/cierre a mitad del frame
+  - `response body` con bytes parciales -> cabecera recibida pero body
+    incompleto o cortado
 - stages observables:
   - `tcp_connect`
   - `server_connect_request`
@@ -375,6 +382,56 @@ Diagnostico operativo del cliente RCON:
 - esto mejora el diagnostico del protocolo, pero no resuelve por si solo la
   conectividad real si el servidor acepta TCP y luego no responde al handshake
   RCON o al comando `GetServerInformation`
+
+Interpretacion operativa especifica de `server_connect_response`:
+
+- si `tcp_connect` ya paso y el fallo real es `server_connect_response`, la app
+  ya logro abrir la sesion TCP contra `host:port`
+- si el timeout dice `response header (0/8 bytes received)`, la causa pendiente
+  no esta en el loader local ni en un rechazo TCP basico: el peer acepto la
+  conexion pero no emitio una primera respuesta RCON util a `ServerConnect`
+- eso acota el problema real a una de estas fronteras externas o
+  infra-dependientes:
+  - puerto RCON expuesto pero no asociado al servicio/protocolo esperado
+  - RCON no habilitado realmente en el servidor aunque el puerto responda a TCP
+  - password o handshake incompatibles con la implementacion esperada
+  - proxy, firewall, NAT o rate-limit que deja abrir socket pero bloquea o
+    interrumpe la respuesta aplicativa
+  - servicio intermedio distinto de HLL RCON v2 escuchando en ese puerto
+
+Checklist operativa minima para validar con administracion de servidores:
+
+- confirmar que el puerto compartido es el puerto RCON real y no el game/query
+  port
+- confirmar que RCON esta habilitado en el servidor y no solo publicado a nivel
+  de red
+- confirmar que la password RCON entregada al backend es la vigente
+- confirmar que el servidor remoto habla el mismo protocolo esperado por este
+  cliente:
+  - `ServerConnect`
+  - respuesta con XOR key en base64
+  - `Login`
+  - `GetServerInformation`
+- confirmar que desde el contenedor o proceso backend no hay firewall/NAT/ACL
+  que permita el SYN pero bloquee o corte la respuesta aplicativa
+- si existe proxy o tunel intermedio, confirmar que no modifica ni bufferiza de
+  forma incompatible el frame inicial RCON
+- repetir una captura manual y revisar si el mensaje queda en:
+  - `response header (0/8 bytes received)`
+  - `response header (n/8 bytes received)`
+  - `response body (n/m bytes received)`
+  - cierre inesperado durante header/body
+
+Criterio honesto para considerar resuelto el bloqueo real:
+
+- al menos un target debe completar handshake y persistir una muestra valida
+- `rcon_historical_samples > 0`
+- `rcon_historical_competitive_windows > 0`
+- `GET /api/historical/server-summary` o
+  `GET /api/historical/recent-matches` debe poder responder con
+  `selected_source = "rcon"` usando cobertura real
+- mientras eso no ocurra, TASK-106 no debe cerrarse como resuelta de forma
+  real, aunque la frontera runtime ya este corregida
 
 Ejemplo:
 
@@ -1555,11 +1612,53 @@ Persistencia nueva en SQLite:
 - `elo_mmr_monthly_rankings`
 - `elo_mmr_monthly_checkpoints`
 
-Politica de exactitud:
+Politica de exactitud actual:
 
-- `exact`: outcome, combat, utility, disciplina por teamkills, MMR persistente
-- `approximate`: role bucket, objective index, strength of schedule
-- `not_available`: leadership y tacticas finas no persistidas
+- `exact`:
+  - `OutcomeScore`
+  - `CombatIndex`
+  - `UtilityIndex`
+  - match validity
+  - participacion por `time_seconds`
+  - persistencia base de `MMR`
+- `approximate`:
+  - `role_bucket`
+  - `ObjectiveIndex`
+  - `DisciplineIndex` cuando combina teamkills exactos con proxy de
+    participacion para leave/AFK risk
+  - `StrengthOfScheduleMatch` y `StrengthOfSchedule` mensual, hoy alineados con
+    presion media de MMR rival y calidad de match, no con un roster graph total
+  - `DeltaMMR` y `MatchScore`, porque agregan seÃ±ales mixtas exactas y proxy
+- `not_available`:
+  - `LeadershipIndex`
+  - telemetria tactica fina todavia no persistida
+
+Alineacion V2 introducida sobre la base inicial:
+
+- la elegibilidad por match ya no depende solo de que la partida sea valida:
+  tambien exige participacion minima del jugador dentro de la partida
+- `DeltaMMR` pasa a un movimiento mas cercano a Elo:
+  - rating esperado contra MMR medio rival
+  - resultado real derivado de `OutcomeScore`, `ImpactScore`,
+    `StrengthOfScheduleMatch` y participacion
+- `MonthlyRankScore` sigue siendo una capa separada del `MMR` persistente, pero
+  ahora pondera mejor:
+  - `avg_match_score`
+  - `mmr_gain`
+  - `strength_of_schedule`
+  - `consistency`
+  - `activity`
+  - `confidence`
+- los payloads exponen un `accuracy_contract` adicional para que producto/UI
+  vea de forma compacta quÃ© componentes son exactos, aproximados o no
+  disponibles
+- los payloads exponen tambien un `model_contract` y un `rating_breakdown`
+  aditivo para distinguir sin romper endpoints:
+  - rating persistente competitivo
+  - `monthly_rank_score`
+  - `elo_core_gain`
+  - `performance_modifier_gain`
+  - `proxy_modifier_gain`
 
 Cuando `historical_data_source=rcon`, el motor Elo/MMR deja visible una
 frontera hibrida y honesta:

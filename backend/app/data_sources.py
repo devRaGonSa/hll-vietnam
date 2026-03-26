@@ -11,6 +11,8 @@ from .providers.public_scoreboard_provider import PublicScoreboardHistoricalData
 from .providers.rcon_provider import RconLiveDataSource
 from .rcon_historical_read_model import (
     describe_rcon_historical_read_model,
+    has_rcon_historical_recent_activity_coverage,
+    has_rcon_historical_server_summary_coverage,
     list_rcon_historical_recent_activity,
     list_rcon_historical_server_summaries,
 )
@@ -215,6 +217,14 @@ class RconHistoricalDataSource:
     def describe_capabilities(self) -> dict[str, object]:
         """Describe the supported RCON historical read surface."""
         return describe_rcon_historical_read_model()
+
+    def has_server_summary_coverage(self, items: list[dict[str, object]]) -> bool:
+        """Return whether one summary payload has enough RCON coverage to serve runtime reads."""
+        return has_rcon_historical_server_summary_coverage(items)
+
+    def has_recent_activity_coverage(self, items: list[dict[str, object]]) -> bool:
+        """Return whether one recent-activity payload has enough RCON coverage to serve runtime reads."""
+        return has_rcon_historical_recent_activity_coverage(items)
 
 
 def get_historical_data_source() -> HistoricalDataSource:

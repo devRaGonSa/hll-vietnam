@@ -833,6 +833,7 @@ function hydrateWeeklyLeaderboard(
           <td>${escapeHtml(item.player?.name || "Jugador no identificado")}</td>
           <td>${escapeHtml(formatNumber(item.metric_value))}</td>
           <td>${escapeHtml(formatNumber(item.matches_considered))}</td>
+          <td>${escapeHtml(formatPlaytimeHours(item.total_time_seconds))}</td>
         </tr>
       `,
     )
@@ -1555,9 +1556,12 @@ function buildMonthlyMvpV2Footer(item, payload) {
 
 function buildEloMmrNote(payload) {
   const monthLabel = formatMonthKey(payload?.month_key);
-  const exactRatio = Number(payload?.capabilities_summary?.exact_ratio || 0);
-  const approximateRatio = Number(payload?.capabilities_summary?.approximate_ratio || 0);
-  return `${monthLabel || "Mes activo"}. Rating persistente + score mensual con ${formatPercent(exactRatio)} de senal exacta y ${formatPercent(approximateRatio)} de senal aproximada en este corte.`;
+  const exactRatio = Number(payload?.accuracy_contract?.exact_ratio || 0);
+  const approximateRatio = Number(payload?.accuracy_contract?.approximate_ratio || 0);
+  const blockedComponents = Array.isArray(payload?.accuracy_contract?.blocked_components)
+    ? payload.accuracy_contract.blocked_components.length
+    : 0;
+  return `${monthLabel || "Mes activo"}. Rating persistente competitivo + score mensual. ${formatPercent(exactRatio)} de senal exacta, ${formatPercent(approximateRatio)} aproximada y ${formatNumber(blockedComponents)} componentes bloqueados por telemetria.`;
 }
 
 function buildEloMmrMeta(payload) {
@@ -1569,7 +1573,7 @@ function buildEloMmrMeta(payload) {
 }
 
 function buildEloMmrSummary(item) {
-  return `AvgMatchScore ${formatDecimal(item?.components?.avg_match_score, 1)}, actividad ${formatDecimal(item?.components?.activity, 1)} y strength-of-schedule ${formatDecimal(item?.components?.strength_of_schedule, 1)}.`;
+  return `Elo core ${formatSignedDecimal(item?.rating_breakdown?.delta_sources?.elo_core_gain, 1)}, modificadores HLL ${formatSignedDecimal(item?.rating_breakdown?.delta_sources?.performance_modifier_gain, 1)} y tramo proxy ${formatSignedDecimal(item?.rating_breakdown?.delta_sources?.proxy_modifier_gain, 1)}.`;
 }
 
 function buildEloMmrFooter(item, payload) {
@@ -1783,6 +1787,14 @@ function formatSignedDecimal(value, fractionDigits = 1) {
   }
   const prefix = parsedValue > 0 ? "+" : "";
   return `${prefix}${formatDecimal(parsedValue, fractionDigits)}`;
+}
+
+function formatPlaytimeHours(value) {
+  const parsedValue = Number(value);
+  if (!Number.isFinite(parsedValue) || parsedValue <= 0) {
+    return "0,0 h";
+  }
+  return `${formatDecimal(parsedValue / 3600, 1)} h`;
 }
 
 function formatAccuracyMode(mode) {

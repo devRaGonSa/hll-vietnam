@@ -16,7 +16,7 @@ from .config import (
 from .historical_models import HistoricalServerDefinition
 from .monthly_mvp import build_monthly_mvp_rankings
 from .monthly_mvp_v2 import build_monthly_mvp_v2_rankings
-from .sqlite_utils import connect_sqlite_writer
+from .sqlite_utils import connect_sqlite_readonly, connect_sqlite_writer
 
 
 DEFAULT_HISTORICAL_SERVERS = (
@@ -55,10 +55,10 @@ SUPPORTED_MONTHLY_LEADERBOARD_METRICS = SUPPORTED_WEEKLY_LEADERBOARD_METRICS
 
 def initialize_historical_storage(*, db_path: Path | None = None) -> Path:
     """Create or migrate the local SQLite schema for historical data."""
-    resolved_path = db_path or get_storage_path()
+    resolved_path = _resolve_db_path(db_path)
     resolved_path.parent.mkdir(parents=True, exist_ok=True)
 
-    with _connect(resolved_path) as connection:
+    with _connect_writer(resolved_path) as connection:
         legacy_historical_schema = _has_legacy_historical_schema(connection)
         if legacy_historical_schema:
             _rename_legacy_historical_tables(connection)
@@ -205,8 +205,11 @@ def initialize_historical_storage(*, db_path: Path | None = None) -> Path:
 
 def list_historical_servers(*, db_path: Path | None = None) -> list[dict[str, object]]:
     """Return configured CRCON historical sources."""
-    resolved_path = initialize_historical_storage(db_path=db_path)
-    with _connect(resolved_path) as connection:
+    resolved_path = _resolve_existing_db_path(db_path)
+    if resolved_path is None:
+        return [_build_default_historical_server_item(server) for server in DEFAULT_HISTORICAL_SERVERS]
+
+    with _connect_readonly(resolved_path) as connection:
         rows = connection.execute(
             """
             SELECT slug, display_name, scoreboard_base_url, server_number, source_kind
@@ -225,7 +228,7 @@ def start_ingestion_run(
 ) -> int:
     """Create a row tracking one ingestion execution."""
     resolved_path = initialize_historical_storage(db_path=db_path)
-    with _connect(resolved_path) as connection:
+    with _connect_writer(resolved_path) as connection:
         cursor = connection.execute(
             """
             INSERT INTO historical_ingestion_runs (
@@ -255,7 +258,7 @@ def finalize_ingestion_run(
 ) -> None:
     """Update an ingestion run row with outcome metrics."""
     resolved_path = initialize_historical_storage(db_path=db_path)
-    with _connect(resolved_path) as connection:
+    with _connect_writer(resolved_path) as connection:
         connection.execute(
             """
             UPDATE historical_ingestion_runs
@@ -294,7 +297,7 @@ def mark_backfill_progress_started(
 ) -> None:
     """Persist the start of one resumable historical backfill attempt."""
     resolved_path = initialize_historical_storage(db_path=db_path)
-    with _connect(resolved_path) as connection:
+    with _connect_writer(resolved_path) as connection:
         server_row = _resolve_historical_server(connection, server_slug)
         connection.execute(
             """
@@ -341,7 +344,7 @@ def mark_backfill_progress_page_completed(
     if discovered_total_matches and page_size > 0:
         discovered_total_pages = (discovered_total_matches + page_size - 1) // page_size
 
-    with _connect(resolved_path) as connection:
+    with _connect_writer(resolved_path) as connection:
         server_row = _resolve_historical_server(connection, server_slug)
         connection.execute(
             """
@@ -404,7 +407,7 @@ def finalize_backfill_progress(
 ) -> None:
     """Persist the final state of one resumable historical backfill attempt."""
     resolved_path = initialize_historical_storage(db_path=db_path)
-    with _connect(resolved_path) as connection:
+    with _connect_writer(resolved_path) as connection:
         server_row = _resolve_historical_server(connection, server_slug)
         connection.execute(
             """
@@ -457,8 +460,11 @@ def get_backfill_resume_page(
     db_path: Path | None = None,
 ) -> int:
     """Return the next page recorded for one resumable historical backfill."""
-    resolved_path = initialize_historical_storage(db_path=db_path)
-    with _connect(resolved_path) as connection:
+    resolved_path = _resolve_existing_db_path(db_path)
+    if resolved_path is None:
+        return 1
+
+    with _connect_readonly(resolved_path) as connection:
         server_row = _resolve_historical_server(connection, server_slug)
         row = connection.execute(
             """
@@ -478,14 +484,17 @@ def list_historical_backfill_progress(
     db_path: Path | None = None,
 ) -> list[dict[str, object]]:
     """Return persisted resume checkpoints and last run state per server."""
-    resolved_path = initialize_historical_storage(db_path=db_path)
+    resolved_path = _resolve_existing_db_path(db_path)
+    if resolved_path is None:
+        return _build_default_backfill_progress_items(server_slug=server_slug, mode=mode)
+
     where_clause = ""
     params: list[object] = [mode]
     if server_slug:
         where_clause = "WHERE historical_servers.slug = ?"
         params.append(server_slug)
 
-    with _connect(resolved_path) as connection:
+    with _connect_readonly(resolved_path) as connection:
         rows = connection.execute(
             f"""
             SELECT
@@ -550,7 +559,7 @@ def upsert_historical_match(
     if not match_external_id:
         raise ValueError("Historical match payload is missing a stable id.")
 
-    with _connect(resolved_path) as connection:
+    with _connect_writer(resolved_path) as connection:
         server_row = _resolve_historical_server(connection, server_slug)
         map_id = _upsert_historical_map(connection, match_payload)
         match_row = connection.execute(
@@ -719,8 +728,11 @@ def get_refresh_cutoff_for_server(
     )
     if resolved_overlap_hours < 0:
         raise ValueError("overlap_hours must be zero or positive.")
-    resolved_path = initialize_historical_storage(db_path=db_path)
-    with _connect(resolved_path) as connection:
+    resolved_path = _resolve_existing_db_path(db_path)
+    if resolved_path is None:
+        return None
+
+    with _connect_readonly(resolved_path) as connection:
         server_row = _resolve_historical_server(connection, server_slug)
         row = connection.execute(
             """
@@ -745,7 +757,10 @@ def list_recent_historical_matches(
     db_path: Path | None = None,
 ) -> list[dict[str, object]]:
     """Return recent persisted matches grouped for the historical API layer."""
-    resolved_path = initialize_historical_storage(db_path=db_path)
+    resolved_path = _resolve_existing_db_path(db_path)
+    if resolved_path is None:
+        return []
+
     where_clause = ""
     params: list[object] = []
     if server_slug and not _is_all_servers_selector(server_slug):
@@ -753,7 +768,7 @@ def list_recent_historical_matches(
         params.append(server_slug)
     params.append(limit)
 
-    with _connect(resolved_path) as connection:
+    with _connect_readonly(resolved_path) as connection:
         rows = connection.execute(
             f"""
             SELECT
@@ -815,7 +830,10 @@ def list_historical_server_summaries(
     db_path: Path | None = None,
 ) -> list[dict[str, object]]:
     """Return aggregate historical metrics per server."""
-    resolved_path = initialize_historical_storage(db_path=db_path)
+    resolved_path = _resolve_existing_db_path(db_path)
+    if resolved_path is None:
+        return _build_default_server_summaries(server_slug=server_slug)
+
     if _is_all_servers_selector(server_slug):
         return [_build_all_servers_summary(db_path=resolved_path)]
 
@@ -825,7 +843,7 @@ def list_historical_server_summaries(
         where_clause = "WHERE historical_servers.slug = ?"
         params.append(server_slug)
 
-    with _connect(resolved_path) as connection:
+    with _connect_readonly(resolved_path) as connection:
         summary_rows = connection.execute(
             f"""
             SELECT
@@ -945,14 +963,17 @@ def list_historical_coverage_report(
     db_path: Path | None = None,
 ) -> list[dict[str, object]]:
     """Return persisted coverage metrics used to validate historical bootstrap depth."""
-    resolved_path = initialize_historical_storage(db_path=db_path)
+    resolved_path = _resolve_existing_db_path(db_path)
+    if resolved_path is None:
+        return _build_default_coverage_report_items(server_slug=server_slug)
+
     where_clause = ""
     params: list[object] = []
     if server_slug:
         where_clause = "WHERE historical_servers.slug = ?"
         params.append(server_slug)
 
-    with _connect(resolved_path) as connection:
+    with _connect_readonly(resolved_path) as connection:
         rows = connection.execute(
             f"""
             SELECT
@@ -1032,8 +1053,11 @@ def get_historical_player_profile(
     if not resolved_player_id:
         return None
 
-    resolved_path = initialize_historical_storage(db_path=db_path)
-    with _connect(resolved_path) as connection:
+    resolved_path = _resolve_existing_db_path(db_path)
+    if resolved_path is None:
+        return None
+
+    with _connect_readonly(resolved_path) as connection:
         player_row = connection.execute(
             """
             SELECT
@@ -1123,7 +1147,7 @@ def list_weekly_leaderboard(
     db_path: Path | None = None,
 ) -> dict[str, object]:
     """Return ranked weekly leaderboard totals from persisted historical match stats."""
-    resolved_path = initialize_historical_storage(db_path=db_path)
+    resolved_path = _resolve_existing_db_path(db_path)
     aggregate_all_servers = _is_all_servers_selector(server_id)
     current_time = datetime.now(timezone.utc)
     current_week_start = _start_of_week(current_time)
@@ -1131,6 +1155,12 @@ def list_weekly_leaderboard(
     normalized_metric = metric.strip() if isinstance(metric, str) else ""
     if normalized_metric not in SUPPORTED_WEEKLY_LEADERBOARD_METRICS:
         raise ValueError(f"Unsupported weekly leaderboard metric: {metric}")
+
+    if resolved_path is None:
+        return _build_empty_weekly_leaderboard_result(
+            metric=normalized_metric,
+            current_time=current_time,
+        )
 
     weekly_window = _select_weekly_window(
         server_id=server_id,
@@ -1188,7 +1218,7 @@ def list_weekly_leaderboard(
         ),
     }[normalized_metric]
 
-    with _connect(resolved_path) as connection:
+    with _connect_readonly(resolved_path) as connection:
         rows = connection.execute(
             f"""
             WITH ranked_players AS (
@@ -1199,6 +1229,7 @@ def list_weekly_leaderboard(
                     historical_players.display_name AS player_name,
                     historical_players.steam_id,
                     COUNT(DISTINCT historical_matches.id) AS matches_count,
+                    COALESCE(SUM(historical_player_match_stats.time_seconds), 0) AS total_time_seconds,
                     {metric_sum_expression} AS metric_value,
                     ROW_NUMBER() OVER (
                         PARTITION BY {partition_expression}
@@ -1247,6 +1278,7 @@ def list_weekly_leaderboard(
                 "ranking_position": int(row["ranking_position"]),
                 "metric_value": int(row["metric_value"] or 0),
                 "matches_considered": int(row["matches_count"] or 0),
+                "total_time_seconds": int(row["total_time_seconds"] or 0),
             }
         )
 
@@ -1308,7 +1340,7 @@ def list_monthly_leaderboard(
     db_path: Path | None = None,
 ) -> dict[str, object]:
     """Return ranked monthly leaderboard totals from persisted historical match stats."""
-    resolved_path = initialize_historical_storage(db_path=db_path)
+    resolved_path = _resolve_existing_db_path(db_path)
     aggregate_all_servers = _is_all_servers_selector(server_id)
     current_time = datetime.now(timezone.utc)
     current_month_start = _start_of_month(current_time)
@@ -1316,6 +1348,12 @@ def list_monthly_leaderboard(
     normalized_metric = metric.strip() if isinstance(metric, str) else ""
     if normalized_metric not in SUPPORTED_MONTHLY_LEADERBOARD_METRICS:
         raise ValueError(f"Unsupported monthly leaderboard metric: {metric}")
+
+    if resolved_path is None:
+        return _build_empty_monthly_leaderboard_result(
+            metric=normalized_metric,
+            current_time=current_time,
+        )
 
     monthly_window = _select_monthly_window(
         server_id=server_id,
@@ -1373,7 +1411,7 @@ def list_monthly_leaderboard(
         ),
     }[normalized_metric]
 
-    with _connect(resolved_path) as connection:
+    with _connect_readonly(resolved_path) as connection:
         rows = connection.execute(
             f"""
             WITH ranked_players AS (
@@ -1384,6 +1422,7 @@ def list_monthly_leaderboard(
                     historical_players.display_name AS player_name,
                     historical_players.steam_id,
                     COUNT(DISTINCT historical_matches.id) AS matches_count,
+                    COALESCE(SUM(historical_player_match_stats.time_seconds), 0) AS total_time_seconds,
                     {metric_sum_expression} AS metric_value,
                     ROW_NUMBER() OVER (
                         PARTITION BY {partition_expression}
@@ -1433,6 +1472,7 @@ def list_monthly_leaderboard(
                 "ranking_position": int(row["ranking_position"]),
                 "metric_value": int(row["metric_value"] or 0),
                 "matches_considered": int(row["matches_count"] or 0),
+                "total_time_seconds": int(row["total_time_seconds"] or 0),
             }
         )
 
@@ -1466,11 +1506,14 @@ def list_monthly_mvp_ranking(
     db_path: Path | None = None,
 ) -> dict[str, object]:
     """Return the monthly MVP V1 ranking built from persisted historical totals."""
-    resolved_path = initialize_historical_storage(db_path=db_path)
+    resolved_path = _resolve_existing_db_path(db_path)
     aggregate_all_servers = _is_all_servers_selector(server_id)
     current_time = datetime.now(timezone.utc)
     current_month_start = _start_of_month(current_time)
     previous_month_start = _start_of_previous_month(current_month_start)
+    if resolved_path is None:
+        return _build_empty_monthly_mvp_result(current_time=current_time)
+
     monthly_window = _select_monthly_window(
         server_id=server_id,
         current_time=current_time,
@@ -1512,7 +1555,7 @@ def list_monthly_mvp_ranking(
         else "historical_servers.slug, historical_players.id"
     )
 
-    with _connect(resolved_path) as connection:
+    with _connect_readonly(resolved_path) as connection:
         rows = connection.execute(
             f"""
             SELECT
@@ -1585,11 +1628,14 @@ def list_monthly_mvp_v2_ranking(
     db_path: Path | None = None,
 ) -> dict[str, object]:
     """Return the monthly MVP V2 ranking built from monthly totals plus V2 signals."""
-    resolved_path = initialize_historical_storage(db_path=db_path)
+    resolved_path = _resolve_existing_db_path(db_path)
     aggregate_all_servers = _is_all_servers_selector(server_id)
     current_time = datetime.now(timezone.utc)
     current_month_start = _start_of_month(current_time)
     previous_month_start = _start_of_previous_month(current_month_start)
+    if resolved_path is None:
+        return _build_empty_monthly_mvp_v2_result(current_time=current_time)
+
     monthly_window = _select_monthly_window(
         server_id=server_id,
         current_time=current_time,
@@ -1670,7 +1716,7 @@ def list_monthly_mvp_v2_ranking(
         else "historical_servers.slug, historical_players.id"
     )
 
-    with _connect(resolved_path) as connection:
+    with _connect_readonly(resolved_path) as connection:
         rows = connection.execute(
             f"""
             WITH most_killed_pairs AS (
@@ -1856,7 +1902,18 @@ def _get_monthly_player_event_coverage(
     db_path: Path,
 ) -> dict[str, object]:
     scope_sql, scope_params = _build_player_event_scope_sql(server_id)
-    with _connect(db_path) as connection:
+    if not db_path.exists():
+        return {
+            "month_key": month_key,
+            "latest_month_key": None,
+            "ready": False,
+            "event_count": 0,
+            "source_range_start": None,
+            "source_range_end": None,
+            "selection_reason": "player-event-month-mismatch-or-missing",
+        }
+
+    with _connect_readonly(db_path) as connection:
         latest_row = connection.execute(
             f"""
             SELECT MAX(substr(occurred_at, 1, 7)) AS latest_month_key
@@ -1903,8 +1960,23 @@ def _build_player_event_scope_sql(server_id: str | None) -> tuple[str, list[obje
     return "server_slug = ?", [normalized_server_id]
 
 
-def _connect(db_path: Path) -> sqlite3.Connection:
+def _connect_writer(db_path: Path) -> sqlite3.Connection:
     return connect_sqlite_writer(db_path)
+
+
+def _connect_readonly(db_path: Path) -> sqlite3.Connection:
+    return connect_sqlite_readonly(db_path)
+
+
+def _resolve_db_path(db_path: Path | None) -> Path:
+    return db_path or get_storage_path()
+
+
+def _resolve_existing_db_path(db_path: Path | None) -> Path | None:
+    resolved_path = _resolve_db_path(db_path)
+    if resolved_path.exists():
+        return resolved_path
+    return None
 
 
 def _resolve_match_winner(allied_score: object, axis_score: object) -> str | None:
@@ -2923,7 +2995,10 @@ def _count_closed_matches_in_window(
         )
         params.extend([normalized_server_id, normalized_server_id])
 
-    with _connect(db_path) as connection:
+    if not db_path.exists():
+        return 0
+
+    with _connect_readonly(db_path) as connection:
         row = connection.execute(
             f"""
             SELECT COUNT(DISTINCT historical_matches.id) AS matches_count
@@ -2969,7 +3044,10 @@ def _count_valid_matches_with_stats_in_window(
         )
         params.extend([normalized_server_id, normalized_server_id])
 
-    with _connect(db_path) as connection:
+    if not db_path.exists():
+        return 0
+
+    with _connect_readonly(db_path) as connection:
         row = connection.execute(
             f"""
             SELECT COUNT(DISTINCT historical_matches.id) AS matches_count
@@ -3064,7 +3142,10 @@ def _build_all_servers_summary(*, db_path: Path) -> dict[str, object]:
 
 
 def _count_all_servers_unique_players(*, db_path: Path) -> int:
-    with _connect(db_path) as connection:
+    if not db_path.exists():
+        return 0
+
+    with _connect_readonly(db_path) as connection:
         row = connection.execute(
             """
             SELECT COUNT(DISTINCT historical_players.id) AS unique_players
@@ -3077,7 +3158,10 @@ def _count_all_servers_unique_players(*, db_path: Path) -> int:
 
 
 def _count_all_servers_maps(*, db_path: Path) -> int:
-    with _connect(db_path) as connection:
+    if not db_path.exists():
+        return 0
+
+    with _connect_readonly(db_path) as connection:
         row = connection.execute(
             """
             SELECT COUNT(DISTINCT COALESCE(map_pretty_name, map_name)) AS map_count
@@ -3088,7 +3172,10 @@ def _count_all_servers_maps(*, db_path: Path) -> int:
 
 
 def _list_all_servers_top_maps(*, db_path: Path, limit: int) -> list[dict[str, object]]:
-    with _connect(db_path) as connection:
+    if not db_path.exists():
+        return []
+
+    with _connect_readonly(db_path) as connection:
         rows = connection.execute(
             """
             SELECT
@@ -3108,6 +3195,295 @@ def _list_all_servers_top_maps(*, db_path: Path, limit: int) -> list[dict[str, o
         }
         for row in rows
     ]
+
+
+def _build_default_historical_server_item(
+    server: HistoricalServerDefinition,
+) -> dict[str, object]:
+    return {
+        "slug": server.slug,
+        "display_name": server.display_name,
+        "scoreboard_base_url": server.scoreboard_base_url,
+        "server_number": server.server_number,
+        "source_kind": "public-scoreboard",
+    }
+
+
+def _iter_default_historical_servers(
+    server_slug: str | None = None,
+) -> list[HistoricalServerDefinition]:
+    if not server_slug or _is_all_servers_selector(server_slug):
+        return list(DEFAULT_HISTORICAL_SERVERS)
+    normalized_server_slug = server_slug.strip()
+    return [
+        server
+        for server in DEFAULT_HISTORICAL_SERVERS
+        if server.slug == normalized_server_slug
+    ]
+
+
+def _build_default_backfill_progress_items(
+    *,
+    server_slug: str | None,
+    mode: str,
+) -> list[dict[str, object]]:
+    return [
+        {
+            "server": {
+                "slug": server.slug,
+                "name": server.display_name,
+            },
+            "mode": mode,
+            "next_page": 1,
+            "last_completed_page": None,
+            "discovered_total_matches": None,
+            "discovered_total_pages": None,
+            "archive_exhausted": False,
+            "last_run": {
+                "run_id": None,
+                "status": None,
+                "started_at": None,
+                "completed_at": None,
+                "error": None,
+            },
+        }
+        for server in _iter_default_historical_servers(server_slug)
+    ]
+
+
+def _build_empty_server_summary(server: HistoricalServerDefinition) -> dict[str, object]:
+    return {
+        "server": {
+            "slug": server.slug,
+            "name": server.display_name,
+        },
+        "matches_count": 0,
+        "imported_matches_count": 0,
+        "unique_players": 0,
+        "total_kills": 0,
+        "map_count": 0,
+        "top_maps": [],
+        "coverage": {
+            "basis": "persisted-import",
+            "status": "empty",
+            "imported_matches_count": 0,
+            "discovered_total_matches": None,
+            "first_match_at": None,
+            "last_match_at": None,
+            "coverage_days": None,
+        },
+        "backfill": {
+            "mode": "bootstrap",
+            "next_page": 1,
+            "last_completed_page": None,
+            "discovered_total_matches": None,
+            "discovered_total_pages": None,
+            "remaining_matches_estimate": None,
+            "archive_exhausted": False,
+            "last_run": None,
+        },
+        "time_range": {
+            "start": None,
+            "end": None,
+        },
+    }
+
+
+def _build_empty_all_servers_summary() -> dict[str, object]:
+    return {
+        "server": {
+            "slug": ALL_SERVERS_SLUG,
+            "name": ALL_SERVERS_DISPLAY_NAME,
+        },
+        "matches_count": 0,
+        "imported_matches_count": 0,
+        "unique_players": 0,
+        "total_kills": 0,
+        "map_count": 0,
+        "top_maps": [],
+        "coverage": {
+            "basis": "persisted-import-aggregate",
+            "status": "empty",
+            "imported_matches_count": 0,
+            "discovered_total_matches": None,
+            "first_match_at": None,
+            "last_match_at": None,
+            "coverage_days": None,
+        },
+        "backfill": {
+            "mode": "aggregate",
+            "server_count": len(DEFAULT_HISTORICAL_SERVERS),
+            "discovered_total_matches": None,
+            "remaining_matches_estimate": None,
+            "archive_exhausted": False,
+            "last_run": None,
+        },
+        "time_range": {
+            "start": None,
+            "end": None,
+        },
+    }
+
+
+def _build_default_server_summaries(
+    *,
+    server_slug: str | None,
+) -> list[dict[str, object]]:
+    if _is_all_servers_selector(server_slug):
+        return [_build_empty_all_servers_summary()]
+    return [
+        _build_empty_server_summary(server)
+        for server in _iter_default_historical_servers(server_slug)
+    ]
+
+
+def _build_default_coverage_report_items(
+    *,
+    server_slug: str | None,
+) -> list[dict[str, object]]:
+    return [
+        {
+            "server": {
+                "slug": server.slug,
+                "name": server.display_name,
+                "server_number": server.server_number,
+                "scoreboard_base_url": server.scoreboard_base_url,
+            },
+            "imported_matches_count": 0,
+            "unique_players": 0,
+            "player_stat_rows": 0,
+            "first_match_at": None,
+            "last_match_at": None,
+            "coverage_days": None,
+            "backfill": {
+                "next_page": 1,
+                "last_completed_page": None,
+                "discovered_total_matches": None,
+                "discovered_total_pages": None,
+                "archive_exhausted": False,
+                "last_run": None,
+            },
+        }
+        for server in _iter_default_historical_servers(server_slug)
+    ]
+
+
+def _build_empty_weekly_leaderboard_result(
+    *,
+    metric: str,
+    current_time: datetime,
+) -> dict[str, object]:
+    current_week_start = _start_of_week(current_time)
+    previous_week_start = current_week_start - timedelta(days=DEFAULT_WEEKLY_WINDOW_DAYS)
+    return {
+        "metric": metric,
+        "window_start": previous_week_start.isoformat().replace("+00:00", "Z"),
+        "window_end": current_week_start.isoformat().replace("+00:00", "Z"),
+        "window_days": DEFAULT_WEEKLY_WINDOW_DAYS,
+        "window_kind": "previous-closed-week-fallback",
+        "window_label": "Semana cerrada anterior",
+        "uses_fallback": True,
+        "selection_reason": "insufficient-current-week-sample",
+        "current_week_start": current_week_start.isoformat().replace("+00:00", "Z"),
+        "current_week_closed_matches": 0,
+        "previous_week_closed_matches": 0,
+        "sufficient_sample": {
+            "minimum_closed_matches": 1,
+            "current_week_closed_matches": 0,
+            "current_week_has_sufficient_sample": False,
+            "is_early_week": current_time.weekday() <= get_historical_weekly_fallback_max_weekday(),
+            "fallback_max_weekday": get_historical_weekly_fallback_max_weekday(),
+        },
+        "items": [],
+    }
+
+
+def _build_empty_monthly_leaderboard_result(
+    *,
+    metric: str,
+    current_time: datetime,
+) -> dict[str, object]:
+    current_month_start = _start_of_month(current_time)
+    previous_month_start = _start_of_previous_month(current_month_start)
+    window_days = _calculate_window_days(
+        window_start=previous_month_start,
+        window_end=current_month_start,
+    )
+    return {
+        "timeframe": "monthly",
+        "metric": metric,
+        "window_start": previous_month_start.isoformat().replace("+00:00", "Z"),
+        "window_end": current_month_start.isoformat().replace("+00:00", "Z"),
+        "window_days": window_days,
+        "window_kind": "previous-closed-month-fallback",
+        "window_label": "Mes cerrado anterior",
+        "uses_fallback": True,
+        "selection_reason": "no-current-month-matches",
+        "current_month_start": current_month_start.isoformat().replace("+00:00", "Z"),
+        "current_month_closed_matches": 0,
+        "previous_month_closed_matches": 0,
+        "sufficient_sample": {
+            "minimum_closed_matches": 1,
+            "current_month_closed_matches": 0,
+            "current_month_has_sufficient_sample": False,
+            "is_early_month": current_time.day <= 3,
+        },
+        "items": [],
+    }
+
+
+def _build_empty_monthly_mvp_result(*, current_time: datetime) -> dict[str, object]:
+    empty_result = _build_empty_monthly_leaderboard_result(metric="mvp", current_time=current_time)
+    return {
+        **empty_result,
+        "ranking_version": "v1",
+        "eligibility": None,
+        "eligible_players_count": 0,
+        "items": [],
+    }
+
+
+def _build_empty_monthly_mvp_v2_result(*, current_time: datetime) -> dict[str, object]:
+    current_month_start = _start_of_month(current_time)
+    previous_month_start = _start_of_previous_month(current_month_start)
+    window_days = _calculate_window_days(
+        window_start=previous_month_start,
+        window_end=current_month_start,
+    )
+    month_key = previous_month_start.strftime("%Y-%m")
+    return {
+        "timeframe": "monthly",
+        "metric": "mvp-v2",
+        "ranking_version": "v2",
+        "window_start": previous_month_start.isoformat().replace("+00:00", "Z"),
+        "window_end": current_month_start.isoformat().replace("+00:00", "Z"),
+        "window_days": window_days,
+        "window_kind": "previous-closed-month-fallback",
+        "window_label": "Mes cerrado anterior",
+        "uses_fallback": True,
+        "selection_reason": "no-current-month-matches",
+        "current_month_start": current_month_start.isoformat().replace("+00:00", "Z"),
+        "current_month_closed_matches": 0,
+        "previous_month_closed_matches": 0,
+        "sufficient_sample": {
+            "minimum_closed_matches": 1,
+            "current_month_closed_matches": 0,
+            "current_month_has_sufficient_sample": False,
+            "is_early_month": current_time.day <= 3,
+        },
+        "event_coverage": {
+            "month_key": month_key,
+            "latest_month_key": None,
+            "ready": False,
+            "event_count": 0,
+            "source_range_start": None,
+            "source_range_end": None,
+            "selection_reason": "player-event-month-mismatch-or-missing",
+        },
+        "eligibility": None,
+        "eligible_players_count": 0,
+        "items": [],
+    }
 
 
 def _is_all_servers_selector(value: str | None) -> bool:

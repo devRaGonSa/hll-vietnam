@@ -18,16 +18,10 @@ def list_rcon_historical_server_summaries(
     server_key: str | None = None,
 ) -> list[dict[str, object]]:
     """Return per-target coverage and freshness from RCON-backed competitive storage."""
-    items = list_rcon_historical_competitive_summary_rows()
-    if server_key and server_key != ALL_SERVERS_SLUG:
-        normalized = server_key.strip()
-        items = [
-            item
-            for item in items
-            if item["target_key"] == normalized or item["external_server_id"] == normalized
-        ]
-
-    summaries = [_build_server_summary(item) for item in items]
+    items = list_rcon_historical_competitive_summary_rows(
+        target_key=None if server_key == ALL_SERVERS_SLUG else server_key,
+    )
+    summaries = [_build_server_summary(item, requested_server_key=server_key) for item in items]
     if server_key == ALL_SERVERS_SLUG:
         return [_build_all_servers_summary(summaries)]
     return summaries
@@ -44,8 +38,12 @@ def list_rcon_historical_recent_activity(
     return [
         {
             "server": {
-                "slug": item["target_key"],
+                "slug": _resolve_presented_server_slug(
+                    item,
+                    requested_server_key=server_key,
+                ),
                 "name": item["display_name"],
+                "target_key": item["target_key"],
                 "external_server_id": item["external_server_id"],
                 "region": item["region"],
             },
@@ -123,7 +121,11 @@ def get_rcon_historical_competitive_match_context(
     )
 
 
-def _build_server_summary(item: dict[str, object]) -> dict[str, object]:
+def _build_server_summary(
+    item: dict[str, object],
+    *,
+    requested_server_key: str | None = None,
+) -> dict[str, object]:
     sample_count = int(item.get("sample_count") or 0)
     first_last_points = list_rcon_historical_recent_activity(
         server_key=str(item["target_key"]),
@@ -134,8 +136,12 @@ def _build_server_summary(item: dict[str, object]) -> dict[str, object]:
 
     return {
         "server": {
-            "slug": item["target_key"],
+            "slug": _resolve_presented_server_slug(
+                item,
+                requested_server_key=requested_server_key,
+            ),
             "name": item["display_name"],
+            "target_key": item["target_key"],
             "external_server_id": item["external_server_id"],
             "region": item["region"],
         },
@@ -238,3 +244,48 @@ def _calculate_coverage_hours(
         last_point = last_point.replace(tzinfo=timezone.utc)
     delta = last_point.astimezone(timezone.utc) - first_point.astimezone(timezone.utc)
     return round(delta.total_seconds() / 3600, 2)
+
+
+def _resolve_presented_server_slug(
+    item: dict[str, object],
+    *,
+    requested_server_key: str | None,
+) -> str:
+    external_server_id = str(item.get("external_server_id") or "").strip()
+    if external_server_id:
+        return external_server_id
+    normalized_requested_server_key = str(requested_server_key or "").strip()
+    if normalized_requested_server_key and normalized_requested_server_key != ALL_SERVERS_SLUG:
+        return normalized_requested_server_key
+    return str(item["target_key"])
+
+
+def has_rcon_historical_server_summary_coverage(
+    items: list[dict[str, object]],
+) -> bool:
+    """Return whether the RCON summary items have usable competitive coverage."""
+    return any(_summary_item_has_coverage(item) for item in items)
+
+
+def has_rcon_historical_recent_activity_coverage(
+    items: list[dict[str, object]],
+) -> bool:
+    """Return whether the RCON recent-activity items are usable for runtime reads."""
+    return any(_recent_activity_item_has_coverage(item) for item in items)
+
+
+def _summary_item_has_coverage(item: dict[str, object]) -> bool:
+    coverage = item.get("coverage")
+    if not isinstance(coverage, dict):
+        return False
+    if str(coverage.get("status") or "") == "empty":
+        return False
+    return int(coverage.get("window_count") or coverage.get("sample_count") or 0) > 0
+
+
+def _recent_activity_item_has_coverage(item: dict[str, object]) -> bool:
+    return (
+        bool(item.get("match_id"))
+        and bool(item.get("closed_at"))
+        and int(item.get("sample_count") or 0) > 0
+    )

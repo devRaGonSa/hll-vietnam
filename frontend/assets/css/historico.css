@@ -447,7 +447,7 @@
 .historical-table {
   width: 100%;
   border-collapse: collapse;
-  min-width: 620px;
+  min-width: 740px;
 }
 
 .historical-table th,
@@ -647,6 +647,6 @@
   }
 
   .historical-table {
-    min-width: 540px;
+    min-width: 660px;
   }
 }
