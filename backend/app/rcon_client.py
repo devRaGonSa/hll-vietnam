@@ -18,7 +18,8 @@ from .config import (
 
 
 RCON_BUFFER_SIZE = 32768
-RCON_HEADER_FORMAT = "<II"
+RCON_HEADER_FORMAT = "<III"
+RCON_MAGIC_HEADER_VALUE = 0xDE450508
 RCON_PROTOCOL_VERSION = 2
 
 
@@ -194,7 +195,12 @@ class HllRconConnection:
             },
             separators=(",", ":"),
         ).encode("utf-8")
-        header = struct.pack(RCON_HEADER_FORMAT, request_id, len(body))
+        header = struct.pack(
+            RCON_HEADER_FORMAT,
+            RCON_MAGIC_HEADER_VALUE,
+            request_id,
+            len(body),
+        )
         self._run_socket_stage(
             request_stage,
             lambda: self._socket.sendall(header + self._xor(body)),
@@ -202,15 +208,31 @@ class HllRconConnection:
 
     def _receive_response(self, *, response_stage: str) -> dict[str, object]:
         header_size = struct.calcsize(RCON_HEADER_FORMAT)
-        header_bytes = self._recv_exact(header_size, stage=response_stage)
+        header_bytes = self._recv_exact(
+            header_size,
+            stage=response_stage,
+            receive_context="response header",
+        )
         try:
-            request_id, body_length = struct.unpack(RCON_HEADER_FORMAT, header_bytes)
+            magic_value, request_id, body_length = struct.unpack(
+                RCON_HEADER_FORMAT,
+                header_bytes,
+            )
         except struct.error as error:
             raise RconQueryError(
                 "payload-invalid",
                 "The HLL server returned an invalid RCON response header.",
                 error_stage=response_stage,
             ) from error
+        if magic_value != RCON_MAGIC_HEADER_VALUE:
+            raise RconQueryError(
+                "invalid-magic",
+                (
+                    "The HLL server returned an unexpected RCON magic value: "
+                    f"{magic_value:#x} (expected {RCON_MAGIC_HEADER_VALUE:#x})."
+                ),
+                error_stage=response_stage,
+            )
         if body_length <= 0:
             raise RconQueryError(
                 "unexpected-response",
@@ -218,7 +240,7 @@ class HllRconConnection:
                 error_stage=response_stage,
             )
 
-        body = self._xor(self._recv_exact(body_length, stage=response_stage))
+        body = self._xor(self._recv_body(body_length, stage=response_stage))
         try:
             parsed = json.loads(body.decode("utf-8", errors="replace"))
         except json.JSONDecodeError as error:
@@ -237,7 +259,54 @@ class HllRconConnection:
         parsed["requestId"] = request_id
         return parsed
 
-    def _recv_exact(self, expected_length: int, *, stage: str) -> bytes:
+    def _recv_body(self, expected_length: int, *, stage: str) -> bytes:
+        chunks = bytearray()
+        original_timeout = self._socket.gettimeout()
+        body_timeout_seconds = min(3.0, original_timeout or 3.0)
+        self._socket.settimeout(body_timeout_seconds)
+        try:
+            while len(chunks) < expected_length:
+                self._current_stage = stage
+                try:
+                    chunk = self._socket.recv(
+                        min(RCON_BUFFER_SIZE, expected_length - len(chunks))
+                    )
+                except (TimeoutError, socket.timeout) as error:
+                    raise RconQueryError(
+                        "timeout",
+                        (
+                            f"Timed out during {stage} while waiting for response body "
+                            f"({len(chunks)}/{expected_length} bytes received)."
+                        ),
+                        error_stage=stage,
+                    ) from error
+                except OSError as error:
+                    raise RconQueryError(
+                        _classify_socket_error_type(error),
+                        f"RCON socket error during {stage}: {error}",
+                        error_stage=stage,
+                    ) from error
+                if not chunk:
+                    raise RconQueryError(
+                        "connection-closed",
+                        (
+                            "The HLL RCON connection closed unexpectedly while waiting for "
+                            f"response body ({len(chunks)}/{expected_length} bytes received)."
+                        ),
+                        error_stage=stage,
+                    )
+                chunks.extend(chunk)
+        finally:
+            self._socket.settimeout(original_timeout)
+        return bytes(chunks)
+
+    def _recv_exact(
+        self,
+        expected_length: int,
+        *,
+        stage: str,
+        receive_context: str,
+    ) -> bytes:
         chunks = bytearray()
         while len(chunks) < expected_length:
             self._current_stage = stage
@@ -246,7 +315,10 @@ class HllRconConnection:
             except (TimeoutError, socket.timeout) as error:
                 raise RconQueryError(
                     "timeout",
-                    f"Timed out during {stage}.",
+                    (
+                        f"Timed out during {stage} while waiting for {receive_context} "
+                        f"({len(chunks)}/{expected_length} bytes received)."
+                    ),
                     error_stage=stage,
                 ) from error
             except OSError as error:
@@ -257,8 +329,11 @@ class HllRconConnection:
                 ) from error
             if not chunk:
                 raise RconQueryError(
-                    "unexpected-response",
-                    "The HLL RCON connection closed unexpectedly.",
+                    "connection-closed",
+                    (
+                        "The HLL RCON connection closed unexpectedly while waiting for "
+                        f"{receive_context} ({len(chunks)}/{expected_length} bytes received)."
+                    ),
                     error_stage=stage,
                 )
             chunks.extend(chunk)
@@ -545,8 +620,14 @@ def _classify_runtime_error_type(error: RuntimeError) -> str:
     message = str(error).lower()
     if "auth token" in message or "login failed" in message or "status 401" in message or "status 403" in message:
         return "auth/login"
+    if "invalid magic" in message:
+        return "invalid-magic"
+    if "closed unexpectedly" in message or "closed connection" in message:
+        return "connection-closed"
     if "invalid json" in message or "unexpected payload" in message or "malformed" in message or "invalid rcon" in message:
         return "payload-invalid"
     if "timed out" in message:
         return "timeout"
+    if "unexpected" in message:
+        return "unexpected-response"
     return "other-error"
