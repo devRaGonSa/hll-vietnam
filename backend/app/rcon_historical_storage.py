@@ -10,6 +10,7 @@ from pathlib import Path
 
 from .config import get_storage_path
 from .normalizers import normalize_map_name
+from .rcon_client import load_rcon_targets
 from .sqlite_utils import connect_sqlite_readonly, connect_sqlite_writer
 
 
@@ -356,8 +357,13 @@ def list_recent_rcon_historical_samples(
     where_clause = ""
     params: list[object] = [limit]
     if target_key:
-        where_clause = "WHERE targets.target_key = ? OR targets.external_server_id = ?"
-        params = [target_key, target_key, limit]
+        aliases = _expand_target_key_aliases(target_key)
+        alias_placeholders = ", ".join("?" for _ in aliases)
+        where_clause = (
+            "WHERE targets.target_key IN "
+            f"({alias_placeholders}) OR targets.external_server_id IN ({alias_placeholders})"
+        )
+        params = [*aliases, *aliases, limit]
 
     try:
         with _connect_readonly(resolved_path) as connection:
@@ -411,8 +417,13 @@ def list_rcon_historical_competitive_windows(
     where_clause = ""
     params: list[object] = [limit]
     if target_key:
-        where_clause = "WHERE targets.target_key = ? OR targets.external_server_id = ?"
-        params = [target_key, target_key, limit]
+        aliases = _expand_target_key_aliases(target_key)
+        alias_placeholders = ", ".join("?" for _ in aliases)
+        where_clause = (
+            "WHERE targets.target_key IN "
+            f"({alias_placeholders}) OR targets.external_server_id IN ({alias_placeholders})"
+        )
+        params = [*aliases, *aliases, limit]
 
     try:
         with _connect_readonly(resolved_path) as connection:
@@ -479,6 +490,30 @@ def list_rcon_historical_competitive_windows(
     return items
 
 
+def count_rcon_historical_samples_since(
+    since: str | None,
+    *,
+    db_path: Path | None = None,
+) -> int:
+    """Return how many RCON samples were captured after one timestamp."""
+    if not since:
+        return 0
+    resolved_path = _resolve_db_path(db_path)
+    try:
+        with _connect_readonly(resolved_path) as connection:
+            row = connection.execute(
+                """
+                SELECT COUNT(*) AS sample_count
+                FROM rcon_historical_samples
+                WHERE captured_at > ?
+                """,
+                (since,),
+            ).fetchone()
+    except sqlite3.OperationalError:
+        return 0
+    return int(row["sample_count"] or 0) if row else 0
+
+
 def list_rcon_historical_competitive_summary_rows(
     *,
     target_key: str | None = None,
@@ -489,8 +524,13 @@ def list_rcon_historical_competitive_summary_rows(
     where_clause = ""
     params: list[object] = []
     if target_key:
-        where_clause = "WHERE targets.target_key = ? OR targets.external_server_id = ?"
-        params = [target_key, target_key]
+        aliases = _expand_target_key_aliases(target_key)
+        alias_placeholders = ", ".join("?" for _ in aliases)
+        where_clause = (
+            "WHERE targets.target_key IN "
+            f"({alias_placeholders}) OR targets.external_server_id IN ({alias_placeholders})"
+        )
+        params = [*aliases, *aliases]
 
     try:
         with _connect_readonly(resolved_path) as connection:
@@ -555,10 +595,12 @@ def find_rcon_historical_competitive_window(
         return None
     resolved_path = _resolve_db_path(db_path)
     normalized_map_name = normalize_map_name(map_name)
+    aliases = _expand_target_key_aliases(server_key)
+    alias_placeholders = ", ".join("?" for _ in aliases)
     try:
         with _connect_readonly(resolved_path) as connection:
             candidates = connection.execute(
-                """
+                f"""
             SELECT
                 windows.session_key,
                 windows.first_seen_at,
@@ -573,11 +615,14 @@ def find_rcon_historical_competitive_window(
             FROM rcon_historical_competitive_windows AS windows
             INNER JOIN rcon_historical_targets AS targets
                 ON targets.id = windows.target_id
-            WHERE (targets.target_key = ? OR targets.external_server_id = ?)
+            WHERE (
+                targets.target_key IN ({alias_placeholders})
+                OR targets.external_server_id IN ({alias_placeholders})
+            )
             ORDER BY windows.last_seen_at DESC
             LIMIT 12
             """,
-                (server_key, server_key),
+                [*aliases, *aliases],
             ).fetchall()
     except sqlite3.OperationalError:
         return None
@@ -627,6 +672,31 @@ def _connect_readonly(db_path: Path) -> sqlite3.Connection:
 
 def _resolve_db_path(db_path: Path | None) -> Path:
     return db_path or get_storage_path()
+
+
+def _expand_target_key_aliases(target_key: str) -> list[str]:
+    normalized_target_key = str(target_key or "").strip()
+    if not normalized_target_key:
+        return [normalized_target_key]
+
+    aliases = {normalized_target_key}
+    try:
+        configured_targets = load_rcon_targets()
+    except Exception:
+        configured_targets = ()
+
+    for target in configured_targets:
+        external_server_id = str(target.external_server_id or "").strip()
+        legacy_target_key = f"rcon:{target.host}:{target.port}"
+        if external_server_id and external_server_id == normalized_target_key:
+            aliases.add(legacy_target_key)
+            aliases.add(external_server_id)
+        elif legacy_target_key == normalized_target_key:
+            aliases.add(legacy_target_key)
+            if external_server_id:
+                aliases.add(external_server_id)
+
+    return sorted(alias for alias in aliases if alias)
 
 
 def _upsert_target(connection: sqlite3.Connection, *, target: Mapping[str, object]) -> int:

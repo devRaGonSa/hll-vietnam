@@ -10,17 +10,21 @@ from typing import Any
 
 from .config import (
     get_historical_full_snapshot_every_runs,
+    get_historical_elo_mmr_min_new_samples,
+    get_historical_elo_mmr_rebuild_interval_minutes,
     get_historical_refresh_interval_seconds,
     get_historical_refresh_max_retries,
     get_historical_refresh_retry_delay_seconds,
     get_historical_data_source_kind,
 )
 from .elo_mmr_engine import rebuild_elo_mmr_models
+from .elo_mmr_storage import get_latest_elo_mmr_generated_at
 from .historical_ingestion import run_incremental_refresh
 from .historical_snapshots import (
     generate_and_persist_historical_snapshots,
     generate_and_persist_priority_historical_snapshots,
 )
+from .rcon_historical_storage import count_rcon_historical_samples_since
 from .rcon_historical_worker import run_rcon_historical_capture
 from .writer_lock import backend_writer_lock, build_writer_lock_holder
 
@@ -136,11 +140,23 @@ def _run_refresh_with_retries(
                             "generation_policy": "rcon-primary-useful-cycle",
                             "reason": "rcon-primary-cycle-produced-new-useful-coverage",
                         }
-                        elo_mmr_result = {
-                            "status": "skipped",
-                            "reason": "rcon-primary-useful-cycle-snapshots-only-elo-rebuild-deferred",
-                            "generation_policy": "rcon-primary-useful-cycle-snapshots-only",
-                        }
+                        elo_policy = _build_elo_mmr_rebuild_policy(
+                            rcon_capture_result=rcon_capture_result
+                        )
+                        if bool(elo_policy["due"]):
+                            elo_mmr_result = {
+                                **rebuild_elo_mmr_models(),
+                                "generation_policy": "rcon-primary-useful-cycle-elo-rebuild-due",
+                                "reason": "rcon-primary-useful-cycle-met-elo-rebuild-threshold",
+                                **elo_policy,
+                            }
+                        else:
+                            elo_mmr_result = {
+                                "status": "skipped",
+                                "reason": "rcon-primary-useful-cycle-elo-rebuild-throttled",
+                                "generation_policy": "rcon-primary-useful-cycle-elo-rebuild-throttled",
+                                **elo_policy,
+                            }
                     else:
                         snapshot_result = {
                             "status": "skipped",
@@ -151,6 +167,9 @@ def _run_refresh_with_retries(
                             "status": "skipped",
                             "reason": "rcon-primary-cycle-had-no-new-useful-data",
                             "generation_policy": "rcon-primary-no-new-useful-data",
+                            **_build_elo_mmr_rebuild_policy(
+                                rcon_capture_result=rcon_capture_result
+                            ),
                         }
             return {
                 "status": "ok",
@@ -262,6 +281,49 @@ def _rcon_capture_has_new_useful_data(rcon_capture_result: dict[str, Any]) -> bo
     if not isinstance(targets, list):
         return False
     return any(bool(target.get("sample_inserted")) for target in targets if isinstance(target, dict))
+
+
+def _build_elo_mmr_rebuild_policy(
+    *,
+    rcon_capture_result: dict[str, Any],
+) -> dict[str, Any]:
+    interval_minutes = get_historical_elo_mmr_rebuild_interval_minutes()
+    min_new_samples = get_historical_elo_mmr_min_new_samples()
+    last_generated_at = get_latest_elo_mmr_generated_at()
+    last_generated_at_iso = (
+        last_generated_at.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
+        if last_generated_at is not None
+        else None
+    )
+    minutes_since_last_rebuild = None
+    if last_generated_at is not None:
+        minutes_since_last_rebuild = int(
+            max(
+                0,
+                (
+                    datetime.now(timezone.utc) - last_generated_at.astimezone(timezone.utc)
+                ).total_seconds() // 60,
+            )
+        )
+    samples_since_last_rebuild = count_rcon_historical_samples_since(last_generated_at_iso)
+    due = (
+        _rcon_capture_has_new_useful_data(rcon_capture_result)
+        and samples_since_last_rebuild >= min_new_samples
+        and (
+            last_generated_at is None
+            or minutes_since_last_rebuild is None
+            or minutes_since_last_rebuild >= interval_minutes
+        )
+    )
+    return {
+        "policy": "min-new-rcon-samples-and-minutes-since-last-successful-rebuild",
+        "due": due,
+        "last_generated_at": last_generated_at_iso,
+        "samples_since_last_rebuild": samples_since_last_rebuild,
+        "minutes_since_last_rebuild": minutes_since_last_rebuild,
+        "rebuild_interval_minutes": interval_minutes,
+        "min_new_samples": min_new_samples,
+    }
 
 
 def main() -> None:

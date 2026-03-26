@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+from datetime import datetime
 from pathlib import Path
 
 from .config import get_storage_path
@@ -544,6 +545,25 @@ def get_latest_elo_mmr_month_key(
     except sqlite3.OperationalError:
         return None
     return str(row["latest_month_key"]) if row and row["latest_month_key"] else None
+
+
+def get_latest_elo_mmr_generated_at(*, db_path: Path | None = None) -> datetime | None:
+    """Return the latest persisted Elo/MMR checkpoint generation time, if any."""
+    resolved_path = _resolve_db_path(db_path)
+    try:
+        with _connect_readonly(resolved_path) as connection:
+            row = connection.execute(
+                """
+                SELECT MAX(generated_at) AS latest_generated_at
+                FROM elo_mmr_monthly_checkpoints
+                """
+            ).fetchone()
+    except sqlite3.OperationalError:
+        return None
+    latest_generated_at = str(row["latest_generated_at"] or "").strip() if row else ""
+    if not latest_generated_at:
+        return None
+    return datetime.fromisoformat(latest_generated_at.replace("Z", "+00:00"))
 
 
 def _connect_writer(db_path: Path):

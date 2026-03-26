@@ -24,6 +24,8 @@ DEFAULT_HISTORICAL_SNAPSHOT_REFRESH_INTERVAL_SECONDS = 900
 DEFAULT_HISTORICAL_REFRESH_MAX_RETRIES = 2
 DEFAULT_HISTORICAL_REFRESH_RETRY_DELAY_SECONDS = 30
 DEFAULT_HISTORICAL_FULL_SNAPSHOT_EVERY_RUNS = 4
+DEFAULT_HISTORICAL_ELO_MMR_REBUILD_INTERVAL_MINUTES = 1440
+DEFAULT_HISTORICAL_ELO_MMR_MIN_NEW_SAMPLES = 12
 DEFAULT_HISTORICAL_WEEKLY_FALLBACK_MIN_MATCHES = 3
 DEFAULT_HISTORICAL_WEEKLY_FALLBACK_MAX_WEEKDAY = 2
 DEFAULT_PLAYER_EVENT_REFRESH_INTERVAL_SECONDS = 1800
@@ -316,6 +318,30 @@ def get_historical_full_snapshot_every_runs() -> int:
         raise ValueError("HLL_HISTORICAL_FULL_SNAPSHOT_EVERY_RUNS must be positive.")
 
     return run_count
+
+
+def get_historical_elo_mmr_rebuild_interval_minutes() -> int:
+    """Return the minimum minutes between automatic Elo/MMR rebuilds."""
+    configured_value = os.getenv(
+        "HLL_HISTORICAL_ELO_MMR_REBUILD_INTERVAL_MINUTES",
+        str(DEFAULT_HISTORICAL_ELO_MMR_REBUILD_INTERVAL_MINUTES),
+    )
+    interval_minutes = int(configured_value)
+    if interval_minutes <= 0:
+        raise ValueError("HLL_HISTORICAL_ELO_MMR_REBUILD_INTERVAL_MINUTES must be positive.")
+    return interval_minutes
+
+
+def get_historical_elo_mmr_min_new_samples() -> int:
+    """Return the minimum new RCON samples required for an automatic Elo/MMR rebuild."""
+    configured_value = os.getenv(
+        "HLL_HISTORICAL_ELO_MMR_MIN_NEW_SAMPLES",
+        str(DEFAULT_HISTORICAL_ELO_MMR_MIN_NEW_SAMPLES),
+    )
+    min_samples = int(configured_value)
+    if min_samples <= 0:
+        raise ValueError("HLL_HISTORICAL_ELO_MMR_MIN_NEW_SAMPLES must be positive.")
+    return min_samples
 
 
 def get_historical_weekly_fallback_min_matches() -> int:
