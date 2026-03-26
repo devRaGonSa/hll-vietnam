@@ -119,19 +119,39 @@ def _run_refresh_with_retries(
                     )
                     elo_mmr_result = rebuild_elo_mmr_models()
                 else:
+                    should_generate_snapshots = _rcon_capture_has_new_useful_data(
+                        rcon_capture_result
+                    )
                     refresh_result = {
                         "status": "skipped",
                         "reason": "rcon-primary-cycle-no-classic-fallback-needed",
                     }
-                    snapshot_result = {
-                        "status": "skipped",
-                        "reason": "rcon-primary-cycle-no-classic-fallback-needed",
-                        "generation_policy": "classic-historical-fallback-only",
-                    }
-                    elo_mmr_result = {
-                        "status": "skipped",
-                        "reason": "rcon-primary-cycle-no-classic-fallback-needed",
-                    }
+                    if should_generate_snapshots:
+                        snapshot_result = generate_historical_snapshots(
+                            server_slug=server_slug,
+                            run_number=run_number,
+                        )
+                        snapshot_result = {
+                            **snapshot_result,
+                            "generation_policy": "rcon-primary-useful-cycle",
+                            "reason": "rcon-primary-cycle-produced-new-useful-coverage",
+                        }
+                        elo_mmr_result = {
+                            "status": "skipped",
+                            "reason": "rcon-primary-useful-cycle-snapshots-only-elo-rebuild-deferred",
+                            "generation_policy": "rcon-primary-useful-cycle-snapshots-only",
+                        }
+                    else:
+                        snapshot_result = {
+                            "status": "skipped",
+                            "reason": "rcon-primary-cycle-had-no-new-useful-data",
+                            "generation_policy": "rcon-primary-no-new-useful-data",
+                        }
+                        elo_mmr_result = {
+                            "status": "skipped",
+                            "reason": "rcon-primary-cycle-had-no-new-useful-data",
+                            "generation_policy": "rcon-primary-no-new-useful-data",
+                        }
             return {
                 "status": "ok",
                 "attempts_used": attempt,
@@ -230,6 +250,18 @@ def _rcon_capture_has_usable_results(rcon_capture_result: dict[str, Any]) -> boo
         return False
     targets = rcon_capture_result.get("targets")
     return isinstance(targets, list) and len(targets) > 0
+
+
+def _rcon_capture_has_new_useful_data(rcon_capture_result: dict[str, Any]) -> bool:
+    if rcon_capture_result.get("status") != "ok":
+        return False
+    totals = rcon_capture_result.get("totals")
+    if isinstance(totals, dict) and int(totals.get("samples_inserted") or 0) > 0:
+        return True
+    targets = rcon_capture_result.get("targets")
+    if not isinstance(targets, list):
+        return False
+    return any(bool(target.get("sample_inserted")) for target in targets if isinstance(target, dict))
 
 
 def main() -> None:
