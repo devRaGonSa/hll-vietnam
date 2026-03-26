@@ -334,6 +334,7 @@ Variables especificas de captura historica prospectiva RCON:
 `HLL_BACKEND_RCON_TARGETS` acepta un array JSON con:
 
 - `name`
+- `slug` opcional como alias legacy
 - `host`
 - `port`
 - `password`
@@ -343,19 +344,52 @@ Variables especificas de captura historica prospectiva RCON:
 - `query_port` opcional
 - `source_name` opcional
 
+Compatibilidad operativa del loader:
+
+- si llega `slug` pero no `external_server_id`, el backend reutiliza `slug`
+  como `external_server_id`
+- si falta `name` pero existe `slug`, el backend genera un nombre razonable a
+  partir del slug en vez de dejar `Unnamed RCON target`
+- los errores de validacion indican el campo que falta y las claves
+  efectivamente recibidas
+
+Timeout recomendado por defecto:
+
+- `HLL_BACKEND_RCON_TIMEOUT_SECONDS=20`
+
+Diagnostico operativo del cliente RCON:
+
+- el cliente informa ahora el stage exacto del fallo cuando puede distinguirlo
+- stages observables:
+  - `tcp_connect`
+  - `server_connect_request`
+  - `server_connect_response`
+  - `xor_key_decode`
+  - `login_request`
+  - `login_response`
+  - `get_server_information_request`
+  - `get_server_information_response`
+  - `payload_decode`
+  - `unexpected_response`
+  - `timeout`
+- esto mejora el diagnostico del protocolo, pero no resuelve por si solo la
+  conectividad real si el servidor acepta TCP y luego no responde al handshake
+  RCON o al comando `GetServerInformation`
+
 Ejemplo:
 
 ```powershell
 $env:HLL_BACKEND_RCON_TARGETS='[
   {
     "name": "Comunidad Hispana #01",
-    "host": "203.0.113.10",
-    "port": 28015,
+    "slug": "comunidad-hispana-01",
+    "host": "152.114.195.174",
+    "port": 7779,
     "password": "replace-me",
     "external_server_id": "comunidad-hispana-01",
     "region": "ES",
-    "game_port": 7777,
-    "query_port": 7778,
+    "game_port": null,
+    "query_port": null,
     "source_name": "community-hispana-rcon"
   }
 ]'
@@ -422,6 +456,26 @@ La salida del worker incluye:
 - `targets`
 - `errors`
 - `storage_status`
+
+Cuando una captura falla, cada error incluye como minimo:
+
+- `target_key`
+- `external_server_id`
+- `name`
+- `host`
+- `port`
+- `timeout_seconds`
+- `error_type`
+- `error_stage`
+- `message`
+
+`error_type` intenta clasificar al menos:
+
+- `timeout`
+- `auth/login`
+- `connection-refused`
+- `payload-invalid`
+- `other-error`
 
 La persistencia queda separada del historico `historical_*` actual y usa:
 
@@ -530,6 +584,17 @@ comparten el mismo SQLite, incluyendo:
 - `player_event_storage.py`
 - `rcon_historical_storage.py`
 - `storage.py`
+
+Politica read-only para historico:
+
+- las rutas de lectura de `historical_storage.py` no ejecutan ya
+  `initialize_historical_storage()`
+- si el SQLite historico todavia no existe, esas lecturas devuelven resultados
+  vacios o defaults estables sin crear archivo ni correr seed/migraciones
+- cuando el archivo ya existe, esas lecturas abren `mode=ro` con
+  `row_factory = sqlite3.Row` y `PRAGMA busy_timeout`
+- la inicializacion, migraciones, seed y normalizaciones siguen reservadas al
+  writer path explicito
 
 Variable opcional:
 
@@ -1448,6 +1513,19 @@ Estado real a fecha de esta fase:
   en ventanas derivadas desde persistencia `rcon_historical_*`
 - `server-summary` y `recent-matches` pasan a usar esa capa RCON-backed como
   camino principal real
+- en runtime, esas dos rutas solo se sirven como `rcon` cuando la capability
+  sigue soportada y existe cobertura RCON util para el scope pedido
+- cobertura util en esta frontera significa:
+  - `server-summary`: al menos una fila con `coverage.status != "empty"` y
+    `window_count` o `sample_count` mayor que cero
+  - `recent-matches`: al menos una ventana con `match_id`, `closed_at` y
+    `sample_count > 0`
+- si el target persistido quedo con clave legacy `rcon:<host>:<port>` pero el
+  runtime actual ya conoce su `external_server_id`, la capa read model intenta
+  resolver ambos aliases antes de caer a fallback
+- si no hay coverage suficiente o la lectura RCON falla, el backend mantiene
+  fallback explicito a `public-scoreboard` con `fallback_used = true` y
+  `fallback_reason` visible
 - `historical_ingestion` intenta primero una captura writer-oriented por RCON y
   deja esa tentativa visible en su salida
 - leaderboards semanales/mensuales, MVP V1/V2 y player-events siguen teniendo

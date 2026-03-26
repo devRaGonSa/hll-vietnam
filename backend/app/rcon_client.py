@@ -40,9 +40,16 @@ class RconServerTarget:
 class RconQueryError(RuntimeError):
     """Normalized RCON query failure with a machine-readable error type."""
 
-    def __init__(self, error_type: str, message: str) -> None:
+    def __init__(
+        self,
+        error_type: str,
+        message: str,
+        *,
+        error_stage: str | None = None,
+    ) -> None:
         super().__init__(message)
         self.error_type = error_type
+        self.error_stage = error_stage
 
 
 class HllRconConnection:
@@ -54,30 +61,64 @@ class HllRconConnection:
         self._xor_key: bytes | None = None
         self._auth_token: str | None = None
         self._request_ids = itertools.count(1)
+        self._current_stage = "tcp_connect"
 
     def connect(self, *, host: str, port: int, password: str) -> None:
-        self._socket.connect((host, port))
+        self._run_socket_stage(
+            "tcp_connect",
+            lambda: self._socket.connect((host, port)),
+        )
 
-        server_connect_response = self._exchange("ServerConnect", "")
+        server_connect_response = self._exchange(
+            "ServerConnect",
+            "",
+            request_stage="server_connect_request",
+            response_stage="server_connect_response",
+        )
+        self._current_stage = "xor_key_decode"
         xor_key_b64 = _expect_text_content(server_connect_response, command_name="ServerConnect")
         try:
             self._xor_key = base64.b64decode(xor_key_b64)
         except (ValueError, TypeError) as error:
-            raise RuntimeError("The HLL server returned an invalid RCON XOR key.") from error
+            raise RconQueryError(
+                "payload-invalid",
+                "The HLL server returned an invalid RCON XOR key.",
+                error_stage="xor_key_decode",
+            ) from error
         if not self._xor_key:
-            raise RuntimeError("The HLL server returned an empty RCON XOR key.")
+            raise RconQueryError(
+                "unexpected-response",
+                "The HLL server returned an empty RCON XOR key.",
+                error_stage="xor_key_decode",
+            )
 
-        login_response = self._exchange("Login", password)
+        login_response = self._exchange(
+            "Login",
+            password,
+            request_stage="login_request",
+            response_stage="login_response",
+        )
         self._auth_token = _expect_text_content(login_response, command_name="Login")
         if not self._auth_token:
-            raise RuntimeError("The HLL server returned an empty RCON auth token.")
+            raise RconQueryError(
+                "unexpected-response",
+                "The HLL server returned an empty RCON auth token.",
+                error_stage="login_response",
+            )
 
     def execute_json(
         self,
         command: str,
         content: dict[str, object] | str = "",
     ) -> dict[str, object]:
-        response = self._exchange(command, content)
+        stage_prefix = _resolve_command_stage_prefix(command)
+        response = self._exchange(
+            command,
+            content,
+            request_stage=f"{stage_prefix}_request",
+            response_stage=f"{stage_prefix}_response",
+        )
+        self._current_stage = "payload_decode"
         content_body = response.get("contentBody")
         if isinstance(content_body, dict):
             return content_body
@@ -85,12 +126,18 @@ class HllRconConnection:
             try:
                 parsed = json.loads(content_body)
             except json.JSONDecodeError as error:
-                raise RuntimeError(
-                    f"The HLL server returned invalid JSON content for {command}."
+                raise RconQueryError(
+                    "payload-invalid",
+                    f"The HLL server returned invalid JSON content for {command}.",
+                    error_stage="payload_decode",
                 ) from error
             if isinstance(parsed, dict):
                 return parsed
-        raise RuntimeError(f"The HLL server returned an unexpected payload for {command}.")
+        raise RconQueryError(
+            "unexpected-response",
+            f"The HLL server returned an unexpected payload for {command}.",
+            error_stage="unexpected_response",
+        )
 
     def close(self) -> None:
         try:
@@ -103,16 +150,26 @@ class HllRconConnection:
         self,
         command: str,
         content: dict[str, object] | str = "",
+        *,
+        request_stage: str,
+        response_stage: str,
     ) -> dict[str, object]:
         request_id = next(self._request_ids)
-        self._send_request(request_id=request_id, command=command, content=content)
-        response = self._receive_response()
+        self._send_request(
+            request_id=request_id,
+            command=command,
+            content=content,
+            request_stage=request_stage,
+        )
+        response = self._receive_response(response_stage=response_stage)
         response_request_id = int(response.get("requestId") or 0)
         if response_request_id != request_id:
-            raise RuntimeError(
-                f"Unexpected RCON response id {response_request_id} for request {request_id}."
+            raise RconQueryError(
+                "unexpected-response",
+                f"Unexpected RCON response id {response_request_id} for request {request_id}.",
+                error_stage="unexpected_response",
             )
-        _raise_for_status(response, command_name=command)
+        _raise_for_status(response, command_name=command, error_stage=response_stage)
         return response
 
     def _send_request(
@@ -121,6 +178,7 @@ class HllRconConnection:
         request_id: int,
         command: str,
         content: dict[str, object] | str,
+        request_stage: str,
     ) -> None:
         content_body = (
             content
@@ -137,35 +195,72 @@ class HllRconConnection:
             separators=(",", ":"),
         ).encode("utf-8")
         header = struct.pack(RCON_HEADER_FORMAT, request_id, len(body))
-        self._socket.sendall(header + self._xor(body))
+        self._run_socket_stage(
+            request_stage,
+            lambda: self._socket.sendall(header + self._xor(body)),
+        )
 
-    def _receive_response(self) -> dict[str, object]:
+    def _receive_response(self, *, response_stage: str) -> dict[str, object]:
         header_size = struct.calcsize(RCON_HEADER_FORMAT)
-        header_bytes = self._recv_exact(header_size)
+        header_bytes = self._recv_exact(header_size, stage=response_stage)
         try:
             request_id, body_length = struct.unpack(RCON_HEADER_FORMAT, header_bytes)
         except struct.error as error:
-            raise RuntimeError("The HLL server returned an invalid RCON response header.") from error
+            raise RconQueryError(
+                "payload-invalid",
+                "The HLL server returned an invalid RCON response header.",
+                error_stage=response_stage,
+            ) from error
         if body_length <= 0:
-            raise RuntimeError("The HLL server returned an empty RCON response body.")
+            raise RconQueryError(
+                "unexpected-response",
+                "The HLL server returned an empty RCON response body.",
+                error_stage=response_stage,
+            )
 
-        body = self._xor(self._recv_exact(body_length))
+        body = self._xor(self._recv_exact(body_length, stage=response_stage))
         try:
             parsed = json.loads(body.decode("utf-8", errors="replace"))
         except json.JSONDecodeError as error:
-            raise RuntimeError("The HLL server returned malformed RCON JSON.") from error
+            raise RconQueryError(
+                "payload-invalid",
+                "The HLL server returned malformed RCON JSON.",
+                error_stage="payload_decode",
+            ) from error
         if not isinstance(parsed, dict):
-            raise RuntimeError("The HLL server returned a non-object RCON response.")
+            raise RconQueryError(
+                "unexpected-response",
+                "The HLL server returned a non-object RCON response.",
+                error_stage="unexpected_response",
+            )
 
         parsed["requestId"] = request_id
         return parsed
 
-    def _recv_exact(self, expected_length: int) -> bytes:
+    def _recv_exact(self, expected_length: int, *, stage: str) -> bytes:
         chunks = bytearray()
         while len(chunks) < expected_length:
-            chunk = self._socket.recv(min(RCON_BUFFER_SIZE, expected_length - len(chunks)))
+            self._current_stage = stage
+            try:
+                chunk = self._socket.recv(min(RCON_BUFFER_SIZE, expected_length - len(chunks)))
+            except (TimeoutError, socket.timeout) as error:
+                raise RconQueryError(
+                    "timeout",
+                    f"Timed out during {stage}.",
+                    error_stage=stage,
+                ) from error
+            except OSError as error:
+                raise RconQueryError(
+                    _classify_socket_error_type(error),
+                    f"RCON socket error during {stage}: {error}",
+                    error_stage=stage,
+                ) from error
             if not chunk:
-                raise RuntimeError("The HLL RCON connection closed unexpectedly.")
+                raise RconQueryError(
+                    "unexpected-response",
+                    "The HLL RCON connection closed unexpectedly.",
+                    error_stage=stage,
+                )
             chunks.extend(chunk)
         return bytes(chunks)
 
@@ -182,6 +277,23 @@ class HllRconConnection:
 
     def __exit__(self, exc_type: object, exc: object, traceback: object) -> None:
         self.close()
+
+    def _run_socket_stage(self, stage: str, operation: object) -> object:
+        self._current_stage = stage
+        try:
+            return operation()
+        except (TimeoutError, socket.timeout) as error:
+            raise RconQueryError(
+                "timeout",
+                f"Timed out during {stage}.",
+                error_stage=stage,
+            ) from error
+        except OSError as error:
+            raise RconQueryError(
+                _classify_socket_error_type(error),
+                f"RCON socket error during {stage}: {error}",
+                error_stage=stage,
+            ) from error
 
 
 def load_rcon_targets() -> tuple[RconServerTarget, ...]:
@@ -240,6 +352,7 @@ def query_live_server_sample(
         raise RconQueryError(
             _classify_runtime_error_type(error),
             str(error),
+            error_stage=getattr(error, "error_stage", None),
         ) from error
 
     resolved_external_id = target.external_server_id or f"rcon:{target.host}:{target.port}"
@@ -309,7 +422,12 @@ def _coerce_rcon_target(raw_target: dict[str, object]) -> RconServerTarget:
     )
 
 
-def _raise_for_status(response: dict[str, object], *, command_name: str) -> None:
+def _raise_for_status(
+    response: dict[str, object],
+    *,
+    command_name: str,
+    error_stage: str,
+) -> None:
     status_code = int(response.get("statusCode") or 0)
     if status_code == 200:
         return
@@ -318,15 +436,34 @@ def _raise_for_status(response: dict[str, object], *, command_name: str) -> None
         raise RconQueryError(
             "auth/login",
             f"{command_name} failed with RCON status {status_code}: {status_message}",
+            error_stage=error_stage,
         )
-    raise RuntimeError(f"{command_name} failed with RCON status {status_code}: {status_message}")
+    raise RconQueryError(
+        "unexpected-response",
+        f"{command_name} failed with RCON status {status_code}: {status_message}",
+        error_stage=error_stage,
+    )
 
 
 def _expect_text_content(response: dict[str, object], *, command_name: str) -> str:
     content = response.get("contentBody")
     if isinstance(content, str):
         return content
-    raise RuntimeError(f"The HLL server returned unexpected text content for {command_name}.")
+    raise RconQueryError(
+        "unexpected-response",
+        f"The HLL server returned unexpected text content for {command_name}.",
+        error_stage="unexpected_response",
+    )
+
+
+def _resolve_command_stage_prefix(command: str) -> str:
+    normalized_command = str(command or "").strip().lower()
+    stage_prefix_by_command = {
+        "serverconnect": "server_connect",
+        "login": "login",
+        "getserverinformation": "get_server_information",
+    }
+    return stage_prefix_by_command.get(normalized_command, normalized_command or "rcon_command")
 
 
 def _string_or_none(value: object) -> str | None:

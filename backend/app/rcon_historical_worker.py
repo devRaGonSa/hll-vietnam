@@ -252,6 +252,7 @@ def _serialize_capture_error(
     timeout_seconds: float,
 ) -> dict[str, object]:
     error_type = _classify_capture_error_type(error)
+    error_stage = _classify_capture_error_stage(error)
     return {
         "target_key": build_rcon_target_key(target),
         "external_server_id": target.external_server_id,
@@ -260,6 +261,7 @@ def _serialize_capture_error(
         "port": target.port,
         "timeout_seconds": timeout_seconds,
         "error_type": error_type,
+        "error_stage": error_stage,
         "message": str(error),
     }
 
@@ -279,8 +281,18 @@ def _classify_capture_error_type(error: Exception) -> str:
     return "other-error"
 
 
+def _classify_capture_error_stage(error: Exception) -> str | None:
+    if isinstance(error, RconQueryError):
+        return error.error_stage
+    return None
+
+
 def _format_error_message(error: Exception) -> str:
-    return f"[{_classify_capture_error_type(error)}] {error}"
+    error_type = _classify_capture_error_type(error)
+    error_stage = _classify_capture_error_stage(error)
+    if error_stage:
+        return f"[{error_type}:{error_stage}] {error}"
+    return f"[{error_type}] {error}"
 
 
 def build_arg_parser() -> argparse.ArgumentParser:
