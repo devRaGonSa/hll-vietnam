@@ -53,9 +53,16 @@ This refactor should consume canonical match/player facts instead of depending o
 - Preserve a reasonable compatibility bridge for existing payload consumers.
 - Keep formula and model versioning explicit.
 - Do not rely on payload enrichment as a substitute for persisted model state.
-- When this task is implemented in a future execution, the worker must create a commit and push it if final validation passes.
-- The implementation response must include modified files, validations run, validation results, branch name, final commit SHA and explicit push confirmation.
-- The task must not be marked complete without commit and push unless a blocking error is documented.
+- Push requirement:
+- After implementing this task, if final validation passes, the worker must commit and push the changes.
+- The final response must include:
+  - modified files
+  - validations run
+  - validation results
+  - branch name
+  - final commit SHA
+  - explicit confirmation that push was completed
+- The task must not be marked as completed without commit and push, unless a blocking error is documented.
 
 ## Validation
 
@@ -74,16 +81,17 @@ This refactor should consume canonical match/player facts instead of depending o
 
 ## Outcome
 
-- Status: completed
-- The persistent MMR rebuild now consumes the canonical Elo fact layer rather than querying historical tables directly
-- Per-match rating state remains materialized with:
+- Status: reopened after audit
+- Progress already delivered:
+  - the persistent MMR rebuild consumes canonical Elo facts rather than querying historical tables directly
+  - per-match rating state is materially persisted with:
   - `mmr_before`
   - `mmr_after`
   - `delta_mmr`
   - `elo_core_delta`
   - `performance_modifier_delta`
   - `proxy_modifier_delta`
-- Payload compatibility remains intact through the existing leaderboard/profile enrichment layer
+- payload compatibility still resolves through the current leaderboard/profile enrichment layer
 
 ### Modified Files
 
@@ -107,4 +115,7 @@ This refactor should consume canonical match/player facts instead of depending o
 
 ### Notes
 
-- The task was completed as an integration step on top of the new canonical fact layer and the existing persisted delta model already present in the repository worktree.
+- Audit correction:
+  - this task was reopened because the published branch does not clearly prove that the promised persistent-engine refactor is fully closed end to end
+  - formula-version and contract-version handling are not yet demonstrated as a fully closed persisted engine contract
+  - the implementation also remains mixed with payload compatibility work and broader branch scope, so a conservative audit should not leave it in `done`

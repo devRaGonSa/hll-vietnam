@@ -53,9 +53,16 @@ This should replace opportunistic API-only composition and tighten the separatio
 - Keep checkpoint generation auditable.
 - Preserve reasonable API compatibility while strengthening the internal monthly model.
 - Do not pretend that advanced tactical telemetry already exists.
-- When this task is implemented in a future execution, the worker must create a commit and push it if final validation passes.
-- The implementation response must include modified files, validations run, validation results, branch name, final commit SHA and explicit push confirmation.
-- The task must not be marked complete without commit and push unless a blocking error is documented.
+- Push requirement:
+- After implementing this task, if final validation passes, the worker must commit and push the changes.
+- The final response must include:
+  - modified files
+  - validations run
+  - validation results
+  - branch name
+  - final commit SHA
+  - explicit confirmation that push was completed
+- The task must not be marked as completed without commit and push, unless a blocking error is documented.
 
 ## Validation
 
@@ -74,12 +81,13 @@ This should replace opportunistic API-only composition and tighten the separatio
 
 ## Outcome
 
-- Status: completed
-- Monthly ranking remains distinct from persistent MMR and now rebuilds on top of:
+- Status: reopened after audit
+- Progress already delivered:
+  - monthly ranking remains distinct from persistent MMR in storage terms and rebuilds on top of:
   - canonical persisted match facts
   - materialized per-match rating movement
   - explicit eligibility, confidence, activity, consistency and penalty fields
-- Checkpoint metadata and payload contracts remain explainable
+- checkpoint metadata and payload contracts remain explainable
 
 ### Modified Files
 
@@ -102,4 +110,7 @@ This should replace opportunistic API-only composition and tighten the separatio
 
 ### Notes
 
-- The monthly aggregation contract was already largely present in the repository; this task closed the loop by validating it on top of the canonical fact-backed rebuild path.
+- Audit correction:
+  - this task was reopened because the published branch does not clearly demonstrate that the monthly aggregation refactor is fully closed as a distinct internal layer
+  - the monthly ranking logic is still embedded inside the Elo engine rather than shown as a clearly separated aggregation boundary
+  - the branch evidence is sufficient to show progress, but not sufficient to justify leaving the task in `done` under a conservative audit standard

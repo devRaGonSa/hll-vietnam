@@ -115,3 +115,14 @@ This task builds on the existing Elo/MMR system and does not replace the current
 ### Notes
 
 - Full Elo rebuild on the full development DB did not finish within the interactive command timeout, so end-to-end rebuild validation was completed on a scoped SQLite copy while canonical fact materialization was validated on the full local DB.
+
+### Audit Correction
+
+- Audit status: kept in `done`.
+- Reason:
+  - a canonical Elo fact layer now exists in real repository code
+  - canonical players, canonical matches and canonical player-match facts are materially persisted in dedicated Elo tables
+  - the rebuild engine consumes canonical match rows instead of reading historical stats tables directly
+- Boundary kept explicit:
+  - this task is considered closed for the canonical fact foundation only
+  - downstream persistent-rating and monthly-aggregation concerns remain subject to separate audit decisions
