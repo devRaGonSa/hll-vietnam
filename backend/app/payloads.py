@@ -636,6 +636,17 @@ def build_leaderboard_snapshot_payload(
     payload = snapshot.get("payload") if snapshot else {}
     items = payload.get("items") if isinstance(payload, dict) else None
     sliced_items = list(items[:limit]) if isinstance(items, list) else []
+    runtime_enrichment_applied = False
+    if _leaderboard_snapshot_items_need_playtime_enrichment(sliced_items):
+        runtime_items = _load_runtime_leaderboard_items(
+            limit=limit,
+            server_id=server_id,
+            metric=metric,
+            timeframe=normalized_timeframe,
+        )
+        if runtime_items:
+            sliced_items = runtime_items[:limit]
+            runtime_enrichment_applied = True
     is_all_servers = server_id == ALL_SERVERS_SLUG
     return {
         "status": "ok",
@@ -677,6 +688,14 @@ def build_leaderboard_snapshot_payload(
             "sufficient_sample": payload.get("sufficient_sample") if isinstance(payload, dict) else None,
             "snapshot_limit": payload.get("limit") if isinstance(payload, dict) else None,
             "limit": limit,
+            "runtime_enrichment": {
+                "applied": runtime_enrichment_applied,
+                "reason": (
+                    "snapshot-items-missing-total-time-seconds"
+                    if runtime_enrichment_applied
+                    else None
+                ),
+            },
             **_resolve_historical_fallback_policy(
                 fallback_reason="rcon-historical-read-model-does-not-support-historical-snapshots-yet",
             ),
@@ -984,12 +1003,29 @@ def build_historical_server_summary_payload(
     if get_historical_data_source_kind() == "rcon":
         data_source = get_rcon_historical_read_model()
         if data_source is not None:
-            items = data_source.list_server_summaries(server_key=server_slug)
             capabilities = data_source.describe_capabilities()
-            if items and any(
-                item.get("coverage", {}).get("status") != "empty"
-                for item in items
-            ):
+            try:
+                items = data_source.list_server_summaries(server_key=server_slug)
+            except Exception as error:  # noqa: BLE001 - explicit runtime fallback boundary
+                items = []
+                rcon_source_policy = build_historical_runtime_source_policy(
+                    operation="historical-server-summary",
+                    rcon_status="error",
+                    fallback_reason="rcon-historical-read-model-request-failed",
+                    rcon_message=str(error),
+                )
+            else:
+                rcon_source_policy = build_historical_runtime_source_policy(
+                    operation="historical-server-summary",
+                    rcon_status=(
+                        "success"
+                        if data_source.has_server_summary_coverage(items)
+                        else "empty"
+                    ),
+                    fallback_reason="rcon-historical-read-model-has-no-summary-coverage",
+                )
+
+            if not bool(rcon_source_policy.get("fallback_used")):
                 return {
                     "status": "ok",
                     "data": {
@@ -1004,17 +1040,7 @@ def build_historical_server_summary_payload(
                         "summary_basis": "rcon-competitive-windows",
                         "server_slug": server_slug,
                         "supported": True,
-                        **build_source_policy(
-                            primary_source=SOURCE_KIND_RCON,
-                            selected_source=SOURCE_KIND_RCON,
-                            source_attempts=[
-                                build_source_attempt(
-                                    source=SOURCE_KIND_RCON,
-                                    role="primary",
-                                    status="success",
-                                )
-                            ],
-                        ),
+                        **rcon_source_policy,
                         "items": items,
                         "capabilities": capabilities,
                     },
@@ -1033,8 +1059,13 @@ def build_historical_server_summary_payload(
             "summary_basis": "persisted-import",
             "weekly_ranking_window_days": 7,
             "server_slug": server_slug,
-            **_resolve_historical_fallback_policy(
-                fallback_reason="rcon-historical-read-model-has-no-summary-coverage",
+            **(
+                rcon_source_policy
+                if get_historical_data_source_kind() == "rcon"
+                and "rcon_source_policy" in locals()
+                else _resolve_historical_fallback_policy(
+                    fallback_reason="rcon-historical-read-model-has-no-summary-coverage",
+                )
             ),
             "items": items,
         },
@@ -1068,6 +1099,7 @@ def build_elo_mmr_leaderboard_payload(
     """Return the current Elo/MMR monthly leaderboard."""
     payload = list_elo_mmr_leaderboard_payload(server_id=server_id, limit=limit)
     is_all_servers = server_id == ALL_SERVERS_SLUG
+    accuracy_contract = _build_elo_accuracy_contract(payload.get("capabilities_summary"))
     return {
         "status": "ok",
         "data": {
@@ -1088,7 +1120,13 @@ def build_elo_mmr_leaderboard_payload(
                 fallback_reason="elo-mmr-source-policy-missing",
             )),
             "capabilities_summary": payload.get("capabilities_summary"),
-            "items": payload.get("items") or [],
+            "accuracy_contract": accuracy_contract,
+            "model_contract": _build_elo_model_contract(accuracy_contract),
+            "items": [
+                _enrich_elo_leaderboard_item(item, accuracy_contract=accuracy_contract)
+                for item in (payload.get("items") or [])
+                if isinstance(item, dict)
+            ],
         },
     }
 
@@ -1101,6 +1139,7 @@ def build_elo_mmr_player_payload(
     """Return one Elo/MMR player profile."""
     profile = get_elo_mmr_player_payload(player_id=player_id, server_id=server_id)
     source_policy = list_elo_mmr_leaderboard_payload(server_id=server_id, limit=1).get("source_policy")
+    accuracy_contract = _build_elo_player_accuracy_contract(profile)
     return {
         "status": "ok",
         "data": {
@@ -1114,9 +1153,247 @@ def build_elo_mmr_player_payload(
                 operation="elo-mmr-player",
                 fallback_reason="elo-mmr-player-source-policy-missing",
             )),
-            "profile": profile,
+            "accuracy_contract": accuracy_contract,
+            "model_contract": _build_elo_model_contract(accuracy_contract),
+            "profile": _enrich_elo_profile(profile, accuracy_contract=accuracy_contract),
         },
     }
+
+
+def _build_elo_player_accuracy_contract(profile: dict[str, object] | None) -> dict[str, object]:
+    if not isinstance(profile, dict):
+        return _build_elo_accuracy_contract(None)
+    monthly_ranking = profile.get("monthly_ranking")
+    if isinstance(monthly_ranking, dict) and isinstance(monthly_ranking.get("capabilities"), dict):
+        return _build_elo_accuracy_contract(monthly_ranking.get("capabilities"))
+    persistent_rating = profile.get("persistent_rating")
+    if isinstance(persistent_rating, dict) and isinstance(persistent_rating.get("capabilities"), dict):
+        return _build_elo_accuracy_contract(persistent_rating.get("capabilities"))
+    return _build_elo_accuracy_contract(None)
+
+
+def _build_elo_accuracy_contract(summary: dict[str, object] | None) -> dict[str, object]:
+    capabilities = summary if isinstance(summary, dict) else {}
+    signals = capabilities.get("signals")
+    normalized_signals = [signal for signal in signals if isinstance(signal, dict)] if isinstance(signals, list) else []
+    component_status = {
+        str(signal.get("name") or "").strip(): signal.get("status")
+        for signal in normalized_signals
+        if str(signal.get("name") or "").strip()
+    }
+    return {
+        "accuracy_mode": capabilities.get("accuracy_mode") or "unknown",
+        "exact_ratio": capabilities.get("exact_ratio"),
+        "approximate_ratio": capabilities.get("approximate_ratio"),
+        "not_available_ratio": capabilities.get("unavailable_ratio"),
+        "component_status": component_status,
+        "blocked_components": [
+            name for name, status in component_status.items() if status == "not_available"
+        ],
+        "explanation": {
+            "exact": "computed from persisted repository signals without proxy substitution",
+            "approximate": "computed with explicit proxies because the ideal telemetry is not stored yet",
+            "not_available": "not computable yet with the current repository telemetry",
+        },
+    }
+
+
+def _build_elo_model_contract(accuracy_contract: dict[str, object]) -> dict[str, object]:
+    blocked_components = accuracy_contract.get("blocked_components")
+    return {
+        "persistent_rating": {
+            "meaning": "long-lived competitive rating rebuilt from persisted matches for the selected scope",
+            "primary_field": "persistent_rating.mmr",
+        },
+        "monthly_rank_score": {
+            "meaning": "monthly leaderboard ordering score that combines rating movement, match quality, activity and confidence",
+            "primary_field": "monthly_rank_score",
+        },
+        "elo_core": {
+            "meaning": "competitive rating movement driven by expected-vs-actual outcome against opponent rating pressure",
+            "fields": ["components.elo_core_gain"],
+        },
+        "performance_modifiers": {
+            "meaning": "bounded HLL-specific adjustments layered on top of the competitive Elo core",
+            "fields": [
+                "components.performance_modifier_gain",
+                "components.proxy_modifier_gain",
+            ],
+        },
+        "proxy_boundary": {
+            "meaning": "subset of modifier logic that still depends on approximate signals such as role, objective, schedule or discipline proxies",
+            "blocked_by_telemetry": blocked_components if isinstance(blocked_components, list) else [],
+        },
+    }
+
+
+def _enrich_elo_leaderboard_item(
+    item: dict[str, object],
+    *,
+    accuracy_contract: dict[str, object],
+) -> dict[str, object]:
+    enriched = dict(item)
+    components = item.get("components") if isinstance(item.get("components"), dict) else {}
+    persistent_rating = item.get("persistent_rating") if isinstance(item.get("persistent_rating"), dict) else {}
+    delta_breakdown = _resolve_elo_delta_sources(
+        components,
+        persistent_rating=persistent_rating,
+    )
+    enriched["rating_breakdown"] = {
+        "persistent_rating": {
+            "mmr": persistent_rating.get("mmr"),
+            "baseline_mmr": persistent_rating.get("baseline_mmr"),
+            "net_mmr_gain": persistent_rating.get("mmr_gain"),
+        },
+        "monthly_ranking": {
+            "score": item.get("monthly_rank_score"),
+            "valid_matches": item.get("valid_matches"),
+            "confidence": components.get("confidence"),
+        },
+        "delta_sources": delta_breakdown["values"],
+        "materialization": delta_breakdown["materialization"],
+        "telemetry_boundary": {
+            "approximate_ratio": accuracy_contract.get("approximate_ratio"),
+            "blocked_components": accuracy_contract.get("blocked_components") or [],
+        },
+    }
+    return enriched
+
+
+def _enrich_elo_profile(
+    profile: dict[str, object] | None,
+    *,
+    accuracy_contract: dict[str, object],
+) -> dict[str, object] | None:
+    if not isinstance(profile, dict):
+        return profile
+    enriched = dict(profile)
+    monthly_ranking = dict(profile.get("monthly_ranking")) if isinstance(profile.get("monthly_ranking"), dict) else None
+    if monthly_ranking is not None:
+        components = monthly_ranking.get("components") if isinstance(monthly_ranking.get("components"), dict) else {}
+        delta_breakdown = _resolve_elo_delta_sources(
+            components,
+            persistent_rating={
+                "mmr_gain": monthly_ranking.get("mmr_gain"),
+                "baseline_mmr": monthly_ranking.get("baseline_mmr"),
+                "mmr": monthly_ranking.get("current_mmr"),
+            },
+        )
+        monthly_ranking["rating_breakdown"] = {
+            "monthly_rank_score": monthly_ranking.get("monthly_rank_score"),
+            "current_mmr": monthly_ranking.get("current_mmr"),
+            "baseline_mmr": monthly_ranking.get("baseline_mmr"),
+            "net_mmr_gain": monthly_ranking.get("mmr_gain"),
+            "elo_core_gain": delta_breakdown["values"]["elo_core_gain"],
+            "performance_modifier_gain": delta_breakdown["values"]["performance_modifier_gain"],
+            "proxy_modifier_gain": delta_breakdown["values"]["proxy_modifier_gain"],
+            "confidence": components.get("confidence"),
+            "avg_participation_ratio": components.get("avg_participation_ratio"),
+            "materialization": delta_breakdown["materialization"],
+        }
+        enriched["monthly_ranking"] = monthly_ranking
+    persistent_rating = dict(profile.get("persistent_rating")) if isinstance(profile.get("persistent_rating"), dict) else None
+    if persistent_rating is not None:
+        persistent_rating["meaning"] = "persistent competitive rating for the selected scope"
+        enriched["persistent_rating"] = persistent_rating
+    enriched["telemetry_boundary"] = {
+        "accuracy_mode": accuracy_contract.get("accuracy_mode"),
+        "blocked_components": accuracy_contract.get("blocked_components") or [],
+    }
+    return enriched
+
+
+def _resolve_elo_delta_sources(
+    components: dict[str, object],
+    *,
+    persistent_rating: dict[str, object] | None,
+) -> dict[str, object]:
+    elo_core_gain = _coerce_optional_float(components.get("elo_core_gain"))
+    performance_modifier_gain = _coerce_optional_float(components.get("performance_modifier_gain"))
+    proxy_modifier_gain = _coerce_optional_float(components.get("proxy_modifier_gain"))
+    if (
+        elo_core_gain is not None
+        or performance_modifier_gain is not None
+        or proxy_modifier_gain is not None
+    ):
+        return {
+            "values": {
+                "elo_core_gain": elo_core_gain,
+                "performance_modifier_gain": performance_modifier_gain,
+                "proxy_modifier_gain": proxy_modifier_gain,
+            },
+            "materialization": {
+                "status": "v3-materialized",
+                "reason": "persisted-monthly-ranking-includes-v3-delta-sources",
+                "delta_sources_accuracy": "exact-or-proxy-as-persisted",
+            },
+        }
+
+    legacy_net_gain = _coerce_optional_float(components.get("mmr_gain_raw"))
+    if legacy_net_gain is None and isinstance(persistent_rating, dict):
+        legacy_net_gain = _coerce_optional_float(persistent_rating.get("mmr_gain"))
+    if legacy_net_gain is None:
+        return {
+            "values": {
+                "elo_core_gain": None,
+                "performance_modifier_gain": None,
+                "proxy_modifier_gain": None,
+            },
+            "materialization": {
+                "status": "v3-delta-sources-unavailable",
+                "reason": (
+                    "persisted-monthly-ranking-predates-v3-delta-split-and-has-no-compatible-net-gain"
+                ),
+                "delta_sources_accuracy": "not_available",
+            },
+        }
+
+    return {
+        "values": {
+            "elo_core_gain": legacy_net_gain,
+            "performance_modifier_gain": 0.0,
+            "proxy_modifier_gain": 0.0,
+        },
+        "materialization": {
+            "status": "legacy-compatibility-approximation",
+            "reason": (
+                "persisted-monthly-ranking-predates-v3-delta-split-api-approximates-delta-sources-"
+                "from-legacy-net-mmr-gain"
+            ),
+            "delta_sources_accuracy": "approximate",
+        },
+    }
+
+
+def _coerce_optional_float(value: object) -> float | None:
+    if value is None:
+        return None
+    try:
+        return round(float(value), 3)
+    except (TypeError, ValueError):
+        return None
+
+
+def _leaderboard_snapshot_items_need_playtime_enrichment(items: list[object]) -> bool:
+    normalized_items = [item for item in items if isinstance(item, dict)]
+    if not normalized_items:
+        return False
+    return any("total_time_seconds" not in item for item in normalized_items)
+
+
+def _load_runtime_leaderboard_items(
+    *,
+    limit: int,
+    server_id: str | None,
+    metric: str,
+    timeframe: str,
+) -> list[dict[str, object]]:
+    if timeframe == "monthly":
+        result = list_monthly_leaderboard(limit=limit, server_id=server_id, metric=metric)
+    else:
+        result = list_weekly_leaderboard(limit=limit, server_id=server_id, metric=metric)
+    items = result.get("items") if isinstance(result, dict) else None
+    return [item for item in items if isinstance(item, dict)] if isinstance(items, list) else []
 
 
 def _get_historical_snapshot_record(
