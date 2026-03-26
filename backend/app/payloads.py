@@ -373,12 +373,12 @@ def build_recent_historical_matches_payload(
                 return {
                     "status": "ok",
                     "data": {
-                        "title": "Actividad reciente capturada por RCON",
+                        "title": "Actividad competitiva reciente capturada por RCON",
                         "context": "historical-recent-matches",
-                        "source": "rcon-historical-read-model",
+                        "source": "rcon-historical-competitive-read-model",
                         "historical_data_source": "rcon",
                         "supported": True,
-                        "coverage_basis": "prospective-rcon-samples",
+                        "coverage_basis": "rcon-competitive-windows",
                         "limit": limit,
                         "server_slug": server_slug,
                         **build_source_policy(
@@ -520,8 +520,23 @@ def build_historical_server_summary_snapshot_payload(
             "source": "historical-precomputed-snapshots",
             "server_slug": server_slug,
             "found": snapshot is not None and isinstance(item, dict),
-            **_resolve_historical_fallback_policy(
-                fallback_reason="rcon-historical-read-model-does-not-support-historical-snapshots-yet",
+            **(
+                build_source_policy(
+                    primary_source=SOURCE_KIND_RCON,
+                    selected_source=SOURCE_KIND_RCON,
+                    source_attempts=[
+                        build_source_attempt(
+                            source=SOURCE_KIND_RCON,
+                            role="primary",
+                            status="success",
+                            reason="server-summary-snapshot-served-by-rcon-competitive-model",
+                        )
+                    ],
+                )
+                if get_historical_data_source_kind() == SOURCE_KIND_RCON and isinstance(item, dict)
+                else _resolve_historical_fallback_policy(
+                    fallback_reason="rcon-historical-read-model-does-not-support-historical-snapshots-yet",
+                )
             ),
             **_build_historical_snapshot_metadata(snapshot),
             "item": item if isinstance(item, dict) else None,
@@ -661,8 +676,23 @@ def build_recent_historical_matches_snapshot_payload(
             **_build_historical_snapshot_metadata(snapshot),
             "snapshot_limit": payload.get("limit") if isinstance(payload, dict) else None,
             "limit": limit,
-            **_resolve_historical_fallback_policy(
-                fallback_reason="rcon-historical-read-model-does-not-support-historical-snapshots-yet",
+            **(
+                build_source_policy(
+                    primary_source=SOURCE_KIND_RCON,
+                    selected_source=SOURCE_KIND_RCON,
+                    source_attempts=[
+                        build_source_attempt(
+                            source=SOURCE_KIND_RCON,
+                            role="primary",
+                            status="success",
+                            reason="recent-matches-snapshot-served-by-rcon-competitive-model",
+                        )
+                    ],
+                )
+                if get_historical_data_source_kind() == SOURCE_KIND_RCON and sliced_items
+                else _resolve_historical_fallback_policy(
+                    fallback_reason="rcon-historical-read-model-does-not-support-historical-snapshots-yet",
+                )
             ),
             "items": sliced_items,
         },
@@ -856,9 +886,9 @@ def build_historical_server_summary_payload(
                             else "Cobertura historica minima RCON agregada"
                         ),
                         "context": "historical-server-summary",
-                        "source": "rcon-historical-read-model",
+                        "source": "rcon-historical-competitive-read-model",
                         "historical_data_source": "rcon",
-                        "summary_basis": "prospective-rcon-samples",
+                        "summary_basis": "rcon-competitive-windows",
                         "server_slug": server_slug,
                         "supported": True,
                         **build_source_policy(
@@ -957,6 +987,7 @@ def build_elo_mmr_player_payload(
 ) -> dict[str, object]:
     """Return one Elo/MMR player profile."""
     profile = get_elo_mmr_player_payload(player_id=player_id, server_id=server_id)
+    source_policy = list_elo_mmr_leaderboard_payload(server_id=server_id, limit=1).get("source_policy")
     return {
         "status": "ok",
         "data": {
@@ -966,10 +997,10 @@ def build_elo_mmr_player_payload(
             "player_id": player_id,
             "server_slug": server_id,
             "found": profile is not None,
-            **_resolve_historical_fallback_policy(
+            **(source_policy or _resolve_historical_fallback_policy(
                 operation="elo-mmr-player",
-                fallback_reason="rcon-historical-read-model-does-not-support-elo-mmr-competitive-calculations-yet",
-            ),
+                fallback_reason="elo-mmr-player-source-policy-missing",
+            )),
             "profile": profile,
         },
     }

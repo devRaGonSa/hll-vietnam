@@ -1195,6 +1195,12 @@ El servicio `historical-runner` usa el mismo volumen persistente `./backend/data
 y ejecuta `python -m app.historical_runner --hourly` como bucle operativo
 dedicado, sin mezclar el scheduler con el proceso HTTP principal.
 
+En frontend, la landing ya no arranca con cards fake estaticas para servidores:
+
+- el contenedor queda en estado de loading
+- solo se renderizan cards con datos reales al hidratar
+- si la API falla, se muestra una degradacion limpia en lugar de datos falsos
+
 ## Coordinacion single-writer para automatizaciones y CLI
 
 Todos los procesos writer-oriented que comparten el mismo SQLite usan ahora un
@@ -1224,6 +1230,10 @@ Comportamiento:
   - `started_at`
   - host
   - pid
+- si el lock parece venir de un contenedor Docker ya parado, el backend puede
+  recuperarlo automaticamente cuando:
+  - el holder venia de un cwd tipo `/app`
+  - el lock ya supero una gracia minima de seguridad
 - la coordinacion principal es este single-writer lock; WAL y `busy_timeout`
   quedan como endurecimiento complementario, no como solucion unica
 
@@ -1434,12 +1444,18 @@ Metadata observable en payloads historicos:
 
 Estado real a fecha de esta fase:
 
-- el read model historico RCON soporta cobertura y actividad reciente
+- el read model historico RCON soporta ya una capa competitiva primaria basada
+  en ventanas derivadas desde persistencia `rcon_historical_*`
+- `server-summary` y `recent-matches` pasan a usar esa capa RCON-backed como
+  camino principal real
 - `historical_ingestion` intenta primero una captura writer-oriented por RCON y
   deja esa tentativa visible en su salida
-- rankings competitivos, MVP y Elo/MMR siguen necesitando fallback a
-  `public-scoreboard` porque el read model RCON actual no expone aun detalle
-  historico competitivo suficiente
+- leaderboards semanales/mensuales, MVP V1/V2 y player-events siguen teniendo
+  fallback a `public-scoreboard` mientras RCON no disponga de señal competitiva
+  por jugador con paridad suficiente
+- Elo/MMR pasa a consumir primero contexto competitivo RCON-backed para
+  cobertura y calidad de match cuando existe, pero sigue necesitando
+  `public-scoreboard` como suplemento para estadisticas por jugador
 
 ## Elo/MMR Monthly Ranking
 
@@ -1466,6 +1482,17 @@ Politica de exactitud:
 - `exact`: outcome, combat, utility, disciplina por teamkills, MMR persistente
 - `approximate`: role bucket, objective index, strength of schedule
 - `not_available`: leadership y tacticas finas no persistidas
+
+Cuando `historical_data_source=rcon`, el motor Elo/MMR deja visible una
+frontera hibrida y honesta:
+
+- `primary_source = rcon`
+- `selected_source = hybrid-rcon-competitive-plus-public-scoreboard`
+- `fallback_used = true`
+
+Eso significa que la capa RCON-backed ya aporta el contexto competitivo de
+cobertura y calidad de match, pero las estadisticas competitivas por jugador
+siguen necesitando el suplemento clasico hasta que RCON tenga esa granularidad.
 
 La especificacion detallada y el mapa de capabilities quedan en:
 

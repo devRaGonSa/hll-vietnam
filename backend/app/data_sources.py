@@ -174,7 +174,7 @@ class RconFirstLiveDataSource:
 
 @dataclass(frozen=True, slots=True)
 class RconHistoricalDataSource:
-    """Minimal persisted historical read model over prospective RCON capture."""
+    """Persisted RCON-backed historical read model over captured competitive windows."""
 
     source_kind: str = SOURCE_KIND_RCON
 
@@ -200,7 +200,7 @@ class RconHistoricalDataSource:
         )
 
     def list_server_summaries(self, *, server_key: str | None = None) -> list[dict[str, object]]:
-        """Return coverage and freshness from persisted prospective RCON samples."""
+        """Return coverage and freshness from persisted RCON-backed competitive history."""
         return list_rcon_historical_server_summaries(server_key=server_key)
 
     def list_recent_activity(
@@ -209,7 +209,7 @@ class RconHistoricalDataSource:
         server_key: str | None = None,
         limit: int = 20,
     ) -> list[dict[str, object]]:
-        """Return recent persisted RCON activity without on-demand network calls."""
+        """Return recent RCON-backed competitive history without on-demand network calls."""
         return list_rcon_historical_recent_activity(server_key=server_key, limit=limit)
 
     def describe_capabilities(self) -> dict[str, object]:
@@ -238,7 +238,7 @@ def get_live_data_source() -> LiveDataSource:
 
 
 def get_rcon_historical_read_model() -> RconHistoricalDataSource | None:
-    """Return the minimal persisted RCON historical read model when selected."""
+    """Return the persisted RCON-backed historical read model when selected."""
     if get_historical_data_source_kind() != SOURCE_KIND_RCON:
         return None
     return RconHistoricalDataSource()
@@ -258,8 +258,8 @@ def describe_historical_runtime_policy() -> dict[str, object]:
         "primary_source": SOURCE_KIND_RCON,
         "fallback_source": SOURCE_KIND_PUBLIC_SCOREBOARD,
         "summary": (
-            "Historical runtime attempts the persisted RCON read model first and falls "
-            "back to public-scoreboard when the requested operation is unsupported, has "
+            "Historical runtime attempts the persisted RCON-backed competitive model first "
+            "and falls back to public-scoreboard when the requested operation is unsupported, has "
             "no coverage yet, or the primary path fails."
         ),
     }

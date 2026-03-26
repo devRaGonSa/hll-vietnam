@@ -7,8 +7,9 @@ from datetime import datetime, timezone
 from .historical_storage import ALL_SERVERS_SLUG
 from .normalizers import normalize_map_name
 from .rcon_historical_storage import (
-    list_rcon_historical_target_statuses,
-    list_recent_rcon_historical_samples,
+    find_rcon_historical_competitive_window,
+    list_rcon_historical_competitive_summary_rows,
+    list_rcon_historical_competitive_windows,
 )
 
 
@@ -16,8 +17,8 @@ def list_rcon_historical_server_summaries(
     *,
     server_key: str | None = None,
 ) -> list[dict[str, object]]:
-    """Return per-target coverage and freshness from prospective RCON storage."""
-    items = list_rcon_historical_target_statuses()
+    """Return per-target coverage and freshness from RCON-backed competitive storage."""
+    items = list_rcon_historical_competitive_summary_rows()
     if server_key and server_key != ALL_SERVERS_SLUG:
         normalized = server_key.strip()
         items = [
@@ -37,14 +38,37 @@ def list_rcon_historical_recent_activity(
     server_key: str | None = None,
     limit: int = 20,
 ) -> list[dict[str, object]]:
-    """Return recent persisted RCON activity samples for one or all targets."""
+    """Return recent RCON-backed competitive windows for one or all targets."""
     normalized_server_key = None if server_key == ALL_SERVERS_SLUG else server_key
-    items = list_recent_rcon_historical_samples(target_key=normalized_server_key, limit=limit)
+    items = list_rcon_historical_competitive_windows(target_key=normalized_server_key, limit=limit)
     return [
         {
-            **item,
-            "current_map": normalize_map_name(item.get("current_map")),
-            "minutes_since_capture": _minutes_since_timestamp(item.get("captured_at")),
+            "server": {
+                "slug": item["target_key"],
+                "name": item["display_name"],
+                "external_server_id": item["external_server_id"],
+                "region": item["region"],
+            },
+            "match_id": item["session_key"],
+            "started_at": item["first_seen_at"],
+            "ended_at": item["last_seen_at"],
+            "closed_at": item["last_seen_at"],
+            "map": {
+                "name": item.get("map_name"),
+                "pretty_name": normalize_map_name(item.get("map_pretty_name") or item.get("map_name")),
+            },
+            "result": {
+                "allied_score": None,
+                "axis_score": None,
+                "winner": None,
+            },
+            "player_count": int(round(float(item.get("average_players") or 0))),
+            "peak_players": item.get("peak_players"),
+            "sample_count": item.get("sample_count"),
+            "duration_seconds": item.get("duration_seconds"),
+            "capture_basis": "rcon-competitive-window",
+            "capabilities": item.get("capabilities"),
+            "minutes_since_capture": _minutes_since_timestamp(item.get("last_seen_at")),
         }
         for item in items
     ]
@@ -53,7 +77,7 @@ def list_rcon_historical_recent_activity(
 def describe_rcon_historical_read_model() -> dict[str, object]:
     """Describe what the minimal RCON historical read model currently supports."""
     return {
-        "source": "rcon-historical-read-model",
+        "source": "rcon-historical-competitive-read-model",
         "supported_endpoints": [
             "/api/historical/server-summary",
             "/api/historical/recent-matches",
@@ -70,18 +94,33 @@ def describe_rcon_historical_read_model() -> dict[str, object]:
             "/api/historical/player-profile",
             "/api/historical/snapshots/*",
         ],
-        "capabilities": [
-            "coverage by configured RCON target",
-            "recent persisted live activity",
-            "freshness and last successful capture metadata",
-        ],
+        "capabilities": {
+            "server_summary": "exact",
+            "recent_matches": "approximate",
+            "competitive_quality": "partial",
+            "player_stats": "unavailable",
+        },
         "limitations": [
             "No retroactive backfill of closed matches.",
             "No weekly or monthly competitive leaderboards.",
             "No MVP or player-event parity with public-scoreboard.",
-            "No precomputed historical snapshots for the RCON read model yet.",
+            "No player-level scoreboard parity from RCON samples alone.",
         ],
     }
+
+
+def get_rcon_historical_competitive_match_context(
+    *,
+    server_key: str,
+    ended_at: str | None,
+    map_name: str | None = None,
+) -> dict[str, object] | None:
+    """Return the closest RCON-backed competitive context for one historical match."""
+    return find_rcon_historical_competitive_window(
+        server_key=server_key,
+        ended_at=ended_at,
+        map_name=map_name,
+    )
 
 
 def _build_server_summary(item: dict[str, object]) -> dict[str, object]:
@@ -90,7 +129,7 @@ def _build_server_summary(item: dict[str, object]) -> dict[str, object]:
         server_key=str(item["target_key"]),
         limit=1,
     )
-    last_sample_at = item.get("last_sample_at")
+    last_sample_at = item.get("last_seen_at")
     latest_activity = first_last_points[0] if first_last_points else None
 
     return {
@@ -101,31 +140,32 @@ def _build_server_summary(item: dict[str, object]) -> dict[str, object]:
             "region": item["region"],
         },
         "coverage": {
-            "basis": "prospective-rcon-samples",
-            "status": "available" if sample_count > 0 else "empty",
+            "basis": "rcon-competitive-windows",
+            "status": "available" if int(item.get("window_count") or 0) > 0 else "empty",
+            "window_count": int(item.get("window_count") or 0),
             "sample_count": sample_count,
-            "first_sample_at": item.get("first_sample_at"),
+            "first_sample_at": item.get("first_seen_at"),
             "last_sample_at": last_sample_at,
-            "coverage_hours": _calculate_coverage_hours(item.get("first_sample_at"), last_sample_at),
+            "coverage_hours": _calculate_coverage_hours(item.get("first_seen_at"), last_sample_at),
         },
         "freshness": {
             "last_successful_capture_at": item.get("last_successful_capture_at"),
             "minutes_since_last_capture": _minutes_since_timestamp(last_sample_at),
-            "last_run_id": item.get("last_run_id"),
             "last_run_status": item.get("last_run_status"),
             "last_error": item.get("last_error"),
             "last_error_at": item.get("last_error_at"),
         },
         "activity": {
-            "latest_players": latest_activity.get("players") if latest_activity else None,
-            "latest_max_players": latest_activity.get("max_players") if latest_activity else None,
-            "latest_map": latest_activity.get("current_map") if latest_activity else None,
-            "latest_status": latest_activity.get("status") if latest_activity else None,
+            "latest_players": latest_activity.get("player_count") if latest_activity else None,
+            "latest_peak_players": latest_activity.get("peak_players") if latest_activity else None,
+            "latest_map": latest_activity.get("map", {}).get("pretty_name") if latest_activity else None,
+            "latest_status": "captured" if latest_activity else None,
         },
         "time_range": {
-            "start": None,
+            "start": item.get("first_seen_at"),
             "end": last_sample_at,
         },
+        "capabilities": describe_rcon_historical_read_model()["capabilities"],
     }
 
 
@@ -145,7 +185,7 @@ def _build_all_servers_summary(items: list[dict[str, object]]) -> dict[str, obje
             "region": None,
         },
         "coverage": {
-            "basis": "prospective-rcon-samples-aggregate",
+            "basis": "rcon-competitive-windows-aggregate",
             "status": "available" if total_samples > 0 else "empty",
             "sample_count": total_samples,
             "first_sample_at": None,
@@ -155,7 +195,6 @@ def _build_all_servers_summary(items: list[dict[str, object]]) -> dict[str, obje
         "freshness": {
             "last_successful_capture_at": last_capture_at,
             "minutes_since_last_capture": _minutes_since_timestamp(last_capture_at),
-            "last_run_id": None,
             "last_run_status": None,
             "last_error": None,
             "last_error_at": None,
@@ -171,6 +210,7 @@ def _build_all_servers_summary(items: list[dict[str, object]]) -> dict[str, obje
             "end": last_capture_at,
         },
         "server_count": len(items),
+        "capabilities": describe_rcon_historical_read_model()["capabilities"],
     }
 
 

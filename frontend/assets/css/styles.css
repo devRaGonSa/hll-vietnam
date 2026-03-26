@@ -311,6 +311,49 @@ h2 {
   color: var(--accent-warm);
 }
 
+.servers-loading,
+.servers-empty {
+  display: grid;
+  justify-items: center;
+  gap: 14px;
+  width: 100%;
+  padding: 36px 24px;
+  border: 1px dashed rgba(183, 201, 125, 0.24);
+  border-radius: 18px;
+  background: linear-gradient(180deg, rgba(19, 24, 16, 0.72), rgba(10, 13, 9, 0.84));
+  color: var(--text-soft);
+  text-align: center;
+}
+
+.servers-loading__pulse {
+  width: 14px;
+  height: 14px;
+  border-radius: 999px;
+  background: var(--accent-warm);
+  box-shadow: 0 0 0 rgba(210, 182, 118, 0.34);
+  animation: servers-loading-pulse 1.6s ease-in-out infinite;
+}
+
+@keyframes servers-loading-pulse {
+  0% {
+    transform: scale(0.9);
+    box-shadow: 0 0 0 0 rgba(210, 182, 118, 0.26);
+    opacity: 0.78;
+  }
+
+  70% {
+    transform: scale(1);
+    box-shadow: 0 0 0 16px rgba(210, 182, 118, 0);
+    opacity: 1;
+  }
+
+  100% {
+    transform: scale(0.92);
+    box-shadow: 0 0 0 0 rgba(210, 182, 118, 0);
+    opacity: 0.82;
+  }
+}
+
 .discord-button {
   display: inline-flex;
   align-items: center;

@@ -25,6 +25,7 @@ class BackendWriterLockTimeoutError(RuntimeError):
 
 _ACTIVE_LOCK_DEPTH_BY_PATH: dict[Path, int] = {}
 _ACTIVE_LOCK_TOKEN_BY_PATH: dict[Path, str] = {}
+CONTAINER_STALE_LOCK_GRACE_SECONDS = 300
 
 
 def resolve_backend_writer_lock_path(*, storage_path: Path | None = None) -> Path:
@@ -167,15 +168,27 @@ def _read_lock_metadata(lock_path: Path) -> dict[str, object] | None:
 def _can_clear_stale_lock(existing_metadata: dict[str, object] | None) -> bool:
     if not existing_metadata:
         return False
-    if str(existing_metadata.get("hostname") or "") != socket.gethostname():
-        return False
     try:
         holder_pid = int(existing_metadata.get("pid"))
     except (TypeError, ValueError):
         return False
     if holder_pid <= 0:
         return False
-    return not _is_process_alive(holder_pid)
+
+    holder_hostname = str(existing_metadata.get("hostname") or "").strip()
+    current_hostname = socket.gethostname()
+    if holder_hostname == current_hostname:
+        if _is_process_alive(holder_pid):
+            return False
+        return True
+    if not _looks_like_containerized_holder(existing_metadata):
+        return False
+    lock_age_seconds = _calculate_lock_age_seconds(existing_metadata)
+    if lock_age_seconds is None:
+        return False
+    if lock_age_seconds < CONTAINER_STALE_LOCK_GRACE_SECONDS:
+        return False
+    return True
 
 
 def _is_process_alive(pid: int) -> bool:
@@ -217,6 +230,25 @@ def _build_lock_timeout_message(
         f"since {started_at} on {hostname} (pid {pid}). "
         f"Timed out after waiting {timeout_seconds:.1f}s for {holder}."
     )
+
+
+def _looks_like_containerized_holder(existing_metadata: dict[str, object]) -> bool:
+    holder_cwd = str(existing_metadata.get("cwd") or "").strip().lower()
+    return holder_cwd.startswith("/app")
+
+
+def _calculate_lock_age_seconds(existing_metadata: dict[str, object]) -> float | None:
+    started_at_raw = str(existing_metadata.get("started_at") or "").strip()
+    if not started_at_raw:
+        return None
+    try:
+        started_at = datetime.fromisoformat(started_at_raw.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if started_at.tzinfo is None:
+        started_at = started_at.replace(tzinfo=timezone.utc)
+    delta = datetime.now(timezone.utc) - started_at.astimezone(timezone.utc)
+    return max(0.0, delta.total_seconds())
 
 
 def _utc_now_iso() -> str:

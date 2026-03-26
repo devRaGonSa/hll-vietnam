@@ -6,6 +6,8 @@ import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
 
+from .config import get_historical_data_source_kind
+from .data_sources import SOURCE_KIND_RCON, get_rcon_historical_read_model
 from .historical_storage import (
     ALL_SERVERS_SLUG,
     list_historical_server_summaries,
@@ -364,7 +366,15 @@ def _build_server_summary_snapshot(
     *,
     db_path: Path | None = None,
 ) -> dict[str, object]:
-    summary_items = list_historical_server_summaries(server_slug=server_key, db_path=db_path)
+    if get_historical_data_source_kind() == SOURCE_KIND_RCON:
+        data_source = get_rcon_historical_read_model()
+        summary_items = (
+            data_source.list_server_summaries(server_key=server_key)
+            if data_source is not None
+            else []
+        )
+    else:
+        summary_items = list_historical_server_summaries(server_slug=server_key, db_path=db_path)
     summary_item = summary_items[0] if summary_items else {}
     time_range = summary_item.get("time_range") if isinstance(summary_item, dict) else {}
     return {
@@ -457,11 +467,19 @@ def _build_recent_matches_snapshot(
     limit: int,
     db_path: Path | None = None,
 ) -> dict[str, object]:
-    items = list_recent_historical_matches(
-        limit=limit,
-        server_slug=server_key,
-        db_path=db_path,
-    )
+    if get_historical_data_source_kind() == SOURCE_KIND_RCON:
+        data_source = get_rcon_historical_read_model()
+        items = (
+            data_source.list_recent_activity(server_key=server_key, limit=limit)
+            if data_source is not None
+            else []
+        )
+    else:
+        items = list_recent_historical_matches(
+            limit=limit,
+            server_slug=server_key,
+            db_path=db_path,
+        )
     closed_points = [
         _parse_optional_timestamp(item.get("closed_at"))
         for item in items

@@ -93,6 +93,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
   updateBackendStatus(statusNode, "Backend comprobando", "status-chip--idle");
   setServersDataState(serversBadge, { timestampLabel: "" });
+  renderServersLoadingState(serversList);
   hydrateCommunityClans(communityClansList);
 
   let serverRefreshInFlight = false;
@@ -208,8 +209,26 @@ async function hydrateServers(
     const visibleItems = selectPrimaryServerItems(serversData.items);
     serversList.innerHTML = renderServerSections(visibleItems);
   } catch (error) {
-    console.warn("Servers panel remains on static fallback", error);
+    console.warn("Servers panel failed to hydrate with live data", error);
+    serversList.innerHTML =
+      '<p class="servers-empty">No se pudo cargar el estado real de servidores en este momento.</p>';
+    setServersDataState(serversBadge, {
+      label: "Actualizacion no disponible",
+      isFresh: false,
+    });
   }
+}
+
+function renderServersLoadingState(serversList) {
+  if (!serversList) {
+    return;
+  }
+  serversList.innerHTML = `
+    <div class="servers-loading">
+      <span class="servers-loading__pulse"></span>
+      <p>Cargando estado real de servidores...</p>
+    </div>
+  `;
 }
 
 function updateBackendStatus(statusNode, label, stateClass) {

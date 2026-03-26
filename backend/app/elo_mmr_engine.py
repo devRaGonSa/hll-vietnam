@@ -15,6 +15,7 @@ from .data_sources import (
     SOURCE_KIND_RCON,
     build_source_attempt,
     build_source_policy,
+    get_rcon_historical_read_model,
 )
 from .elo_mmr_models import (
     CAPABILITY_APPROXIMATE,
@@ -39,6 +40,7 @@ from .elo_mmr_storage import (
     replace_elo_mmr_state,
 )
 from .historical_storage import ALL_SERVERS_SLUG, initialize_historical_storage
+from .rcon_historical_read_model import get_rcon_historical_competitive_match_context
 from .sqlite_utils import connect_sqlite_readonly
 from .writer_lock import backend_writer_lock, build_writer_lock_holder
 
@@ -68,6 +70,7 @@ def rebuild_elo_mmr_models(*, db_path=None) -> dict[str, object]:
         resolved_path = initialize_historical_storage(db_path=db_path)
         initialize_elo_mmr_storage(db_path=resolved_path)
         historical_source_policy = _build_historical_source_policy_for_elo()
+        rcon_read_model = get_rcon_historical_read_model()
         match_rows = _load_closed_match_rows(db_path=resolved_path)
         grouped_matches = _group_match_rows(match_rows)
 
@@ -85,6 +88,15 @@ def rebuild_elo_mmr_models(*, db_path=None) -> dict[str, object]:
                         match_group=match_group,
                         scope_key=scope_key,
                         ratings_by_scope=ratings_by_scope[scope_key],
+                        rcon_match_context=(
+                            get_rcon_historical_competitive_match_context(
+                                server_key=str(match_group["server_slug"]),
+                                ended_at=match_group.get("ended_at"),
+                                map_name=match_group.get("map_pretty_name") or match_group.get("map_name"),
+                            )
+                            if rcon_read_model is not None
+                            else None
+                        ),
                     )
                 )
 
@@ -274,11 +286,18 @@ def _score_match_for_scope(
     match_group: dict[str, object],
     scope_key: str,
     ratings_by_scope: dict[str, dict[str, object]],
+    rcon_match_context: dict[str, object] | None = None,
 ) -> list[dict[str, object]]:
     players = list(match_group["players"])
-    duration_seconds, duration_mode = _resolve_match_duration(match_group, players)
+    duration_seconds, duration_mode = _resolve_match_duration(
+        match_group,
+        players,
+        rcon_match_context=rcon_match_context,
+    )
     quality_factor = _build_quality_factor(
-        player_count=len(players),
+        player_count=max(len(players), int(rcon_match_context.get("peak_players") or 0))
+        if rcon_match_context is not None
+        else len(players),
         duration_seconds=duration_seconds,
         has_score=match_group.get("allied_score") is not None and match_group.get("axis_score") is not None,
     )
@@ -354,6 +373,14 @@ def _score_match_for_scope(
             signals.append(build_signal("quality_duration", CAPABILITY_EXACT, "Duration computed from match timestamps."))
         else:
             signals.append(build_signal("quality_duration", CAPABILITY_APPROXIMATE, "Duration approximated from the maximum persisted player time."))
+        if rcon_match_context is not None:
+            signals.append(
+                build_signal(
+                    "RconCompetitiveWindow",
+                    CAPABILITY_APPROXIMATE,
+                    "Uses the closest RCON-backed competitive window for match duration and lobby density when coverage exists.",
+                )
+            )
 
         weights = ROLE_WEIGHTS.get(role_bucket, ROLE_WEIGHTS[ROLE_BUCKET_GENERALIST])
         impact_score = round(
@@ -541,17 +568,34 @@ def _build_historical_source_policy_for_elo() -> dict[str, object]:
         )
     return build_source_policy(
         primary_source=SOURCE_KIND_RCON,
-        selected_source=SOURCE_KIND_PUBLIC_SCOREBOARD,
+        selected_source="hybrid-rcon-competitive-plus-public-scoreboard",
         fallback_used=True,
-        fallback_reason="rcon-historical-read-model-does-not-support-elo-mmr-competitive-calculations-yet",
+        fallback_reason="rcon-competitive-context-primary-but-player-stats-still-require-public-scoreboard-supplement",
         source_attempts=[
-            build_source_attempt(source=SOURCE_KIND_RCON, role="primary", status="unsupported", reason="rcon-historical-read-model-does-not-support-elo-mmr-competitive-calculations-yet"),
-            build_source_attempt(source=SOURCE_KIND_PUBLIC_SCOREBOARD, role="fallback", status="success"),
+            build_source_attempt(
+                source=SOURCE_KIND_RCON,
+                role="primary",
+                status="partial",
+                reason="rcon-competitive-context-used-for-match-coverage-and-quality",
+            ),
+            build_source_attempt(
+                source=SOURCE_KIND_PUBLIC_SCOREBOARD,
+                role="supplemental-fallback",
+                status="success",
+                reason="public-scoreboard-still-provides-player-level-competitive-stats",
+            ),
         ],
     )
 
 
-def _resolve_match_duration(match_group: dict[str, object], players: list[dict[str, object]]) -> tuple[int, str]:
+def _resolve_match_duration(
+    match_group: dict[str, object],
+    players: list[dict[str, object]],
+    *,
+    rcon_match_context: dict[str, object] | None = None,
+) -> tuple[int, str]:
+    if rcon_match_context and int(rcon_match_context.get("duration_seconds") or 0) > 0:
+        return int(rcon_match_context["duration_seconds"]), CAPABILITY_APPROXIMATE
     started_at = _parse_optional_timestamp(match_group.get("started_at"))
     ended_at = _parse_optional_timestamp(match_group.get("ended_at"))
     if started_at and ended_at and ended_at >= started_at:
