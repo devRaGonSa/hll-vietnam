@@ -156,7 +156,7 @@ document.addEventListener("DOMContentLoaded", () => {
       recentMatchesCache,
       pendingRequestCache,
       buildRecentMatchesSnapshotKey(serverSlug),
-      `${backendBaseUrl}/api/historical/snapshots/recent-matches?server=${encodeURIComponent(serverSlug)}&limit=6`,
+      `${backendBaseUrl}/api/historical/snapshots/recent-matches?server=${encodeURIComponent(serverSlug)}&limit=10`,
     );
 
   const getLeaderboardSnapshot = (serverSlug, timeframeKey, metricKey) =>
