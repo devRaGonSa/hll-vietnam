@@ -2,9 +2,17 @@
 
 ## Scope
 
-This repository now exposes a first operational Elo/MMR-like system inspired by
+This repository now exposes an operational Elo/MMR system inspired by
 `sistema_elo_mensual_hll.pdf`, but constrained to signals that are really
 available today.
+
+Current implementation label:
+
+- practical PDF alignment at the `v1-v2` level
+
+Deferred explicitly:
+
+- telemetry-rich `v3` evolution
 
 The implementation keeps the same conceptual split:
 
@@ -97,8 +105,15 @@ This is an operational approximation of the PDF quality factor and is labelled:
 Implemented:
 
 - duration bucket
+- canonical resolved match duration with explicit source status
 - mode retention through `game_mode`
 - approximate `role_bucket`
+- explicit participation bucket per player-match fact
+- per-time derived rates from existing stored metrics
+  - `kills_per_minute`
+  - `combat_per_minute`
+  - `support_per_minute`
+  - `objective_proxy_per_minute`
 
 Not implemented yet:
 
@@ -147,6 +162,9 @@ Tables added in backend SQLite:
 - `elo_mmr_match_results`
 - `elo_mmr_monthly_rankings`
 - `elo_mmr_monthly_checkpoints`
+- `elo_mmr_canonical_players`
+- `elo_mmr_canonical_matches`
+- `elo_mmr_canonical_player_match_facts`
 
 Meaning:
 
@@ -158,6 +176,25 @@ Meaning:
   - monthly ranking rows ready for product/API
 - `elo_mmr_monthly_checkpoints`
   - generated-at metadata plus source policy and capability summary
+- `elo_mmr_canonical_matches`
+  - canonical closed-match context with resolved duration, duration bucket and
+    player count
+- `elo_mmr_canonical_player_match_facts`
+  - player-match fact foundation with explicit participation buckets,
+    objective proxy fields and per-minute derived rates
+
+Canonical fact lineage now persisted and reused:
+
+- `fact_schema_version = "elo-canonical-v2"`
+- `source_input_version = "historical-closed-match-v1"`
+
+Current model/version family:
+
+- `model_version = "elo-pdf-v1-v2-practical"`
+- persistent match formula revision:
+  - `elo-pdf-v1-v2-practical-match-rev3`
+- monthly formula revision:
+  - `elo-pdf-v1-v2-practical-monthly-rev3`
 
 Scopes persisted:
 
@@ -214,6 +251,7 @@ It should **not** be described as:
 - a perfect Elo system
 - full parity with the PDF
 - a complete tactical rating model
+- a telemetry-rich v3 implementation
 
 ## Planned Expansion Path
 
@@ -305,12 +343,18 @@ Real signals available today:
 - match closed timestamps
 - player playtime seconds
 - persisted historical player identity
+- canonical resolved match duration
+- canonical duration buckets
+- player participation buckets derived from persisted playtime and resolved
+  duration
+- per-minute rates derived from existing scoreboard metrics
 - persisted player-event V2 summaries outside the current core Elo/MMR formula
 
 Signals that currently exist only as proxies:
 
 - player role via dominant scoreboard axis
 - tactical objective contribution via `offense + defense`
+- objective pace via `objective_proxy_per_minute`
 - strength of schedule via opponent average MMR plus match quality proxy
 - discipline beyond teamkills via participation-style heuristics when needed
 
@@ -327,14 +371,14 @@ Signals still not available in the repository:
 
 Safe to align now without fictional telemetry:
 
-1. tighten match eligibility with player-level participation checks
-2. move `StrengthOfSchedule` toward opponent-MMR pressure using persisted
-   ratings already available during rebuild
-3. make `DeltaMMR` more explicitly dependent on expected-vs-actual outcome
-   rather than only on a flat combined score
-4. make discipline and penalty behavior honest about which parts are exact and
-   which are participation proxies
-5. expose richer component-level accuracy metadata in payloads
+Already aligned in the current practical v1-v2 implementation:
+
+1. match eligibility uses player-level participation checks
+2. `StrengthOfSchedule` uses persisted opponent-MMR pressure as an honest proxy
+3. `DeltaMMR` depends on expected-vs-actual outcome rather than only on a flat
+   combined score
+4. discipline and participation boundaries are explicit
+5. payloads expose richer component-level accuracy and fact-foundation metadata
 
 Depends on future telemetry:
 

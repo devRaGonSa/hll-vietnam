@@ -10,7 +10,7 @@ from pathlib import Path
 from .config import get_storage_path
 from .sqlite_utils import connect_sqlite_readonly, connect_sqlite_writer
 
-ELO_MMR_CANONICAL_FACT_SCHEMA_VERSION = "elo-canonical-v1"
+ELO_MMR_CANONICAL_FACT_SCHEMA_VERSION = "elo-canonical-v2"
 ELO_MMR_CANONICAL_SOURCE_INPUT_VERSION = "historical-closed-match-v1"
 
 
@@ -79,6 +79,30 @@ def initialize_elo_mmr_storage(*, db_path: Path | None = None) -> Path:
                 mmr_after REAL NOT NULL,
                 match_score REAL NOT NULL,
                 penalty_points REAL NOT NULL,
+                time_seconds INTEGER NOT NULL DEFAULT 0,
+                participation_ratio REAL NOT NULL DEFAULT 0,
+                strength_of_schedule_match REAL NOT NULL DEFAULT 0,
+                team_outcome TEXT,
+                expected_result REAL NOT NULL DEFAULT 0,
+                actual_result REAL NOT NULL DEFAULT 0,
+                elo_core_delta REAL NOT NULL DEFAULT 0,
+                performance_modifier_delta REAL NOT NULL DEFAULT 0,
+                proxy_modifier_delta REAL NOT NULL DEFAULT 0,
+                canonical_fact_capability_status TEXT NOT NULL DEFAULT 'not_available',
+                identity_capability_status TEXT NOT NULL DEFAULT 'not_available',
+                match_duration_seconds INTEGER NOT NULL DEFAULT 0,
+                duration_source_status TEXT NOT NULL DEFAULT 'not_available',
+                duration_bucket TEXT NOT NULL DEFAULT 'unknown',
+                player_count INTEGER NOT NULL DEFAULT 0,
+                objective_score_proxy INTEGER NOT NULL DEFAULT 0,
+                objective_score_proxy_mode TEXT NOT NULL DEFAULT 'approximate',
+                kills_per_minute REAL NOT NULL DEFAULT 0,
+                combat_per_minute REAL NOT NULL DEFAULT 0,
+                support_per_minute REAL NOT NULL DEFAULT 0,
+                objective_proxy_per_minute REAL NOT NULL DEFAULT 0,
+                participation_bucket TEXT NOT NULL DEFAULT 'none',
+                participation_mode TEXT NOT NULL DEFAULT 'not_available',
+                participation_quality_score REAL NOT NULL DEFAULT 0,
                 capabilities_json TEXT NOT NULL,
                 updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 PRIMARY KEY (scope_key, external_match_id, stable_player_key)
@@ -152,6 +176,10 @@ def initialize_elo_mmr_storage(*, db_path: Path | None = None) -> Path:
                 game_mode TEXT,
                 allied_score INTEGER,
                 axis_score INTEGER,
+                resolved_duration_seconds INTEGER NOT NULL DEFAULT 0,
+                duration_source_status TEXT NOT NULL DEFAULT 'not_available',
+                duration_bucket TEXT NOT NULL DEFAULT 'unknown',
+                player_count INTEGER NOT NULL DEFAULT 0,
                 match_capability_status TEXT NOT NULL,
                 source_kind TEXT NOT NULL,
                 fact_schema_version TEXT NOT NULL,
@@ -176,6 +204,20 @@ def initialize_elo_mmr_storage(*, db_path: Path | None = None) -> Path:
                 offense INTEGER NOT NULL DEFAULT 0,
                 defense INTEGER NOT NULL DEFAULT 0,
                 support INTEGER NOT NULL DEFAULT 0,
+                match_duration_seconds INTEGER NOT NULL DEFAULT 0,
+                match_duration_mode TEXT NOT NULL DEFAULT 'not_available',
+                duration_bucket TEXT NOT NULL DEFAULT 'unknown',
+                player_count INTEGER NOT NULL DEFAULT 0,
+                objective_score_proxy INTEGER NOT NULL DEFAULT 0,
+                objective_score_proxy_mode TEXT NOT NULL DEFAULT 'approximate',
+                kills_per_minute REAL NOT NULL DEFAULT 0,
+                combat_per_minute REAL NOT NULL DEFAULT 0,
+                support_per_minute REAL NOT NULL DEFAULT 0,
+                objective_proxy_per_minute REAL NOT NULL DEFAULT 0,
+                participation_ratio REAL NOT NULL DEFAULT 0,
+                participation_bucket TEXT NOT NULL DEFAULT 'none',
+                participation_mode TEXT NOT NULL DEFAULT 'not_available',
+                participation_quality_score REAL NOT NULL DEFAULT 0,
                 fact_capability_status TEXT NOT NULL,
                 fact_schema_version TEXT NOT NULL,
                 source_input_version TEXT NOT NULL,
@@ -310,8 +352,23 @@ def replace_elo_mmr_state(
                 elo_core_delta,
                 performance_modifier_delta,
                 proxy_modifier_delta,
+                canonical_fact_capability_status,
+                identity_capability_status,
+                match_duration_seconds,
+                duration_source_status,
+                duration_bucket,
+                player_count,
+                objective_score_proxy,
+                objective_score_proxy_mode,
+                kills_per_minute,
+                combat_per_minute,
+                support_per_minute,
+                objective_proxy_per_minute,
+                participation_bucket,
+                participation_mode,
+                participation_quality_score,
                 capabilities_json
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             [
                 (
@@ -360,6 +417,21 @@ def replace_elo_mmr_state(
                     row.get("elo_core_delta", 0.0),
                     row.get("performance_modifier_delta", 0.0),
                     row.get("proxy_modifier_delta", 0.0),
+                    row.get("canonical_fact_capability_status", "not_available"),
+                    row.get("identity_capability_status", "not_available"),
+                    row.get("match_duration_seconds", 0),
+                    row.get("duration_source_status", "not_available"),
+                    row.get("duration_bucket", "unknown"),
+                    row.get("player_count", 0),
+                    row.get("objective_score_proxy", 0),
+                    row.get("objective_score_proxy_mode", "approximate"),
+                    row.get("kills_per_minute", 0.0),
+                    row.get("combat_per_minute", 0.0),
+                    row.get("support_per_minute", 0.0),
+                    row.get("objective_proxy_per_minute", 0.0),
+                    row.get("participation_bucket", "none"),
+                    row.get("participation_mode", "not_available"),
+                    row.get("participation_quality_score", 0.0),
                     json.dumps(row["capabilities"], ensure_ascii=True, separators=(",", ":")),
                 )
                 for row in match_results
@@ -530,37 +602,117 @@ def rebuild_elo_mmr_canonical_facts(*, db_path: Path | None = None) -> dict[str,
                 game_mode,
                 allied_score,
                 axis_score,
+                resolved_duration_seconds,
+                duration_source_status,
+                duration_bucket,
+                player_count,
                 match_capability_status,
                 source_kind,
                 fact_schema_version,
                 source_input_version
             )
             SELECT
-                historical_servers.slug || ':' || historical_matches.external_match_id AS canonical_match_key,
-                historical_servers.slug AS server_slug,
-                historical_servers.display_name AS server_name,
-                historical_matches.external_match_id,
-                historical_matches.started_at,
-                historical_matches.ended_at,
-                historical_matches.game_mode,
-                historical_matches.allied_score,
-                historical_matches.axis_score,
+                canonical_match_key,
+                server_slug,
+                server_name,
+                external_match_id,
+                started_at,
+                ended_at,
+                game_mode,
+                allied_score,
+                axis_score,
+                resolved_duration_seconds,
+                duration_source_status,
+                duration_bucket,
+                player_count,
                 CASE
-                    WHEN historical_matches.started_at IS NOT NULL
-                     AND historical_matches.allied_score IS NOT NULL
-                     AND historical_matches.axis_score IS NOT NULL THEN 'exact'
-                    WHEN historical_matches.started_at IS NOT NULL
-                      OR historical_matches.allied_score IS NOT NULL
-                      OR historical_matches.axis_score IS NOT NULL THEN 'approximate'
+                    WHEN started_at IS NOT NULL
+                     AND allied_score IS NOT NULL
+                     AND axis_score IS NOT NULL
+                     AND resolved_duration_seconds > 0 THEN 'exact'
+                    WHEN started_at IS NOT NULL
+                      OR allied_score IS NOT NULL
+                      OR axis_score IS NOT NULL
+                      OR resolved_duration_seconds > 0 THEN 'approximate'
                     ELSE 'not_available'
                 END AS match_capability_status,
                 'historical-closed-match' AS source_kind,
                 ? AS fact_schema_version,
                 ? AS source_input_version
-            FROM historical_matches
-            INNER JOIN historical_servers
-                ON historical_servers.id = historical_matches.historical_server_id
-            WHERE historical_matches.ended_at IS NOT NULL
+            FROM (
+                SELECT
+                    historical_servers.slug || ':' || historical_matches.external_match_id AS canonical_match_key,
+                    historical_servers.slug AS server_slug,
+                    historical_servers.display_name AS server_name,
+                    historical_matches.external_match_id,
+                    historical_matches.started_at,
+                    historical_matches.ended_at,
+                    historical_matches.game_mode,
+                    historical_matches.allied_score,
+                    historical_matches.axis_score,
+                    COALESCE(match_rollup.player_count, 0) AS player_count,
+                    CASE
+                        WHEN historical_matches.started_at IS NOT NULL
+                         AND historical_matches.ended_at IS NOT NULL
+                         AND julianday(historical_matches.ended_at) >= julianday(historical_matches.started_at)
+                            THEN CAST((julianday(historical_matches.ended_at) - julianday(historical_matches.started_at)) * 86400 AS INTEGER)
+                        WHEN COALESCE(match_rollup.max_time_seconds, 0) > 0 THEN match_rollup.max_time_seconds
+                        ELSE 0
+                    END AS resolved_duration_seconds,
+                    CASE
+                        WHEN historical_matches.started_at IS NOT NULL
+                         AND historical_matches.ended_at IS NOT NULL
+                         AND julianday(historical_matches.ended_at) >= julianday(historical_matches.started_at) THEN 'exact'
+                        WHEN COALESCE(match_rollup.max_time_seconds, 0) > 0 THEN 'approximate'
+                        ELSE 'not_available'
+                    END AS duration_source_status,
+                    CASE
+                        WHEN (
+                            CASE
+                                WHEN historical_matches.started_at IS NOT NULL
+                                 AND historical_matches.ended_at IS NOT NULL
+                                 AND julianday(historical_matches.ended_at) >= julianday(historical_matches.started_at)
+                                    THEN CAST((julianday(historical_matches.ended_at) - julianday(historical_matches.started_at)) * 86400 AS INTEGER)
+                                WHEN COALESCE(match_rollup.max_time_seconds, 0) > 0 THEN match_rollup.max_time_seconds
+                                ELSE 0
+                            END
+                        ) >= 3600 THEN 'full'
+                        WHEN (
+                            CASE
+                                WHEN historical_matches.started_at IS NOT NULL
+                                 AND historical_matches.ended_at IS NOT NULL
+                                 AND julianday(historical_matches.ended_at) >= julianday(historical_matches.started_at)
+                                    THEN CAST((julianday(historical_matches.ended_at) - julianday(historical_matches.started_at)) * 86400 AS INTEGER)
+                                WHEN COALESCE(match_rollup.max_time_seconds, 0) > 0 THEN match_rollup.max_time_seconds
+                                ELSE 0
+                            END
+                        ) >= 1800 THEN 'standard'
+                        WHEN (
+                            CASE
+                                WHEN historical_matches.started_at IS NOT NULL
+                                 AND historical_matches.ended_at IS NOT NULL
+                                 AND julianday(historical_matches.ended_at) >= julianday(historical_matches.started_at)
+                                    THEN CAST((julianday(historical_matches.ended_at) - julianday(historical_matches.started_at)) * 86400 AS INTEGER)
+                                WHEN COALESCE(match_rollup.max_time_seconds, 0) > 0 THEN match_rollup.max_time_seconds
+                                ELSE 0
+                            END
+                        ) > 0 THEN 'short'
+                        ELSE 'unknown'
+                    END AS duration_bucket
+                FROM historical_matches
+                INNER JOIN historical_servers
+                    ON historical_servers.id = historical_matches.historical_server_id
+                LEFT JOIN (
+                    SELECT
+                        historical_match_id,
+                        COUNT(*) AS player_count,
+                        MAX(COALESCE(time_seconds, 0)) AS max_time_seconds
+                    FROM historical_player_match_stats
+                    GROUP BY historical_match_id
+                ) AS match_rollup
+                    ON match_rollup.historical_match_id = historical_matches.id
+                WHERE historical_matches.ended_at IS NOT NULL
+            )
             """,
             (
                 ELO_MMR_CANONICAL_FACT_SCHEMA_VERSION,
@@ -586,6 +738,20 @@ def rebuild_elo_mmr_canonical_facts(*, db_path: Path | None = None) -> dict[str,
                 offense,
                 defense,
                 support,
+                match_duration_seconds,
+                match_duration_mode,
+                duration_bucket,
+                player_count,
+                objective_score_proxy,
+                objective_score_proxy_mode,
+                kills_per_minute,
+                combat_per_minute,
+                support_per_minute,
+                objective_proxy_per_minute,
+                participation_ratio,
+                participation_bucket,
+                participation_mode,
+                participation_quality_score,
                 fact_capability_status,
                 fact_schema_version,
                 source_input_version
@@ -606,9 +772,54 @@ def rebuild_elo_mmr_canonical_facts(*, db_path: Path | None = None) -> dict[str,
                 COALESCE(historical_player_match_stats.offense, 0) AS offense,
                 COALESCE(historical_player_match_stats.defense, 0) AS defense,
                 COALESCE(historical_player_match_stats.support, 0) AS support,
+                COALESCE(canonical_matches.resolved_duration_seconds, 0) AS match_duration_seconds,
+                canonical_matches.duration_source_status AS match_duration_mode,
+                canonical_matches.duration_bucket,
+                canonical_matches.player_count,
+                COALESCE(historical_player_match_stats.offense, 0) + COALESCE(historical_player_match_stats.defense, 0) AS objective_score_proxy,
+                'approximate' AS objective_score_proxy_mode,
+                CASE
+                    WHEN COALESCE(historical_player_match_stats.time_seconds, 0) > 0 THEN ROUND((COALESCE(historical_player_match_stats.kills, 0) * 60.0) / historical_player_match_stats.time_seconds, 3)
+                    ELSE 0.0
+                END AS kills_per_minute,
+                CASE
+                    WHEN COALESCE(historical_player_match_stats.time_seconds, 0) > 0 THEN ROUND((COALESCE(historical_player_match_stats.combat, 0) * 60.0) / historical_player_match_stats.time_seconds, 3)
+                    ELSE 0.0
+                END AS combat_per_minute,
+                CASE
+                    WHEN COALESCE(historical_player_match_stats.time_seconds, 0) > 0 THEN ROUND((COALESCE(historical_player_match_stats.support, 0) * 60.0) / historical_player_match_stats.time_seconds, 3)
+                    ELSE 0.0
+                END AS support_per_minute,
+                CASE
+                    WHEN COALESCE(historical_player_match_stats.time_seconds, 0) > 0 THEN ROUND(((COALESCE(historical_player_match_stats.offense, 0) + COALESCE(historical_player_match_stats.defense, 0)) * 60.0) / historical_player_match_stats.time_seconds, 3)
+                    ELSE 0.0
+                END AS objective_proxy_per_minute,
+                CASE
+                    WHEN COALESCE(canonical_matches.resolved_duration_seconds, 0) <= 0 THEN 0.0
+                    WHEN COALESCE(historical_player_match_stats.time_seconds, 0) >= canonical_matches.resolved_duration_seconds THEN 1.0
+                    ELSE ROUND((historical_player_match_stats.time_seconds * 1.0) / canonical_matches.resolved_duration_seconds, 3)
+                END AS participation_ratio,
+                CASE
+                    WHEN COALESCE(canonical_matches.resolved_duration_seconds, 0) <= 0
+                      OR COALESCE(historical_player_match_stats.time_seconds, 0) <= 0 THEN 'none'
+                    WHEN (historical_player_match_stats.time_seconds * 1.0) / canonical_matches.resolved_duration_seconds >= 0.85 THEN 'full'
+                    WHEN (historical_player_match_stats.time_seconds * 1.0) / canonical_matches.resolved_duration_seconds >= 0.50 THEN 'core'
+                    ELSE 'limited'
+                END AS participation_bucket,
+                CASE
+                    WHEN canonical_matches.duration_source_status = 'exact' THEN 'exact'
+                    WHEN canonical_matches.duration_source_status = 'approximate' THEN 'approximate'
+                    ELSE 'not_available'
+                END AS participation_mode,
+                CASE
+                    WHEN COALESCE(canonical_matches.resolved_duration_seconds, 0) <= 0 THEN 0.0
+                    WHEN COALESCE(historical_player_match_stats.time_seconds, 0) >= canonical_matches.resolved_duration_seconds THEN 100.0
+                    ELSE ROUND(((historical_player_match_stats.time_seconds * 1.0) / canonical_matches.resolved_duration_seconds) * 100.0, 3)
+                END AS participation_quality_score,
                 CASE
                     WHEN historical_player_match_stats.team_side IS NOT NULL
-                     AND COALESCE(historical_player_match_stats.time_seconds, 0) > 0 THEN 'exact'
+                     AND COALESCE(historical_player_match_stats.time_seconds, 0) > 0
+                     AND canonical_matches.duration_source_status = 'exact' THEN 'exact'
                     WHEN COALESCE(historical_player_match_stats.kills, 0) > 0
                       OR COALESCE(historical_player_match_stats.deaths, 0) > 0
                       OR COALESCE(historical_player_match_stats.teamkills, 0) > 0
@@ -630,6 +841,8 @@ def rebuild_elo_mmr_canonical_facts(*, db_path: Path | None = None) -> dict[str,
                 ON historical_players.id = historical_player_match_stats.historical_player_id
             INNER JOIN elo_mmr_canonical_players AS canonical_players
                 ON canonical_players.stable_player_key = historical_players.stable_player_key
+            INNER JOIN elo_mmr_canonical_matches AS canonical_matches
+                ON canonical_matches.canonical_match_key = historical_servers.slug || ':' || historical_matches.external_match_id
             WHERE historical_matches.ended_at IS NOT NULL
             """,
             (
@@ -676,6 +889,10 @@ def list_elo_mmr_canonical_match_rows(*, db_path: Path | None = None) -> list[di
                     canonical_matches.game_mode,
                     canonical_matches.allied_score,
                     canonical_matches.axis_score,
+                    canonical_matches.resolved_duration_seconds,
+                    canonical_matches.duration_source_status,
+                    canonical_matches.duration_bucket,
+                    canonical_matches.player_count,
                     canonical_matches.match_capability_status,
                     canonical_matches.fact_schema_version,
                     canonical_matches.source_input_version,
@@ -691,6 +908,20 @@ def list_elo_mmr_canonical_match_rows(*, db_path: Path | None = None) -> list[di
                     canonical_facts.offense,
                     canonical_facts.defense,
                     canonical_facts.support,
+                    canonical_facts.match_duration_seconds,
+                    canonical_facts.match_duration_mode,
+                    canonical_facts.duration_bucket AS player_duration_bucket,
+                    canonical_facts.player_count AS fact_player_count,
+                    canonical_facts.objective_score_proxy,
+                    canonical_facts.objective_score_proxy_mode,
+                    canonical_facts.kills_per_minute,
+                    canonical_facts.combat_per_minute,
+                    canonical_facts.support_per_minute,
+                    canonical_facts.objective_proxy_per_minute,
+                    canonical_facts.participation_ratio,
+                    canonical_facts.participation_bucket,
+                    canonical_facts.participation_mode,
+                    canonical_facts.participation_quality_score,
                     canonical_facts.fact_capability_status,
                     canonical_players.identity_capability_status
                 FROM elo_mmr_canonical_player_match_facts AS canonical_facts
@@ -986,6 +1217,21 @@ def _ensure_schema_extensions(connection: sqlite3.Connection) -> None:
             "elo_core_delta": "REAL NOT NULL DEFAULT 0",
             "performance_modifier_delta": "REAL NOT NULL DEFAULT 0",
             "proxy_modifier_delta": "REAL NOT NULL DEFAULT 0",
+            "canonical_fact_capability_status": "TEXT NOT NULL DEFAULT 'not_available'",
+            "identity_capability_status": "TEXT NOT NULL DEFAULT 'not_available'",
+            "match_duration_seconds": "INTEGER NOT NULL DEFAULT 0",
+            "duration_source_status": "TEXT NOT NULL DEFAULT 'not_available'",
+            "duration_bucket": "TEXT NOT NULL DEFAULT 'unknown'",
+            "player_count": "INTEGER NOT NULL DEFAULT 0",
+            "objective_score_proxy": "INTEGER NOT NULL DEFAULT 0",
+            "objective_score_proxy_mode": "TEXT NOT NULL DEFAULT 'approximate'",
+            "kills_per_minute": "REAL NOT NULL DEFAULT 0",
+            "combat_per_minute": "REAL NOT NULL DEFAULT 0",
+            "support_per_minute": "REAL NOT NULL DEFAULT 0",
+            "objective_proxy_per_minute": "REAL NOT NULL DEFAULT 0",
+            "participation_bucket": "TEXT NOT NULL DEFAULT 'none'",
+            "participation_mode": "TEXT NOT NULL DEFAULT 'not_available'",
+            "participation_quality_score": "REAL NOT NULL DEFAULT 0",
         },
     )
     _ensure_table_columns(
@@ -1005,6 +1251,36 @@ def _ensure_schema_extensions(connection: sqlite3.Connection) -> None:
             "model_version": "TEXT NOT NULL DEFAULT ''",
             "formula_version": "TEXT NOT NULL DEFAULT ''",
             "contract_version": "TEXT NOT NULL DEFAULT ''",
+        },
+    )
+    _ensure_table_columns(
+        connection,
+        "elo_mmr_canonical_matches",
+        {
+            "resolved_duration_seconds": "INTEGER NOT NULL DEFAULT 0",
+            "duration_source_status": "TEXT NOT NULL DEFAULT 'not_available'",
+            "duration_bucket": "TEXT NOT NULL DEFAULT 'unknown'",
+            "player_count": "INTEGER NOT NULL DEFAULT 0",
+        },
+    )
+    _ensure_table_columns(
+        connection,
+        "elo_mmr_canonical_player_match_facts",
+        {
+            "match_duration_seconds": "INTEGER NOT NULL DEFAULT 0",
+            "match_duration_mode": "TEXT NOT NULL DEFAULT 'not_available'",
+            "duration_bucket": "TEXT NOT NULL DEFAULT 'unknown'",
+            "player_count": "INTEGER NOT NULL DEFAULT 0",
+            "objective_score_proxy": "INTEGER NOT NULL DEFAULT 0",
+            "objective_score_proxy_mode": "TEXT NOT NULL DEFAULT 'approximate'",
+            "kills_per_minute": "REAL NOT NULL DEFAULT 0",
+            "combat_per_minute": "REAL NOT NULL DEFAULT 0",
+            "support_per_minute": "REAL NOT NULL DEFAULT 0",
+            "objective_proxy_per_minute": "REAL NOT NULL DEFAULT 0",
+            "participation_ratio": "REAL NOT NULL DEFAULT 0",
+            "participation_bucket": "TEXT NOT NULL DEFAULT 'none'",
+            "participation_mode": "TEXT NOT NULL DEFAULT 'not_available'",
+            "participation_quality_score": "REAL NOT NULL DEFAULT 0",
         },
     )
 

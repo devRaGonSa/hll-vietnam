@@ -61,6 +61,14 @@ SCOPE_ALL_SERVERS = ALL_SERVERS_SLUG
 QUALITY_BUCKET_HIGH = "high"
 QUALITY_BUCKET_MEDIUM = "medium"
 QUALITY_BUCKET_LOW = "low"
+DURATION_BUCKET_FULL = "full"
+DURATION_BUCKET_STANDARD = "standard"
+DURATION_BUCKET_SHORT = "short"
+DURATION_BUCKET_UNKNOWN = "unknown"
+PARTICIPATION_BUCKET_FULL = "full"
+PARTICIPATION_BUCKET_CORE = "core"
+PARTICIPATION_BUCKET_LIMITED = "limited"
+PARTICIPATION_BUCKET_NONE = "none"
 ROLE_BUCKET_SUPPORT = "support"
 ROLE_BUCKET_OFFENSE = "offense"
 ROLE_BUCKET_DEFENSE = "defense"
@@ -243,6 +251,10 @@ def _group_match_rows(rows: list[dict[str, object]]) -> list[dict[str, object]]:
                 "game_mode": first["game_mode"],
                 "allied_score": _safe_int(first["allied_score"]),
                 "axis_score": _safe_int(first["axis_score"]),
+                "resolved_duration_seconds": _safe_int(first.get("resolved_duration_seconds")),
+                "duration_source_status": first.get("duration_source_status"),
+                "duration_bucket": first.get("duration_bucket"),
+                "player_count": _safe_int(first.get("player_count")),
                 "match_capability_status": first.get("match_capability_status"),
                 "fact_schema_version": first.get("fact_schema_version"),
                 "source_input_version": first.get("source_input_version"),
@@ -265,15 +277,18 @@ def _score_match_for_scope(
         players,
         rcon_match_context=rcon_match_context,
     )
+    duration_bucket = str(match_group.get("duration_bucket") or _classify_duration_bucket(duration_seconds))
+    player_count = max(
+        _safe_int(match_group.get("player_count")),
+        max(len(players), int(rcon_match_context.get("peak_players") or 0)) if rcon_match_context is not None else len(players),
+    )
     quality_factor = _build_quality_factor(
-        player_count=max(len(players), int(rcon_match_context.get("peak_players") or 0))
-        if rcon_match_context is not None
-        else len(players),
+        player_count=player_count,
         duration_seconds=duration_seconds,
         has_score=match_group.get("allied_score") is not None and match_group.get("axis_score") is not None,
     )
     quality_bucket = _classify_quality_bucket(quality_factor)
-    match_valid = duration_seconds >= MIN_VALID_MATCH_DURATION_SECONDS and len(players) >= MIN_VALID_MATCH_PLAYERS
+    match_valid = duration_seconds >= MIN_VALID_MATCH_DURATION_SECONDS and player_count >= MIN_VALID_MATCH_PLAYERS
     month_key = str(match_group["ended_at"])[:7]
     max_kills = max(max(_safe_int(player.get("kills")), 0) for player in players) or 1
     max_support = max(max(_safe_int(player.get("support")), 0) for player in players) or 1
@@ -315,9 +330,17 @@ def _score_match_for_scope(
         )
         signals: list[dict[str, object]] = []
         time_seconds = _safe_int(player.get("time_seconds"))
-        participation_ratio = _build_participation_ratio(
+        participation_ratio = float(player.get("participation_ratio") or 0.0) or _build_participation_ratio(
             time_seconds=time_seconds,
             duration_seconds=duration_seconds,
+        )
+        participation_bucket = str(
+            player.get("participation_bucket") or _classify_participation_bucket(participation_ratio)
+        )
+        participation_mode = str(player.get("participation_mode") or duration_mode or CAPABILITY_UNAVAILABLE)
+        participation_quality_score = round(
+            float(player.get("participation_quality_score") or (participation_ratio * 100.0)),
+            3,
         )
         player_match_valid = match_valid and _is_player_match_eligible(
             time_seconds=time_seconds,
@@ -336,7 +359,27 @@ def _score_match_for_scope(
         signals.append(build_signal("OutcomeScore", CAPABILITY_EXACT, "Derived from team side and final match score."))
         signals.append(build_signal("MatchValidity", CAPABILITY_EXACT, "Uses closed match state, duration and lobby size thresholds."))
         if duration_seconds > 0:
-            signals.append(build_signal("PlayerParticipation", CAPABILITY_EXACT, "Uses persisted player time_seconds relative to match duration."))
+            signals.append(
+                build_signal(
+                    "PlayerParticipation",
+                    participation_mode if participation_mode in {CAPABILITY_EXACT, CAPABILITY_APPROXIMATE} else CAPABILITY_EXACT,
+                    "Uses persisted player time_seconds relative to the resolved match duration.",
+                )
+            )
+        signals.append(
+            build_signal(
+                "DurationBucket",
+                duration_mode if duration_mode in {CAPABILITY_EXACT, CAPABILITY_APPROXIMATE} else CAPABILITY_APPROXIMATE,
+                "Persists normalization-ready match length categorization from canonical match facts.",
+            )
+        )
+        signals.append(
+            build_signal(
+                "ParticipationBucket",
+                participation_mode if participation_mode in {CAPABILITY_EXACT, CAPABILITY_APPROXIMATE} else CAPABILITY_APPROXIMATE,
+                "Persists player participation quality buckets from canonical player-match facts.",
+            )
+        )
 
         kills = _safe_int(player.get("kills"))
         deaths = max(1, _safe_int(player.get("deaths")))
@@ -353,9 +396,12 @@ def _score_match_for_scope(
         utility_index = round(100.0 * (support / max_support), 3) if max_support > 0 else 0.0
         signals.append(build_signal("UtilityIndex", CAPABILITY_EXACT, "Uses persisted support points."))
 
-        objective_proxy = _safe_int(player.get("offense")) + _safe_int(player.get("defense"))
+        objective_proxy = _safe_int(player.get("objective_score_proxy")) or (
+            _safe_int(player.get("offense")) + _safe_int(player.get("defense"))
+        )
         objective_index = round(100.0 * (objective_proxy / max_objective), 3) if max_objective > 0 else 0.0
         signals.append(build_signal("ObjectiveIndex", CAPABILITY_APPROXIMATE, "Approximated from offense and defense scoreboard points because no tactical event feed exists yet."))
+        signals.append(build_signal("ObjectiveScoreProxy", CAPABILITY_APPROXIMATE, "Persists offense plus defense as an explicit tactical proxy rather than implying exact tactical telemetry."))
 
         teamkills = _safe_int(player.get("teamkills"))
         completion_component = round(participation_ratio * 100.0, 3)
@@ -521,8 +567,13 @@ def _score_match_for_scope(
                 "match_score": match_score,
                 "penalty_points": round((teamkills * 2.0) + max(0.0, (0.5 - participation_ratio) * 8.0), 3),
                 "capabilities": capability_summary,
+                "canonical_fact_capability_status": player.get("fact_capability_status", CAPABILITY_UNAVAILABLE),
+                "identity_capability_status": player.get("identity_capability_status", CAPABILITY_UNAVAILABLE),
                 "time_seconds": time_seconds,
                 "participation_ratio": participation_ratio,
+                "participation_bucket": participation_bucket,
+                "participation_mode": participation_mode,
+                "participation_quality_score": participation_quality_score,
                 "strength_of_schedule_match": strength_of_schedule_match,
                 "team_outcome": team_outcome,
                 "expected_result": expected_result,
@@ -530,6 +581,16 @@ def _score_match_for_scope(
                 "elo_core_delta": elo_core_delta,
                 "performance_modifier_delta": performance_modifier_delta,
                 "proxy_modifier_delta": proxy_modifier_delta,
+                "match_duration_seconds": duration_seconds,
+                "duration_source_status": duration_mode,
+                "duration_bucket": duration_bucket,
+                "player_count": player_count,
+                "objective_score_proxy": objective_proxy,
+                "objective_score_proxy_mode": CAPABILITY_APPROXIMATE,
+                "kills_per_minute": round(float(player.get("kills_per_minute") or 0.0), 3),
+                "combat_per_minute": round(float(player.get("combat_per_minute") or 0.0), 3),
+                "support_per_minute": round(float(player.get("support_per_minute") or 0.0), 3),
+                "objective_proxy_per_minute": round(float(player.get("objective_proxy_per_minute") or 0.0), 3),
             }
         )
         rating_row["current_mmr"] = rating_after
@@ -580,12 +641,53 @@ def _build_monthly_rankings(match_results: list[dict[str, object]]) -> list[dict
             sum(float(row.get("proxy_modifier_delta") or 0.0) for row in rows),
             3,
         )
+        exact_duration_match_count = sum(
+            1 for row in rows if row.get("duration_source_status") == CAPABILITY_EXACT
+        )
+        approximate_duration_match_count = sum(
+            1 for row in rows if row.get("duration_source_status") == CAPABILITY_APPROXIMATE
+        )
+        full_participation_match_count = sum(
+            1 for row in valid_rows if row.get("participation_bucket") == PARTICIPATION_BUCKET_FULL
+        )
+        core_participation_match_count = sum(
+            1 for row in valid_rows if row.get("participation_bucket") == PARTICIPATION_BUCKET_CORE
+        )
+        high_quality_match_count = sum(
+            1 for row in valid_rows if row.get("quality_bucket") == QUALITY_BUCKET_HIGH
+        )
+        medium_quality_match_count = sum(
+            1 for row in valid_rows if row.get("quality_bucket") == QUALITY_BUCKET_MEDIUM
+        )
+        low_quality_match_count = sum(
+            1 for row in valid_rows if row.get("quality_bucket") == QUALITY_BUCKET_LOW
+        )
         avg_participation_ratio = round(
             sum(float(row.get("participation_ratio") or 0.0) for row in rows) / max(1, len(rows)),
             3,
         )
+        avg_participation_quality_score = round(
+            sum(float(row.get("participation_quality_score") or 0.0) for row in rows) / max(1, len(rows)),
+            3,
+        )
         strength_of_schedule = round(
             sum(float(row.get("strength_of_schedule_match") or 0.0) for row in valid_rows) / max(1, len(valid_rows)),
+            3,
+        )
+        avg_kills_per_minute = round(
+            sum(float(row.get("kills_per_minute") or 0.0) for row in valid_rows) / max(1, len(valid_rows)),
+            3,
+        )
+        avg_combat_per_minute = round(
+            sum(float(row.get("combat_per_minute") or 0.0) for row in valid_rows) / max(1, len(valid_rows)),
+            3,
+        )
+        avg_support_per_minute = round(
+            sum(float(row.get("support_per_minute") or 0.0) for row in valid_rows) / max(1, len(valid_rows)),
+            3,
+        )
+        avg_objective_proxy_per_minute = round(
+            sum(float(row.get("objective_proxy_per_minute") or 0.0) for row in valid_rows) / max(1, len(valid_rows)),
             3,
         )
         consistency = _build_consistency_score(valid_rows)
@@ -650,6 +752,8 @@ def _build_monthly_rankings(match_results: list[dict[str, object]]) -> list[dict
                         build_signal("LeadershipIndex", CAPABILITY_UNAVAILABLE, "No leadership telemetry exists yet."),
                         build_signal("DisciplineIndex", CAPABILITY_APPROXIMATE, "Uses teamkills exactly plus participation as a leave-risk proxy."),
                         build_signal("StrengthOfSchedule", CAPABILITY_APPROXIMATE, "Uses opponent average MMR pressure plus match quality, not a full roster graph."),
+                        build_signal("DurationBucket", CAPABILITY_APPROXIMATE, "Duration buckets are materialized from exact timestamps when present or approximate duration fallbacks otherwise."),
+                        build_signal("ParticipationBucket", CAPABILITY_APPROXIMATE, "Participation quality is explicit, but can inherit approximate duration boundaries when timestamps are missing."),
                         build_signal("MonthlyEligibility", CAPABILITY_EXACT, "Uses persisted valid-match count, playtime and participation thresholds."),
                     ],
                 },
@@ -661,6 +765,8 @@ def _build_monthly_rankings(match_results: list[dict[str, object]]) -> list[dict
                     "persistent_rating_contract_version": PERSISTENT_RATING_CONTRACT_VERSION,
                     "match_result_contract_version": MATCH_RESULT_CONTRACT_VERSION,
                     "monthly_ranking_contract_version": MONTHLY_RANKING_CONTRACT_VERSION,
+                    "canonical_fact_schema_version": rows[-1].get("fact_schema_version"),
+                    "canonical_source_input_version": rows[-1].get("source_input_version"),
                     "avg_match_score": avg_match_score,
                     "mmr_gain_raw": mmr_gain,
                     "elo_core_gain": elo_core_gain,
@@ -676,7 +782,19 @@ def _build_monthly_rankings(match_results: list[dict[str, object]]) -> list[dict
                     "consistency": consistency,
                     "activity": activity,
                     "confidence": confidence,
+                    "avg_kills_per_minute": avg_kills_per_minute,
+                    "avg_combat_per_minute": avg_combat_per_minute,
+                    "avg_support_per_minute": avg_support_per_minute,
+                    "avg_objective_proxy_per_minute": avg_objective_proxy_per_minute,
                     "avg_participation_ratio": avg_participation_ratio,
+                    "avg_participation_quality_score": avg_participation_quality_score,
+                    "exact_duration_match_count": exact_duration_match_count,
+                    "approximate_duration_match_count": approximate_duration_match_count,
+                    "full_participation_match_count": full_participation_match_count,
+                    "core_participation_match_count": core_participation_match_count,
+                    "high_quality_match_count": high_quality_match_count,
+                    "medium_quality_match_count": medium_quality_match_count,
+                    "low_quality_match_count": low_quality_match_count,
                     "penalty_points": penalty_points,
                 },
             }
@@ -757,6 +875,7 @@ def _build_monthly_ranking_materialization(
                     "aggregation_contract": _build_monthly_ranking_contract_metadata(),
                     "notes": [
                         "Outcome, combat, utility, match validity and player participation use real stored signals.",
+                        "Canonical player-match facts now persist duration buckets, participation buckets and per-minute rates from the currently available repository data.",
                         "ObjectiveIndex, role bucket, discipline and strength of schedule rely partly on honest proxies.",
                         "LeadershipIndex is not available with the current repository telemetry.",
                     ],
@@ -825,6 +944,10 @@ def _resolve_match_duration(
     *,
     rcon_match_context: dict[str, object] | None = None,
 ) -> tuple[int, str]:
+    canonical_duration = _safe_int(match_group.get("resolved_duration_seconds"))
+    canonical_mode = str(match_group.get("duration_source_status") or "").strip() or CAPABILITY_UNAVAILABLE
+    if canonical_duration > 0:
+        return canonical_duration, canonical_mode
     if rcon_match_context and int(rcon_match_context.get("duration_seconds") or 0) > 0:
         return int(rcon_match_context["duration_seconds"]), CAPABILITY_APPROXIMATE
     started_at = _parse_optional_timestamp(match_group.get("started_at"))
@@ -974,6 +1097,26 @@ def _classify_quality_bucket(quality_factor: float) -> str:
     if quality_factor >= 0.55:
         return QUALITY_BUCKET_MEDIUM
     return QUALITY_BUCKET_LOW
+
+
+def _classify_duration_bucket(duration_seconds: int) -> str:
+    if duration_seconds >= 3600:
+        return DURATION_BUCKET_FULL
+    if duration_seconds >= 1800:
+        return DURATION_BUCKET_STANDARD
+    if duration_seconds > 0:
+        return DURATION_BUCKET_SHORT
+    return DURATION_BUCKET_UNKNOWN
+
+
+def _classify_participation_bucket(participation_ratio: float) -> str:
+    if participation_ratio >= 0.85:
+        return PARTICIPATION_BUCKET_FULL
+    if participation_ratio >= 0.50:
+        return PARTICIPATION_BUCKET_CORE
+    if participation_ratio > 0:
+        return PARTICIPATION_BUCKET_LIMITED
+    return PARTICIPATION_BUCKET_NONE
 
 
 def _resolve_team_outcome(*, team_side: str, allied_score: int | None, axis_score: int | None) -> str:

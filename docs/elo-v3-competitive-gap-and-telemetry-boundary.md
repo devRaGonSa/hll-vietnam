@@ -18,6 +18,16 @@ centrada en:
 
 Sin cambios funcionales. Sin frontend.
 
+Important naming boundary after the latest practical alignment work:
+
+- implemented branch model:
+  - `elo-pdf-v1-v2-practical`
+- deferred evolution:
+  - telemetry-rich `v3`
+
+This repo can keep evolving contracts and formulas without claiming that the
+implemented telemetry model is already `v3`.
+
 ## Evidence Reviewed
 
 - `backend/app/elo_mmr_engine.py`
@@ -68,6 +78,8 @@ Conclusion practica:
 - hoy ya existe un nucleo Elo-like usable
 - no existe todavia una paridad exacta con un ranking competitivo ideal basado
   en telemetria tactica o eventos raw de HLL
+- la implementacion actual debe describirse como alineacion practica PDF
+  `v1-v2`, no como culminacion real de `v3`
 
 ## How Elo/MMR Works Today
 
@@ -120,6 +132,10 @@ Senales reales ya persistidas y reutilizables para Elo competitivo:
 - `time_seconds`
 - timestamps de inicio y cierre del match
 - identidad persistente del jugador
+- duracion canonica resuelta por match
+- bucket de duracion por match
+- bucket de participacion por jugador y match
+- ritmos por minuto derivados del scoreboard ya persistido
 
 Senales reales parciales adicionales fuera del nucleo Elo:
 
@@ -278,6 +294,27 @@ Superficie minima:
 - `accuracy_mode`
 - ratios exact / approximate / not_available
 - estado por componente
+
+### 3.5. Practical V1-V2 Foundation Already Materialized
+
+La repo ya materializa una base mas cercana a `player_match_fact` sin inventar
+telemetria nueva:
+
+- `elo_mmr_canonical_matches`
+  - duracion resuelta
+  - bucket de duracion
+  - player count
+- `elo_mmr_canonical_player_match_facts`
+  - `participation_ratio`
+  - `participation_bucket`
+  - `participation_quality_score`
+  - `objective_score_proxy`
+  - tasas por minuto derivadas de stats reales ya persistidas
+- `elo_mmr_match_results`
+  - arrastra esa linea de fact lineage hacia el rating por match
+- `elo_mmr_monthly_rankings`
+  - persiste inputs mensuales mas explicitos para actividad, calidad y
+    consistencia
 
 ### 4. Optional Duel Layer
 

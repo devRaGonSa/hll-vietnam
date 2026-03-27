@@ -1227,6 +1227,16 @@ def _build_elo_model_contract(
         else None
     )
     return {
+        "implemented_scope": {
+            "status": "implemented",
+            "label": "pdf-v1-v2-practical",
+            "meaning": "current branch implements the practical v1-v2 Elo/MMR foundation backed by real stored signals and explicit proxies",
+        },
+        "deferred_scope": {
+            "status": "deferred",
+            "label": "telemetry-rich-v3",
+            "meaning": "advanced tactical and event-rich evolution remains deferred until the repository stores the required telemetry",
+        },
         "persistent_rating": {
             "meaning": "long-lived competitive rating rebuilt from persisted matches for the selected scope",
             "primary_field": "persistent_rating.mmr",
@@ -1289,6 +1299,7 @@ def _enrich_elo_leaderboard_item(
         components,
         persistent_rating=persistent_rating,
     )
+    foundation_summary = _build_elo_foundation_summary(components)
     enriched["rating_breakdown"] = {
         "persistent_rating": {
             "mmr": persistent_rating.get("mmr"),
@@ -1302,6 +1313,7 @@ def _enrich_elo_leaderboard_item(
         },
         "delta_sources": delta_breakdown["values"],
         "materialization": delta_breakdown["materialization"],
+        "fact_foundation": foundation_summary,
         "telemetry_boundary": {
             "approximate_ratio": accuracy_contract.get("approximate_ratio"),
             "blocked_components": accuracy_contract.get("blocked_components") or [],
@@ -1329,6 +1341,7 @@ def _enrich_elo_profile(
                 "mmr": monthly_ranking.get("current_mmr"),
             },
         )
+        foundation_summary = _build_elo_foundation_summary(components)
         monthly_ranking["rating_breakdown"] = {
             "monthly_rank_score": monthly_ranking.get("monthly_rank_score"),
             "current_mmr": monthly_ranking.get("current_mmr"),
@@ -1339,6 +1352,7 @@ def _enrich_elo_profile(
             "proxy_modifier_gain": delta_breakdown["values"]["proxy_modifier_gain"],
             "confidence": components.get("confidence"),
             "avg_participation_ratio": components.get("avg_participation_ratio"),
+            "fact_foundation": foundation_summary,
             "materialization": delta_breakdown["materialization"],
         }
         enriched["monthly_ranking"] = monthly_ranking
@@ -1411,6 +1425,34 @@ def _resolve_elo_delta_sources(
                 "from-legacy-net-mmr-gain"
             ),
             "delta_sources_accuracy": "approximate",
+        },
+    }
+
+
+def _build_elo_foundation_summary(components: dict[str, object]) -> dict[str, object]:
+    return {
+        "canonical_fact_schema_version": components.get("canonical_fact_schema_version"),
+        "canonical_source_input_version": components.get("canonical_source_input_version"),
+        "duration_mix": {
+            "exact_matches": components.get("exact_duration_match_count"),
+            "approximate_matches": components.get("approximate_duration_match_count"),
+        },
+        "quality_mix": {
+            "high_quality_matches": components.get("high_quality_match_count"),
+            "medium_quality_matches": components.get("medium_quality_match_count"),
+            "low_quality_matches": components.get("low_quality_match_count"),
+        },
+        "participation_mix": {
+            "avg_participation_ratio": components.get("avg_participation_ratio"),
+            "avg_participation_quality_score": components.get("avg_participation_quality_score"),
+            "full_participation_matches": components.get("full_participation_match_count"),
+            "core_participation_matches": components.get("core_participation_match_count"),
+        },
+        "per_time_rates": {
+            "avg_kills_per_minute": components.get("avg_kills_per_minute"),
+            "avg_combat_per_minute": components.get("avg_combat_per_minute"),
+            "avg_support_per_minute": components.get("avg_support_per_minute"),
+            "avg_objective_proxy_per_minute": components.get("avg_objective_proxy_per_minute"),
         },
     }
 
