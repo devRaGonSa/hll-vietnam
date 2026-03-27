@@ -24,6 +24,16 @@ from .elo_mmr_engine import (
     get_elo_mmr_player_payload,
     list_elo_mmr_leaderboard_payload,
 )
+from .elo_mmr_models import (
+    MATCH_RESULT_CONTRACT_VERSION,
+    MONTHLY_CHECKPOINT_CONTRACT_VERSION,
+    MONTHLY_RANKING_CONTRACT_VERSION,
+    MONTHLY_RANKING_FORMULA_VERSION,
+    MONTHLY_RANKING_MODEL_VERSION,
+    PERSISTENT_RATING_CONTRACT_VERSION,
+    PERSISTENT_RATING_FORMULA_VERSION,
+    PERSISTENT_RATING_MODEL_VERSION,
+)
 from .historical_snapshot_storage import get_historical_snapshot
 from .historical_snapshots import (
     DEFAULT_MONTHLY_SNAPSHOT_WINDOW,
@@ -1150,14 +1160,17 @@ def build_elo_mmr_player_payload(
 ) -> dict[str, object]:
     """Return one Elo/MMR player profile."""
     profile = get_elo_mmr_player_payload(player_id=player_id, server_id=server_id)
-    source_policy = list_elo_mmr_leaderboard_payload(server_id=server_id, limit=1).get("source_policy")
+    leaderboard_context = list_elo_mmr_leaderboard_payload(server_id=server_id, limit=1)
+    source_policy = leaderboard_context.get("source_policy")
     accuracy_contract = _build_elo_player_accuracy_contract(profile)
     model_contract = _build_elo_model_contract(
         accuracy_contract,
+        monthly_context=leaderboard_context,
         player_profile=profile,
     )
     auditability = _build_elo_auditability_summary(
         accuracy_contract,
+        monthly_context=leaderboard_context,
         player_profile=profile,
     )
     return {
@@ -1272,34 +1285,16 @@ def _build_elo_model_contract(
         "persistent_rating": {
             "meaning": "long-lived competitive rating rebuilt from persisted matches for the selected scope",
             "primary_field": "persistent_rating.mmr",
-            "model_version": persistent_rating.get("model_version") if isinstance(persistent_rating, dict) else None,
-            "formula_version": persistent_rating.get("formula_version") if isinstance(persistent_rating, dict) else None,
-            "contract_version": persistent_rating.get("contract_version") if isinstance(persistent_rating, dict) else None,
+            "model_version": PERSISTENT_RATING_MODEL_VERSION,
+            "formula_version": PERSISTENT_RATING_FORMULA_VERSION,
+            "contract_version": PERSISTENT_RATING_CONTRACT_VERSION,
         },
         "monthly_rank_score": {
             "meaning": "monthly leaderboard ordering score that combines rating movement, match quality, activity and confidence",
             "primary_field": "monthly_rank_score",
-            "model_version": (
-                monthly_context.get("model_version")
-                if isinstance(monthly_context, dict)
-                else monthly_ranking.get("model_version")
-                if isinstance(monthly_ranking, dict)
-                else None
-            ),
-            "formula_version": (
-                monthly_context.get("formula_version")
-                if isinstance(monthly_context, dict)
-                else monthly_ranking.get("formula_version")
-                if isinstance(monthly_ranking, dict)
-                else None
-            ),
-            "contract_version": (
-                monthly_context.get("contract_version")
-                if isinstance(monthly_context, dict)
-                else monthly_ranking.get("contract_version")
-                if isinstance(monthly_ranking, dict)
-                else None
-            ),
+            "model_version": MONTHLY_RANKING_MODEL_VERSION,
+            "formula_version": MONTHLY_RANKING_FORMULA_VERSION,
+            "contract_version": MONTHLY_RANKING_CONTRACT_VERSION,
         },
         "elo_core": {
             "meaning": "competitive rating movement driven by ExpectedWin, won score and bounded OutcomeAdjusted against opponent rating pressure",
@@ -1359,46 +1354,28 @@ def _build_elo_auditability_summary(
         else None
     )
     foundation_summary = _build_elo_foundation_summary(components)
+    monthly_ranking_model_version = MONTHLY_RANKING_MODEL_VERSION
+    monthly_ranking_formula_version = MONTHLY_RANKING_FORMULA_VERSION
+    monthly_ranking_contract_version = MONTHLY_RANKING_CONTRACT_VERSION
+    checkpoint_contract_version = _first_non_empty(
+        capabilities_summary.get("aggregation_contract", {}).get("checkpoint_contract_version")
+        if isinstance(capabilities_summary, dict)
+        else None,
+        monthly_context.get("contract_version") if isinstance(monthly_context, dict) else None,
+        MONTHLY_CHECKPOINT_CONTRACT_VERSION,
+    )
     return {
         "contracts": {
             "canonical_fact_schema_version": foundation_summary.get("canonical_fact_schema_version"),
             "canonical_source_input_version": foundation_summary.get("canonical_source_input_version"),
-            "persistent_rating_model_version": (
-                persistent_rating.get("model_version") if isinstance(persistent_rating, dict) else None
-            ) or components.get("persistent_rating_model_version"),
-            "persistent_rating_formula_version": (
-                persistent_rating.get("formula_version") if isinstance(persistent_rating, dict) else None
-            ) or components.get("persistent_rating_formula_version"),
-            "persistent_rating_contract_version": (
-                persistent_rating.get("contract_version") if isinstance(persistent_rating, dict) else None
-            ) or components.get("persistent_rating_contract_version"),
-            "match_result_contract_version": components.get("match_result_contract_version"),
-            "monthly_ranking_model_version": (
-                monthly_context.get("model_version")
-                if isinstance(monthly_context, dict)
-                else monthly_ranking.get("model_version")
-                if isinstance(monthly_ranking, dict)
-                else None
-            ),
-            "monthly_ranking_formula_version": (
-                monthly_context.get("formula_version")
-                if isinstance(monthly_context, dict)
-                else monthly_ranking.get("formula_version")
-                if isinstance(monthly_ranking, dict)
-                else None
-            ),
-            "monthly_ranking_contract_version": (
-                monthly_context.get("contract_version")
-                if isinstance(monthly_context, dict)
-                else monthly_ranking.get("contract_version")
-                if isinstance(monthly_ranking, dict)
-                else None
-            ) or components.get("monthly_ranking_contract_version"),
-            "monthly_checkpoint_contract_version": (
-                capabilities_summary.get("aggregation_contract", {}).get("checkpoint_contract_version")
-                if isinstance(capabilities_summary, dict)
-                else None
-            ),
+            "persistent_rating_model_version": PERSISTENT_RATING_MODEL_VERSION,
+            "persistent_rating_formula_version": PERSISTENT_RATING_FORMULA_VERSION,
+            "persistent_rating_contract_version": PERSISTENT_RATING_CONTRACT_VERSION,
+            "match_result_contract_version": MATCH_RESULT_CONTRACT_VERSION,
+            "monthly_ranking_model_version": monthly_ranking_model_version,
+            "monthly_ranking_formula_version": monthly_ranking_formula_version,
+            "monthly_ranking_contract_version": monthly_ranking_contract_version,
+            "monthly_checkpoint_contract_version": checkpoint_contract_version,
         },
         "lineage": {
             "event_lineage_table": "elo_event_lineage_headers",
@@ -1407,11 +1384,7 @@ def _build_elo_auditability_summary(
             "persistent_rating_table": "elo_mmr_player_ratings",
             "monthly_ranking_table": "elo_mmr_monthly_rankings",
             "monthly_checkpoint_table": "elo_mmr_monthly_checkpoints",
-            "monthly_aggregation_lineage": (
-                capabilities_summary.get("monthly_aggregation_lineage")
-                if isinstance(capabilities_summary, dict)
-                else None
-            ),
+            "monthly_aggregation_lineage": _resolve_monthly_aggregation_lineage(capabilities_summary),
         },
         "telemetry_boundary": {
             "accuracy_mode": accuracy_contract.get("accuracy_mode"),
@@ -1461,8 +1434,14 @@ def _enrich_elo_leaderboard_item(
             "score": item.get("monthly_rank_score"),
             "valid_matches": item.get("valid_matches"),
             "confidence": components.get("confidence"),
-            "comparison_path": components.get("comparison_path"),
-            "role_primary": components.get("role_primary"),
+            "comparison_path": _resolve_surface_value(
+                components.get("comparison_path"),
+                fallback="not_materialized_in_persisted_monthly_row",
+            ),
+            "role_primary": _resolve_surface_value(
+                components.get("role_primary"),
+                fallback="not_materialized_in_persisted_monthly_row",
+            ),
             "penalty_points": components.get("penalty_points"),
         },
         "delta_sources": delta_breakdown["values"],
@@ -1510,8 +1489,14 @@ def _enrich_elo_profile(
             "proxy_modifier_gain": delta_breakdown["values"]["proxy_modifier_gain"],
             "confidence": components.get("confidence"),
             "avg_participation_ratio": components.get("avg_participation_ratio"),
-            "comparison_path": components.get("comparison_path"),
-            "role_primary": components.get("role_primary"),
+            "comparison_path": _resolve_surface_value(
+                components.get("comparison_path"),
+                fallback="not_materialized_in_persisted_monthly_row",
+            ),
+            "role_primary": _resolve_surface_value(
+                components.get("role_primary"),
+                fallback="not_materialized_in_persisted_monthly_row",
+            ),
             "penalty_points": components.get("penalty_points"),
             "fact_foundation": foundation_summary,
             "materialization": delta_breakdown["materialization"],
@@ -1619,6 +1604,41 @@ def _build_elo_foundation_summary(components: dict[str, object]) -> dict[str, ob
             "avg_objective_proxy_per_minute": components.get("avg_objective_proxy_per_minute"),
         },
     }
+
+
+def _resolve_monthly_aggregation_lineage(
+    capabilities_summary: dict[str, object] | None,
+) -> dict[str, object]:
+    if isinstance(capabilities_summary, dict):
+        lineage = capabilities_summary.get("monthly_aggregation_lineage")
+        if isinstance(lineage, dict):
+            return lineage
+    return {
+        "status": "not_materialized_in_current_checkpoint_context",
+        "reason": (
+            "current payload path does not expose a distinct persisted monthly aggregation lineage "
+            "object, so the lineage remains at monthly checkpoint table granularity"
+        ),
+    }
+
+
+def _resolve_surface_value(value: object, *, fallback: str) -> object:
+    if isinstance(value, str) and value.strip():
+        return value
+    if value is not None:
+        return value
+    return fallback
+
+
+def _first_non_empty(*values: object) -> object | None:
+    for value in values:
+        if isinstance(value, str):
+            if value.strip():
+                return value
+            continue
+        if value is not None:
+            return value
+    return None
 
 
 def _coerce_optional_float(value: object) -> float | None:

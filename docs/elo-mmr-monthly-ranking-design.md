@@ -380,7 +380,7 @@ Signals still not available in the repository:
 
 Safe to align now without fictional telemetry:
 
-Already aligned in the current practical v1-v2 implementation:
+Already aligned in the current practical v3 implementation:
 
 1. match eligibility uses player-level participation checks
 2. `StrengthOfSchedule` uses persisted opponent-MMR pressure as an honest proxy

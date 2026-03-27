@@ -67,6 +67,19 @@ Payload surfaces now expose:
 - `rating_breakdown.materialization`
 - monthly checkpoint aggregation lineage
 
+When a payload path does not carry a distinct monthly checkpoint lineage object,
+the surface should expose an explicit non-null explanation instead of an opaque
+`null`.
+
+The same rule applies to monthly comparison helpers such as:
+
+- `comparison_path`
+- `role_primary`
+
+If a persisted monthly row predates those fields or does not materialize them
+for that payload path, the surface should return an explicit
+`not_materialized...` style value rather than a bare `null`.
+
 ## Exact, Approximate And Unavailable Boundary
 
 Exact today:
