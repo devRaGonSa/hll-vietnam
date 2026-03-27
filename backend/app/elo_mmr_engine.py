@@ -48,8 +48,10 @@ from .elo_mmr_storage import (
     get_elo_mmr_player_profile,
     initialize_elo_mmr_storage,
     list_elo_mmr_canonical_match_rows,
+    list_elo_mmr_match_results,
     list_elo_mmr_monthly_rankings,
     rebuild_elo_mmr_canonical_facts,
+    replace_elo_mmr_monthly_state,
     replace_elo_mmr_state,
 )
 from .historical_storage import ALL_SERVERS_SLUG, initialize_historical_storage
@@ -191,6 +193,45 @@ def list_elo_mmr_leaderboard_payload(*, server_id: str | None, limit: int) -> di
         "source_policy": result["source_policy"] or _build_historical_source_policy_for_elo(),
         "capabilities_summary": result["capabilities_summary"],
     }
+
+
+def refresh_elo_mmr_monthly_materialization_from_persisted_results(*, db_path=None) -> dict[str, object]:
+    """Rebuild monthly rankings/checkpoints from persisted match results only."""
+    with backend_writer_lock(holder=build_writer_lock_holder("app.elo_mmr_engine refresh-monthly")):
+        resolved_path = initialize_historical_storage(db_path=db_path)
+        initialize_elo_mmr_storage(db_path=resolved_path)
+        match_results = list_elo_mmr_match_results(db_path=resolved_path)
+        if not match_results:
+            return {
+                "status": "no_data",
+                "message": "No persisted Elo/MMR match results are available for monthly rematerialization.",
+                "totals": {
+                    "match_results": 0,
+                    "monthly_rankings": 0,
+                    "monthly_checkpoints": 0,
+                },
+            }
+        monthly_aggregation = _build_monthly_ranking_materialization(
+            match_results=match_results,
+            historical_source_policy=_build_historical_source_policy_for_elo(),
+        )
+        replace_elo_mmr_monthly_state(
+            monthly_rankings=monthly_aggregation["monthly_rankings"],
+            monthly_checkpoints=monthly_aggregation["monthly_checkpoints"],
+            db_path=resolved_path,
+        )
+        return {
+            "status": "ok",
+            "totals": {
+                "match_results": len(match_results),
+                "monthly_rankings": len(monthly_aggregation["monthly_rankings"]),
+                "monthly_checkpoints": len(monthly_aggregation["monthly_checkpoints"]),
+            },
+            "latest_month_by_scope": {
+                checkpoint["scope_key"]: checkpoint["month_key"]
+                for checkpoint in monthly_aggregation["monthly_checkpoints"]
+            },
+        }
 
 
 def get_elo_mmr_player_payload(*, player_id: str, server_id: str | None) -> dict[str, object] | None:

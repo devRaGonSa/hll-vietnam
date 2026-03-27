@@ -1,8 +1,8 @@
 {
-  "lock_token": "1114319d475e477fb33afb7ab816641c",
-  "holder": "app.historical_runner refresh:all-servers [/app/app/historical_runner.py --hourly]",
-  "started_at": "2026-03-26T19:02:16.570456Z",
-  "hostname": "ab481d54a483",
-  "pid": 1,
-  "cwd": "/app"
+  "lock_token": "f39da4544f914a018c53b6d58edc51f2",
+  "holder": "app.elo_mmr_engine refresh-monthly [-]",
+  "started_at": "2026-03-27T12:57:46.297962Z",
+  "hostname": "DESKTOP-CIRQDK5",
+  "pid": 33816,
+  "cwd": "D:\\Proyectos\\HLL Vietnam\\backend"
 }

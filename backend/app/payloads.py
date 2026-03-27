@@ -1419,30 +1419,43 @@ def _enrich_elo_leaderboard_item(
     enriched = dict(item)
     components = item.get("components") if isinstance(item.get("components"), dict) else {}
     persistent_rating = item.get("persistent_rating") if isinstance(item.get("persistent_rating"), dict) else {}
+    normalized_components = _normalize_monthly_components(components)
+    normalized_persistent_rating = _normalize_persistent_rating_surface(persistent_rating)
     delta_breakdown = _resolve_elo_delta_sources(
-        components,
-        persistent_rating=persistent_rating,
+        normalized_components,
+        persistent_rating=normalized_persistent_rating,
     )
-    foundation_summary = _build_elo_foundation_summary(components)
+    foundation_summary = _build_elo_foundation_summary(normalized_components)
+    enriched["components"] = normalized_components
+    enriched["persistent_rating"] = normalized_persistent_rating
+    enriched["model_version"] = MONTHLY_RANKING_MODEL_VERSION
+    enriched["formula_version"] = MONTHLY_RANKING_FORMULA_VERSION
+    enriched["contract_version"] = MONTHLY_RANKING_CONTRACT_VERSION
     enriched["rating_breakdown"] = {
         "persistent_rating": {
-            "mmr": persistent_rating.get("mmr"),
-            "baseline_mmr": persistent_rating.get("baseline_mmr"),
-            "net_mmr_gain": persistent_rating.get("mmr_gain"),
+            "mmr": normalized_persistent_rating.get("mmr"),
+            "baseline_mmr": normalized_persistent_rating.get("baseline_mmr"),
+            "net_mmr_gain": normalized_persistent_rating.get("mmr_gain"),
+            "model_version": normalized_persistent_rating.get("model_version"),
+            "formula_version": normalized_persistent_rating.get("formula_version"),
+            "contract_version": normalized_persistent_rating.get("contract_version"),
         },
         "monthly_ranking": {
             "score": item.get("monthly_rank_score"),
             "valid_matches": item.get("valid_matches"),
-            "confidence": components.get("confidence"),
+            "confidence": normalized_components.get("confidence"),
             "comparison_path": _resolve_surface_value(
-                components.get("comparison_path"),
+                normalized_components.get("comparison_path"),
                 fallback="not_materialized_in_persisted_monthly_row",
             ),
             "role_primary": _resolve_surface_value(
-                components.get("role_primary"),
+                normalized_components.get("role_primary"),
                 fallback="not_materialized_in_persisted_monthly_row",
             ),
-            "penalty_points": components.get("penalty_points"),
+            "penalty_points": normalized_components.get("penalty_points"),
+            "model_version": MONTHLY_RANKING_MODEL_VERSION,
+            "formula_version": MONTHLY_RANKING_FORMULA_VERSION,
+            "contract_version": MONTHLY_RANKING_CONTRACT_VERSION,
         },
         "delta_sources": delta_breakdown["values"],
         "materialization": delta_breakdown["materialization"],
@@ -1470,15 +1483,20 @@ def _enrich_elo_profile(
     monthly_ranking = dict(profile.get("monthly_ranking")) if isinstance(profile.get("monthly_ranking"), dict) else None
     if monthly_ranking is not None:
         components = monthly_ranking.get("components") if isinstance(monthly_ranking.get("components"), dict) else {}
+        normalized_components = _normalize_monthly_components(components)
         delta_breakdown = _resolve_elo_delta_sources(
-            components,
+            normalized_components,
             persistent_rating={
                 "mmr_gain": monthly_ranking.get("mmr_gain"),
                 "baseline_mmr": monthly_ranking.get("baseline_mmr"),
                 "mmr": monthly_ranking.get("current_mmr"),
             },
         )
-        foundation_summary = _build_elo_foundation_summary(components)
+        foundation_summary = _build_elo_foundation_summary(normalized_components)
+        monthly_ranking["model_version"] = MONTHLY_RANKING_MODEL_VERSION
+        monthly_ranking["formula_version"] = MONTHLY_RANKING_FORMULA_VERSION
+        monthly_ranking["contract_version"] = MONTHLY_RANKING_CONTRACT_VERSION
+        monthly_ranking["components"] = normalized_components
         monthly_ranking["rating_breakdown"] = {
             "monthly_rank_score": monthly_ranking.get("monthly_rank_score"),
             "current_mmr": monthly_ranking.get("current_mmr"),
@@ -1487,23 +1505,27 @@ def _enrich_elo_profile(
             "elo_core_gain": delta_breakdown["values"]["elo_core_gain"],
             "performance_modifier_gain": delta_breakdown["values"]["performance_modifier_gain"],
             "proxy_modifier_gain": delta_breakdown["values"]["proxy_modifier_gain"],
-            "confidence": components.get("confidence"),
-            "avg_participation_ratio": components.get("avg_participation_ratio"),
+            "confidence": normalized_components.get("confidence"),
+            "avg_participation_ratio": normalized_components.get("avg_participation_ratio"),
             "comparison_path": _resolve_surface_value(
-                components.get("comparison_path"),
+                normalized_components.get("comparison_path"),
                 fallback="not_materialized_in_persisted_monthly_row",
             ),
             "role_primary": _resolve_surface_value(
-                components.get("role_primary"),
+                normalized_components.get("role_primary"),
                 fallback="not_materialized_in_persisted_monthly_row",
             ),
-            "penalty_points": components.get("penalty_points"),
+            "penalty_points": normalized_components.get("penalty_points"),
+            "model_version": MONTHLY_RANKING_MODEL_VERSION,
+            "formula_version": MONTHLY_RANKING_FORMULA_VERSION,
+            "contract_version": MONTHLY_RANKING_CONTRACT_VERSION,
             "fact_foundation": foundation_summary,
             "materialization": delta_breakdown["materialization"],
         }
         enriched["monthly_ranking"] = monthly_ranking
     persistent_rating = dict(profile.get("persistent_rating")) if isinstance(profile.get("persistent_rating"), dict) else None
     if persistent_rating is not None:
+        persistent_rating = _normalize_persistent_rating_surface(persistent_rating)
         persistent_rating["meaning"] = "persistent competitive rating for the selected scope"
         enriched["persistent_rating"] = persistent_rating
     enriched["telemetry_boundary"] = {
@@ -1604,6 +1626,26 @@ def _build_elo_foundation_summary(components: dict[str, object]) -> dict[str, ob
             "avg_objective_proxy_per_minute": components.get("avg_objective_proxy_per_minute"),
         },
     }
+
+
+def _normalize_persistent_rating_surface(persistent_rating: dict[str, object]) -> dict[str, object]:
+    normalized = dict(persistent_rating)
+    normalized["model_version"] = PERSISTENT_RATING_MODEL_VERSION
+    normalized["formula_version"] = PERSISTENT_RATING_FORMULA_VERSION
+    normalized["contract_version"] = PERSISTENT_RATING_CONTRACT_VERSION
+    return normalized
+
+
+def _normalize_monthly_components(components: dict[str, object]) -> dict[str, object]:
+    normalized = dict(components)
+    normalized["model_version"] = MONTHLY_RANKING_MODEL_VERSION
+    normalized["ranking_formula_version"] = MONTHLY_RANKING_FORMULA_VERSION
+    normalized["persistent_rating_model_version"] = PERSISTENT_RATING_MODEL_VERSION
+    normalized["persistent_rating_formula_version"] = PERSISTENT_RATING_FORMULA_VERSION
+    normalized["persistent_rating_contract_version"] = PERSISTENT_RATING_CONTRACT_VERSION
+    normalized["match_result_contract_version"] = MATCH_RESULT_CONTRACT_VERSION
+    normalized["monthly_ranking_contract_version"] = MONTHLY_RANKING_CONTRACT_VERSION
+    return normalized
 
 
 def _resolve_monthly_aggregation_lineage(

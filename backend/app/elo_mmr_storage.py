@@ -896,6 +896,149 @@ def replace_elo_mmr_state(
     return resolved_path
 
 
+def replace_elo_mmr_monthly_state(
+    *,
+    monthly_rankings: list[dict[str, object]],
+    monthly_checkpoints: list[dict[str, object]],
+    db_path: Path | None = None,
+) -> Path:
+    """Replace only the persisted monthly Elo/MMR state with a freshly built dataset."""
+    resolved_path = initialize_elo_mmr_storage(db_path=db_path)
+    with _connect_writer(resolved_path) as connection:
+        connection.execute("DELETE FROM elo_mmr_monthly_checkpoints")
+        connection.execute("DELETE FROM elo_mmr_monthly_rankings")
+
+        connection.executemany(
+            """
+            INSERT INTO elo_mmr_monthly_rankings (
+                scope_key,
+                month_key,
+                stable_player_key,
+                player_name,
+                steam_id,
+                model_version,
+                formula_version,
+                contract_version,
+                current_mmr,
+                baseline_mmr,
+                mmr_gain,
+                avg_match_score,
+                strength_of_schedule,
+                consistency,
+                activity,
+                confidence,
+                penalty_points,
+                monthly_rank_score,
+                valid_matches,
+                total_matches,
+                total_time_seconds,
+                avg_participation_ratio,
+                eligible,
+                eligibility_reason,
+                accuracy_mode,
+                capabilities_json,
+                component_scores_json
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            [
+                (
+                    row["scope_key"],
+                    row["month_key"],
+                    row["stable_player_key"],
+                    row["player_name"],
+                    row.get("steam_id"),
+                    row.get("model_version", ""),
+                    row.get("formula_version", ""),
+                    row.get("contract_version", ""),
+                    row["current_mmr"],
+                    row["baseline_mmr"],
+                    row["mmr_gain"],
+                    row["avg_match_score"],
+                    row["strength_of_schedule"],
+                    row["consistency"],
+                    row["activity"],
+                    row["confidence"],
+                    row["penalty_points"],
+                    row["monthly_rank_score"],
+                    row["valid_matches"],
+                    row["total_matches"],
+                    row["total_time_seconds"],
+                    row.get("avg_participation_ratio", 0.0),
+                    1 if row["eligible"] else 0,
+                    row.get("eligibility_reason"),
+                    row["accuracy_mode"],
+                    json.dumps(row["capabilities"], ensure_ascii=True, separators=(",", ":")),
+                    json.dumps(row["component_scores"], ensure_ascii=True, separators=(",", ":")),
+                )
+                for row in monthly_rankings
+            ],
+        )
+
+        connection.executemany(
+            """
+            INSERT INTO elo_mmr_monthly_checkpoints (
+                scope_key,
+                month_key,
+                generated_at,
+                model_version,
+                formula_version,
+                contract_version,
+                player_count,
+                eligible_player_count,
+                source_policy_json,
+                capabilities_summary_json
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            [
+                (
+                    row["scope_key"],
+                    row["month_key"],
+                    row["generated_at"],
+                    row.get("model_version", ""),
+                    row.get("formula_version", ""),
+                    row.get("contract_version", ""),
+                    row["player_count"],
+                    row["eligible_player_count"],
+                    json.dumps(row["source_policy"], ensure_ascii=True, separators=(",", ":")),
+                    json.dumps(
+                        row["capabilities_summary"],
+                        ensure_ascii=True,
+                        separators=(",", ":"),
+                    ),
+                )
+                for row in monthly_checkpoints
+            ],
+        )
+    return resolved_path
+
+
+def list_elo_mmr_match_results(*, db_path: Path | None = None) -> list[dict[str, object]]:
+    """Return persisted match-result rows for monthly rematerialization or audits."""
+    resolved_path = _resolve_db_path(db_path)
+    try:
+        with _connect_readonly(resolved_path) as connection:
+            rows = connection.execute(
+                """
+                SELECT *
+                FROM elo_mmr_match_results
+                ORDER BY
+                    match_ended_at ASC,
+                    scope_key ASC,
+                    external_match_id ASC,
+                    stable_player_key ASC
+                """
+            ).fetchall()
+    except sqlite3.OperationalError:
+        return []
+    items: list[dict[str, object]] = []
+    for row in rows:
+        item = dict(row)
+        item["match_valid"] = bool(item.get("match_valid"))
+        item["capabilities"] = json.loads(item["capabilities_json"])
+        items.append(item)
+    return items
+
+
 def rebuild_elo_mmr_canonical_facts(*, db_path: Path | None = None) -> dict[str, object]:
     """Materialize the canonical Elo fact layer from persisted historical closed matches."""
     resolved_path = initialize_elo_mmr_storage(db_path=db_path)
