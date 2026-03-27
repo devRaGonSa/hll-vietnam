@@ -3486,6 +3486,35 @@ def _build_empty_monthly_mvp_v2_result(*, current_time: datetime) -> dict[str, o
     }
 
 
+def describe_historical_event_telemetry_boundary() -> dict[str, object]:
+    """Describe current tactical-event coverage from the public historical source."""
+    return {
+        "source": "public-scoreboard",
+        "event_telemetry_contract_version": "elo-event-telemetry-v1",
+        "event_storage_strategy": "hybrid-header-plus-family-detail",
+        "event_family_capabilities": {
+            "garrison_events": "not_available",
+            "outpost_events": "not_available",
+            "revive_events": "not_available",
+            "supply_events": "not_available",
+            "node_events": "not_available",
+            "repair_events": "not_available",
+            "mine_events": "not_available",
+            "commander_ability_events": "not_available",
+            "strongpoint_presence_events": "not_available",
+            "role_assignment_events": "not_available",
+            "disconnect_leave_admin_events": "not_available",
+            "death_classification_events": "not_available",
+        },
+        "notes": [
+            "Current historical ingestion persists scoreboard-style match facts and player rows only.",
+            "The V2 player-event pipeline stores aggregated kill, death, weapon and teamkill summaries, not tactical/admin event families.",
+            "That auxiliary summary pipeline can support approximate canonical death_classification_events after Elo event ingestion, but it does not upgrade the base historical source itself into an exact tactical feed.",
+            "Later workers must not infer canonical tactical event rows from scoreboard totals alone.",
+        ],
+    }
+
+
 def _is_all_servers_selector(value: str | None) -> bool:
     return isinstance(value, str) and value.strip() == ALL_SERVERS_SLUG
 

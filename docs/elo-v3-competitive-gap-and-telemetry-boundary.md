@@ -21,9 +21,9 @@ Sin cambios funcionales. Sin frontend.
 Important naming boundary after the latest practical alignment work:
 
 - implemented branch model:
-  - `elo-pdf-v1-v2-practical`
+  - `elo-pdf-v3-practical`
 - deferred evolution:
-  - telemetry-rich `v3`
+  - telemetry-complete `v3`
 
 This repo can keep evolving contracts and formulas without claiming that the
 implemented telemetry model is already `v3`.
@@ -79,7 +79,7 @@ Conclusion practica:
 - no existe todavia una paridad exacta con un ranking competitivo ideal basado
   en telemetria tactica o eventos raw de HLL
 - la implementacion actual debe describirse como alineacion practica PDF
-  `v1-v2`, no como culminacion real de `v3`
+  `v3`, no como culminacion telemetry-complete de `v3`
 
 ## How Elo/MMR Works Today
 

@@ -403,7 +403,9 @@ def _score_match_for_scope(
         signals.append(build_signal("ObjectiveIndex", CAPABILITY_APPROXIMATE, "Approximated from offense and defense scoreboard points because no tactical event feed exists yet."))
         signals.append(build_signal("ObjectiveScoreProxy", CAPABILITY_APPROXIMATE, "Persists offense plus defense as an explicit tactical proxy rather than implying exact tactical telemetry."))
 
-        teamkills = _safe_int(player.get("teamkills"))
+        teamkills = _safe_int(player.get("teamkill_exact_count") or player.get("teamkills"))
+        death_type_capability_status = str(player.get("death_type_capability_status") or CAPABILITY_UNAVAILABLE)
+        leave_admin_capability_status = str(player.get("leave_admin_capability_status") or CAPABILITY_UNAVAILABLE)
         completion_component = round(participation_ratio * 100.0, 3)
         discipline_index = round(
             max(
@@ -412,12 +414,33 @@ def _score_match_for_scope(
             ),
             3,
         )
-        signals.append(build_signal("DisciplineIndex", CAPABILITY_APPROXIMATE, "Uses exact teamkills plus participation as an honest proxy for leave or AFK risk because direct discipline telemetry is unavailable."))
+        signals.append(build_signal("DisciplineIndex", CAPABILITY_APPROXIMATE, "Uses exact teamkill counts plus participation as an honest proxy because leave, kick and admin telemetry remain unavailable."))
+        signals.append(
+            build_signal(
+                "DeathTypeClassification",
+                death_type_capability_status if death_type_capability_status in {CAPABILITY_EXACT, CAPABILITY_APPROXIMATE} else CAPABILITY_UNAVAILABLE,
+                "Approximate summary-backed death classification is available for combat and friendly-fire proxy categories; redeploy, suicide and menu-exit exact types remain unavailable.",
+            )
+        )
+        signals.append(
+            build_signal(
+                "LeaveAdminLineage",
+                leave_admin_capability_status if leave_admin_capability_status in {CAPABILITY_EXACT, CAPABILITY_APPROXIMATE} else CAPABILITY_UNAVAILABLE,
+                "No exact disconnect, kick, ban or admin-action event family is persisted yet.",
+            )
+        )
         leadership_index = None
         signals.append(build_signal("LeadershipIndex", CAPABILITY_UNAVAILABLE, "No leadership-specific telemetry is stored in the repository yet."))
 
-        role_bucket = _resolve_role_bucket(player)
-        signals.append(build_signal("role_bucket", CAPABILITY_APPROXIMATE, "Inferred from the dominant combat/offense/defense/support axis because literal player role is unavailable."))
+        role_bucket = str(player.get("role_primary") or _resolve_role_bucket(player))
+        role_bucket_mode = str(player.get("role_primary_mode") or CAPABILITY_APPROXIMATE)
+        signals.append(
+            build_signal(
+                "role_bucket",
+                role_bucket_mode if role_bucket_mode in {CAPABILITY_EXACT, CAPABILITY_APPROXIMATE} else CAPABILITY_APPROXIMATE,
+                "Uses persisted role-primary normalization input when available; current fallback remains scoreboard-axis approximation because literal role assignment events are unavailable.",
+            )
+        )
         if duration_mode == CAPABILITY_EXACT:
             signals.append(build_signal("quality_duration", CAPABILITY_EXACT, "Duration computed from match timestamps."))
         else:
@@ -454,77 +477,79 @@ def _score_match_for_scope(
             quality_factor=quality_factor,
         )
         signals.append(build_signal("StrengthOfScheduleMatch", CAPABILITY_APPROXIMATE, "Approximated from opponent average MMR pressure plus match quality because no full roster graph is stored."))
-        exact_modifier_index = _build_weighted_modifier_index(
-            left_value=combat_index,
-            right_value=utility_index,
-            left_weight=weights["combat"],
-            right_weight=weights["utility"],
-        )
-        proxy_modifier_index = _build_weighted_modifier_index(
-            left_value=objective_index,
-            right_value=discipline_index,
-            left_weight=weights["objective"],
-            right_weight=weights["discipline"],
-        )
-        effective_score = round(
-            (
-                (0.60 * outcome_score)
-                + (0.25 * impact_score)
-                + (0.10 * strength_of_schedule_match)
-                + (0.05 * discipline_index)
-            )
-            * participation_ratio,
-            3,
+        normalization_bucket_key = str(player.get("normalization_bucket_key") or "")
+        normalization_fallback_reason = player.get("normalization_fallback_reason")
+        combat_contribution = round(weights["combat"] * _build_centered_modifier_edge(combat_index, participation_ratio=1.0), 4)
+        objective_contribution = round(weights["objective"] * _build_centered_modifier_edge(objective_index, participation_ratio=1.0), 4)
+        utility_contribution = round(weights["utility"] * _build_centered_modifier_edge(utility_index, participation_ratio=1.0), 4)
+        survival_discipline_contribution = round(weights["discipline"] * _build_centered_modifier_edge(discipline_index, participation_ratio=1.0), 4)
+        exact_component_contribution = round(combat_contribution + utility_contribution, 4)
+        proxy_component_contribution = round(objective_contribution + survival_discipline_contribution, 4)
+        match_impact = round(
+            max(-1.0, min(1.0, exact_component_contribution + proxy_component_contribution)),
+            4,
         )
         if not player_match_valid:
             delta_mmr = 0.0
             match_score = 0.0
             expected_result = 0.0
             actual_result = 0.0
+            won_score = 0.0
+            own_team_average_mmr = 0.0
+            enemy_team_average_mmr = 0.0
+            margin_boost = 0.0
+            outcome_adjusted = 0.0
             elo_core_delta = 0.0
             performance_modifier_delta = 0.0
             proxy_modifier_delta = 0.0
         else:
-            expected_result = _build_expected_result(
-                player_rating=rating_before_by_player.get(stable_player_key, DEFAULT_BASE_MMR),
-                opponent_average_rating=_resolve_opponent_average_rating(
-                    stable_player_key=stable_player_key,
-                    team_side=team_side,
-                    players=players,
-                    rating_before_by_player=rating_before_by_player,
-                ),
+            own_team_average_mmr = _resolve_own_team_average_rating(
+                stable_player_key=stable_player_key,
+                team_side=team_side,
+                players=players,
+                rating_before_by_player=rating_before_by_player,
             )
-            actual_result = _build_actual_result(
+            enemy_team_average_mmr = _resolve_opponent_average_rating(
+                stable_player_key=stable_player_key,
+                team_side=team_side,
+                players=players,
+                rating_before_by_player=rating_before_by_player,
+            )
+            expected_result = _build_expected_result(
+                player_rating=own_team_average_mmr,
+                opponent_average_rating=enemy_team_average_mmr,
+            )
+            won_score = _build_won_score(team_outcome=team_outcome)
+            actual_result = won_score
+            margin_boost = _build_margin_boost(
                 team_outcome=team_outcome,
                 allied_score=_safe_int(match_group.get("allied_score")),
                 axis_score=_safe_int(match_group.get("axis_score")),
-                participation_ratio=participation_ratio,
             )
-            exact_modifier_edge = _build_centered_modifier_edge(
-                exact_modifier_index,
-                participation_ratio=participation_ratio,
-            )
-            proxy_modifier_edge = _build_centered_modifier_edge(
-                proxy_modifier_index,
-                participation_ratio=participation_ratio,
+            outcome_adjusted = _build_outcome_adjusted(
+                won_score=won_score,
+                expected_win=expected_result,
+                margin_boost=margin_boost,
             )
             elo_core_delta = round(
-                ELO_K_FACTOR * quality_factor * (actual_result - expected_result),
+                ELO_K_FACTOR * quality_factor * 0.80 * outcome_adjusted,
                 3,
             )
-            exact_modifier_delta = round(
-                ELO_K_FACTOR * quality_factor * EXACT_MODIFIER_K_SHARE * exact_modifier_edge,
+            performance_modifier_delta = round(
+                ELO_K_FACTOR * quality_factor * 0.20 * exact_component_contribution,
                 3,
             )
             proxy_modifier_delta = round(
-                ELO_K_FACTOR * quality_factor * PROXY_MODIFIER_K_SHARE * proxy_modifier_edge,
+                ELO_K_FACTOR * quality_factor * 0.20 * proxy_component_contribution,
                 3,
             )
-            performance_modifier_delta = exact_modifier_delta
             delta_mmr = round(elo_core_delta + performance_modifier_delta + proxy_modifier_delta, 3)
-            match_score = round(effective_score * quality_factor, 3)
-            signals.append(build_signal("DeltaMMR", CAPABILITY_APPROXIMATE, "Uses Elo-like expected-vs-actual movement plus bounded HLL performance modifiers and honest proxy boundaries."))
-            signals.append(build_signal("MatchScore", CAPABILITY_APPROXIMATE, "Uses outcome-first competitive scoring with bounded HLL impact and schedule context, then scales by match quality."))
+            combined_rating_signal = max(-1.0, min(1.0, (0.80 * outcome_adjusted) + (0.20 * match_impact)))
+            match_score = round((50.0 + (combined_rating_signal * 50.0)) * quality_factor, 3)
+            signals.append(build_signal("OutcomeAdjusted", CAPABILITY_EXACT, "Uses explicit ExpectedWin, won score and bounded margin boost."))
+            signals.append(build_signal("MatchImpact", CAPABILITY_APPROXIMATE, "Uses bounded role-adjusted combat, objective, utility and survival-discipline contributions with exact and proxy source separation."))
+            signals.append(build_signal("DeltaMMR", CAPABILITY_APPROXIMATE, "Uses DeltaMMR = K * Q * (0.80 * OutcomeAdjusted + 0.20 * MatchImpact) with exact and proxy contribution split persisted per row."))
+            signals.append(build_signal("MatchScore", CAPABILITY_APPROXIMATE, "Uses the bounded persistent-rating signal mapped to a reviewable 0-100 scale."))
         capability_summary = summarize_accuracy(signals)
         rating_before = float(rating_row["current_mmr"])
         rating_after = round(rating_before + delta_mmr, 3)
@@ -549,7 +574,7 @@ def _score_match_for_scope(
                 "quality_factor": quality_factor,
                 "quality_bucket": quality_bucket,
                 "role_bucket": role_bucket,
-                "role_bucket_mode": CAPABILITY_APPROXIMATE,
+                "role_bucket_mode": role_bucket_mode,
                 "outcome_score": outcome_score,
                 "combat_index": combat_index,
                 "objective_index": objective_index,
@@ -576,8 +601,23 @@ def _score_match_for_scope(
                 "participation_quality_score": participation_quality_score,
                 "strength_of_schedule_match": strength_of_schedule_match,
                 "team_outcome": team_outcome,
+                "own_team_average_mmr": own_team_average_mmr,
+                "enemy_team_average_mmr": enemy_team_average_mmr,
                 "expected_result": expected_result,
                 "actual_result": actual_result,
+                "won_score": won_score,
+                "margin_boost": margin_boost,
+                "outcome_adjusted": outcome_adjusted,
+                "match_impact": match_impact,
+                "combat_contribution": combat_contribution,
+                "objective_contribution": objective_contribution,
+                "utility_contribution": utility_contribution,
+                "survival_discipline_contribution": survival_discipline_contribution,
+                "exact_component_contribution": exact_component_contribution,
+                "proxy_component_contribution": proxy_component_contribution,
+                "normalization_bucket_key": normalization_bucket_key,
+                "normalization_fallback_bucket_key": player.get("normalization_fallback_bucket_key"),
+                "normalization_fallback_reason": normalization_fallback_reason,
                 "elo_core_delta": elo_core_delta,
                 "performance_modifier_delta": performance_modifier_delta,
                 "proxy_modifier_delta": proxy_modifier_delta,
@@ -591,6 +631,11 @@ def _score_match_for_scope(
                 "combat_per_minute": round(float(player.get("combat_per_minute") or 0.0), 3),
                 "support_per_minute": round(float(player.get("support_per_minute") or 0.0), 3),
                 "objective_proxy_per_minute": round(float(player.get("objective_proxy_per_minute") or 0.0), 3),
+                "discipline_capability_status": player.get("discipline_capability_status", CAPABILITY_UNAVAILABLE),
+                "leave_admin_capability_status": leave_admin_capability_status,
+                "death_type_capability_status": death_type_capability_status,
+                "teamkill_exact_count": _safe_int(player.get("teamkill_exact_count")),
+                "tactical_event_count": _safe_int(player.get("tactical_event_count")),
             }
         )
         rating_row["current_mmr"] = rating_after
@@ -670,6 +715,14 @@ def _build_monthly_rankings(match_results: list[dict[str, object]]) -> list[dict
             sum(float(row.get("participation_quality_score") or 0.0) for row in rows) / max(1, len(rows)),
             3,
         )
+        avg_tactical_event_count = round(
+            sum(float(row.get("tactical_event_count") or 0.0) for row in rows) / max(1, len(rows)),
+            3,
+        )
+        avg_teamkill_exact_count = round(
+            sum(float(row.get("teamkill_exact_count") or 0.0) for row in rows) / max(1, len(rows)),
+            3,
+        )
         strength_of_schedule = round(
             sum(float(row.get("strength_of_schedule_match") or 0.0) for row in valid_rows) / max(1, len(valid_rows)),
             3,
@@ -692,6 +745,32 @@ def _build_monthly_rankings(match_results: list[dict[str, object]]) -> list[dict
         )
         consistency = _build_consistency_score(valid_rows)
         activity = _build_activity_score(valid_rows, total_time_seconds)
+        role_counts: dict[str, int] = defaultdict(int)
+        for row in valid_rows or rows:
+            role_counts[str(row.get("role_bucket") or ROLE_BUCKET_GENERALIST)] += 1
+        role_primary = max(role_counts.items(), key=lambda item: item[1])[0] if role_counts else ROLE_BUCKET_GENERALIST
+        role_primary_mode = (
+            CAPABILITY_EXACT
+            if valid_rows and all(row.get("role_bucket_mode") == CAPABILITY_EXACT for row in valid_rows)
+            else CAPABILITY_APPROXIMATE
+            if role_counts
+            else CAPABILITY_UNAVAILABLE
+        )
+        normalization_fallback_used = any(bool(row.get("normalization_fallback_reason")) for row in rows)
+        comparison_path = "role-all-parent-fallback" if normalization_fallback_used else "role-primary-bucket"
+        comparison_bucket_key = next(
+            (
+                str(
+                    row.get("normalization_fallback_bucket_key")
+                    or row.get("normalization_bucket_key")
+                    or ""
+                )
+                for row in rows
+                if row.get("normalization_bucket_key")
+            ),
+            "",
+        )
+        role_bucket_sample_sufficient = not normalization_fallback_used
         confidence = round(
             min(
                 100.0,
@@ -706,11 +785,13 @@ def _build_monthly_rankings(match_results: list[dict[str, object]]) -> list[dict
             len(valid_rows) >= MONTHLY_MIN_VALID_MATCHES
             and total_time_seconds >= MONTHLY_MIN_TIME_SECONDS
             and avg_participation_ratio >= MONTHLY_MIN_AVG_PARTICIPATION_RATIO
+            and avg_participation_quality_score >= 45.0
         )
         eligibility_reason = _build_monthly_eligibility_reason(
             valid_match_count=len(valid_rows),
             total_time_seconds=total_time_seconds,
             avg_participation_ratio=avg_participation_ratio,
+            avg_participation_quality_score=avg_participation_quality_score,
         )
         grouped_by_scope_month[(scope_key, month_key)].append(
             {
@@ -754,7 +835,8 @@ def _build_monthly_rankings(match_results: list[dict[str, object]]) -> list[dict
                         build_signal("StrengthOfSchedule", CAPABILITY_APPROXIMATE, "Uses opponent average MMR pressure plus match quality, not a full roster graph."),
                         build_signal("DurationBucket", CAPABILITY_APPROXIMATE, "Duration buckets are materialized from exact timestamps when present or approximate duration fallbacks otherwise."),
                         build_signal("ParticipationBucket", CAPABILITY_APPROXIMATE, "Participation quality is explicit, but can inherit approximate duration boundaries when timestamps are missing."),
-                        build_signal("MonthlyEligibility", CAPABILITY_EXACT, "Uses persisted valid-match count, playtime and participation thresholds."),
+                        build_signal("MonthlyEligibility", CAPABILITY_EXACT, "Uses persisted valid-match count, playtime, participation ratio and participation quality thresholds."),
+                        build_signal("MonthlyRoleComparison", role_primary_mode if role_primary_mode in {CAPABILITY_EXACT, CAPABILITY_APPROXIMATE} else CAPABILITY_UNAVAILABLE, "Uses role-primary bucket comparison when bucket coverage is sufficient and falls back to role-all parent buckets otherwise."),
                     ],
                 },
                 "component_scores": {
@@ -788,6 +870,8 @@ def _build_monthly_rankings(match_results: list[dict[str, object]]) -> list[dict
                     "avg_objective_proxy_per_minute": avg_objective_proxy_per_minute,
                     "avg_participation_ratio": avg_participation_ratio,
                     "avg_participation_quality_score": avg_participation_quality_score,
+                    "avg_tactical_event_count": avg_tactical_event_count,
+                    "avg_teamkill_exact_count": avg_teamkill_exact_count,
                     "exact_duration_match_count": exact_duration_match_count,
                     "approximate_duration_match_count": approximate_duration_match_count,
                     "full_participation_match_count": full_participation_match_count,
@@ -795,6 +879,16 @@ def _build_monthly_rankings(match_results: list[dict[str, object]]) -> list[dict
                     "high_quality_match_count": high_quality_match_count,
                     "medium_quality_match_count": medium_quality_match_count,
                     "low_quality_match_count": low_quality_match_count,
+                    "role_primary": role_primary,
+                    "role_primary_mode": role_primary_mode,
+                    "comparison_path": comparison_path,
+                    "comparison_bucket_key": comparison_bucket_key,
+                    "role_bucket_sample_sufficient": role_bucket_sample_sufficient,
+                    "normalization_fallback_used": normalization_fallback_used,
+                    "minimum_participation_quality_threshold": 45.0,
+                    "discipline_capability_status": _most_common_status(rows, "discipline_capability_status"),
+                    "leave_admin_capability_status": _most_common_status(rows, "leave_admin_capability_status"),
+                    "death_type_capability_status": _most_common_status(rows, "death_type_capability_status"),
                     "penalty_points": penalty_points,
                 },
             }
@@ -873,9 +967,17 @@ def _build_monthly_ranking_materialization(
                     "unavailable_ratio": unavailable_ratio,
                     "partial_count": partial_count,
                     "aggregation_contract": _build_monthly_ranking_contract_metadata(),
+                    "monthly_aggregation_lineage": {
+                        "source": "elo_mmr_match_results",
+                        "uses_bucket_aware_comparison": True,
+                        "role_parent_fallback_enabled": True,
+                        "penalty_boundary": "discipline-exact-plus-leave-admin-capability-aware",
+                    },
                     "notes": [
                         "Outcome, combat, utility, match validity and player participation use real stored signals.",
                         "Canonical player-match facts now persist duration buckets, participation buckets and per-minute rates from the currently available repository data.",
+                        "Canonical player-match facts also carry event-backed summary counters for approximate death classification lineage from the player-event ledger.",
+                        "Normalization bucket keys and bucket-level baselines are persisted so later rating and monthly tasks can use explicit fallback-aware comparisons.",
                         "ObjectiveIndex, role bucket, discipline and strength of schedule rely partly on honest proxies.",
                         "LeadershipIndex is not available with the current repository telemetry.",
                     ],
@@ -1052,6 +1154,25 @@ def _resolve_opponent_average_rating(
     return round(sum(opponent_ratings) / len(opponent_ratings), 3)
 
 
+def _resolve_own_team_average_rating(
+    *,
+    stable_player_key: str,
+    team_side: str,
+    players: list[dict[str, object]],
+    rating_before_by_player: dict[str, float],
+) -> float:
+    normalized_team_side = str(team_side or "").strip().lower()
+    own_team_ratings = [
+        rating_before_by_player.get(str(player["stable_player_key"]), DEFAULT_BASE_MMR)
+        for player in players
+        if str(player["stable_player_key"]) == stable_player_key
+        or _is_same_team(str(player.get("team_side") or ""), normalized_team_side)
+    ]
+    if not own_team_ratings:
+        return DEFAULT_BASE_MMR
+    return round(sum(own_team_ratings) / len(own_team_ratings), 3)
+
+
 def _build_strength_of_schedule_match(
     *,
     stable_player_key: str,
@@ -1076,11 +1197,34 @@ def _build_expected_result(*, player_rating: float, opponent_average_rating: flo
     return round(1.0 / (1.0 + (10.0**exponent)), 4)
 
 
+def _build_won_score(*, team_outcome: str) -> float:
+    if team_outcome == "win":
+        return 1.0
+    if team_outcome == "draw":
+        return 0.5
+    return 0.0
+
+
+def _build_margin_boost(*, team_outcome: str, allied_score: int | None, axis_score: int | None) -> float:
+    if allied_score is None or axis_score is None or team_outcome == "draw":
+        return 0.0
+    total_score = max(1, allied_score + axis_score)
+    margin_ratio = abs(allied_score - axis_score) / total_score
+    signed_boost = min(0.15, margin_ratio * 0.30)
+    return round(signed_boost if team_outcome == "win" else -signed_boost, 4)
+
+
+def _build_outcome_adjusted(*, won_score: float, expected_win: float, margin_boost: float) -> float:
+    raw_score = (2.0 * (won_score - expected_win)) + margin_boost
+    return round(max(-1.0, min(1.0, raw_score)), 4)
+
+
 def _build_monthly_eligibility_reason(
     *,
     valid_match_count: int,
     total_time_seconds: int,
     avg_participation_ratio: float,
+    avg_participation_quality_score: float,
 ) -> str | None:
     if valid_match_count < MONTHLY_MIN_VALID_MATCHES:
         return "minimum-valid-matches-not-met"
@@ -1088,7 +1232,18 @@ def _build_monthly_eligibility_reason(
         return "minimum-playtime-not-met"
     if avg_participation_ratio < MONTHLY_MIN_AVG_PARTICIPATION_RATIO:
         return "minimum-participation-ratio-not-met"
+    if avg_participation_quality_score < 45.0:
+        return "minimum-participation-quality-not-met"
     return None
+
+
+def _most_common_status(rows: list[dict[str, object]], field_name: str) -> str:
+    counts: dict[str, int] = defaultdict(int)
+    for row in rows:
+        counts[str(row.get(field_name) or CAPABILITY_UNAVAILABLE)] += 1
+    if not counts:
+        return CAPABILITY_UNAVAILABLE
+    return max(counts.items(), key=lambda item: item[1])[0]
 
 
 def _classify_quality_bucket(quality_factor: float) -> str:

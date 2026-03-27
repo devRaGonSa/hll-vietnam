@@ -76,6 +76,7 @@ def describe_rcon_historical_read_model() -> dict[str, object]:
     """Describe what the minimal RCON historical read model currently supports."""
     return {
         "source": "rcon-historical-competitive-read-model",
+        "event_telemetry_contract_version": "elo-event-telemetry-v1",
         "supported_endpoints": [
             "/api/historical/server-summary",
             "/api/historical/recent-matches",
@@ -97,12 +98,28 @@ def describe_rcon_historical_read_model() -> dict[str, object]:
             "recent_matches": "approximate",
             "competitive_quality": "partial",
             "player_stats": "unavailable",
+            "tactical_event_families": "not_available",
+        },
+        "event_family_capabilities": {
+            "garrison_events": "not_available",
+            "outpost_events": "not_available",
+            "revive_events": "not_available",
+            "supply_events": "not_available",
+            "node_events": "not_available",
+            "repair_events": "not_available",
+            "mine_events": "not_available",
+            "commander_ability_events": "not_available",
+            "strongpoint_presence_events": "not_available",
+            "role_assignment_events": "not_available",
+            "disconnect_leave_admin_events": "not_available",
+            "death_classification_events": "not_available",
         },
         "limitations": [
             "No retroactive backfill of closed matches.",
             "No weekly or monthly competitive leaderboards.",
             "No MVP or player-event parity with public-scoreboard.",
             "No player-level scoreboard parity from RCON samples alone.",
+            "No tactical event telemetry families are emitted by the current historical RCON read model.",
         ],
     }
 

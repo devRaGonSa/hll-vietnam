@@ -8,11 +8,11 @@ available today.
 
 Current implementation label:
 
-- practical PDF alignment at the `v1-v2` level
+- practical PDF alignment at the `v3` level
 
 Deferred explicitly:
 
-- telemetry-rich `v3` evolution
+- telemetry-complete `v3` evolution
 
 The implementation keeps the same conceptual split:
 
@@ -185,16 +185,25 @@ Meaning:
 
 Canonical fact lineage now persisted and reused:
 
-- `fact_schema_version = "elo-canonical-v2"`
-- `source_input_version = "historical-closed-match-v1"`
+- `fact_schema_version = "elo-canonical-v3"`
+- `source_input_version = "historical-closed-match-v1-plus-player-event-summary-v1"`
 
 Current model/version family:
 
-- `model_version = "elo-pdf-v1-v2-practical"`
+- persistent rating model:
+  - `elo-pdf-v3-persistent-practical`
 - persistent match formula revision:
-  - `elo-pdf-v1-v2-practical-match-rev3`
-- monthly formula revision:
-  - `elo-pdf-v1-v2-practical-monthly-rev3`
+  - `elo-pdf-v3-persistent-match-rev4`
+- monthly ranking model:
+  - `elo-pdf-v3-monthly-practical`
+- monthly ranking formula revision:
+  - `elo-pdf-v3-monthly-rev4`
+- match result contract:
+  - `elo-mmr-match-result-v4`
+- monthly ranking contract:
+  - `elo-mmr-monthly-ranking-v4`
+- monthly checkpoint contract:
+  - `elo-mmr-monthly-checkpoint-v4`
 
 Scopes persisted:
 

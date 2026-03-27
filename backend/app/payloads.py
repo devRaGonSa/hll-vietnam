@@ -1099,8 +1099,12 @@ def build_elo_mmr_leaderboard_payload(
     """Return the current Elo/MMR monthly leaderboard."""
     payload = list_elo_mmr_leaderboard_payload(server_id=server_id, limit=limit)
     is_all_servers = server_id == ALL_SERVERS_SLUG
-    accuracy_contract = _build_elo_accuracy_contract(payload.get("capabilities_summary"))
+    accuracy_contract = _resolve_elo_leaderboard_accuracy_contract(payload)
     model_contract = _build_elo_model_contract(
+        accuracy_contract,
+        monthly_context=payload,
+    )
+    auditability = _build_elo_auditability_summary(
         accuracy_contract,
         monthly_context=payload,
     )
@@ -1129,6 +1133,7 @@ def build_elo_mmr_leaderboard_payload(
             "capabilities_summary": payload.get("capabilities_summary"),
             "accuracy_contract": accuracy_contract,
             "model_contract": model_contract,
+            "auditability": auditability,
             "items": [
                 _enrich_elo_leaderboard_item(item, accuracy_contract=accuracy_contract)
                 for item in (payload.get("items") or [])
@@ -1151,6 +1156,10 @@ def build_elo_mmr_player_payload(
         accuracy_contract,
         player_profile=profile,
     )
+    auditability = _build_elo_auditability_summary(
+        accuracy_contract,
+        player_profile=profile,
+    )
     return {
         "status": "ok",
         "data": {
@@ -1166,6 +1175,7 @@ def build_elo_mmr_player_payload(
             )),
             "accuracy_contract": accuracy_contract,
             "model_contract": model_contract,
+            "auditability": auditability,
             "profile": _enrich_elo_profile(profile, accuracy_contract=accuracy_contract),
         },
     }
@@ -1183,6 +1193,18 @@ def _build_elo_player_accuracy_contract(profile: dict[str, object] | None) -> di
     return _build_elo_accuracy_contract(None)
 
 
+def _resolve_elo_leaderboard_accuracy_contract(payload: dict[str, object]) -> dict[str, object]:
+    accuracy_contract = _build_elo_accuracy_contract(payload.get("capabilities_summary"))
+    if accuracy_contract.get("component_status"):
+        return accuracy_contract
+    items = payload.get("items")
+    if isinstance(items, list):
+        for item in items:
+            if isinstance(item, dict) and isinstance(item.get("capabilities"), dict):
+                return _build_elo_accuracy_contract(item.get("capabilities"))
+    return accuracy_contract
+
+
 def _build_elo_accuracy_contract(summary: dict[str, object] | None) -> dict[str, object]:
     capabilities = summary if isinstance(summary, dict) else {}
     signals = capabilities.get("signals")
@@ -1192,15 +1214,25 @@ def _build_elo_accuracy_contract(summary: dict[str, object] | None) -> dict[str,
         for signal in normalized_signals
         if str(signal.get("name") or "").strip()
     }
+    exact_components = sorted(
+        name for name, status in component_status.items() if status == "exact"
+    )
+    approximate_components = sorted(
+        name for name, status in component_status.items() if status == "approximate"
+    )
+    unavailable_components = sorted(
+        name for name, status in component_status.items() if status == "not_available"
+    )
     return {
         "accuracy_mode": capabilities.get("accuracy_mode") or "unknown",
         "exact_ratio": capabilities.get("exact_ratio"),
         "approximate_ratio": capabilities.get("approximate_ratio"),
         "not_available_ratio": capabilities.get("unavailable_ratio"),
         "component_status": component_status,
-        "blocked_components": [
-            name for name, status in component_status.items() if status == "not_available"
-        ],
+        "exact_components": exact_components,
+        "approximate_components": approximate_components,
+        "unavailable_components": unavailable_components,
+        "blocked_components": unavailable_components,
         "explanation": {
             "exact": "computed from persisted repository signals without proxy substitution",
             "approximate": "computed with explicit proxies because the ideal telemetry is not stored yet",
@@ -1229,13 +1261,13 @@ def _build_elo_model_contract(
     return {
         "implemented_scope": {
             "status": "implemented",
-            "label": "pdf-v1-v2-practical",
-            "meaning": "current branch implements the practical v1-v2 Elo/MMR foundation backed by real stored signals and explicit proxies",
+            "label": "elo-pdf-v3-practical",
+            "meaning": "current branch implements the practical v3 Elo/MMR foundation backed by real stored signals, explicit proxies and versioned lineage",
         },
         "deferred_scope": {
             "status": "deferred",
-            "label": "telemetry-rich-v3",
-            "meaning": "advanced tactical and event-rich evolution remains deferred until the repository stores the required telemetry",
+            "label": "telemetry-complete-v3",
+            "meaning": "advanced tactical and event-complete evolution remains deferred until the repository stores the required telemetry families",
         },
         "persistent_rating": {
             "meaning": "long-lived competitive rating rebuilt from persisted matches for the selected scope",
@@ -1270,20 +1302,139 @@ def _build_elo_model_contract(
             ),
         },
         "elo_core": {
-            "meaning": "competitive rating movement driven by expected-vs-actual outcome against opponent rating pressure",
+            "meaning": "competitive rating movement driven by ExpectedWin, won score and bounded OutcomeAdjusted against opponent rating pressure",
             "fields": ["components.elo_core_gain"],
+            "formula_terms": [
+                "ExpectedWin = 1 / (1 + 10 ^ ((EnemyTeamMMR - OwnTeamMMR) / 400))",
+                "OutcomeScore = 2 * (Won - ExpectedWin)",
+                "OutcomeAdjusted = clamp(OutcomeScore + MarginBoost, -1, 1)",
+            ],
         },
         "performance_modifiers": {
-            "meaning": "bounded HLL-specific adjustments layered on top of the competitive Elo core",
+            "meaning": "bounded HLL-specific MatchImpact adjustments layered on top of the competitive Elo core",
             "fields": [
                 "components.performance_modifier_gain",
                 "components.proxy_modifier_gain",
+            ],
+            "formula_terms": [
+                "DeltaMMR = K * Q * (0.80 * OutcomeAdjusted + 0.20 * MatchImpact)",
+                "MatchImpact separates combat, objective, utility and survival-discipline contributions",
             ],
         },
         "proxy_boundary": {
             "meaning": "subset of modifier logic that still depends on approximate signals such as role, objective, schedule or discipline proxies",
             "blocked_by_telemetry": blocked_components if isinstance(blocked_components, list) else [],
         },
+    }
+
+
+def _build_elo_auditability_summary(
+    accuracy_contract: dict[str, object],
+    *,
+    monthly_context: dict[str, object] | None = None,
+    player_profile: dict[str, object] | None = None,
+) -> dict[str, object]:
+    monthly_ranking = (
+        player_profile.get("monthly_ranking")
+        if isinstance(player_profile, dict) and isinstance(player_profile.get("monthly_ranking"), dict)
+        else None
+    )
+    persistent_rating = (
+        player_profile.get("persistent_rating")
+        if isinstance(player_profile, dict) and isinstance(player_profile.get("persistent_rating"), dict)
+        else None
+    )
+    components: dict[str, object] = {}
+    if isinstance(monthly_ranking, dict) and isinstance(monthly_ranking.get("components"), dict):
+        components = monthly_ranking.get("components")
+    elif isinstance(monthly_context, dict):
+        items = monthly_context.get("items")
+        if isinstance(items, list):
+            first_item = next((item for item in items if isinstance(item, dict)), None)
+            if isinstance(first_item, dict) and isinstance(first_item.get("components"), dict):
+                components = first_item.get("components")
+    capabilities_summary = (
+        monthly_context.get("capabilities_summary")
+        if isinstance(monthly_context, dict) and isinstance(monthly_context.get("capabilities_summary"), dict)
+        else None
+    )
+    foundation_summary = _build_elo_foundation_summary(components)
+    return {
+        "contracts": {
+            "canonical_fact_schema_version": foundation_summary.get("canonical_fact_schema_version"),
+            "canonical_source_input_version": foundation_summary.get("canonical_source_input_version"),
+            "persistent_rating_model_version": (
+                persistent_rating.get("model_version") if isinstance(persistent_rating, dict) else None
+            ) or components.get("persistent_rating_model_version"),
+            "persistent_rating_formula_version": (
+                persistent_rating.get("formula_version") if isinstance(persistent_rating, dict) else None
+            ) or components.get("persistent_rating_formula_version"),
+            "persistent_rating_contract_version": (
+                persistent_rating.get("contract_version") if isinstance(persistent_rating, dict) else None
+            ) or components.get("persistent_rating_contract_version"),
+            "match_result_contract_version": components.get("match_result_contract_version"),
+            "monthly_ranking_model_version": (
+                monthly_context.get("model_version")
+                if isinstance(monthly_context, dict)
+                else monthly_ranking.get("model_version")
+                if isinstance(monthly_ranking, dict)
+                else None
+            ),
+            "monthly_ranking_formula_version": (
+                monthly_context.get("formula_version")
+                if isinstance(monthly_context, dict)
+                else monthly_ranking.get("formula_version")
+                if isinstance(monthly_ranking, dict)
+                else None
+            ),
+            "monthly_ranking_contract_version": (
+                monthly_context.get("contract_version")
+                if isinstance(monthly_context, dict)
+                else monthly_ranking.get("contract_version")
+                if isinstance(monthly_ranking, dict)
+                else None
+            ) or components.get("monthly_ranking_contract_version"),
+            "monthly_checkpoint_contract_version": (
+                capabilities_summary.get("aggregation_contract", {}).get("checkpoint_contract_version")
+                if isinstance(capabilities_summary, dict)
+                else None
+            ),
+        },
+        "lineage": {
+            "event_lineage_table": "elo_event_lineage_headers",
+            "canonical_fact_table": "elo_mmr_canonical_player_match_facts",
+            "match_result_table": "elo_mmr_match_results",
+            "persistent_rating_table": "elo_mmr_player_ratings",
+            "monthly_ranking_table": "elo_mmr_monthly_rankings",
+            "monthly_checkpoint_table": "elo_mmr_monthly_checkpoints",
+            "monthly_aggregation_lineage": (
+                capabilities_summary.get("monthly_aggregation_lineage")
+                if isinstance(capabilities_summary, dict)
+                else None
+            ),
+        },
+        "telemetry_boundary": {
+            "accuracy_mode": accuracy_contract.get("accuracy_mode"),
+            "exact_components": accuracy_contract.get("exact_components") or [],
+            "approximate_components": accuracy_contract.get("approximate_components") or [],
+            "unavailable_components": accuracy_contract.get("unavailable_components") or [],
+            "deferred_tactical_dependencies": [
+                "garrison-events",
+                "outpost-events",
+                "revive-events",
+                "supply-events",
+                "node-events",
+                "repair-events",
+                "mine-events",
+                "commander-ability-events",
+                "strongpoint-presence-events",
+                "role-assignment-events",
+                "disconnect-leave-admin-events",
+                "death-classification-events",
+                "leadership-index",
+            ],
+        },
+        "fact_foundation": foundation_summary,
     }
 
 
@@ -1310,12 +1461,19 @@ def _enrich_elo_leaderboard_item(
             "score": item.get("monthly_rank_score"),
             "valid_matches": item.get("valid_matches"),
             "confidence": components.get("confidence"),
+            "comparison_path": components.get("comparison_path"),
+            "role_primary": components.get("role_primary"),
+            "penalty_points": components.get("penalty_points"),
         },
         "delta_sources": delta_breakdown["values"],
         "materialization": delta_breakdown["materialization"],
         "fact_foundation": foundation_summary,
         "telemetry_boundary": {
+            "accuracy_mode": accuracy_contract.get("accuracy_mode"),
             "approximate_ratio": accuracy_contract.get("approximate_ratio"),
+            "exact_components": accuracy_contract.get("exact_components") or [],
+            "approximate_components": accuracy_contract.get("approximate_components") or [],
+            "unavailable_components": accuracy_contract.get("unavailable_components") or [],
             "blocked_components": accuracy_contract.get("blocked_components") or [],
         },
     }
@@ -1352,6 +1510,9 @@ def _enrich_elo_profile(
             "proxy_modifier_gain": delta_breakdown["values"]["proxy_modifier_gain"],
             "confidence": components.get("confidence"),
             "avg_participation_ratio": components.get("avg_participation_ratio"),
+            "comparison_path": components.get("comparison_path"),
+            "role_primary": components.get("role_primary"),
+            "penalty_points": components.get("penalty_points"),
             "fact_foundation": foundation_summary,
             "materialization": delta_breakdown["materialization"],
         }
@@ -1362,6 +1523,9 @@ def _enrich_elo_profile(
         enriched["persistent_rating"] = persistent_rating
     enriched["telemetry_boundary"] = {
         "accuracy_mode": accuracy_contract.get("accuracy_mode"),
+        "exact_components": accuracy_contract.get("exact_components") or [],
+        "approximate_components": accuracy_contract.get("approximate_components") or [],
+        "unavailable_components": accuracy_contract.get("unavailable_components") or [],
         "blocked_components": accuracy_contract.get("blocked_components") or [],
     }
     return enriched

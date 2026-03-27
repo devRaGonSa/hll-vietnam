@@ -26,14 +26,17 @@ MONTHLY_ACTIVITY_TARGET_MATCHES = 12
 MONTHLY_ACTIVITY_TARGET_HOURS = 20.0
 DEFAULT_MONTHLY_SCOREBOARD_MIN_MATCHES = 3
 ELO_K_FACTOR = 28.0
-PERSISTENT_RATING_MODEL_VERSION = "elo-pdf-v1-v2-practical"
-PERSISTENT_RATING_FORMULA_VERSION = "elo-pdf-v1-v2-practical-match-rev3"
-PERSISTENT_RATING_CONTRACT_VERSION = "elo-mmr-player-rating-v3"
-MATCH_RESULT_CONTRACT_VERSION = "elo-mmr-match-result-v3"
-MONTHLY_RANKING_MODEL_VERSION = "elo-pdf-v1-v2-practical"
-MONTHLY_RANKING_FORMULA_VERSION = "elo-pdf-v1-v2-practical-monthly-rev3"
-MONTHLY_RANKING_CONTRACT_VERSION = "elo-mmr-monthly-ranking-v3"
-MONTHLY_CHECKPOINT_CONTRACT_VERSION = "elo-mmr-monthly-checkpoint-v3"
+PERSISTENT_RATING_MODEL_VERSION = "elo-pdf-v3-persistent-practical"
+PERSISTENT_RATING_FORMULA_VERSION = "elo-pdf-v3-persistent-match-rev4"
+PERSISTENT_RATING_CONTRACT_VERSION = "elo-mmr-player-rating-v4"
+MATCH_RESULT_CONTRACT_VERSION = "elo-mmr-match-result-v4"
+MONTHLY_RANKING_MODEL_VERSION = "elo-pdf-v3-monthly-practical"
+MONTHLY_RANKING_FORMULA_VERSION = "elo-pdf-v3-monthly-rev4"
+MONTHLY_RANKING_CONTRACT_VERSION = "elo-mmr-monthly-ranking-v4"
+MONTHLY_CHECKPOINT_CONTRACT_VERSION = "elo-mmr-monthly-checkpoint-v4"
+NORMALIZATION_BUCKET_VERSION = "elo-normalization-bucket-v1"
+NORMALIZATION_BASELINE_VERSION = "elo-normalization-baseline-v1"
+NORMALIZATION_MIN_BUCKET_SAMPLE = 25
 
 
 @dataclass(frozen=True, slots=True)
