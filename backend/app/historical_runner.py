@@ -26,7 +26,15 @@ from .historical_snapshots import (
 )
 from .rcon_historical_storage import count_rcon_historical_samples_since
 from .rcon_historical_worker import run_rcon_historical_capture
-from .writer_lock import backend_writer_lock, build_writer_lock_holder
+from .writer_lock import (
+    BackendWriterLockConflictError,
+    BackendWriterLockTimeoutError,
+    backend_writer_lock,
+    build_acquired_writer_lock_payload,
+    build_writer_lock_holder,
+    build_writer_lock_timeout_payload,
+    check_manual_writer_lock_preflight,
+)
 
 HOURLY_INTERVAL_SECONDS = 3600
 DEFAULT_HISTORICAL_SERVER_SCOPE = (
@@ -34,11 +42,13 @@ DEFAULT_HISTORICAL_SERVER_SCOPE = (
     "comunidad-hispana-02",
     "comunidad-hispana-03",
 )
+MANUAL_PHASE_CHOICES = ("full", "snapshots", "capture", "refresh")
 
 
 def run_periodic_historical_refresh(
     *,
     interval_seconds: int,
+    manual_full_elo_rebuild: bool = False,
     max_retries: int,
     retry_delay_seconds: int,
     server_slug: str | None = None,
@@ -66,7 +76,10 @@ def run_periodic_historical_refresh(
     try:
         while max_runs is None or completed_runs < max_runs:
             completed_runs += 1
-            payload = _run_refresh_with_retries(
+            payload = _run_phase_with_retries(
+                phase="full",
+                execution_mode="loop",
+                manual_full_elo_rebuild=manual_full_elo_rebuild,
                 max_retries=max_retries,
                 retry_delay_seconds=retry_delay_seconds,
                 server_slug=server_slug,
@@ -84,8 +97,11 @@ def run_periodic_historical_refresh(
         print("\nHistorical refresh loop stopped by user.")
 
 
-def _run_refresh_with_retries(
+def _run_phase_with_retries(
     *,
+    phase: str,
+    execution_mode: str,
+    manual_full_elo_rebuild: bool,
     max_retries: int,
     retry_delay_seconds: int,
     server_slug: str | None,
@@ -94,93 +110,49 @@ def _run_refresh_with_retries(
     run_number: int,
 ) -> dict[str, Any]:
     attempt = 0
+    manual_holder = build_writer_lock_holder(
+        f"app.historical_runner {phase}:{server_slug or 'all-servers'}"
+    )
     while True:
         attempt += 1
         try:
-            with backend_writer_lock(
-                holder=build_writer_lock_holder(
-                    f"app.historical_runner refresh:{server_slug or 'all-servers'}"
-                )
-            ):
-                rcon_capture_result = _run_primary_rcon_capture()
-                should_run_classic_fallback, classic_fallback_reason = (
-                    _resolve_classic_fallback_policy(
-                        server_slug=server_slug,
-                        run_number=run_number,
-                        rcon_capture_result=rcon_capture_result,
-                    )
-                )
-                if should_run_classic_fallback:
-                    refresh_result = run_incremental_refresh(
-                        server_slug=server_slug,
-                        max_pages=max_pages,
-                        page_size=page_size,
-                        rebuild_snapshots=False,
-                    )
-                    snapshot_result = generate_historical_snapshots(
-                        server_slug=server_slug,
-                        run_number=run_number,
-                    )
-                    elo_mmr_result = rebuild_elo_mmr_models()
-                else:
-                    should_generate_snapshots = _rcon_capture_has_new_useful_data(
-                        rcon_capture_result
-                    )
-                    refresh_result = {
-                        "status": "skipped",
-                        "reason": "rcon-primary-cycle-no-classic-fallback-needed",
-                    }
-                    if should_generate_snapshots:
-                        snapshot_result = generate_historical_snapshots(
-                            server_slug=server_slug,
-                            run_number=run_number,
-                        )
-                        snapshot_result = {
-                            **snapshot_result,
-                            "generation_policy": "rcon-primary-useful-cycle",
-                            "reason": "rcon-primary-cycle-produced-new-useful-coverage",
-                        }
-                        elo_policy = _build_elo_mmr_rebuild_policy(
-                            rcon_capture_result=rcon_capture_result
-                        )
-                        if bool(elo_policy["due"]):
-                            elo_mmr_result = {
-                                **rebuild_elo_mmr_models(),
-                                "generation_policy": "rcon-primary-useful-cycle-elo-rebuild-due",
-                                "reason": "rcon-primary-useful-cycle-met-elo-rebuild-threshold",
-                                **elo_policy,
-                            }
-                        else:
-                            elo_mmr_result = {
-                                "status": "skipped",
-                                "reason": "rcon-primary-useful-cycle-elo-rebuild-throttled",
-                                "generation_policy": "rcon-primary-useful-cycle-elo-rebuild-throttled",
-                                **elo_policy,
-                            }
-                    else:
-                        snapshot_result = {
-                            "status": "skipped",
-                            "reason": "rcon-primary-cycle-had-no-new-useful-data",
-                            "generation_policy": "rcon-primary-no-new-useful-data",
-                        }
-                        elo_mmr_result = {
-                            "status": "skipped",
-                            "reason": "rcon-primary-cycle-had-no-new-useful-data",
-                            "generation_policy": "rcon-primary-no-new-useful-data",
-                            **_build_elo_mmr_rebuild_policy(
-                                rcon_capture_result=rcon_capture_result
-                            ),
-                        }
+            if execution_mode == "manual":
+                check_manual_writer_lock_preflight(holder=manual_holder)
+            payload = run_manual_historical_phase(
+                phase=phase,
+                execution_mode=execution_mode,
+                manual_full_elo_rebuild=manual_full_elo_rebuild,
+                server_slug=server_slug,
+                max_pages=max_pages,
+                page_size=page_size,
+                run_number=run_number,
+            )
             return {
                 "status": "ok",
                 "attempts_used": attempt,
                 "max_retries": max_retries,
-                "rcon_capture_result": rcon_capture_result,
-                "classic_fallback_used": should_run_classic_fallback,
-                "classic_fallback_reason": classic_fallback_reason,
-                "refresh_result": refresh_result,
-                "snapshot_result": snapshot_result,
-                "elo_mmr_result": elo_mmr_result,
+                "writer_lock": (
+                    build_acquired_writer_lock_payload(holder=manual_holder, metadata=None)
+                    if execution_mode == "manual"
+                    else None
+                ),
+                **payload,
+            }
+        except BackendWriterLockConflictError as exc:
+            return {
+                "status": "error",
+                "attempts_used": attempt,
+                "max_retries": max_retries,
+                "error": str(exc),
+                "writer_lock": exc.payload,
+            }
+        except BackendWriterLockTimeoutError as exc:
+            return {
+                "status": "error",
+                "attempts_used": attempt,
+                "max_retries": max_retries,
+                "error": str(exc),
+                "writer_lock": build_writer_lock_timeout_payload(holder=manual_holder),
             }
         except Exception as exc:
             if attempt > max_retries:
@@ -192,6 +164,273 @@ def _run_refresh_with_retries(
                 }
             if retry_delay_seconds > 0:
                 time.sleep(retry_delay_seconds)
+
+
+def run_manual_historical_phase(
+    *,
+    phase: str,
+    execution_mode: str = "manual",
+    manual_full_elo_rebuild: bool = False,
+    server_slug: str | None = None,
+    max_pages: int | None = None,
+    page_size: int | None = None,
+    run_number: int = 1,
+) -> dict[str, Any]:
+    """Run one explicit historical maintenance phase and return one structured result."""
+    normalized_phase = phase.strip().lower()
+    if normalized_phase not in MANUAL_PHASE_CHOICES:
+        raise ValueError(
+            f"--phase must be one of {', '.join(MANUAL_PHASE_CHOICES)}."
+        )
+
+    if normalized_phase == "capture":
+        return {
+            "mode": execution_mode,
+            "phase": normalized_phase,
+            "run_number": run_number,
+            "rcon_capture_result": _run_primary_rcon_capture(),
+            "classic_fallback_used": False,
+            "classic_fallback_reason": "manual-phase-capture-only",
+            "refresh_result": _build_phase_skip_result("manual-phase-capture-only"),
+            "snapshot_result": _build_phase_skip_result("manual-phase-capture-only"),
+            "elo_mmr_result": _build_elo_mmr_follow_up_result(
+                workload="skipped",
+                reason="manual-phase-capture-only",
+                policy_mode="manual-no-elo-follow-up",
+            ),
+        }
+
+    with backend_writer_lock(
+        holder=build_writer_lock_holder(
+            f"app.historical_runner {normalized_phase}:{server_slug or 'all-servers'}"
+        )
+    ):
+        return _run_manual_historical_phase_unlocked(
+            phase=normalized_phase,
+            execution_mode=execution_mode,
+            manual_full_elo_rebuild=manual_full_elo_rebuild,
+            server_slug=server_slug,
+            max_pages=max_pages,
+            page_size=page_size,
+            run_number=run_number,
+        )
+
+
+def _run_manual_historical_phase_unlocked(
+    *,
+    phase: str,
+    execution_mode: str,
+    manual_full_elo_rebuild: bool,
+    server_slug: str | None,
+    max_pages: int | None,
+    page_size: int | None,
+    run_number: int,
+) -> dict[str, Any]:
+    if phase == "snapshots":
+        return {
+            "mode": execution_mode,
+            "phase": phase,
+            "run_number": run_number,
+            "rcon_capture_result": _build_phase_skip_result("manual-phase-snapshots-only"),
+            "classic_fallback_used": False,
+            "classic_fallback_reason": "manual-phase-snapshots-only",
+            "refresh_result": _build_phase_skip_result("manual-phase-snapshots-only"),
+            "snapshot_result": {
+                **generate_historical_snapshots(
+                    server_slug=server_slug,
+                    run_number=run_number,
+                ),
+                "generation_policy": "manual-phase-snapshots-only",
+                "reason": "manual-phase-requested-snapshot-materialization-only",
+            },
+            "elo_mmr_result": _build_elo_mmr_follow_up_result(
+                workload="skipped",
+                reason="manual-phase-snapshots-only",
+                policy_mode="manual-no-elo-follow-up",
+            ),
+        }
+
+    if phase == "refresh":
+        return {
+            "mode": execution_mode,
+            "phase": phase,
+            "run_number": run_number,
+            "rcon_capture_result": _build_phase_skip_result("manual-phase-refresh-only"),
+            "classic_fallback_used": True,
+            "classic_fallback_reason": "manual-phase-refresh-only",
+            "refresh_result": _run_classic_refresh(
+                server_slug=server_slug,
+                max_pages=max_pages,
+                page_size=page_size,
+            ),
+            "snapshot_result": _build_phase_skip_result("manual-phase-refresh-only"),
+            "elo_mmr_result": _build_elo_mmr_follow_up_result(
+                workload="skipped",
+                reason="manual-phase-refresh-only",
+                policy_mode="manual-no-elo-follow-up",
+            ),
+        }
+
+    rcon_capture_result = _run_primary_rcon_capture()
+    if phase == "capture":
+        raise RuntimeError("Capture phase must be handled before acquiring the manual writer lock.")
+
+    should_run_classic_fallback, classic_fallback_reason = _resolve_classic_fallback_policy(
+        server_slug=server_slug,
+        run_number=run_number,
+        rcon_capture_result=rcon_capture_result,
+    )
+    if should_run_classic_fallback:
+        refresh_result = _run_classic_refresh(
+            server_slug=server_slug,
+            max_pages=max_pages,
+            page_size=page_size,
+        )
+        snapshot_result = generate_historical_snapshots(
+            server_slug=server_slug,
+            run_number=run_number,
+        )
+        elo_mmr_result = _resolve_elo_mmr_follow_up(
+            execution_mode=execution_mode,
+            manual_full_elo_rebuild=manual_full_elo_rebuild,
+            rcon_capture_result=rcon_capture_result,
+            default_skip_reason="manual-full-cycle-defaults-to-no-elo-rebuild",
+            auto_skip_reason="rcon-primary-cycle-had-classic-fallback-but-auto-elo-policy-not-due",
+        )
+    else:
+        should_generate_snapshots = _rcon_capture_has_new_useful_data(rcon_capture_result)
+        refresh_result = {
+            "status": "skipped",
+            "reason": "rcon-primary-cycle-no-classic-fallback-needed",
+        }
+        if should_generate_snapshots:
+            snapshot_result = generate_historical_snapshots(
+                server_slug=server_slug,
+                run_number=run_number,
+            )
+            snapshot_result = {
+                **snapshot_result,
+                "generation_policy": "rcon-primary-useful-cycle",
+                "reason": "rcon-primary-cycle-produced-new-useful-coverage",
+            }
+            elo_mmr_result = _resolve_elo_mmr_follow_up(
+                execution_mode=execution_mode,
+                manual_full_elo_rebuild=manual_full_elo_rebuild,
+                rcon_capture_result=rcon_capture_result,
+                default_skip_reason="manual-full-cycle-defaults-to-no-elo-rebuild",
+                auto_skip_reason="rcon-primary-useful-cycle-elo-rebuild-throttled",
+            )
+        else:
+            snapshot_result = {
+                "status": "skipped",
+                "reason": "rcon-primary-cycle-had-no-new-useful-data",
+                "generation_policy": "rcon-primary-no-new-useful-data",
+            }
+            elo_mmr_result = _resolve_elo_mmr_follow_up(
+                execution_mode=execution_mode,
+                manual_full_elo_rebuild=manual_full_elo_rebuild,
+                rcon_capture_result=rcon_capture_result,
+                default_skip_reason="manual-full-cycle-defaults-to-no-elo-rebuild",
+                auto_skip_reason="rcon-primary-cycle-had-no-new-useful-data",
+            )
+
+    return {
+        "mode": execution_mode,
+        "phase": phase,
+        "run_number": run_number,
+        "rcon_capture_result": rcon_capture_result,
+        "classic_fallback_used": should_run_classic_fallback,
+        "classic_fallback_reason": classic_fallback_reason,
+        "refresh_result": refresh_result,
+        "snapshot_result": snapshot_result,
+        "elo_mmr_result": elo_mmr_result,
+    }
+
+
+def _run_classic_refresh(
+    *,
+    server_slug: str | None,
+    max_pages: int | None,
+    page_size: int | None,
+) -> dict[str, Any]:
+    return run_incremental_refresh(
+        server_slug=server_slug,
+        max_pages=max_pages,
+        page_size=page_size,
+        rebuild_snapshots=False,
+    )
+
+
+def _build_phase_skip_result(reason: str) -> dict[str, str]:
+    return {
+        "status": "skipped",
+        "reason": reason,
+    }
+
+
+def _resolve_elo_mmr_follow_up(
+    *,
+    execution_mode: str,
+    manual_full_elo_rebuild: bool,
+    rcon_capture_result: dict[str, Any],
+    default_skip_reason: str,
+    auto_skip_reason: str,
+) -> dict[str, Any]:
+    if execution_mode == "manual":
+        if not manual_full_elo_rebuild:
+            return _build_elo_mmr_follow_up_result(
+                workload="skipped",
+                reason=default_skip_reason,
+                policy_mode="manual-default-skip",
+                explicit_path="python -m app.elo_mmr_engine rebuild or --full-elo-rebuild",
+            )
+        return {
+            **rebuild_elo_mmr_models(),
+            "workload": "full",
+            "policy_mode": "manual-explicit-full-rebuild",
+            "requested_explicitly": True,
+        }
+
+    elo_policy = _build_elo_mmr_rebuild_policy(rcon_capture_result=rcon_capture_result)
+    if bool(elo_policy["due"]):
+        return {
+            **rebuild_elo_mmr_models(),
+            "workload": "full",
+            "policy_mode": "automatic-loop-policy",
+            "requested_explicitly": False,
+            "generation_policy": "automatic-loop-elo-rebuild-due",
+            "reason": "automatic-loop-policy-met-elo-rebuild-threshold",
+            **elo_policy,
+        }
+    return _build_elo_mmr_follow_up_result(
+        workload="skipped",
+        reason=auto_skip_reason,
+        policy_mode="automatic-loop-policy",
+        requested_explicitly=False,
+        **elo_policy,
+    )
+
+
+def _build_elo_mmr_follow_up_result(
+    *,
+    workload: str,
+    reason: str,
+    policy_mode: str,
+    requested_explicitly: bool = False,
+    explicit_path: str | None = None,
+    **extra: Any,
+) -> dict[str, Any]:
+    result: dict[str, Any] = {
+        "status": "ok" if workload in {"lightweight", "full"} else "skipped",
+        "workload": workload,
+        "reason": reason,
+        "policy_mode": policy_mode,
+        "requested_explicitly": requested_explicitly,
+    }
+    if explicit_path:
+        result["explicit_path"] = explicit_path
+    result.update(extra)
+    return result
 
 
 def generate_historical_snapshots(
@@ -326,10 +565,23 @@ def _build_elo_mmr_rebuild_policy(
     }
 
 
-def main() -> None:
+def build_arg_parser() -> argparse.ArgumentParser:
     """Allow local scheduled historical refresh execution without external infra."""
     parser = argparse.ArgumentParser(
         description="Run periodic historical refreshes and regenerate snapshots for HLL Vietnam.",
+    )
+    parser.add_argument(
+        "mode",
+        nargs="?",
+        choices=("run", "loop"),
+        default="run",
+        help="run executes one explicit manual phase; loop keeps running the full cycle periodically",
+    )
+    parser.add_argument(
+        "--phase",
+        choices=MANUAL_PHASE_CHOICES,
+        default="full",
+        help="manual phase for run mode: full, snapshots, capture, or refresh",
     )
     parser.add_argument(
         "--interval",
@@ -375,31 +627,60 @@ def main() -> None:
         "--max-runs",
         type=int,
         default=None,
-        help="Optional safety limit for the number of refresh cycles to execute.",
+        help="Optional safety limit for loop mode.",
     )
-    args = parser.parse_args()
+    parser.add_argument(
+        "--full-elo-rebuild",
+        action="store_true",
+        help="run mode only: explicitly trigger a full Elo/MMR rebuild after the selected manual phase",
+    )
+    return parser
+
+
+def main() -> None:
+    args = build_arg_parser().parse_args()
 
     if args.hourly:
         args.interval = HOURLY_INTERVAL_SECONDS
 
-    if args.interval <= 0:
-        raise ValueError("--interval must be a positive integer.")
     if args.retries < 0:
         raise ValueError("--retries must be zero or positive.")
     if args.retry_delay < 0:
         raise ValueError("--retry-delay must be zero or positive.")
     if args.max_runs is not None and args.max_runs <= 0:
         raise ValueError("--max-runs must be positive when provided.")
+    if args.mode == "loop" and args.full_elo_rebuild:
+        raise ValueError("--full-elo-rebuild is only supported in run mode.")
+    if args.mode == "run" and args.full_elo_rebuild and args.phase != "full":
+        raise ValueError("--full-elo-rebuild is only supported with run --phase full.")
 
-    run_periodic_historical_refresh(
-        interval_seconds=args.interval,
+    if args.mode == "loop":
+        if args.interval <= 0:
+            raise ValueError("--interval must be a positive integer.")
+        run_periodic_historical_refresh(
+            interval_seconds=args.interval,
+            manual_full_elo_rebuild=False,
+            max_retries=args.retries,
+            retry_delay_seconds=args.retry_delay,
+            server_slug=args.server_slug,
+            max_pages=args.max_pages,
+            page_size=args.page_size,
+            max_runs=args.max_runs,
+        )
+        return
+
+    payload = _run_phase_with_retries(
+        phase=args.phase,
+        execution_mode="manual",
+        manual_full_elo_rebuild=args.full_elo_rebuild,
         max_retries=args.retries,
         retry_delay_seconds=args.retry_delay,
         server_slug=args.server_slug,
         max_pages=args.max_pages,
         page_size=args.page_size,
-        max_runs=args.max_runs,
+        run_number=1,
     )
+    print(json.dumps(payload, indent=2))
 
 
 if __name__ == "__main__":

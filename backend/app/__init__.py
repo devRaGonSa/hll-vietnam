@@ -1,12 +1,42 @@
 """Minimal bootstrap package for the HLL Vietnam Python backend."""
 
-from .config import get_allowed_origins, get_bind_address
-from .main import create_server, run
-from .normalizers import normalize_a2s_server_info, normalize_server_record
-from .payloads import build_health_payload
-from .routes import resolve_get_payload
-from .snapshots import build_server_snapshot, build_snapshot_batch, utc_now
-from .storage import initialize_storage, persist_snapshot_batch
+from __future__ import annotations
+
+from importlib import import_module
+from typing import Any
+
+
+_LAZY_EXPORTS: dict[str, tuple[str, str]] = {
+    "build_health_payload": (".payloads", "build_health_payload"),
+    "build_server_snapshot": (".snapshots", "build_server_snapshot"),
+    "build_snapshot_batch": (".snapshots", "build_snapshot_batch"),
+    "create_server": (".main", "create_server"),
+    "get_allowed_origins": (".config", "get_allowed_origins"),
+    "get_bind_address": (".config", "get_bind_address"),
+    "initialize_storage": (".storage", "initialize_storage"),
+    "normalize_a2s_server_info": (".normalizers", "normalize_a2s_server_info"),
+    "normalize_server_record": (".normalizers", "normalize_server_record"),
+    "persist_snapshot_batch": (".storage", "persist_snapshot_batch"),
+    "resolve_get_payload": (".routes", "resolve_get_payload"),
+    "run": (".main", "run"),
+    "utc_now": (".snapshots", "utc_now"),
+}
+
+
+def __getattr__(name: str) -> Any:
+    """Resolve public package exports lazily to avoid preloading entrypoint modules."""
+    export = _LAZY_EXPORTS.get(name)
+    if export is None:
+        raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
+    module_name, attribute_name = export
+    value = getattr(import_module(module_name, __name__), attribute_name)
+    globals()[name] = value
+    return value
+
+
+def __dir__() -> list[str]:
+    return sorted(set(globals()) | set(_LAZY_EXPORTS) | set(__all__))
 
 
 def collect_server_snapshots(*args: object, **kwargs: object) -> dict[str, object]:
@@ -37,6 +67,7 @@ def fetch_controlled_server_source() -> tuple[dict[str, object], ...]:
     )
 
     return tuple(_fetch_controlled_server_source())
+
 
 __all__ = [
     "build_health_payload",

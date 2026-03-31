@@ -7,6 +7,7 @@ import os
 import socket
 import sys
 import time
+import ctypes
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
@@ -14,6 +15,8 @@ from uuid import uuid4
 
 from .config import (
     get_storage_path,
+    get_sqlite_busy_timeout_ms,
+    get_sqlite_writer_timeout_seconds,
     get_writer_lock_poll_interval_seconds,
     get_writer_lock_timeout_seconds,
 )
@@ -21,6 +24,14 @@ from .config import (
 
 class BackendWriterLockTimeoutError(RuntimeError):
     """Raised when the shared backend writer lock cannot be acquired in time."""
+
+
+class BackendWriterLockConflictError(RuntimeError):
+    """Raised when a manual command detects an active conflicting backend writer."""
+
+    def __init__(self, message: str, *, payload: dict[str, object]):
+        super().__init__(message)
+        self.payload = payload
 
 
 _ACTIVE_LOCK_DEPTH_BY_PATH: dict[Path, int] = {}
@@ -81,6 +92,97 @@ def build_writer_lock_holder(label: str) -> str:
     if argv:
         return f"{label} [{argv}]"
     return label
+
+
+def check_manual_writer_lock_preflight(
+    *,
+    holder: str,
+    storage_path: Path | None = None,
+) -> dict[str, object]:
+    """Fail fast for manual commands when another backend writer is already active."""
+    lock_path = resolve_backend_writer_lock_path(storage_path=storage_path).resolve()
+    existing_metadata = _read_lock_metadata(lock_path)
+    stale_lock_cleared = False
+    if _can_clear_stale_lock(existing_metadata):
+        _remove_lock_file(lock_path)
+        existing_metadata = None
+        stale_lock_cleared = True
+
+    if existing_metadata:
+        payload = _build_writer_lock_payload(
+            status="aborted-conflict-detected-before-wait",
+            holder=holder,
+            lock_path=lock_path,
+            existing_metadata=existing_metadata,
+            waited_seconds=0.0,
+            message=(
+                "Another backend writer is active. Stop the running backend worker, "
+                "scheduled job, or containerized daemon before retrying this manual command."
+            ),
+            corrective_action=(
+                "Stop or disable the active backend writer shown in active_holder, then rerun "
+                "the manual command."
+            ),
+        )
+        raise BackendWriterLockConflictError(str(payload["message"]), payload=payload)
+
+    return _build_writer_lock_payload(
+        status="ready-no-conflict-detected",
+        holder=holder,
+        lock_path=lock_path,
+        existing_metadata=None,
+        waited_seconds=0.0,
+        message=(
+            "No active conflicting backend writer was detected before starting the manual command."
+        ),
+        stale_lock_cleared=stale_lock_cleared,
+    )
+
+
+def build_acquired_writer_lock_payload(
+    *,
+    holder: str,
+    metadata: dict[str, object] | None,
+    storage_path: Path | None = None,
+    waited_seconds: float = 0.0,
+) -> dict[str, object]:
+    """Return one structured payload for a successfully acquired writer lock."""
+    return _build_writer_lock_payload(
+        status="acquired",
+        holder=holder,
+        lock_path=resolve_backend_writer_lock_path(storage_path=storage_path).resolve(),
+        existing_metadata=metadata,
+        waited_seconds=waited_seconds,
+        message="Manual command acquired the shared backend writer lock.",
+    )
+
+
+def build_writer_lock_timeout_payload(
+    *,
+    holder: str,
+    storage_path: Path | None = None,
+    waited_seconds: float | None = None,
+) -> dict[str, object]:
+    """Return one structured payload for a writer-lock timeout or late contention race."""
+    resolved_wait = (
+        get_writer_lock_timeout_seconds() if waited_seconds is None else waited_seconds
+    )
+    lock_path = resolve_backend_writer_lock_path(storage_path=storage_path).resolve()
+    existing_metadata = _read_lock_metadata(lock_path)
+    return _build_writer_lock_payload(
+        status="timed-out",
+        holder=holder,
+        lock_path=lock_path,
+        existing_metadata=existing_metadata,
+        waited_seconds=resolved_wait,
+        message=(
+            "The manual command timed out while waiting for the shared backend writer lock."
+        ),
+        corrective_action=(
+            "Stop or disable the active backend writer shown in active_holder before retrying "
+            "this manual command."
+        ),
+    )
 
 
 def _acquire_backend_writer_lock(
@@ -194,6 +296,21 @@ def _can_clear_stale_lock(existing_metadata: dict[str, object] | None) -> bool:
 def _is_process_alive(pid: int) -> bool:
     if pid == os.getpid():
         return True
+    if os.name == "nt":
+        process_query_limited_information = 0x1000
+        handle = ctypes.windll.kernel32.OpenProcess(
+            process_query_limited_information,
+            False,
+            pid,
+        )
+        if handle:
+            ctypes.windll.kernel32.CloseHandle(handle)
+            return True
+        last_error = ctypes.GetLastError()
+        if last_error in {5}:
+            return True
+        if last_error in {87, 1168}:
+            return False
     try:
         os.kill(pid, 0)
     except ProcessLookupError:
@@ -230,6 +347,39 @@ def _build_lock_timeout_message(
         f"since {started_at} on {hostname} (pid {pid}). "
         f"Timed out after waiting {timeout_seconds:.1f}s for {holder}."
     )
+
+
+def _build_writer_lock_payload(
+    *,
+    status: str,
+    holder: str,
+    lock_path: Path,
+    existing_metadata: dict[str, object] | None,
+    waited_seconds: float,
+    message: str,
+    corrective_action: str | None = None,
+    stale_lock_cleared: bool = False,
+) -> dict[str, object]:
+    payload: dict[str, object] = {
+        "status": status,
+        "holder": holder,
+        "lock_path": str(lock_path),
+        "waited_seconds": round(max(0.0, waited_seconds), 3),
+        "writer_lock_timeout_seconds": get_writer_lock_timeout_seconds(),
+        "writer_lock_poll_interval_seconds": get_writer_lock_poll_interval_seconds(),
+        "sqlite_writer_timeout_seconds": get_sqlite_writer_timeout_seconds(),
+        "sqlite_busy_timeout_ms": get_sqlite_busy_timeout_ms(),
+        "message": message,
+        "stale_lock_cleared": stale_lock_cleared,
+    }
+    if corrective_action:
+        payload["corrective_action"] = corrective_action
+    if existing_metadata:
+        payload["active_holder"] = existing_metadata.get("holder")
+        payload["active_started_at"] = existing_metadata.get("started_at")
+        payload["active_hostname"] = existing_metadata.get("hostname")
+        payload["active_pid"] = existing_metadata.get("pid")
+    return payload
 
 
 def _looks_like_containerized_holder(existing_metadata: dict[str, object]) -> bool:

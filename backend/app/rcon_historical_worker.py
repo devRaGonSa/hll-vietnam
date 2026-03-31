@@ -29,7 +29,15 @@ from .rcon_historical_storage import (
     start_rcon_historical_capture_run,
 )
 from .snapshots import utc_now
-from .writer_lock import backend_writer_lock, build_writer_lock_holder
+from .writer_lock import (
+    BackendWriterLockConflictError,
+    BackendWriterLockTimeoutError,
+    backend_writer_lock,
+    build_acquired_writer_lock_payload,
+    build_writer_lock_holder,
+    build_writer_lock_timeout_payload,
+    check_manual_writer_lock_preflight,
+)
 
 
 @dataclass(slots=True)
@@ -342,9 +350,49 @@ def main(argv: Iterable[str] | None = None) -> int:
     args = parser.parse_args(list(argv) if argv is not None else None)
 
     if args.mode == "capture":
-        result = run_rcon_historical_capture(target_key=args.target_key)
-        print(json.dumps(result, indent=2))
-        return 0
+        holder = build_writer_lock_holder(
+            f"app.rcon_historical_worker capture:{args.target_key or 'all-targets'}"
+        )
+        try:
+            check_manual_writer_lock_preflight(holder=holder)
+            result = run_rcon_historical_capture(target_key=args.target_key)
+            print(
+                json.dumps(
+                    {
+                        **result,
+                        "writer_lock": build_acquired_writer_lock_payload(
+                            holder=holder,
+                            metadata=None,
+                        ),
+                    },
+                    indent=2,
+                )
+            )
+            return 0
+        except BackendWriterLockConflictError as exc:
+            print(
+                json.dumps(
+                    {
+                        "status": "error",
+                        "error": str(exc),
+                        "writer_lock": exc.payload,
+                    },
+                    indent=2,
+                )
+            )
+            return 1
+        except BackendWriterLockTimeoutError as exc:
+            print(
+                json.dumps(
+                    {
+                        "status": "error",
+                        "error": str(exc),
+                        "writer_lock": build_writer_lock_timeout_payload(holder=holder),
+                    },
+                    indent=2,
+                )
+            )
+            return 1
 
     if args.interval <= 0:
         raise ValueError("--interval must be a positive integer.")
