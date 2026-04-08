@@ -53,8 +53,8 @@ SUPPORTED_WEEKLY_LEADERBOARD_METRICS = frozenset(
 SUPPORTED_MONTHLY_LEADERBOARD_METRICS = SUPPORTED_WEEKLY_LEADERBOARD_METRICS
 
 
-def initialize_historical_storage(*, db_path: Path | None = None) -> Path:
-    """Create or migrate the local SQLite schema for historical data."""
+def ensure_historical_storage(*, db_path: Path | None = None) -> Path:
+    """Create or migrate the local SQLite schema without global repair passes."""
     resolved_path = _resolve_db_path(db_path)
     resolved_path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -197,10 +197,22 @@ def initialize_historical_storage(*, db_path: Path | None = None) -> Path:
         _seed_default_historical_servers(connection)
         if legacy_historical_schema:
             _migrate_legacy_historical_data(connection)
-        _normalize_historical_player_identities(connection)
-        _normalize_historical_match_identities(connection)
 
     return resolved_path
+
+
+def run_historical_storage_maintenance(*, db_path: Path | None = None) -> Path:
+    """Run bounded global repair passes after schema initialization."""
+    resolved_path = ensure_historical_storage(db_path=db_path)
+    with _connect_writer(resolved_path) as connection:
+        _normalize_historical_player_identities(connection)
+        _normalize_historical_match_identities(connection)
+    return resolved_path
+
+
+def initialize_historical_storage(*, db_path: Path | None = None) -> Path:
+    """Create or migrate the local SQLite schema and run one-time global maintenance."""
+    return run_historical_storage_maintenance(db_path=db_path)
 
 
 def list_historical_servers(*, db_path: Path | None = None) -> list[dict[str, object]]:
@@ -227,7 +239,7 @@ def start_ingestion_run(
     db_path: Path | None = None,
 ) -> int:
     """Create a row tracking one ingestion execution."""
-    resolved_path = initialize_historical_storage(db_path=db_path)
+    resolved_path = ensure_historical_storage(db_path=db_path)
     with _connect_writer(resolved_path) as connection:
         cursor = connection.execute(
             """
@@ -257,7 +269,7 @@ def finalize_ingestion_run(
     db_path: Path | None = None,
 ) -> None:
     """Update an ingestion run row with outcome metrics."""
-    resolved_path = initialize_historical_storage(db_path=db_path)
+    resolved_path = ensure_historical_storage(db_path=db_path)
     with _connect_writer(resolved_path) as connection:
         connection.execute(
             """
@@ -296,7 +308,7 @@ def mark_backfill_progress_started(
     db_path: Path | None = None,
 ) -> None:
     """Persist the start of one resumable historical backfill attempt."""
-    resolved_path = initialize_historical_storage(db_path=db_path)
+    resolved_path = ensure_historical_storage(db_path=db_path)
     with _connect_writer(resolved_path) as connection:
         server_row = _resolve_historical_server(connection, server_slug)
         connection.execute(
@@ -339,7 +351,7 @@ def mark_backfill_progress_page_completed(
     db_path: Path | None = None,
 ) -> None:
     """Persist the latest completed page so bootstraps can resume safely."""
-    resolved_path = initialize_historical_storage(db_path=db_path)
+    resolved_path = ensure_historical_storage(db_path=db_path)
     discovered_total_pages = None
     if discovered_total_matches and page_size > 0:
         discovered_total_pages = (discovered_total_matches + page_size - 1) // page_size
@@ -406,7 +418,7 @@ def finalize_backfill_progress(
     db_path: Path | None = None,
 ) -> None:
     """Persist the final state of one resumable historical backfill attempt."""
-    resolved_path = initialize_historical_storage(db_path=db_path)
+    resolved_path = ensure_historical_storage(db_path=db_path)
     with _connect_writer(resolved_path) as connection:
         server_row = _resolve_historical_server(connection, server_slug)
         connection.execute(
@@ -554,7 +566,7 @@ def upsert_historical_match(
     db_path: Path | None = None,
 ) -> dict[str, int]:
     """Persist one historical match and its player stats idempotently."""
-    resolved_path = initialize_historical_storage(db_path=db_path)
+    resolved_path = ensure_historical_storage(db_path=db_path)
     match_external_id = _stringify(match_payload.get("id"))
     if not match_external_id:
         raise ValueError("Historical match payload is missing a stable id.")

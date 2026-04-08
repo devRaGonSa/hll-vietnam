@@ -4,7 +4,11 @@ from __future__ import annotations
 
 import argparse
 import json
+import threading
+import time
+from contextlib import contextmanager
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from typing import Callable, Iterable
 
 from .config import (
@@ -40,6 +44,8 @@ from .writer_lock import backend_writer_lock, build_writer_lock_holder
 
 
 ProgressCallback = Callable[[dict[str, object]], None]
+ProgressPayloadFactory = Callable[[], dict[str, object]]
+PROGRESS_HEARTBEAT_INTERVAL_SECONDS = 5.0
 
 
 @dataclass(slots=True)
@@ -134,10 +140,48 @@ def _run_ingestion(
     rebuild_snapshots: bool,
     progress_callback: ProgressCallback | None,
 ) -> dict[str, object]:
+    run_started_at = time.monotonic()
+    selected_servers = _select_servers(server_slug)
+    _emit_progress(
+        progress_callback,
+        {
+            "event": "historical-ingestion-run-started",
+            "mode": mode,
+            "server_scope": [str(server["slug"]) for server in selected_servers],
+            "bounded_debug": any(
+                value is not None for value in (server_slug, max_pages, page_size, start_page)
+            ),
+            "max_pages": max_pages,
+            "page_size": page_size or get_historical_crcon_page_size(),
+            "start_page": start_page,
+            "detail_workers": detail_workers or get_historical_crcon_detail_workers(),
+            "overlap_hours": overlap_hours if incremental else None,
+        },
+    )
+    _emit_progress(
+        progress_callback,
+        {
+            "event": "historical-storage-initialization-started",
+            "mode": mode,
+            "scope": "once-per-ingestion-run",
+            "server_count": len(selected_servers),
+        },
+    )
     initialize_historical_storage()
+    _emit_progress(
+        progress_callback,
+        {
+            "event": "historical-storage-initialization-completed",
+            "mode": mode,
+            "scope": "once-per-ingestion-run",
+            "maintenance_passes": [
+                "historical-player-identity-normalization",
+                "historical-match-identity-normalization",
+            ],
+        },
+    )
     stats = IngestionStats()
     fallback_data_source, fallback_source_policy = resolve_historical_ingestion_data_source()
-    selected_servers = _select_servers(server_slug)
     processed_servers: list[dict[str, object]] = []
     active_runs: dict[str, int] = {}
     resolved_overlap_hours = (
@@ -173,7 +217,7 @@ def _run_ingestion(
 
     try:
         if use_classic_fallback:
-            for server in selected_servers:
+            for server_index, server in enumerate(selected_servers, start=1):
                 run_id = start_ingestion_run(mode=mode, target_server_slug=str(server["slug"]))
                 active_runs[str(server["slug"])] = run_id
                 mark_backfill_progress_started(
@@ -196,6 +240,8 @@ def _run_ingestion(
                 )
                 server_stats = _ingest_server(
                     server=server,
+                    server_index=server_index,
+                    server_count=len(selected_servers),
                     mode=mode,
                     run_id=run_id,
                     stats=stats,
@@ -262,8 +308,7 @@ def _run_ingestion(
                 error_message=str(exc),
             )
         raise
-
-    return {
+    result = {
         "status": "ok",
         "mode": mode,
         "source_provider": source_policy.get("selected_source"),
@@ -286,11 +331,27 @@ def _run_ingestion(
             "player_rows_updated": stats.player_rows_updated,
         },
     }
+    _emit_progress(
+        progress_callback,
+        {
+            "event": "historical-ingestion-run-completed",
+            "mode": mode,
+            "elapsed_seconds": round(time.monotonic() - run_started_at, 3),
+            "server_scope": [str(server["slug"]) for server in selected_servers],
+            "bounded_debug": any(
+                value is not None for value in (server_slug, max_pages, page_size, start_page)
+            ),
+            **result["totals"],
+        },
+    )
+    return result
 
 
 def _ingest_server(
     *,
     server: dict[str, object],
+    server_index: int,
+    server_count: int,
     mode: str,
     run_id: int,
     stats: IngestionStats,
@@ -303,6 +364,7 @@ def _ingest_server(
     progress_callback: ProgressCallback | None,
     source_policy: dict[str, object],
 ) -> dict[str, object]:
+    server_started_at = time.monotonic()
     resolved_page_size = page_size or get_historical_crcon_page_size()
     resolved_detail_workers = detail_workers or get_historical_crcon_detail_workers()
     page_limit = max_pages or 1000000
@@ -318,19 +380,43 @@ def _ingest_server(
             "event": "historical-ingestion-server-started",
             "mode": mode,
             "server_slug": server["slug"],
+            "server_index": server_index,
+            "server_count": server_count,
             "selected_source": source_policy.get("selected_source"),
             "fallback_used": bool(source_policy.get("fallback_used")),
             "start_page": start_page,
             "cutoff": cutoff,
+            "max_pages": max_pages,
+            "page_size": resolved_page_size,
+            "detail_workers": resolved_detail_workers,
+            "bounded_debug": any(value is not None for value in (max_pages, page_size, start_page)),
         },
     )
 
     for page_number in range(start_page, start_page + page_limit):
-        payload = data_source.fetch_match_page(
-            base_url=str(server["scoreboard_base_url"]),
-            page=page_number,
-            limit=resolved_page_size,
-        )
+        with _progress_stage(
+            progress_callback,
+            stage="page-fetch",
+            payload_factory=lambda: _build_progress_payload(
+                mode=mode,
+                server=server,
+                server_index=server_index,
+                server_count=server_count,
+                stats=stats,
+                local_stats=local_stats,
+                current_page=page_number,
+                extra={
+                    "max_pages": max_pages,
+                    "page_size": resolved_page_size,
+                    "detail_workers": resolved_detail_workers,
+                },
+            ),
+        ):
+            payload = data_source.fetch_match_page(
+                base_url=str(server["scoreboard_base_url"]),
+                page=page_number,
+                limit=resolved_page_size,
+            )
         if discovered_total_matches is None:
             discovered_total_matches = _coerce_int(payload.get("total"))
         page_matches = _coerce_match_list(payload.get("maps"))
@@ -371,17 +457,78 @@ def _ingest_server(
             },
         )
 
-        for detail_payload in data_source.fetch_match_details(
-            base_url=str(server["scoreboard_base_url"]),
-            match_ids=match_ids_to_fetch,
-            max_workers=resolved_detail_workers,
+        with _progress_stage(
+            progress_callback,
+            stage="detail-fetch",
+            payload_factory=lambda: _build_progress_payload(
+                mode=mode,
+                server=server,
+                server_index=server_index,
+                server_count=server_count,
+                stats=stats,
+                local_stats=local_stats,
+                current_page=page_number,
+                extra={
+                    "match_ids_to_detail": len(match_ids_to_fetch),
+                    "page_matches": len(page_matches),
+                    "page_size": resolved_page_size,
+                    "detail_workers": resolved_detail_workers,
+                },
+            ),
         ):
-            delta = upsert_historical_match(
-                server_slug=str(server["slug"]),
-                match_payload=detail_payload,
+            detail_payloads = list(
+                data_source.fetch_match_details(
+                    base_url=str(server["scoreboard_base_url"]),
+                    match_ids=match_ids_to_fetch,
+                    max_workers=resolved_detail_workers,
+                )
             )
-            local_stats.apply(delta)
-            stats.apply(delta)
+
+        with _progress_stage(
+            progress_callback,
+            stage="page-persist",
+            payload_factory=lambda: _build_progress_payload(
+                mode=mode,
+                server=server,
+                server_index=server_index,
+                server_count=server_count,
+                stats=stats,
+                local_stats=local_stats,
+                current_page=page_number,
+                extra={
+                    "detail_payloads": len(detail_payloads),
+                    "match_ids_to_detail": len(match_ids_to_fetch),
+                    "page_matches": len(page_matches),
+                },
+            ),
+        ):
+            for persisted_matches, detail_payload in enumerate(detail_payloads, start=1):
+                delta = upsert_historical_match(
+                    server_slug=str(server["slug"]),
+                    match_payload=detail_payload,
+                )
+                local_stats.apply(delta)
+                stats.apply(delta)
+                if persisted_matches == len(detail_payloads) or persisted_matches % 10 == 0:
+                    _emit_progress(
+                        progress_callback,
+                        {
+                            "event": "historical-ingestion-persist-progress",
+                            **_build_progress_payload(
+                                mode=mode,
+                                server=server,
+                                server_index=server_index,
+                                server_count=server_count,
+                                stats=stats,
+                                local_stats=local_stats,
+                                current_page=page_number,
+                                extra={
+                                    "persisted_matches": persisted_matches,
+                                    "detail_payloads": len(detail_payloads),
+                                },
+                            ),
+                        },
+                    )
 
         mark_backfill_progress_page_completed(
             server_slug=str(server["slug"]),
@@ -395,7 +542,7 @@ def _ingest_server(
         if stop_after_page:
             break
 
-    return {
+    server_result = {
         "server_slug": server["slug"],
         "public_name": _extract_public_name(public_info),
         "server_number": public_info.get("server_number") or server.get("server_number"),
@@ -412,6 +559,22 @@ def _ingest_server(
         "cutoff": cutoff,
         "archive_exhausted": archive_exhausted,
     }
+    _emit_progress(
+        progress_callback,
+        {
+            "event": "historical-ingestion-server-completed",
+            "mode": mode,
+            "server_slug": server["slug"],
+            "server_index": server_index,
+            "server_count": server_count,
+            "elapsed_seconds": round(time.monotonic() - server_started_at, 3),
+            **_build_stats_payload(stats=stats, local_stats=local_stats),
+            "last_page_processed": last_page_processed,
+            "archive_exhausted": archive_exhausted,
+            "discovered_total_matches": discovered_total_matches,
+        },
+    )
+    return server_result
 
 
 def _resolve_start_page(
@@ -583,6 +746,123 @@ def _emit_progress(
     callback(payload)
 
 
+def _build_progress_payload(
+    *,
+    mode: str,
+    server: dict[str, object],
+    server_index: int,
+    server_count: int,
+    stats: IngestionStats,
+    local_stats: IngestionStats,
+    current_page: int | None = None,
+    extra: dict[str, object] | None = None,
+) -> dict[str, object]:
+    payload: dict[str, object] = {
+        "mode": mode,
+        "server_slug": server["slug"],
+        "server_index": server_index,
+        "server_count": server_count,
+        "page": current_page,
+        **_build_stats_payload(stats=stats, local_stats=local_stats),
+    }
+    if extra:
+        payload.update(extra)
+    return payload
+
+
+def _build_stats_payload(
+    *,
+    stats: IngestionStats,
+    local_stats: IngestionStats,
+) -> dict[str, object]:
+    return {
+        "pages_processed_total": stats.pages_processed,
+        "matches_seen_total": stats.matches_seen,
+        "matches_inserted_total": stats.matches_inserted,
+        "matches_updated_total": stats.matches_updated,
+        "player_rows_inserted_total": stats.player_rows_inserted,
+        "player_rows_updated_total": stats.player_rows_updated,
+        "pages_processed_server": local_stats.pages_processed,
+        "matches_seen_server": local_stats.matches_seen,
+        "matches_inserted_server": local_stats.matches_inserted,
+        "matches_updated_server": local_stats.matches_updated,
+        "player_rows_inserted_server": local_stats.player_rows_inserted,
+        "player_rows_updated_server": local_stats.player_rows_updated,
+    }
+
+
+@contextmanager
+def _progress_stage(
+    callback: ProgressCallback | None,
+    *,
+    stage: str,
+    payload_factory: ProgressPayloadFactory,
+):
+    if callback is None:
+        yield
+        return
+
+    started_at = time.monotonic()
+    stop_event = threading.Event()
+
+    _emit_progress(
+        callback,
+        {
+            "event": "historical-ingestion-stage-started",
+            "stage": stage,
+            "started_at": _utc_now_iso(),
+            **payload_factory(),
+        },
+    )
+
+    heartbeat_thread = threading.Thread(
+        target=_emit_progress_heartbeats,
+        kwargs={
+            "callback": callback,
+            "stage": stage,
+            "payload_factory": payload_factory,
+            "stop_event": stop_event,
+        },
+        daemon=True,
+        name=f"historical-ingestion-{stage}-heartbeat",
+    )
+    heartbeat_thread.start()
+    try:
+        yield
+    finally:
+        stop_event.set()
+        heartbeat_thread.join(timeout=PROGRESS_HEARTBEAT_INTERVAL_SECONDS)
+        _emit_progress(
+            callback,
+            {
+                "event": "historical-ingestion-stage-completed",
+                "stage": stage,
+                "elapsed_seconds": round(time.monotonic() - started_at, 3),
+                **payload_factory(),
+            },
+        )
+
+
+def _emit_progress_heartbeats(
+    *,
+    callback: ProgressCallback,
+    stage: str,
+    payload_factory: ProgressPayloadFactory,
+    stop_event: threading.Event,
+) -> None:
+    started_at = time.monotonic()
+    while not stop_event.wait(PROGRESS_HEARTBEAT_INTERVAL_SECONDS):
+        _emit_progress(
+            callback,
+            {
+                "event": "historical-ingestion-heartbeat",
+                "stage": stage,
+                "elapsed_seconds": round(time.monotonic() - started_at, 3),
+                **payload_factory(),
+            },
+        )
+
+
 def _select_servers(server_slug: str | None) -> list[dict[str, object]]:
     servers = list_historical_servers()
     if server_slug is None:
@@ -633,6 +913,10 @@ def _coerce_int(value: object) -> int | None:
         return int(value)
     except (TypeError, ValueError):
         return None
+
+
+def _utc_now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
 
 
 def build_arg_parser() -> argparse.ArgumentParser:

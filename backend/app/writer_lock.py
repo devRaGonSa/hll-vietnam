@@ -7,6 +7,7 @@ import os
 import socket
 import sys
 import time
+import threading
 import ctypes
 from contextlib import contextmanager
 from datetime import datetime, timezone
@@ -36,7 +37,9 @@ class BackendWriterLockConflictError(RuntimeError):
 
 _ACTIVE_LOCK_DEPTH_BY_PATH: dict[Path, int] = {}
 _ACTIVE_LOCK_TOKEN_BY_PATH: dict[Path, str] = {}
-CONTAINER_STALE_LOCK_GRACE_SECONDS = 300
+CONTAINER_STALE_LOCK_GRACE_SECONDS = 20
+CONTAINER_LOCK_HEARTBEAT_INTERVAL_SECONDS = 5.0
+CONTAINER_LOCK_HEARTBEAT_STALE_SECONDS = 15.0
 
 
 def resolve_backend_writer_lock_path(*, storage_path: Path | None = None) -> Path:
@@ -78,9 +81,18 @@ def backend_writer_lock(
     )
     _ACTIVE_LOCK_DEPTH_BY_PATH[lock_path] = 1
     _ACTIVE_LOCK_TOKEN_BY_PATH[lock_path] = str(metadata["lock_token"])
+    heartbeat_stop_event = threading.Event()
+    heartbeat_thread = _start_lock_heartbeat(
+        lock_path=lock_path,
+        lock_token=str(metadata["lock_token"]),
+        stop_event=heartbeat_stop_event,
+    )
     try:
         yield metadata
     finally:
+        heartbeat_stop_event.set()
+        if heartbeat_thread is not None:
+            heartbeat_thread.join(timeout=CONTAINER_LOCK_HEARTBEAT_INTERVAL_SECONDS)
         _release_backend_writer_lock(lock_path)
         _ACTIVE_LOCK_DEPTH_BY_PATH.pop(lock_path, None)
         _ACTIVE_LOCK_TOKEN_BY_PATH.pop(lock_path, None)
@@ -102,10 +114,18 @@ def check_manual_writer_lock_preflight(
     """Fail fast for manual commands when another backend writer is already active."""
     lock_path = resolve_backend_writer_lock_path(storage_path=storage_path).resolve()
     existing_metadata = _read_lock_metadata(lock_path)
+    existing_state = _classify_lock_state(existing_metadata)
     stale_lock_cleared = False
-    if _can_clear_stale_lock(existing_metadata):
+    if existing_state["status"] == "stale-clearable":
         _remove_lock_file(lock_path)
         existing_metadata = None
+        existing_state = {
+            "status": "stale-cleared",
+            "reason": str(existing_state["reason"]),
+            "holder_scope": str(existing_state["holder_scope"]),
+            "lock_age_seconds": existing_state["lock_age_seconds"],
+            "heartbeat_age_seconds": existing_state["heartbeat_age_seconds"],
+        }
         stale_lock_cleared = True
 
     if existing_metadata:
@@ -123,6 +143,7 @@ def check_manual_writer_lock_preflight(
                 "Stop or disable the active backend writer shown in active_holder, then rerun "
                 "the manual command."
             ),
+            lock_state=existing_state,
         )
         raise BackendWriterLockConflictError(str(payload["message"]), payload=payload)
 
@@ -136,6 +157,7 @@ def check_manual_writer_lock_preflight(
             "No active conflicting backend writer was detected before starting the manual command."
         ),
         stale_lock_cleared=stale_lock_cleared,
+        lock_state=existing_state,
     )
 
 
@@ -154,6 +176,7 @@ def build_acquired_writer_lock_payload(
         existing_metadata=metadata,
         waited_seconds=waited_seconds,
         message="Manual command acquired the shared backend writer lock.",
+        lock_state=_classify_lock_state(metadata),
     )
 
 
@@ -182,6 +205,7 @@ def build_writer_lock_timeout_payload(
             "Stop or disable the active backend writer shown in active_holder before retrying "
             "this manual command."
         ),
+        lock_state=_classify_lock_state(existing_metadata),
     )
 
 
@@ -209,7 +233,8 @@ def _acquire_backend_writer_lock(
             )
         except FileExistsError:
             existing_metadata = _read_lock_metadata(lock_path)
-            if _can_clear_stale_lock(existing_metadata):
+            existing_state = _classify_lock_state(existing_metadata)
+            if existing_state["status"] == "stale-clearable":
                 _remove_lock_file(lock_path)
                 continue
             if time.monotonic() >= deadline:
@@ -219,6 +244,7 @@ def _acquire_backend_writer_lock(
                         holder=holder,
                         timeout_seconds=timeout_seconds,
                         existing_metadata=existing_metadata,
+                        lock_state=existing_state,
                     )
                 )
             time.sleep(poll_interval_seconds)
@@ -250,13 +276,16 @@ def _remove_lock_file(lock_path: Path) -> None:
 
 
 def _build_lock_metadata(*, holder: str) -> dict[str, object]:
+    now_iso = _utc_now_iso()
     return {
         "lock_token": uuid4().hex,
         "holder": holder,
-        "started_at": _utc_now_iso(),
+        "started_at": now_iso,
+        "heartbeat_at": now_iso,
         "hostname": socket.gethostname(),
         "pid": os.getpid(),
         "cwd": str(Path.cwd()),
+        "runtime_scope": "container" if _is_current_process_containerized() else "host",
     }
 
 
@@ -267,30 +296,78 @@ def _read_lock_metadata(lock_path: Path) -> dict[str, object] | None:
         return None
 
 
-def _can_clear_stale_lock(existing_metadata: dict[str, object] | None) -> bool:
+def _classify_lock_state(existing_metadata: dict[str, object] | None) -> dict[str, object]:
     if not existing_metadata:
-        return False
-    try:
-        holder_pid = int(existing_metadata.get("pid"))
-    except (TypeError, ValueError):
-        return False
-    if holder_pid <= 0:
-        return False
+        return {
+            "status": "missing",
+            "reason": "no-lock-file-present",
+            "holder_scope": "none",
+            "lock_age_seconds": None,
+            "heartbeat_age_seconds": None,
+        }
 
-    holder_hostname = str(existing_metadata.get("hostname") or "").strip()
-    current_hostname = socket.gethostname()
-    if holder_hostname == current_hostname:
-        if _is_process_alive(holder_pid):
-            return False
-        return True
-    if not _looks_like_containerized_holder(existing_metadata):
-        return False
     lock_age_seconds = _calculate_lock_age_seconds(existing_metadata)
-    if lock_age_seconds is None:
-        return False
-    if lock_age_seconds < CONTAINER_STALE_LOCK_GRACE_SECONDS:
-        return False
-    return True
+    heartbeat_age_seconds = _calculate_lock_age_seconds(existing_metadata, timestamp_key="heartbeat_at")
+    holder_scope = _classify_holder_scope(existing_metadata)
+    recent_heartbeat = (
+        heartbeat_age_seconds is not None
+        and heartbeat_age_seconds <= CONTAINER_LOCK_HEARTBEAT_STALE_SECONDS
+    )
+    holder_pid = _coerce_positive_pid(existing_metadata.get("pid"))
+
+    if holder_scope == "same-host":
+        if holder_pid is not None and _is_process_alive(holder_pid):
+            return {
+                "status": "active",
+                "reason": "same-host-process-is-running",
+                "holder_scope": holder_scope,
+                "lock_age_seconds": lock_age_seconds,
+                "heartbeat_age_seconds": heartbeat_age_seconds,
+            }
+        return {
+            "status": "stale-clearable",
+            "reason": "same-host-process-is-not-running",
+            "holder_scope": holder_scope,
+            "lock_age_seconds": lock_age_seconds,
+            "heartbeat_age_seconds": heartbeat_age_seconds,
+        }
+
+    if _looks_like_containerized_holder(existing_metadata):
+        if recent_heartbeat:
+            return {
+                "status": "active",
+                "reason": "cross-container-lock-has-recent-heartbeat",
+                "holder_scope": holder_scope,
+                "lock_age_seconds": lock_age_seconds,
+                "heartbeat_age_seconds": heartbeat_age_seconds,
+            }
+        if lock_age_seconds is not None and lock_age_seconds < CONTAINER_STALE_LOCK_GRACE_SECONDS:
+            return {
+                "status": "stale-unsafe",
+                "reason": "cross-container-lock-is-still-within-grace-window",
+                "holder_scope": holder_scope,
+                "lock_age_seconds": lock_age_seconds,
+                "heartbeat_age_seconds": heartbeat_age_seconds,
+            }
+        return {
+            "status": "stale-clearable",
+            "reason": (
+                "cross-container-lock-heartbeat-missing-or-stale"
+                if heartbeat_age_seconds is None
+                else "cross-container-lock-heartbeat-expired"
+            ),
+            "holder_scope": holder_scope,
+            "lock_age_seconds": lock_age_seconds,
+            "heartbeat_age_seconds": heartbeat_age_seconds,
+        }
+
+    return {
+        "status": "stale-unsafe",
+        "reason": "non-container-foreign-host-lock-cannot-be-cleared-safely",
+        "holder_scope": holder_scope,
+        "lock_age_seconds": lock_age_seconds,
+        "heartbeat_age_seconds": heartbeat_age_seconds,
+    }
 
 
 def _is_process_alive(pid: int) -> bool:
@@ -331,6 +408,7 @@ def _build_lock_timeout_message(
     holder: str,
     timeout_seconds: float,
     existing_metadata: dict[str, object] | None,
+    lock_state: dict[str, object],
 ) -> str:
     if not existing_metadata:
         return (
@@ -342,9 +420,12 @@ def _build_lock_timeout_message(
     started_at = existing_metadata.get("started_at") or "unknown-started-at"
     hostname = existing_metadata.get("hostname") or "unknown-host"
     pid = existing_metadata.get("pid") or "unknown-pid"
+    diagnosis = str(lock_state.get("status") or "unknown")
+    reason = str(lock_state.get("reason") or "unknown-reason")
     return (
         f"Writer lock is busy at {lock_path}. Held by {existing_holder} "
         f"since {started_at} on {hostname} (pid {pid}). "
+        f"Diagnosis {diagnosis} ({reason}). "
         f"Timed out after waiting {timeout_seconds:.1f}s for {holder}."
     )
 
@@ -359,7 +440,9 @@ def _build_writer_lock_payload(
     message: str,
     corrective_action: str | None = None,
     stale_lock_cleared: bool = False,
+    lock_state: dict[str, object] | None = None,
 ) -> dict[str, object]:
+    resolved_lock_state = lock_state or _classify_lock_state(existing_metadata)
     payload: dict[str, object] = {
         "status": status,
         "holder": holder,
@@ -371,24 +454,123 @@ def _build_writer_lock_payload(
         "sqlite_busy_timeout_ms": get_sqlite_busy_timeout_ms(),
         "message": message,
         "stale_lock_cleared": stale_lock_cleared,
+        "lock_diagnosis": resolved_lock_state.get("status"),
+        "lock_reason": resolved_lock_state.get("reason"),
+        "active_holder_scope": resolved_lock_state.get("holder_scope"),
+        "active_lock_age_seconds": resolved_lock_state.get("lock_age_seconds"),
+        "active_heartbeat_age_seconds": resolved_lock_state.get("heartbeat_age_seconds"),
     }
     if corrective_action:
         payload["corrective_action"] = corrective_action
     if existing_metadata:
         payload["active_holder"] = existing_metadata.get("holder")
         payload["active_started_at"] = existing_metadata.get("started_at")
+        payload["active_heartbeat_at"] = existing_metadata.get("heartbeat_at")
         payload["active_hostname"] = existing_metadata.get("hostname")
         payload["active_pid"] = existing_metadata.get("pid")
+        payload["active_runtime_scope"] = existing_metadata.get("runtime_scope")
     return payload
 
 
+def _start_lock_heartbeat(
+    *,
+    lock_path: Path,
+    lock_token: str,
+    stop_event: threading.Event,
+) -> threading.Thread | None:
+    interval_seconds = min(
+        CONTAINER_LOCK_HEARTBEAT_INTERVAL_SECONDS,
+        max(1.0, get_writer_lock_poll_interval_seconds()),
+    )
+    if interval_seconds <= 0:
+        return None
+
+    thread = threading.Thread(
+        target=_heartbeat_lock_file,
+        kwargs={
+            "lock_path": lock_path,
+            "lock_token": lock_token,
+            "stop_event": stop_event,
+            "interval_seconds": interval_seconds,
+        },
+        name=f"backend-writer-lock-heartbeat-{lock_path.stem}",
+        daemon=True,
+    )
+    thread.start()
+    return thread
+
+
+def _heartbeat_lock_file(
+    *,
+    lock_path: Path,
+    lock_token: str,
+    stop_event: threading.Event,
+    interval_seconds: float,
+) -> None:
+    while not stop_event.wait(interval_seconds):
+        metadata = _read_lock_metadata(lock_path)
+        if not metadata or str(metadata.get("lock_token") or "") != lock_token:
+            return
+        metadata["heartbeat_at"] = _utc_now_iso()
+        _write_lock_metadata(lock_path, metadata, expected_token=lock_token)
+
+
+def _write_lock_metadata(
+    lock_path: Path,
+    metadata: dict[str, object],
+    *,
+    expected_token: str | None = None,
+) -> None:
+    if expected_token is not None:
+        current_metadata = _read_lock_metadata(lock_path)
+        if not current_metadata or str(current_metadata.get("lock_token") or "") != expected_token:
+            return
+    temporary_path = lock_path.with_suffix(f"{lock_path.suffix}.tmp")
+    temporary_path.write_text(
+        json.dumps(metadata, ensure_ascii=True, indent=2) + "\n",
+        encoding="utf-8",
+    )
+    os.replace(temporary_path, lock_path)
+
+
 def _looks_like_containerized_holder(existing_metadata: dict[str, object]) -> bool:
+    runtime_scope = str(existing_metadata.get("runtime_scope") or "").strip().lower()
+    if runtime_scope == "container":
+        return True
     holder_cwd = str(existing_metadata.get("cwd") or "").strip().lower()
     return holder_cwd.startswith("/app")
 
 
-def _calculate_lock_age_seconds(existing_metadata: dict[str, object]) -> float | None:
-    started_at_raw = str(existing_metadata.get("started_at") or "").strip()
+def _is_current_process_containerized() -> bool:
+    current_cwd = str(Path.cwd()).strip().lower()
+    return current_cwd.startswith("/app")
+
+
+def _classify_holder_scope(existing_metadata: dict[str, object]) -> str:
+    holder_hostname = str(existing_metadata.get("hostname") or "").strip()
+    if not holder_hostname:
+        return "unknown"
+    if holder_hostname == socket.gethostname():
+        return "same-host"
+    if _looks_like_containerized_holder(existing_metadata):
+        return "cross-container"
+    return "cross-host"
+
+
+def _coerce_positive_pid(value: object) -> int | None:
+    try:
+        pid = int(value)
+    except (TypeError, ValueError):
+        return None
+    return pid if pid > 0 else None
+
+
+def _calculate_lock_age_seconds(
+    existing_metadata: dict[str, object],
+    *,
+    timestamp_key: str = "started_at",
+) -> float | None:
+    started_at_raw = str(existing_metadata.get(timestamp_key) or "").strip()
     if not started_at_raw:
         return None
     try:

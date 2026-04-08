@@ -126,6 +126,11 @@ def _run_phase_with_retries(
                 max_pages=max_pages,
                 page_size=page_size,
                 run_number=run_number,
+                progress_callback=_build_runner_progress_callback(
+                    execution_mode=execution_mode,
+                    phase=phase,
+                    run_number=run_number,
+                ),
             )
             return {
                 "status": "ok",
@@ -175,6 +180,7 @@ def run_manual_historical_phase(
     max_pages: int | None = None,
     page_size: int | None = None,
     run_number: int = 1,
+    progress_callback: Any = None,
 ) -> dict[str, Any]:
     """Run one explicit historical maintenance phase and return one structured result."""
     normalized_phase = phase.strip().lower()
@@ -213,6 +219,7 @@ def run_manual_historical_phase(
             max_pages=max_pages,
             page_size=page_size,
             run_number=run_number,
+            progress_callback=progress_callback,
         )
 
 
@@ -225,9 +232,23 @@ def _run_manual_historical_phase_unlocked(
     max_pages: int | None,
     page_size: int | None,
     run_number: int,
+    progress_callback: Any,
 ) -> dict[str, Any]:
+    _emit_runner_progress(
+        progress_callback,
+        {
+            "event": "historical-runner-phase-started",
+            "mode": execution_mode,
+            "phase": phase,
+            "run_number": run_number,
+            "server_scope": _describe_refresh_scope(server_slug),
+            "max_pages": max_pages,
+            "page_size": page_size,
+            "bounded_debug": any(value is not None for value in (server_slug, max_pages, page_size)),
+        },
+    )
     if phase == "snapshots":
-        return {
+        result = {
             "mode": execution_mode,
             "phase": phase,
             "run_number": run_number,
@@ -249,9 +270,25 @@ def _run_manual_historical_phase_unlocked(
                 policy_mode="manual-no-elo-follow-up",
             ),
         }
+        _emit_runner_progress(
+            progress_callback,
+            {
+                "event": "historical-runner-phase-completed",
+                "mode": execution_mode,
+                "phase": phase,
+                "run_number": run_number,
+                "server_scope": _describe_refresh_scope(server_slug),
+                "max_pages": max_pages,
+                "page_size": page_size,
+                "bounded_debug": any(value is not None for value in (server_slug, max_pages, page_size)),
+                "classic_fallback_used": result["classic_fallback_used"],
+                "classic_fallback_reason": result["classic_fallback_reason"],
+            },
+        )
+        return result
 
     if phase == "refresh":
-        return {
+        result = {
             "mode": execution_mode,
             "phase": phase,
             "run_number": run_number,
@@ -262,6 +299,7 @@ def _run_manual_historical_phase_unlocked(
                 server_slug=server_slug,
                 max_pages=max_pages,
                 page_size=page_size,
+                progress_callback=progress_callback,
             ),
             "snapshot_result": _build_phase_skip_result("manual-phase-refresh-only"),
             "elo_mmr_result": _build_elo_mmr_follow_up_result(
@@ -270,6 +308,22 @@ def _run_manual_historical_phase_unlocked(
                 policy_mode="manual-no-elo-follow-up",
             ),
         }
+        _emit_runner_progress(
+            progress_callback,
+            {
+                "event": "historical-runner-phase-completed",
+                "mode": execution_mode,
+                "phase": phase,
+                "run_number": run_number,
+                "server_scope": _describe_refresh_scope(server_slug),
+                "max_pages": max_pages,
+                "page_size": page_size,
+                "bounded_debug": any(value is not None for value in (server_slug, max_pages, page_size)),
+                "classic_fallback_used": result["classic_fallback_used"],
+                "classic_fallback_reason": result["classic_fallback_reason"],
+            },
+        )
+        return result
 
     rcon_capture_result = _run_primary_rcon_capture()
     if phase == "capture":
@@ -285,6 +339,7 @@ def _run_manual_historical_phase_unlocked(
             server_slug=server_slug,
             max_pages=max_pages,
             page_size=page_size,
+            progress_callback=progress_callback,
         )
         snapshot_result = generate_historical_snapshots(
             server_slug=server_slug,
@@ -334,7 +389,7 @@ def _run_manual_historical_phase_unlocked(
                 auto_skip_reason="rcon-primary-cycle-had-no-new-useful-data",
             )
 
-    return {
+    result = {
         "mode": execution_mode,
         "phase": phase,
         "run_number": run_number,
@@ -345,6 +400,22 @@ def _run_manual_historical_phase_unlocked(
         "snapshot_result": snapshot_result,
         "elo_mmr_result": elo_mmr_result,
     }
+    _emit_runner_progress(
+        progress_callback,
+        {
+            "event": "historical-runner-phase-completed",
+            "mode": execution_mode,
+            "phase": phase,
+            "run_number": run_number,
+            "server_scope": _describe_refresh_scope(server_slug),
+            "max_pages": max_pages,
+            "page_size": page_size,
+            "bounded_debug": any(value is not None for value in (server_slug, max_pages, page_size)),
+            "classic_fallback_used": result["classic_fallback_used"],
+            "classic_fallback_reason": result["classic_fallback_reason"],
+        },
+    )
+    return result
 
 
 def _run_classic_refresh(
@@ -352,12 +423,14 @@ def _run_classic_refresh(
     server_slug: str | None,
     max_pages: int | None,
     page_size: int | None,
+    progress_callback: Any = None,
 ) -> dict[str, Any]:
     return run_incremental_refresh(
         server_slug=server_slug,
         max_pages=max_pages,
         page_size=page_size,
         rebuild_snapshots=False,
+        progress_callback=progress_callback,
     )
 
 
@@ -563,6 +636,36 @@ def _build_elo_mmr_rebuild_policy(
         "rebuild_interval_minutes": interval_minutes,
         "min_new_samples": min_new_samples,
     }
+
+
+def _build_runner_progress_callback(
+    *,
+    execution_mode: str,
+    phase: str,
+    run_number: int,
+):
+    def _callback(payload: dict[str, Any]) -> None:
+        _emit_runner_progress(
+            _print_progress,
+            {
+                **payload,
+                "runner_mode": execution_mode,
+                "runner_phase": phase,
+                "runner_run_number": run_number,
+            },
+        )
+
+    return _callback
+
+
+def _emit_runner_progress(callback: Any, payload: dict[str, Any]) -> None:
+    if callback is None:
+        return
+    callback(payload)
+
+
+def _print_progress(payload: dict[str, Any]) -> None:
+    print(json.dumps(payload, ensure_ascii=True))
 
 
 def build_arg_parser() -> argparse.ArgumentParser:
