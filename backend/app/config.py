@@ -4,11 +4,19 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
+from urllib.parse import quote_plus
 
 
 DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 8000
 DEFAULT_STORAGE_FILENAME = "hll_vietnam_dev.sqlite3"
+DEFAULT_POSTGRES_HOST = "127.0.0.1"
+DEFAULT_POSTGRES_PORT = 5432
+DEFAULT_POSTGRES_DB = "hll_vietnam"
+DEFAULT_POSTGRES_USER = "hll_vietnam"
+DEFAULT_POSTGRES_PASSWORD = "hll_vietnam_dev"
+DEFAULT_POSTGRES_SSLMODE = "disable"
+DEFAULT_POSTGRES_CONNECT_TIMEOUT_SECONDS = 5
 DEFAULT_REFRESH_INTERVAL_SECONDS = 300
 DEFAULT_LIVE_DATA_SOURCE = "rcon"
 DEFAULT_HISTORICAL_DATA_SOURCE = "rcon"
@@ -79,10 +87,116 @@ def _normalize_origin(origin: str) -> str:
 
 
 def get_storage_path() -> Path:
-    """Return the local SQLite path used for development snapshot persistence."""
+    """Return the transitional SQLite path used during the staged migration."""
     default_path = Path(__file__).resolve().parent.parent / "data" / DEFAULT_STORAGE_FILENAME
     configured_path = os.getenv("HLL_BACKEND_STORAGE_PATH")
     return Path(configured_path) if configured_path else default_path
+
+
+def get_postgres_host() -> str:
+    """Return the PostgreSQL host used by the staged runtime foundation."""
+    return os.getenv("HLL_BACKEND_POSTGRES_HOST", DEFAULT_POSTGRES_HOST).strip()
+
+
+def get_postgres_port() -> int:
+    """Return the PostgreSQL port used by the staged runtime foundation."""
+    configured_value = os.getenv(
+        "HLL_BACKEND_POSTGRES_PORT",
+        str(DEFAULT_POSTGRES_PORT),
+    )
+    port = int(configured_value)
+    if port <= 0:
+        raise ValueError("HLL_BACKEND_POSTGRES_PORT must be positive.")
+    return port
+
+
+def get_postgres_database() -> str:
+    """Return the PostgreSQL database name used by the staged runtime foundation."""
+    database = os.getenv("HLL_BACKEND_POSTGRES_DB", DEFAULT_POSTGRES_DB).strip()
+    if not database:
+        raise ValueError("HLL_BACKEND_POSTGRES_DB must not be empty.")
+    return database
+
+
+def get_postgres_user() -> str:
+    """Return the PostgreSQL user used by the staged runtime foundation."""
+    user = os.getenv("HLL_BACKEND_POSTGRES_USER", DEFAULT_POSTGRES_USER).strip()
+    if not user:
+        raise ValueError("HLL_BACKEND_POSTGRES_USER must not be empty.")
+    return user
+
+
+def get_postgres_password() -> str:
+    """Return the PostgreSQL password used by the staged runtime foundation."""
+    return os.getenv("HLL_BACKEND_POSTGRES_PASSWORD", DEFAULT_POSTGRES_PASSWORD)
+
+
+def get_postgres_sslmode() -> str:
+    """Return the PostgreSQL sslmode used by the staged runtime foundation."""
+    sslmode = os.getenv("HLL_BACKEND_POSTGRES_SSLMODE", DEFAULT_POSTGRES_SSLMODE).strip()
+    if not sslmode:
+        raise ValueError("HLL_BACKEND_POSTGRES_SSLMODE must not be empty.")
+    return sslmode
+
+
+def get_postgres_connect_timeout_seconds() -> int:
+    """Return the PostgreSQL connect timeout used by the staged runtime foundation."""
+    configured_value = os.getenv(
+        "HLL_BACKEND_POSTGRES_CONNECT_TIMEOUT_SECONDS",
+        str(DEFAULT_POSTGRES_CONNECT_TIMEOUT_SECONDS),
+    )
+    timeout_seconds = int(configured_value)
+    if timeout_seconds <= 0:
+        raise ValueError("HLL_BACKEND_POSTGRES_CONNECT_TIMEOUT_SECONDS must be positive.")
+    return timeout_seconds
+
+
+def get_postgres_dsn() -> str:
+    """Return the PostgreSQL DSN, preferring the explicit override when provided."""
+    configured_dsn = os.getenv("HLL_BACKEND_POSTGRES_DSN")
+    if configured_dsn and configured_dsn.strip():
+        return configured_dsn.strip()
+
+    user = quote_plus(get_postgres_user())
+    password = quote_plus(get_postgres_password())
+    host = get_postgres_host()
+    port = get_postgres_port()
+    database = quote_plus(get_postgres_database())
+    sslmode = quote_plus(get_postgres_sslmode())
+    connect_timeout = get_postgres_connect_timeout_seconds()
+    return (
+        f"postgresql://{user}:{password}@{host}:{port}/{database}"
+        f"?sslmode={sslmode}&connect_timeout={connect_timeout}"
+    )
+
+
+def get_postgres_connection_settings() -> dict[str, object]:
+    """Return the PostgreSQL runtime contract used by the shared connection layer."""
+    return {
+        "dsn": get_postgres_dsn(),
+        "host": get_postgres_host(),
+        "port": get_postgres_port(),
+        "database": get_postgres_database(),
+        "user": get_postgres_user(),
+        "password": get_postgres_password(),
+        "sslmode": get_postgres_sslmode(),
+        "connect_timeout_seconds": get_postgres_connect_timeout_seconds(),
+        "sqlite_storage_path": str(get_storage_path()),
+        "sqlite_runtime_status": "transitional",
+        "sqlite_env_status": {
+            "HLL_BACKEND_STORAGE_PATH": "transitional",
+            "HLL_BACKEND_SQLITE_WRITER_TIMEOUT_SECONDS": "deprecated-but-tolerated",
+            "HLL_BACKEND_SQLITE_BUSY_TIMEOUT_MS": "deprecated-but-tolerated",
+            "HLL_BACKEND_WRITER_LOCK_TIMEOUT_SECONDS": "deprecated-but-tolerated",
+            "HLL_BACKEND_WRITER_LOCK_POLL_INTERVAL_SECONDS": "deprecated-but-tolerated",
+        },
+        "migration_runner_status": "deferred-to-task-133",
+    }
+
+
+def get_postgres_migrations_path() -> Path:
+    """Return the stable repository location for PostgreSQL SQL-first migrations."""
+    return Path(__file__).resolve().parent.parent / "db" / "migrations"
 
 
 def get_sqlite_writer_timeout_seconds() -> float:

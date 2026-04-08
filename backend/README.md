@@ -1686,3 +1686,67 @@ Esta fase no implementa:
 - dependencias nuevas
 
 La idea es dejar un esqueleto funcional, pequeno y coherente con `docs/frontend-backend-contract.md`.
+
+## PostgreSQL migration boundary
+
+The repository now has an approved staged target architecture for replacing the
+current SQLite-plus-filesystem persistence model with PostgreSQL as the primary
+durable store.
+
+Current state remains SQLite-first for the implemented runtime, but the
+migration boundary is now fixed:
+
+- PostgreSQL becomes the long-term primary store for product data
+- `/app/data/snapshots` stops being the long-term source of truth
+- file-based writer locks are transitional only
+- plain SQL views are not the approved universal answer for historical
+  fast-read payloads
+
+The architecture boundary, ownership map, cutover rules, and task dependency
+order for `TASK-131` to `TASK-138` are documented in
+`docs/postgresql-target-architecture.md`.
+
+## PostgreSQL schema bootstrap
+
+The PostgreSQL migration batch now uses a SQL-first bootstrap path instead of
+embedding new PostgreSQL schema creation inside runtime hot paths.
+
+Stable migration location:
+
+- `backend/db/migrations/`
+
+Schema version tracking:
+
+- table `schema_migrations`
+- version key = SQL filename
+- checksum guard = SHA-256 of each migration file
+
+Local command from `backend/`:
+
+```powershell
+python scripts/run-migrations.py
+```
+
+Container command:
+
+```powershell
+docker compose exec backend python scripts/run-migrations.py
+```
+
+This bootstrap currently covers only the core relational foundation needed
+before downstream domain migrations:
+
+- `game_sources`
+- `servers`
+- `server_snapshots`
+- `historical_servers`
+- `historical_maps`
+- `historical_matches`
+- `historical_players`
+- `historical_player_match_stats`
+- `historical_ingestion_runs`
+- `historical_backfill_progress`
+
+Snapshot payload materialization remains intentionally deferred to `TASK-135`.
+Advanced RCON, player-event, and Elo/MMR tables remain intentionally deferred to
+`TASK-136`.

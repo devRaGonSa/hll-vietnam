@@ -1,1 +1,2 @@
-# El bootstrap actual usa solo la libreria estandar de Python.
+# PostgreSQL runtime foundation for the staged SQLite-to-PostgreSQL migration.
+psycopg[binary]==3.2.6

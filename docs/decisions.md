@@ -126,3 +126,25 @@ Las claves estables son:
 Esto permite bootstrap, refresco incremental e idempotencia sin mezclar
 semanticas de estado actual con historico persistido. El modelo detallado queda
 en `docs/historical-domain-model.md`.
+
+## Decision 014: PostgreSQL como destino primario del backend y cutover por fases
+
+La persistencia SQLite local y los snapshots JSON en filesystem dejan de ser el
+destino objetivo de largo plazo para los datos de producto del backend.
+
+El estado de destino aprobado para la migracion `TASK-131` a `TASK-138` fija:
+
+- PostgreSQL como primary durable store
+- tablas relacionales PostgreSQL para live snapshots, historico base, RCON,
+  player events y Elo/MMR
+- fast-read snapshots persistidos en PostgreSQL mediante tablas explicitas y
+  `JSONB` o una hibridacion estrecha y justificada
+- rechazo explicito de vistas SQL simples como solucion universal de snapshot
+- sustitucion de locks por fichero y supuestos WAL/busy-timeout de SQLite por
+  coordinacion compatible con PostgreSQL
+
+La migracion debe hacerse por fases, con mixed mode solo como frontera
+transicional de backfill y validacion. `.sqlite3`, `/app/data/snapshots` y los
+file locks no pueden sobrevivir como dependencias runtime primarias una vez
+completado el cutover final. La arquitectura y el orden de dependencias quedan
+definidos en `docs/postgresql-target-architecture.md`.
