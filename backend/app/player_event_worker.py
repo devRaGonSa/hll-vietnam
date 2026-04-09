@@ -30,7 +30,15 @@ from .player_event_storage import (
     start_player_event_ingestion_run,
     upsert_player_events,
 )
-from .writer_lock import backend_writer_lock, build_writer_lock_holder
+from .writer_lock import (
+    BackendWriterLockConflictError,
+    BackendWriterLockTimeoutError,
+    backend_writer_lock,
+    build_acquired_writer_lock_payload,
+    build_writer_lock_holder,
+    build_writer_lock_timeout_payload,
+    check_manual_writer_lock_preflight,
+)
 
 
 @dataclass(slots=True)
@@ -60,7 +68,7 @@ def run_player_event_refresh(
         holder=build_writer_lock_holder(
             f"app.player_event_worker refresh:{server_slug or 'all-servers'}"
         )
-    ):
+    ) as writer_lock_metadata:
         initialize_player_event_storage()
         data_source, data_source_policy = resolve_historical_ingestion_data_source()
         event_source_selection = resolve_player_event_source()
@@ -162,6 +170,7 @@ def run_player_event_refresh(
             "overlap_hours": resolved_overlap_hours,
             "scope": event_source.describe_scope(),
             "servers": processed_servers,
+            "writer_lock_metadata": writer_lock_metadata,
         }
 
 
@@ -453,16 +462,57 @@ def main(argv: Iterable[str] | None = None) -> int:
     args = parser.parse_args(list(argv) if argv is not None else None)
 
     if args.mode == "refresh":
-        result = run_player_event_refresh(
-            server_slug=args.server_slug,
-            max_pages=args.max_pages,
-            page_size=args.page_size,
-            start_page=args.start_page,
-            detail_workers=args.detail_workers,
-            overlap_hours=args.overlap_hours,
+        holder = build_writer_lock_holder(
+            f"app.player_event_worker refresh:{args.server_slug or 'all-servers'}"
         )
-        print(json.dumps(result, indent=2))
-        return 0
+        try:
+            check_manual_writer_lock_preflight(holder=holder)
+            result = run_player_event_refresh(
+                server_slug=args.server_slug,
+                max_pages=args.max_pages,
+                page_size=args.page_size,
+                start_page=args.start_page,
+                detail_workers=args.detail_workers,
+                overlap_hours=args.overlap_hours,
+            )
+            writer_lock_metadata = result.pop("writer_lock_metadata", None)
+            print(
+                json.dumps(
+                    {
+                        **result,
+                        "writer_lock": build_acquired_writer_lock_payload(
+                            holder=holder,
+                            metadata=writer_lock_metadata,
+                        ),
+                    },
+                    indent=2,
+                )
+            )
+            return 0
+        except BackendWriterLockConflictError as exc:
+            print(
+                json.dumps(
+                    {
+                        "status": "error",
+                        "error": str(exc),
+                        "writer_lock": exc.payload,
+                    },
+                    indent=2,
+                )
+            )
+            return 1
+        except BackendWriterLockTimeoutError as exc:
+            print(
+                json.dumps(
+                    {
+                        "status": "error",
+                        "error": str(exc),
+                        "writer_lock": build_writer_lock_timeout_payload(holder=holder),
+                    },
+                    indent=2,
+                )
+            )
+            return 1
 
     if args.interval <= 0:
         raise ValueError("--interval must be a positive integer.")

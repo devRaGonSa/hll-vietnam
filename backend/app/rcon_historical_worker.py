@@ -57,8 +57,11 @@ def run_rcon_historical_capture(
         holder=build_writer_lock_holder(
             f"app.rcon_historical_worker capture:{target_key or 'all-targets'}"
         )
-    ):
-        return run_rcon_historical_capture_unlocked(target_key=target_key)
+    ) as writer_lock_metadata:
+        return {
+            **run_rcon_historical_capture_unlocked(target_key=target_key),
+            "writer_lock_metadata": writer_lock_metadata,
+        }
 
 
 def run_rcon_historical_capture_unlocked(
@@ -175,6 +178,7 @@ def run_periodic_rcon_historical_capture(
                 "target_scope": target_key or "all-configured-rcon-targets",
             },
             indent=2,
+            default=str,
         )
     )
     print("Press Ctrl+C to stop.")
@@ -187,7 +191,7 @@ def run_periodic_rcon_historical_capture(
                 retry_delay_seconds=retry_delay_seconds,
                 target_key=target_key,
             )
-            print(json.dumps({"run": completed_runs, **payload}, indent=2))
+            print(json.dumps({"run": completed_runs, **payload}, indent=2, default=str))
             if max_runs is not None and completed_runs >= max_runs:
                 break
             time.sleep(interval_seconds)
@@ -356,16 +360,18 @@ def main(argv: Iterable[str] | None = None) -> int:
         try:
             check_manual_writer_lock_preflight(holder=holder)
             result = run_rcon_historical_capture(target_key=args.target_key)
+            writer_lock_metadata = result.pop("writer_lock_metadata", None)
             print(
                 json.dumps(
                     {
                         **result,
                         "writer_lock": build_acquired_writer_lock_payload(
                             holder=holder,
-                            metadata=None,
+                            metadata=writer_lock_metadata,
                         ),
                     },
                     indent=2,
+                    default=str,
                 )
             )
             return 0
@@ -378,6 +384,7 @@ def main(argv: Iterable[str] | None = None) -> int:
                         "writer_lock": exc.payload,
                     },
                     indent=2,
+                    default=str,
                 )
             )
             return 1
@@ -390,6 +397,7 @@ def main(argv: Iterable[str] | None = None) -> int:
                         "writer_lock": build_writer_lock_timeout_payload(holder=holder),
                     },
                     indent=2,
+                    default=str,
                 )
             )
             return 1

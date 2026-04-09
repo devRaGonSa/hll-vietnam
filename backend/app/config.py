@@ -46,8 +46,8 @@ DEFAULT_RCON_HISTORICAL_CAPTURE_MAX_RETRIES = 2
 DEFAULT_RCON_HISTORICAL_CAPTURE_RETRY_DELAY_SECONDS = 15
 DEFAULT_SQLITE_WRITER_TIMEOUT_SECONDS = 30.0
 DEFAULT_SQLITE_BUSY_TIMEOUT_MS = 30000
-DEFAULT_WRITER_LOCK_TIMEOUT_SECONDS = 120.0
-DEFAULT_WRITER_LOCK_POLL_INTERVAL_SECONDS = 1.0
+DEFAULT_POSTGRES_ADVISORY_LOCK_TIMEOUT_SECONDS = 120.0
+DEFAULT_POSTGRES_ADVISORY_LOCK_POLL_INTERVAL_SECONDS = 1.0
 DEFAULT_ALLOWED_ORIGINS = (
     "null",
     "http://127.0.0.1:5500",
@@ -198,8 +198,10 @@ def get_postgres_connection_settings() -> dict[str, object]:
             "HLL_BACKEND_STORAGE_PATH": "transitional",
             "HLL_BACKEND_SQLITE_WRITER_TIMEOUT_SECONDS": "deprecated-but-tolerated",
             "HLL_BACKEND_SQLITE_BUSY_TIMEOUT_MS": "deprecated-but-tolerated",
-            "HLL_BACKEND_WRITER_LOCK_TIMEOUT_SECONDS": "deprecated-but-tolerated",
-            "HLL_BACKEND_WRITER_LOCK_POLL_INTERVAL_SECONDS": "deprecated-but-tolerated",
+            "HLL_BACKEND_POSTGRES_ADVISORY_LOCK_TIMEOUT_SECONDS": "active-primary-runtime-setting",
+            "HLL_BACKEND_POSTGRES_ADVISORY_LOCK_POLL_INTERVAL_SECONDS": "active-primary-runtime-setting",
+            "HLL_BACKEND_WRITER_LOCK_TIMEOUT_SECONDS": "deprecated-alias-for-postgresql-advisory-lock-timeout",
+            "HLL_BACKEND_WRITER_LOCK_POLL_INTERVAL_SECONDS": "deprecated-alias-for-postgresql-advisory-lock-poll-interval",
         },
         "migration_runner_status": "sql-first-ready",
     }
@@ -234,30 +236,48 @@ def get_sqlite_busy_timeout_ms() -> int:
     return busy_timeout_ms
 
 
-def get_writer_lock_timeout_seconds() -> float:
-    """Return how long writer jobs should wait for the shared backend writer lock."""
+def get_postgres_advisory_lock_timeout_seconds() -> float:
+    """Return how long writer jobs should wait for the PostgreSQL advisory lock."""
     configured_value = os.getenv(
-        "HLL_BACKEND_WRITER_LOCK_TIMEOUT_SECONDS",
-        str(DEFAULT_WRITER_LOCK_TIMEOUT_SECONDS),
+        "HLL_BACKEND_POSTGRES_ADVISORY_LOCK_TIMEOUT_SECONDS",
+        os.getenv(
+            "HLL_BACKEND_WRITER_LOCK_TIMEOUT_SECONDS",
+            str(DEFAULT_POSTGRES_ADVISORY_LOCK_TIMEOUT_SECONDS),
+        ),
     )
     timeout_seconds = float(configured_value)
     if timeout_seconds < 0:
-        raise ValueError("HLL_BACKEND_WRITER_LOCK_TIMEOUT_SECONDS must be zero or positive.")
+        raise ValueError(
+            "HLL_BACKEND_POSTGRES_ADVISORY_LOCK_TIMEOUT_SECONDS must be zero or positive."
+        )
     return timeout_seconds
 
 
-def get_writer_lock_poll_interval_seconds() -> float:
-    """Return how often writer jobs should poll the shared backend writer lock."""
+def get_postgres_advisory_lock_poll_interval_seconds() -> float:
+    """Return how often writer jobs should retry PostgreSQL advisory lock acquisition."""
     configured_value = os.getenv(
-        "HLL_BACKEND_WRITER_LOCK_POLL_INTERVAL_SECONDS",
-        str(DEFAULT_WRITER_LOCK_POLL_INTERVAL_SECONDS),
+        "HLL_BACKEND_POSTGRES_ADVISORY_LOCK_POLL_INTERVAL_SECONDS",
+        os.getenv(
+            "HLL_BACKEND_WRITER_LOCK_POLL_INTERVAL_SECONDS",
+            str(DEFAULT_POSTGRES_ADVISORY_LOCK_POLL_INTERVAL_SECONDS),
+        ),
     )
     poll_interval_seconds = float(configured_value)
     if poll_interval_seconds <= 0:
         raise ValueError(
-            "HLL_BACKEND_WRITER_LOCK_POLL_INTERVAL_SECONDS must be positive."
+            "HLL_BACKEND_POSTGRES_ADVISORY_LOCK_POLL_INTERVAL_SECONDS must be positive."
         )
     return poll_interval_seconds
+
+
+def get_writer_lock_timeout_seconds() -> float:
+    """Compatibility alias for legacy callers using the old writer-lock env name."""
+    return get_postgres_advisory_lock_timeout_seconds()
+
+
+def get_writer_lock_poll_interval_seconds() -> float:
+    """Compatibility alias for legacy callers using the old writer-lock env name."""
+    return get_postgres_advisory_lock_poll_interval_seconds()
 
 
 def get_refresh_interval_seconds() -> int:

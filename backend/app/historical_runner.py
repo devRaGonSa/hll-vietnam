@@ -137,7 +137,10 @@ def _run_phase_with_retries(
                 "attempts_used": attempt,
                 "max_retries": max_retries,
                 "writer_lock": (
-                    build_acquired_writer_lock_payload(holder=manual_holder, metadata=None)
+                    build_acquired_writer_lock_payload(
+                        holder=manual_holder,
+                        metadata=payload.pop("writer_lock_metadata", None),
+                    )
                     if execution_mode == "manual"
                     else None
                 ),
@@ -210,8 +213,9 @@ def run_manual_historical_phase(
         holder=build_writer_lock_holder(
             f"app.historical_runner {normalized_phase}:{server_slug or 'all-servers'}"
         )
-    ):
-        return _run_manual_historical_phase_unlocked(
+    ) as writer_lock_metadata:
+        return {
+            **_run_manual_historical_phase_unlocked(
             phase=normalized_phase,
             execution_mode=execution_mode,
             manual_full_elo_rebuild=manual_full_elo_rebuild,
@@ -220,7 +224,9 @@ def run_manual_historical_phase(
             page_size=page_size,
             run_number=run_number,
             progress_callback=progress_callback,
-        )
+            ),
+            "writer_lock_metadata": writer_lock_metadata,
+        }
 
 
 def _run_manual_historical_phase_unlocked(
