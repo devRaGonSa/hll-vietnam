@@ -17,6 +17,7 @@ DEFAULT_POSTGRES_USER = "hll_vietnam"
 DEFAULT_POSTGRES_PASSWORD = "hll_vietnam_dev"
 DEFAULT_POSTGRES_SSLMODE = "disable"
 DEFAULT_POSTGRES_CONNECT_TIMEOUT_SECONDS = 5
+DEFAULT_PRIMARY_STORAGE_LABEL = "postgresql-primary"
 DEFAULT_REFRESH_INTERVAL_SECONDS = 300
 DEFAULT_LIVE_DATA_SOURCE = "rcon"
 DEFAULT_HISTORICAL_DATA_SOURCE = "rcon"
@@ -91,6 +92,15 @@ def get_storage_path() -> Path:
     default_path = Path(__file__).resolve().parent.parent / "data" / DEFAULT_STORAGE_FILENAME
     configured_path = os.getenv("HLL_BACKEND_STORAGE_PATH")
     return Path(configured_path) if configured_path else default_path
+
+
+def get_primary_storage_label() -> str:
+    """Return the logical runtime label for PostgreSQL-backed durable storage."""
+    configured_label = os.getenv("HLL_BACKEND_PRIMARY_STORAGE_LABEL", DEFAULT_PRIMARY_STORAGE_LABEL)
+    normalized_label = configured_label.strip()
+    if not normalized_label:
+        raise ValueError("HLL_BACKEND_PRIMARY_STORAGE_LABEL must not be empty.")
+    return normalized_label
 
 
 def get_postgres_host() -> str:
@@ -181,6 +191,7 @@ def get_postgres_connection_settings() -> dict[str, object]:
         "password": get_postgres_password(),
         "sslmode": get_postgres_sslmode(),
         "connect_timeout_seconds": get_postgres_connect_timeout_seconds(),
+        "primary_storage_label": get_primary_storage_label(),
         "sqlite_storage_path": str(get_storage_path()),
         "sqlite_runtime_status": "transitional",
         "sqlite_env_status": {
@@ -190,7 +201,7 @@ def get_postgres_connection_settings() -> dict[str, object]:
             "HLL_BACKEND_WRITER_LOCK_TIMEOUT_SECONDS": "deprecated-but-tolerated",
             "HLL_BACKEND_WRITER_LOCK_POLL_INTERVAL_SECONDS": "deprecated-but-tolerated",
         },
-        "migration_runner_status": "deferred-to-task-133",
+        "migration_runner_status": "sql-first-ready",
     }
 
 

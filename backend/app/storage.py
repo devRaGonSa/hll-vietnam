@@ -1,14 +1,13 @@
-"""Local SQLite persistence for provisional server snapshots."""
+"""PostgreSQL-backed persistence for provisional server snapshots."""
 
 from __future__ import annotations
 
-import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Iterable, Mapping
 
-from .config import get_storage_path
-from .sqlite_utils import connect_sqlite_readonly, connect_sqlite_writer
+from .config import get_primary_storage_label
+from .postgres_utils import connect_postgres_compat, ensure_postgres_migrations_applied
 
 
 DEFAULT_GAME_SOURCE = {
@@ -20,62 +19,15 @@ SUMMARY_SNAPSHOT_LIMIT = 6
 
 
 def resolve_storage_path(*, db_path: Path | None = None) -> Path:
-    """Resolve the SQLite path used by live snapshot persistence."""
-    return db_path or get_storage_path()
+    """Resolve the logical storage target used by live snapshot persistence."""
+    return db_path or Path(get_primary_storage_label())
 
 
 def initialize_storage(*, db_path: Path | None = None) -> Path:
-    """Create the local database file and minimal schema when missing."""
+    """Ensure PostgreSQL schema bootstrap exists for live snapshot persistence."""
     resolved_path = resolve_storage_path(db_path=db_path)
-    resolved_path.parent.mkdir(parents=True, exist_ok=True)
-
+    ensure_postgres_migrations_applied()
     with _connect(resolved_path) as connection:
-        connection.executescript(
-            """
-            CREATE TABLE IF NOT EXISTS game_sources (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                slug TEXT NOT NULL UNIQUE,
-                display_name TEXT NOT NULL,
-                provider_kind TEXT NOT NULL,
-                is_active INTEGER NOT NULL DEFAULT 1,
-                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-            );
-
-            CREATE TABLE IF NOT EXISTS servers (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                game_source_id INTEGER NOT NULL,
-                external_server_id TEXT,
-                server_name TEXT NOT NULL,
-                region TEXT,
-                first_seen_at TEXT NOT NULL,
-                last_seen_at TEXT NOT NULL,
-                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                UNIQUE (game_source_id, external_server_id),
-                FOREIGN KEY (game_source_id) REFERENCES game_sources(id)
-            );
-
-            CREATE TABLE IF NOT EXISTS server_snapshots (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                server_id INTEGER NOT NULL,
-                captured_at TEXT NOT NULL,
-                status TEXT NOT NULL,
-                players INTEGER,
-                max_players INTEGER,
-                current_map TEXT,
-                source_name TEXT NOT NULL,
-                snapshot_origin TEXT,
-                source_ref TEXT,
-                raw_payload_ref TEXT,
-                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                FOREIGN KEY (server_id) REFERENCES servers(id)
-            );
-
-            CREATE INDEX IF NOT EXISTS idx_server_snapshots_server_time
-            ON server_snapshots(server_id, captured_at);
-            """
-        )
         _ensure_server_snapshot_columns(connection)
 
     return resolved_path
@@ -146,8 +98,6 @@ def persist_snapshot_batch(
 def list_latest_snapshots(*, db_path: Path | None = None) -> list[dict[str, object]]:
     """Return the latest persisted snapshot for each known server."""
     resolved_path = resolve_storage_path(db_path=db_path)
-    if not resolved_path.exists():
-        return []
     with _connect_readonly(resolved_path) as connection:
         rows = connection.execute(
             """
@@ -191,8 +141,6 @@ def list_snapshot_history(
 ) -> list[dict[str, object]]:
     """Return recent persisted snapshots across all servers."""
     resolved_path = resolve_storage_path(db_path=db_path)
-    if not resolved_path.exists():
-        return []
     with _connect_readonly(resolved_path) as connection:
         rows = connection.execute(
             """
@@ -231,8 +179,6 @@ def list_server_history(
 ) -> list[dict[str, object]]:
     """Return recent history for one server by numeric id or external id."""
     resolved_path = resolve_storage_path(db_path=db_path)
-    if not resolved_path.exists():
-        return []
     server_filter, server_value = _build_server_filter(server_id)
     with _connect_readonly(resolved_path) as connection:
         rows = connection.execute(
@@ -265,26 +211,26 @@ def list_server_history(
     return [_serialize_snapshot_row(row) for row in rows]
 
 
-def _connect(db_path: Path) -> sqlite3.Connection:
-    return connect_sqlite_writer(db_path)
+def _connect(db_path: Path) -> object:
+    return connect_postgres_compat()
 
 
-def _connect_readonly(db_path: Path) -> sqlite3.Connection:
-    return connect_sqlite_readonly(db_path)
+def _connect_readonly(db_path: Path) -> object:
+    return connect_postgres_compat()
 
 
 def _upsert_game_source(
-    connection: sqlite3.Connection,
+    connection: object,
     game_source: Mapping[str, str],
 ) -> int:
     connection.execute(
         """
         INSERT INTO game_sources (slug, display_name, provider_kind, is_active)
-        VALUES (?, ?, ?, 1)
+        VALUES (?, ?, ?, TRUE)
         ON CONFLICT(slug) DO UPDATE SET
             display_name = excluded.display_name,
             provider_kind = excluded.provider_kind,
-            is_active = 1,
+            is_active = TRUE,
             updated_at = CURRENT_TIMESTAMP
         """,
         (
@@ -304,7 +250,7 @@ def _upsert_game_source(
 
 
 def _upsert_server(
-    connection: sqlite3.Connection,
+    connection: object,
     *,
     game_source_id: int,
     snapshot: Mapping[str, object],
@@ -366,17 +312,7 @@ def _build_fallback_external_id(snapshot: Mapping[str, object]) -> str:
     return compact or "unknown-server"
 
 
-def _ensure_server_snapshot_columns(connection: sqlite3.Connection) -> None:
-    columns = {
-        str(row["name"])
-        for row in connection.execute("PRAGMA table_info(server_snapshots)").fetchall()
-    }
-
-    if "snapshot_origin" not in columns:
-        connection.execute("ALTER TABLE server_snapshots ADD COLUMN snapshot_origin TEXT")
-    if "source_ref" not in columns:
-        connection.execute("ALTER TABLE server_snapshots ADD COLUMN source_ref TEXT")
-
+def _ensure_server_snapshot_columns(connection: object) -> None:
     connection.execute(
         """
         UPDATE server_snapshots
@@ -398,7 +334,7 @@ def _ensure_server_snapshot_columns(connection: sqlite3.Connection) -> None:
     _backfill_registered_a2s_source_refs(connection)
 
 
-def _backfill_registered_a2s_source_refs(connection: sqlite3.Connection) -> None:
+def _backfill_registered_a2s_source_refs(connection: object) -> None:
     from .server_targets import load_a2s_targets
 
     for target in load_a2s_targets():
@@ -424,7 +360,7 @@ def _backfill_registered_a2s_source_refs(connection: sqlite3.Connection) -> None
         )
 
 
-def _serialize_snapshot_row(row: sqlite3.Row) -> dict[str, object]:
+def _serialize_snapshot_row(row: Mapping[str, object]) -> dict[str, object]:
     return {
         "server_id": row["server_id"],
         "external_server_id": row["external_server_id"],
@@ -443,7 +379,7 @@ def _serialize_snapshot_row(row: sqlite3.Row) -> dict[str, object]:
 
 
 def _attach_history_summaries(
-    connection: sqlite3.Connection,
+    connection: object,
     items: list[dict[str, object]],
 ) -> list[dict[str, object]]:
     enriched_items: list[dict[str, object]] = []
@@ -459,7 +395,7 @@ def _attach_history_summaries(
 
 
 def _build_history_summary(
-    connection: sqlite3.Connection,
+    connection: object,
     server_id: int,
 ) -> dict[str, object]:
     rows = connection.execute(
@@ -478,7 +414,7 @@ def _build_history_summary(
     return _summarize_history_rows(rows)
 
 
-def _summarize_history_rows(rows: list[sqlite3.Row]) -> dict[str, object]:
+def _summarize_history_rows(rows: list[Mapping[str, object]]) -> dict[str, object]:
     capture_count = len(rows)
     player_values = [
         int(row["players"])

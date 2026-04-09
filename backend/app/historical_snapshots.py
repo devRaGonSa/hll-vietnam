@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -26,6 +25,7 @@ from .player_event_aggregates import (
     list_weapon_kills,
 )
 from .player_event_storage import initialize_player_event_storage
+from .postgres_utils import connect_postgres_compat
 
 SNAPSHOT_TYPE_SERVER_SUMMARY = "server-summary"
 SNAPSHOT_TYPE_WEEKLY_LEADERBOARD = "weekly-leaderboard"
@@ -319,6 +319,7 @@ def generate_and_persist_historical_snapshots(
         "generated_at": _to_iso(generated_at_value),
         "server_slug": server_key,
         "snapshot_policy": "full-matrix",
+        "snapshot_storage_backend": "postgresql-jsonb-materialization",
         "snapshot_count": len(persisted_records),
         "servers_processed": len(snapshots_by_server),
         "snapshots_by_server": snapshots_by_server,
@@ -352,6 +353,7 @@ def generate_and_persist_priority_historical_snapshots(
         "generated_at": _to_iso(generated_at_value),
         "server_slug": None,
         "snapshot_policy": "priority-prewarm",
+        "snapshot_storage_backend": "postgresql-jsonb-materialization",
         "prewarm_server_keys": list(PREWARM_SNAPSHOT_SERVER_KEYS),
         "prewarm_metrics": list(PREWARM_LEADERBOARD_METRICS),
         "snapshot_count": len(persisted_records),
@@ -368,15 +370,17 @@ def _build_server_summary_snapshot(
 ) -> dict[str, object]:
     if get_historical_data_source_kind() == SOURCE_KIND_RCON:
         data_source = get_rcon_historical_read_model()
-        summary_items = (
-            data_source.list_server_summaries(server_key=server_key)
-            if data_source is not None
-            else []
-        )
+        summary_items = []
+        if data_source is not None:
+            summary_items = data_source.list_server_summaries(server_key=server_key)
+        if not summary_items:
+            summary_items = list_historical_server_summaries(server_slug=server_key, db_path=db_path)
     else:
         summary_items = list_historical_server_summaries(server_slug=server_key, db_path=db_path)
     summary_item = summary_items[0] if summary_items else {}
     time_range = summary_item.get("time_range") if isinstance(summary_item, dict) else {}
+    if not isinstance(time_range, dict):
+        time_range = {}
     return {
         "server_key": server_key,
         "snapshot_type": SNAPSHOT_TYPE_SERVER_SUMMARY,
@@ -469,11 +473,15 @@ def _build_recent_matches_snapshot(
 ) -> dict[str, object]:
     if get_historical_data_source_kind() == SOURCE_KIND_RCON:
         data_source = get_rcon_historical_read_model()
-        items = (
-            data_source.list_recent_activity(server_key=server_key, limit=limit)
-            if data_source is not None
-            else []
-        )
+        items = []
+        if data_source is not None:
+            items = data_source.list_recent_activity(server_key=server_key, limit=limit)
+        if not items:
+            items = list_recent_historical_matches(
+                limit=limit,
+                server_slug=server_key,
+                db_path=db_path,
+            )
     else:
         items = list_recent_historical_matches(
             limit=limit,
@@ -481,9 +489,13 @@ def _build_recent_matches_snapshot(
             db_path=db_path,
         )
     closed_points = [
-        _parse_optional_timestamp(item.get("closed_at"))
-        for item in items
-        if isinstance(item, dict) and item.get("closed_at")
+        timestamp
+        for timestamp in (
+            _parse_optional_timestamp(item.get("closed_at"))
+            for item in items
+            if isinstance(item, dict) and item.get("closed_at")
+        )
+        if timestamp is not None
     ]
     return {
         "server_key": server_key,
@@ -678,7 +690,7 @@ def _get_latest_player_event_month_key(
     with _connect(resolved_path) as connection:
         row = connection.execute(
             f"""
-            SELECT MAX(substr(occurred_at, 1, 7)) AS latest_month
+            SELECT MAX(TO_CHAR(occurred_at AT TIME ZONE 'UTC', 'YYYY-MM')) AS latest_month
             FROM player_event_raw_ledger
             WHERE occurred_at IS NOT NULL
               AND {where_sql}
@@ -706,7 +718,7 @@ def _get_player_event_source_range(
                 MAX(occurred_at) AS source_range_end
             FROM player_event_raw_ledger
             WHERE occurred_at IS NOT NULL
-              AND substr(occurred_at, 1, 7) = ?
+              AND TO_CHAR(occurred_at AT TIME ZONE 'UTC', 'YYYY-MM') = ?
               AND {where_sql}
             """,
             [month_key, *params],
@@ -725,10 +737,8 @@ def _build_player_event_scope_where(*, server_key: str) -> tuple[str, list[objec
     return "server_slug = ?", [server_key]
 
 
-def _connect(db_path: Path) -> sqlite3.Connection:
-    connection = sqlite3.connect(db_path)
-    connection.row_factory = sqlite3.Row
-    return connection
+def _connect(db_path: Path) -> object:
+    return connect_postgres_compat()
 
 
 def _parse_optional_timestamp(value: object) -> datetime | None:

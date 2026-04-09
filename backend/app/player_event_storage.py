@@ -1,91 +1,20 @@
-"""Raw storage and run tracking for the V2 player event pipeline."""
+"""PostgreSQL-backed raw storage and run tracking for the V2 player event pipeline."""
 
 from __future__ import annotations
 
-import sqlite3
 from collections.abc import Iterable
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from .config import get_player_event_refresh_overlap_hours, get_storage_path
+from .config import get_player_event_refresh_overlap_hours, get_primary_storage_label
 from .player_event_models import PlayerEventRecord
-from .sqlite_utils import connect_sqlite_writer
+from .postgres_utils import connect_postgres_compat, ensure_postgres_migrations_applied
 
 
 def initialize_player_event_storage(*, db_path: Path | None = None) -> Path:
-    """Create the append-only player event ledger and its worker metadata tables."""
-    resolved_path = db_path or get_storage_path()
-    resolved_path.parent.mkdir(parents=True, exist_ok=True)
-
-    with _connect(resolved_path) as connection:
-        connection.executescript(
-            """
-            CREATE TABLE IF NOT EXISTS player_event_raw_ledger (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                event_id TEXT NOT NULL UNIQUE,
-                event_type TEXT NOT NULL,
-                occurred_at TEXT,
-                server_slug TEXT NOT NULL,
-                external_match_id TEXT NOT NULL,
-                source_kind TEXT NOT NULL,
-                source_ref TEXT,
-                raw_event_ref TEXT,
-                killer_player_key TEXT,
-                killer_display_name TEXT,
-                victim_player_key TEXT,
-                victim_display_name TEXT,
-                weapon_name TEXT,
-                weapon_category TEXT,
-                kill_category TEXT,
-                is_teamkill INTEGER NOT NULL DEFAULT 0,
-                event_value INTEGER NOT NULL DEFAULT 1,
-                inserted_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-            );
-
-            CREATE TABLE IF NOT EXISTS player_event_ingestion_runs (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                mode TEXT NOT NULL,
-                status TEXT NOT NULL,
-                target_server_slug TEXT,
-                started_at TEXT NOT NULL,
-                completed_at TEXT,
-                pages_processed INTEGER NOT NULL DEFAULT 0,
-                matches_seen INTEGER NOT NULL DEFAULT 0,
-                matches_fetched INTEGER NOT NULL DEFAULT 0,
-                events_inserted INTEGER NOT NULL DEFAULT 0,
-                duplicate_events INTEGER NOT NULL DEFAULT 0,
-                notes TEXT,
-                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-            );
-
-            CREATE TABLE IF NOT EXISTS player_event_backfill_progress (
-                server_slug TEXT NOT NULL,
-                mode TEXT NOT NULL,
-                next_page INTEGER NOT NULL DEFAULT 1,
-                last_completed_page INTEGER,
-                cutoff_occurred_at TEXT,
-                discovered_total_matches INTEGER,
-                archive_exhausted INTEGER NOT NULL DEFAULT 0,
-                last_run_id INTEGER,
-                last_run_status TEXT,
-                last_run_started_at TEXT,
-                last_run_completed_at TEXT,
-                last_error TEXT,
-                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                PRIMARY KEY (server_slug, mode)
-            );
-
-            CREATE INDEX IF NOT EXISTS idx_player_event_raw_server_match
-            ON player_event_raw_ledger(server_slug, external_match_id);
-
-            CREATE INDEX IF NOT EXISTS idx_player_event_raw_occurred_at
-            ON player_event_raw_ledger(occurred_at DESC);
-
-            CREATE INDEX IF NOT EXISTS idx_player_event_raw_killer_victim
-            ON player_event_raw_ledger(killer_player_key, victim_player_key);
-            """
-        )
-
+    """Ensure PostgreSQL schema bootstrap exists for the V2 player event pipeline."""
+    resolved_path = db_path or Path(get_primary_storage_label())
+    ensure_postgres_migrations_applied()
     return resolved_path
 
 
@@ -102,7 +31,7 @@ def upsert_player_events(
         for event in events:
             cursor = connection.execute(
                 """
-                INSERT OR IGNORE INTO player_event_raw_ledger (
+                INSERT INTO player_event_raw_ledger (
                     event_id,
                     event_type,
                     occurred_at,
@@ -121,6 +50,7 @@ def upsert_player_events(
                     is_teamkill,
                     event_value
                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(event_id) DO NOTHING
                 """,
                 (
                     event.event_id,
@@ -138,7 +68,7 @@ def upsert_player_events(
                     event.weapon_name,
                     event.weapon_category,
                     event.kill_category,
-                    1 if event.is_teamkill else 0,
+                    event.is_teamkill,
                     max(1, int(event.event_value)),
                 ),
             )
@@ -161,7 +91,7 @@ def start_player_event_ingestion_run(
     """Persist one player event ingestion attempt."""
     resolved_path = initialize_player_event_storage(db_path=db_path)
     with _connect(resolved_path) as connection:
-        cursor = connection.execute(
+        row = connection.execute(
             """
             INSERT INTO player_event_ingestion_runs (
                 mode,
@@ -169,10 +99,13 @@ def start_player_event_ingestion_run(
                 target_server_slug,
                 started_at
             ) VALUES (?, 'running', ?, ?)
+            RETURNING id
             """,
             (mode, target_server_slug, _utc_now_iso()),
-        )
-        return int(cursor.lastrowid)
+        ).fetchone()
+        if row is None:
+            raise RuntimeError("Failed to create player event ingestion run.")
+        return int(row["id"])
 
 
 def finalize_player_event_ingestion_run(
@@ -241,7 +174,7 @@ def mark_player_event_progress_started(
                 last_run_started_at,
                 last_run_completed_at,
                 last_error
-            ) VALUES (?, ?, 1, ?, 0, ?, 'running', ?, NULL, NULL)
+            ) VALUES (?, ?, 1, ?, FALSE, ?, 'running', ?, NULL, NULL)
             ON CONFLICT(server_slug, mode) DO UPDATE SET
                 cutoff_occurred_at = excluded.cutoff_occurred_at,
                 last_run_id = excluded.last_run_id,
@@ -281,7 +214,7 @@ def mark_player_event_progress_page_completed(
                 last_run_started_at,
                 last_run_completed_at,
                 last_error
-            ) VALUES (?, ?, ?, ?, ?, 0, ?, 'running', ?, NULL, NULL)
+            ) VALUES (?, ?, ?, ?, ?, FALSE, ?, 'running', ?, NULL, NULL)
             ON CONFLICT(server_slug, mode) DO UPDATE SET
                 next_page = excluded.next_page,
                 last_completed_page = excluded.last_completed_page,
@@ -289,7 +222,7 @@ def mark_player_event_progress_page_completed(
                     excluded.discovered_total_matches,
                     player_event_backfill_progress.discovered_total_matches
                 ),
-                archive_exhausted = 0,
+                archive_exhausted = FALSE,
                 last_run_id = excluded.last_run_id,
                 last_run_status = excluded.last_run_status,
                 last_run_started_at = excluded.last_run_started_at,
@@ -337,8 +270,8 @@ def finalize_player_event_progress(
             ) VALUES (?, ?, 1, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(server_slug, mode) DO UPDATE SET
                 archive_exhausted = CASE
-                    WHEN excluded.last_run_status = 'success' AND excluded.archive_exhausted = 1
-                    THEN 1
+                    WHEN excluded.last_run_status = 'success' AND excluded.archive_exhausted = TRUE
+                    THEN TRUE
                     ELSE player_event_backfill_progress.archive_exhausted
                 END,
                 last_run_id = excluded.last_run_id,
@@ -354,7 +287,7 @@ def finalize_player_event_progress(
             (
                 server_slug,
                 mode,
-                1 if archive_exhausted else 0,
+                archive_exhausted,
                 run_id,
                 status,
                 _utc_now_iso(),
@@ -416,8 +349,8 @@ def get_player_event_refresh_cutoff_for_server(
     return cutoff.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
 
 
-def _connect(db_path: Path) -> sqlite3.Connection:
-    return connect_sqlite_writer(db_path)
+def _connect(db_path: Path) -> object:
+    return connect_postgres_compat()
 
 
 def _utc_now_iso() -> str:

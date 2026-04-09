@@ -1,17 +1,16 @@
-"""Separate storage and run tracking for prospective RCON historical capture."""
+"""PostgreSQL-backed storage and run tracking for prospective RCON historical capture."""
 
 from __future__ import annotations
 
 import json
-import sqlite3
 from collections.abc import Mapping
 from datetime import datetime, timezone
 from pathlib import Path
 
-from .config import get_storage_path
+from .config import get_primary_storage_label
 from .normalizers import normalize_map_name
+from .postgres_utils import connect_postgres_compat, ensure_postgres_migrations_applied
 from .rcon_client import load_rcon_targets
-from .sqlite_utils import connect_sqlite_readonly, connect_sqlite_writer
 
 
 COMPETITIVE_WINDOW_GAP_SECONDS = 1800
@@ -21,106 +20,9 @@ COMPETITIVE_MODE_EXACT = "exact"
 
 
 def initialize_rcon_historical_storage(*, db_path: Path | None = None) -> Path:
-    """Create the SQLite structures used by prospective RCON capture."""
-    resolved_path = db_path or get_storage_path()
-    resolved_path.parent.mkdir(parents=True, exist_ok=True)
-
-    with _connect(resolved_path) as connection:
-        connection.executescript(
-            """
-            CREATE TABLE IF NOT EXISTS rcon_historical_targets (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                target_key TEXT NOT NULL UNIQUE,
-                external_server_id TEXT,
-                display_name TEXT NOT NULL,
-                host TEXT NOT NULL,
-                port INTEGER NOT NULL,
-                region TEXT,
-                game_port INTEGER,
-                query_port INTEGER,
-                source_name TEXT NOT NULL,
-                last_configured_at TEXT NOT NULL,
-                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-            );
-
-            CREATE TABLE IF NOT EXISTS rcon_historical_capture_runs (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                mode TEXT NOT NULL,
-                status TEXT NOT NULL,
-                target_scope TEXT,
-                started_at TEXT NOT NULL,
-                completed_at TEXT,
-                targets_seen INTEGER NOT NULL DEFAULT 0,
-                samples_inserted INTEGER NOT NULL DEFAULT 0,
-                duplicate_samples INTEGER NOT NULL DEFAULT 0,
-                failed_targets INTEGER NOT NULL DEFAULT 0,
-                notes TEXT,
-                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-            );
-
-            CREATE TABLE IF NOT EXISTS rcon_historical_samples (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                target_id INTEGER NOT NULL,
-                capture_run_id INTEGER,
-                captured_at TEXT NOT NULL,
-                source_kind TEXT NOT NULL,
-                status TEXT NOT NULL,
-                players INTEGER,
-                max_players INTEGER,
-                current_map TEXT,
-                normalized_payload_json TEXT NOT NULL,
-                raw_payload_json TEXT,
-                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                UNIQUE(target_id, captured_at),
-                FOREIGN KEY (target_id) REFERENCES rcon_historical_targets(id),
-                FOREIGN KEY (capture_run_id) REFERENCES rcon_historical_capture_runs(id)
-            );
-
-            CREATE TABLE IF NOT EXISTS rcon_historical_checkpoints (
-                target_id INTEGER PRIMARY KEY,
-                last_successful_capture_at TEXT,
-                last_sample_at TEXT,
-                last_run_id INTEGER,
-                last_run_status TEXT,
-                last_error TEXT,
-                last_error_at TEXT,
-                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                FOREIGN KEY (target_id) REFERENCES rcon_historical_targets(id),
-                FOREIGN KEY (last_run_id) REFERENCES rcon_historical_capture_runs(id)
-            );
-
-            CREATE INDEX IF NOT EXISTS idx_rcon_historical_samples_target_time
-            ON rcon_historical_samples(target_id, captured_at DESC);
-
-            CREATE TABLE IF NOT EXISTS rcon_historical_competitive_windows (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                target_id INTEGER NOT NULL,
-                session_key TEXT NOT NULL UNIQUE,
-                source_kind TEXT NOT NULL,
-                map_name TEXT,
-                map_pretty_name TEXT,
-                first_seen_at TEXT NOT NULL,
-                last_seen_at TEXT NOT NULL,
-                sample_count INTEGER NOT NULL DEFAULT 0,
-                total_players INTEGER NOT NULL DEFAULT 0,
-                peak_players INTEGER NOT NULL DEFAULT 0,
-                last_players INTEGER,
-                max_players INTEGER,
-                status TEXT NOT NULL,
-                confidence_mode TEXT NOT NULL,
-                capabilities_json TEXT NOT NULL,
-                latest_payload_json TEXT,
-                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                FOREIGN KEY (target_id) REFERENCES rcon_historical_targets(id)
-            );
-
-            CREATE INDEX IF NOT EXISTS idx_rcon_historical_windows_target_time
-            ON rcon_historical_competitive_windows(target_id, last_seen_at DESC);
-            """
-        )
-
+    """Ensure PostgreSQL schema bootstrap exists for prospective RCON capture."""
+    resolved_path = db_path or Path(get_primary_storage_label())
+    ensure_postgres_migrations_applied()
     return resolved_path
 
 
@@ -133,7 +35,7 @@ def start_rcon_historical_capture_run(
     """Create one run row for prospective RCON capture."""
     resolved_path = initialize_rcon_historical_storage(db_path=db_path)
     with _connect(resolved_path) as connection:
-        cursor = connection.execute(
+        row = connection.execute(
             """
             INSERT INTO rcon_historical_capture_runs (
                 mode,
@@ -141,10 +43,13 @@ def start_rcon_historical_capture_run(
                 target_scope,
                 started_at
             ) VALUES (?, 'running', ?, ?)
+            RETURNING id
             """,
             (mode, target_scope, _utc_now_iso()),
-        )
-        return int(cursor.lastrowid)
+        ).fetchone()
+        if row is None:
+            raise RuntimeError("Failed to create RCON historical capture run.")
+        return int(row["id"])
 
 
 def finalize_rcon_historical_capture_run(
@@ -201,7 +106,7 @@ def persist_rcon_historical_sample(
         target_id = _upsert_target(connection, target=target)
         cursor = connection.execute(
             """
-            INSERT OR IGNORE INTO rcon_historical_samples (
+            INSERT INTO rcon_historical_samples (
                 target_id,
                 capture_run_id,
                 captured_at,
@@ -212,7 +117,8 @@ def persist_rcon_historical_sample(
                 current_map,
                 normalized_payload_json,
                 raw_payload_json
-            ) VALUES (?, ?, ?, 'rcon-live-sample', ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, 'rcon-live-sample', ?, ?, ?, ?, CAST(? AS JSONB), CAST(? AS JSONB))
+            ON CONFLICT(target_id, captured_at) DO NOTHING
             """,
             (
                 target_id,
@@ -322,7 +228,7 @@ def list_rcon_historical_target_statuses(
                 ORDER BY targets.display_name ASC, targets.target_key ASC
                 """
             ).fetchall()
-    except sqlite3.OperationalError:
+    except Exception:
         return []
     return [
         {
@@ -388,7 +294,7 @@ def list_recent_rcon_historical_samples(
                 """,
                 params,
             ).fetchall()
-    except sqlite3.OperationalError:
+    except Exception:
         return []
     return [
         {
@@ -456,7 +362,7 @@ def list_rcon_historical_competitive_windows(
             """,
                 params,
             ).fetchall()
-    except sqlite3.OperationalError:
+    except Exception:
         return []
     items: list[dict[str, object]] = []
     for row in rows:
@@ -509,7 +415,7 @@ def count_rcon_historical_samples_since(
                 """,
                 (since,),
             ).fetchone()
-    except sqlite3.OperationalError:
+    except Exception:
         return 0
     return int(row["sample_count"] or 0) if row else 0
 
@@ -561,7 +467,7 @@ def list_rcon_historical_competitive_summary_rows(
             """,
                 params,
             ).fetchall()
-    except sqlite3.OperationalError:
+    except Exception:
         return []
     return [
         {
@@ -624,7 +530,7 @@ def find_rcon_historical_competitive_window(
             """,
                 [*aliases, *aliases],
             ).fetchall()
-    except sqlite3.OperationalError:
+    except Exception:
         return None
     if not candidates:
         return None
@@ -662,16 +568,16 @@ def find_rcon_historical_competitive_window(
     }
 
 
-def _connect(db_path: Path) -> sqlite3.Connection:
-    return connect_sqlite_writer(db_path)
+def _connect(db_path: Path) -> object:
+    return connect_postgres_compat()
 
 
-def _connect_readonly(db_path: Path) -> sqlite3.Connection:
-    return connect_sqlite_readonly(db_path)
+def _connect_readonly(db_path: Path) -> object:
+    return connect_postgres_compat()
 
 
 def _resolve_db_path(db_path: Path | None) -> Path:
-    return db_path or get_storage_path()
+    return db_path or Path(get_primary_storage_label())
 
 
 def _expand_target_key_aliases(target_key: str) -> list[str]:
@@ -830,8 +736,8 @@ def _upsert_competitive_window(
                 max_players = ?,
                 status = ?,
                 confidence_mode = ?,
-                capabilities_json = ?,
-                latest_payload_json = ?,
+                capabilities_json = CAST(? AS JSONB),
+                latest_payload_json = CAST(? AS JSONB),
                 updated_at = CURRENT_TIMESTAMP
             WHERE id = ?
             """,
@@ -873,7 +779,7 @@ def _upsert_competitive_window(
             confidence_mode,
             capabilities_json,
             latest_payload_json
-        ) VALUES (?, ?, 'rcon-historical-samples', ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, 'rcon-historical-samples', ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, CAST(? AS JSONB), CAST(? AS JSONB))
         """,
         (
             target_id,
@@ -918,6 +824,8 @@ def _build_competitive_capabilities() -> dict[str, object]:
 
 
 def _deserialize_json_object(raw_value: object) -> dict[str, object]:
+    if isinstance(raw_value, dict):
+        return dict(raw_value)
     if isinstance(raw_value, str) and raw_value.strip():
         try:
             parsed = json.loads(raw_value)
@@ -928,8 +836,11 @@ def _deserialize_json_object(raw_value: object) -> dict[str, object]:
     return {}
 
 
-def _parse_timestamp(raw_value: str) -> datetime:
-    timestamp = datetime.fromisoformat(raw_value.replace("Z", "+00:00"))
+def _parse_timestamp(raw_value: object) -> datetime:
+    if isinstance(raw_value, datetime):
+        timestamp = raw_value
+    else:
+        timestamp = datetime.fromisoformat(str(raw_value).replace("Z", "+00:00"))
     if timestamp.tzinfo is None:
         timestamp = timestamp.replace(tzinfo=timezone.utc)
     return timestamp.astimezone(timezone.utc)

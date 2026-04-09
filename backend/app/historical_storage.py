@@ -1,8 +1,7 @@
-"""SQLite persistence for historical CRCON scoreboard data."""
+"""PostgreSQL-backed persistence for historical CRCON scoreboard data."""
 
 from __future__ import annotations
 
-import sqlite3
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Mapping
@@ -11,12 +10,12 @@ from .config import (
     get_historical_refresh_overlap_hours,
     get_historical_weekly_fallback_max_weekday,
     get_historical_weekly_fallback_min_matches,
-    get_storage_path,
+    get_primary_storage_label,
 )
 from .historical_models import HistoricalServerDefinition
 from .monthly_mvp import build_monthly_mvp_rankings
 from .monthly_mvp_v2 import build_monthly_mvp_v2_rankings
-from .sqlite_utils import connect_sqlite_readonly, connect_sqlite_writer
+from .postgres_utils import connect_postgres_compat, ensure_postgres_migrations_applied
 
 
 DEFAULT_HISTORICAL_SERVERS = (
@@ -54,149 +53,11 @@ SUPPORTED_MONTHLY_LEADERBOARD_METRICS = SUPPORTED_WEEKLY_LEADERBOARD_METRICS
 
 
 def ensure_historical_storage(*, db_path: Path | None = None) -> Path:
-    """Create or migrate the local SQLite schema without global repair passes."""
+    """Ensure PostgreSQL schema bootstrap exists for historical relational storage."""
     resolved_path = _resolve_db_path(db_path)
-    resolved_path.parent.mkdir(parents=True, exist_ok=True)
-
+    ensure_postgres_migrations_applied()
     with _connect_writer(resolved_path) as connection:
-        legacy_historical_schema = _has_legacy_historical_schema(connection)
-        if legacy_historical_schema:
-            _rename_legacy_historical_tables(connection)
-        connection.executescript(
-            """
-            CREATE TABLE IF NOT EXISTS historical_servers (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                slug TEXT NOT NULL UNIQUE,
-                display_name TEXT NOT NULL,
-                scoreboard_base_url TEXT NOT NULL UNIQUE,
-                server_number INTEGER,
-                source_kind TEXT NOT NULL,
-                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-            );
-
-            CREATE TABLE IF NOT EXISTS historical_maps (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                external_map_id TEXT UNIQUE,
-                map_name TEXT,
-                pretty_name TEXT,
-                game_mode TEXT,
-                image_name TEXT,
-                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-            );
-
-            CREATE TABLE IF NOT EXISTS historical_matches (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                historical_server_id INTEGER NOT NULL,
-                external_match_id TEXT NOT NULL,
-                historical_map_id INTEGER,
-                created_at_source TEXT,
-                started_at TEXT,
-                ended_at TEXT,
-                map_name TEXT,
-                map_pretty_name TEXT,
-                game_mode TEXT,
-                image_name TEXT,
-                allied_score INTEGER,
-                axis_score INTEGER,
-                last_seen_at TEXT NOT NULL,
-                raw_payload_ref TEXT,
-                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                UNIQUE(historical_server_id, external_match_id),
-                FOREIGN KEY (historical_server_id) REFERENCES historical_servers(id),
-                FOREIGN KEY (historical_map_id) REFERENCES historical_maps(id)
-            );
-
-            CREATE TABLE IF NOT EXISTS historical_players (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                stable_player_key TEXT NOT NULL UNIQUE,
-                display_name TEXT NOT NULL,
-                steam_id TEXT,
-                source_player_id TEXT,
-                first_seen_at TEXT NOT NULL,
-                last_seen_at TEXT NOT NULL,
-                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-            );
-
-            CREATE TABLE IF NOT EXISTS historical_player_match_stats (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                historical_match_id INTEGER NOT NULL,
-                historical_player_id INTEGER NOT NULL,
-                match_player_ref TEXT,
-                team_side TEXT,
-                level INTEGER,
-                kills INTEGER,
-                deaths INTEGER,
-                teamkills INTEGER,
-                time_seconds INTEGER,
-                kills_per_minute REAL,
-                deaths_per_minute REAL,
-                kill_death_ratio REAL,
-                combat INTEGER,
-                offense INTEGER,
-                defense INTEGER,
-                support INTEGER,
-                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                UNIQUE(historical_match_id, historical_player_id),
-                FOREIGN KEY (historical_match_id) REFERENCES historical_matches(id),
-                FOREIGN KEY (historical_player_id) REFERENCES historical_players(id)
-            );
-
-            CREATE TABLE IF NOT EXISTS historical_ingestion_runs (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                mode TEXT NOT NULL,
-                status TEXT NOT NULL,
-                started_at TEXT NOT NULL,
-                completed_at TEXT,
-                target_server_slug TEXT,
-                pages_processed INTEGER NOT NULL DEFAULT 0,
-                matches_seen INTEGER NOT NULL DEFAULT 0,
-                matches_inserted INTEGER NOT NULL DEFAULT 0,
-                matches_updated INTEGER NOT NULL DEFAULT 0,
-                player_rows_inserted INTEGER NOT NULL DEFAULT 0,
-                player_rows_updated INTEGER NOT NULL DEFAULT 0,
-                notes TEXT,
-                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-            );
-
-            CREATE TABLE IF NOT EXISTS historical_backfill_progress (
-                historical_server_id INTEGER NOT NULL,
-                mode TEXT NOT NULL,
-                next_page INTEGER NOT NULL DEFAULT 1,
-                last_completed_page INTEGER,
-                discovered_total_matches INTEGER,
-                discovered_total_pages INTEGER,
-                archive_exhausted INTEGER NOT NULL DEFAULT 0,
-                last_run_id INTEGER,
-                last_run_status TEXT,
-                last_run_started_at TEXT,
-                last_run_completed_at TEXT,
-                last_error TEXT,
-                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                PRIMARY KEY (historical_server_id, mode),
-                FOREIGN KEY (historical_server_id) REFERENCES historical_servers(id)
-            );
-
-            CREATE INDEX IF NOT EXISTS idx_historical_matches_server_end
-            ON historical_matches(historical_server_id, ended_at DESC, started_at DESC);
-
-            CREATE INDEX IF NOT EXISTS idx_historical_player_stats_match
-            ON historical_player_match_stats(historical_match_id);
-
-            CREATE INDEX IF NOT EXISTS idx_historical_players_steam
-            ON historical_players(steam_id);
-
-            CREATE INDEX IF NOT EXISTS idx_historical_backfill_progress_run
-            ON historical_backfill_progress(last_run_id);
-            """
-        )
         _seed_default_historical_servers(connection)
-        if legacy_historical_schema:
-            _migrate_legacy_historical_data(connection)
 
     return resolved_path
 
@@ -211,7 +72,7 @@ def run_historical_storage_maintenance(*, db_path: Path | None = None) -> Path:
 
 
 def initialize_historical_storage(*, db_path: Path | None = None) -> Path:
-    """Create or migrate the local SQLite schema and run one-time global maintenance."""
+    """Ensure PostgreSQL schema bootstrap and one-time normalization are ready."""
     return run_historical_storage_maintenance(db_path=db_path)
 
 
@@ -241,18 +102,33 @@ def start_ingestion_run(
     """Create a row tracking one ingestion execution."""
     resolved_path = ensure_historical_storage(db_path=db_path)
     with _connect_writer(resolved_path) as connection:
-        cursor = connection.execute(
+        historical_server_id = None
+        if target_server_slug:
+            historical_server_row = _resolve_historical_server(connection, target_server_slug)
+            historical_server_id = historical_server_row["id"]
+        row = connection.execute(
             """
             INSERT INTO historical_ingestion_runs (
+                historical_server_id,
+                run_kind,
                 mode,
                 status,
                 started_at,
                 target_server_slug
-            ) VALUES (?, 'running', ?, ?)
+            ) VALUES (?, ?, ?, 'running', ?, ?)
+            RETURNING id
             """,
-            (mode, _utc_now_iso(), target_server_slug),
-        )
-        return int(cursor.lastrowid)
+            (
+                historical_server_id,
+                mode,
+                mode,
+                _utc_now_iso(),
+                target_server_slug,
+            ),
+        ).fetchone()
+        if row is None:
+            raise RuntimeError("Failed to create historical ingestion run.")
+        return int(row["id"])
 
 
 def finalize_ingestion_run(
@@ -323,7 +199,7 @@ def mark_backfill_progress_started(
                 last_run_started_at,
                 last_run_completed_at,
                 last_error
-            ) VALUES (?, ?, 1, 0, ?, 'running', ?, NULL, NULL)
+            ) VALUES (?, ?, 1, FALSE, ?, 'running', ?, NULL, NULL)
             ON CONFLICT(historical_server_id, mode) DO UPDATE SET
                 last_run_id = excluded.last_run_id,
                 last_run_status = excluded.last_run_status,
@@ -331,7 +207,7 @@ def mark_backfill_progress_started(
                 last_run_completed_at = NULL,
                 last_error = NULL,
                 archive_exhausted = CASE
-                    WHEN excluded.mode = 'bootstrap' THEN 0
+                    WHEN excluded.mode = 'bootstrap' THEN FALSE
                     ELSE historical_backfill_progress.archive_exhausted
                 END,
                 updated_at = CURRENT_TIMESTAMP
@@ -373,7 +249,7 @@ def mark_backfill_progress_page_completed(
                 last_run_started_at,
                 last_run_completed_at,
                 last_error
-            ) VALUES (?, ?, ?, ?, ?, ?, 0, ?, ?, ?, NULL, NULL)
+            ) VALUES (?, ?, ?, ?, ?, ?, FALSE, ?, ?, ?, NULL, NULL)
             ON CONFLICT(historical_server_id, mode) DO UPDATE SET
                 next_page = excluded.next_page,
                 last_completed_page = excluded.last_completed_page,
@@ -385,7 +261,7 @@ def mark_backfill_progress_page_completed(
                     excluded.discovered_total_pages,
                     historical_backfill_progress.discovered_total_pages
                 ),
-                archive_exhausted = 0,
+                archive_exhausted = FALSE,
                 last_run_id = excluded.last_run_id,
                 last_run_status = excluded.last_run_status,
                 last_run_started_at = excluded.last_run_started_at,
@@ -436,8 +312,8 @@ def finalize_backfill_progress(
             ) VALUES (?, ?, 1, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(historical_server_id, mode) DO UPDATE SET
                 archive_exhausted = CASE
-                    WHEN excluded.last_run_status = 'success' AND excluded.archive_exhausted = 1
-                    THEN 1
+                    WHEN excluded.last_run_status = 'success' AND excluded.archive_exhausted = TRUE
+                    THEN TRUE
                     WHEN excluded.last_run_status = 'success'
                     THEN historical_backfill_progress.archive_exhausted
                     ELSE historical_backfill_progress.archive_exhausted
@@ -455,7 +331,7 @@ def finalize_backfill_progress(
             (
                 server_row["id"],
                 mode,
-                1 if archive_exhausted else 0,
+                archive_exhausted,
                 run_id,
                 status,
                 _utc_now_iso(),
@@ -800,7 +676,17 @@ def list_recent_historical_matches(
             LEFT JOIN historical_player_match_stats
                 ON historical_player_match_stats.historical_match_id = historical_matches.id
             {where_clause}
-            GROUP BY historical_matches.id
+            GROUP BY
+                historical_servers.slug,
+                historical_servers.display_name,
+                historical_matches.id,
+                historical_matches.external_match_id,
+                historical_matches.started_at,
+                historical_matches.ended_at,
+                historical_matches.map_pretty_name,
+                historical_matches.map_name,
+                historical_matches.allied_score,
+                historical_matches.axis_score
             ORDER BY COALESCE(historical_matches.ended_at, historical_matches.started_at) DESC
             LIMIT ?
             """,
@@ -1217,7 +1103,7 @@ def list_weekly_leaderboard(
     group_by_expression = (
         "historical_players.id"
         if aggregate_all_servers
-        else "historical_servers.slug, historical_players.id"
+        else "historical_servers.slug, historical_servers.display_name, historical_players.id"
     )
 
     metric_sum_expression = {
@@ -1410,7 +1296,7 @@ def list_monthly_leaderboard(
     group_by_expression = (
         "historical_players.id"
         if aggregate_all_servers
-        else "historical_servers.slug, historical_players.id"
+        else "historical_servers.slug, historical_servers.display_name, historical_players.id"
     )
 
     metric_sum_expression = {
@@ -1564,7 +1450,7 @@ def list_monthly_mvp_ranking(
     group_by_expression = (
         "historical_players.id"
         if aggregate_all_servers
-        else "historical_servers.slug, historical_players.id"
+        else "historical_servers.slug, historical_servers.display_name, historical_players.id"
     )
 
     with _connect_readonly(resolved_path) as connection:
@@ -1725,7 +1611,7 @@ def list_monthly_mvp_v2_ranking(
     group_by_expression = (
         "historical_players.id"
         if aggregate_all_servers
-        else "historical_servers.slug, historical_players.id"
+        else "historical_servers.slug, historical_servers.display_name, historical_players.id"
     )
 
     with _connect_readonly(resolved_path) as connection:
@@ -1739,7 +1625,7 @@ def list_monthly_mvp_v2_ranking(
                 FROM player_event_raw_ledger
                 WHERE event_type = 'player_kill_summary'
                   AND occurred_at IS NOT NULL
-                  AND substr(occurred_at, 1, 7) = ?
+                  AND TO_CHAR(occurred_at AT TIME ZONE 'UTC', 'YYYY-MM') = ?
                   AND {event_scope_sql}
                   AND killer_player_key IS NOT NULL
                   AND victim_player_key IS NOT NULL
@@ -1760,7 +1646,7 @@ def list_monthly_mvp_v2_ranking(
                 FROM player_event_raw_ledger
                 WHERE event_type = 'player_death_summary'
                   AND occurred_at IS NOT NULL
-                  AND substr(occurred_at, 1, 7) = ?
+                  AND TO_CHAR(occurred_at AT TIME ZONE 'UTC', 'YYYY-MM') = ?
                   AND {event_scope_sql}
                   AND killer_player_key IS NOT NULL
                   AND victim_player_key IS NOT NULL
@@ -1798,7 +1684,7 @@ def list_monthly_mvp_v2_ranking(
                 FROM player_event_raw_ledger
                 WHERE event_type = 'player_kill_summary'
                   AND occurred_at IS NOT NULL
-                  AND substr(occurred_at, 1, 7) = ?
+                  AND TO_CHAR(occurred_at AT TIME ZONE 'UTC', 'YYYY-MM') = ?
                   AND {event_scope_sql}
                   AND killer_player_key IS NOT NULL
                   AND victim_player_key IS NOT NULL
@@ -1914,21 +1800,10 @@ def _get_monthly_player_event_coverage(
     db_path: Path,
 ) -> dict[str, object]:
     scope_sql, scope_params = _build_player_event_scope_sql(server_id)
-    if not db_path.exists():
-        return {
-            "month_key": month_key,
-            "latest_month_key": None,
-            "ready": False,
-            "event_count": 0,
-            "source_range_start": None,
-            "source_range_end": None,
-            "selection_reason": "player-event-month-mismatch-or-missing",
-        }
-
     with _connect_readonly(db_path) as connection:
         latest_row = connection.execute(
             f"""
-            SELECT MAX(substr(occurred_at, 1, 7)) AS latest_month_key
+            SELECT MAX(TO_CHAR(occurred_at AT TIME ZONE 'UTC', 'YYYY-MM')) AS latest_month_key
             FROM player_event_raw_ledger
             WHERE occurred_at IS NOT NULL
               AND {scope_sql}
@@ -1943,7 +1818,7 @@ def _get_monthly_player_event_coverage(
                 MAX(occurred_at) AS source_range_end
             FROM player_event_raw_ledger
             WHERE occurred_at IS NOT NULL
-              AND substr(occurred_at, 1, 7) = ?
+              AND TO_CHAR(occurred_at AT TIME ZONE 'UTC', 'YYYY-MM') = ?
               AND {scope_sql}
             """,
             [month_key, *scope_params],
@@ -1972,21 +1847,25 @@ def _build_player_event_scope_sql(server_id: str | None) -> tuple[str, list[obje
     return "server_slug = ?", [normalized_server_id]
 
 
-def _connect_writer(db_path: Path) -> sqlite3.Connection:
-    return connect_sqlite_writer(db_path)
+def _connect_writer(db_path: Path) -> object:
+    return connect_postgres_compat()
 
 
-def _connect_readonly(db_path: Path) -> sqlite3.Connection:
-    return connect_sqlite_readonly(db_path)
+def _connect_readonly(db_path: Path) -> object:
+    return connect_postgres_compat()
 
 
 def _resolve_db_path(db_path: Path | None) -> Path:
-    return db_path or get_storage_path()
+    return db_path or Path(get_primary_storage_label())
 
 
 def _resolve_existing_db_path(db_path: Path | None) -> Path | None:
     resolved_path = _resolve_db_path(db_path)
-    if resolved_path.exists():
+    with _connect_readonly(resolved_path) as connection:
+        row = connection.execute(
+            "SELECT COUNT(*) AS historical_server_count FROM historical_servers"
+        ).fetchone()
+    if row is not None and int(row["historical_server_count"] or 0) > 0:
         return resolved_path
     return None
 
@@ -2565,8 +2444,8 @@ def _merge_historical_player_rows(
         SET display_name = ?,
             steam_id = ?,
             source_player_id = ?,
-            first_seen_at = MIN(first_seen_at, ?),
-            last_seen_at = MAX(last_seen_at, ?),
+            first_seen_at = LEAST(first_seen_at, ?),
+            last_seen_at = GREATEST(last_seen_at, ?),
             updated_at = CURRENT_TIMESTAMP
         WHERE id = ?
         """,
@@ -2674,7 +2553,7 @@ def _merge_historical_match_rows(
             allied_score = COALESCE(allied_score, ?),
             axis_score = COALESCE(axis_score, ?),
             raw_payload_ref = COALESCE(raw_payload_ref, ?),
-            last_seen_at = MAX(last_seen_at, ?),
+            last_seen_at = GREATEST(last_seen_at, ?),
             updated_at = CURRENT_TIMESTAMP
         WHERE id = ?
         """,
@@ -3007,9 +2886,6 @@ def _count_closed_matches_in_window(
         )
         params.extend([normalized_server_id, normalized_server_id])
 
-    if not db_path.exists():
-        return 0
-
     with _connect_readonly(db_path) as connection:
         row = connection.execute(
             f"""
@@ -3055,9 +2931,6 @@ def _count_valid_matches_with_stats_in_window(
             "(historical_servers.slug = ? OR CAST(historical_servers.server_number AS TEXT) = ?)"
         )
         params.extend([normalized_server_id, normalized_server_id])
-
-    if not db_path.exists():
-        return 0
 
     with _connect_readonly(db_path) as connection:
         row = connection.execute(
@@ -3154,9 +3027,6 @@ def _build_all_servers_summary(*, db_path: Path) -> dict[str, object]:
 
 
 def _count_all_servers_unique_players(*, db_path: Path) -> int:
-    if not db_path.exists():
-        return 0
-
     with _connect_readonly(db_path) as connection:
         row = connection.execute(
             """
@@ -3170,9 +3040,6 @@ def _count_all_servers_unique_players(*, db_path: Path) -> int:
 
 
 def _count_all_servers_maps(*, db_path: Path) -> int:
-    if not db_path.exists():
-        return 0
-
     with _connect_readonly(db_path) as connection:
         row = connection.execute(
             """
@@ -3184,9 +3051,6 @@ def _count_all_servers_maps(*, db_path: Path) -> int:
 
 
 def _list_all_servers_top_maps(*, db_path: Path, limit: int) -> list[dict[str, object]]:
-    if not db_path.exists():
-        return []
-
     with _connect_readonly(db_path) as connection:
         rows = connection.execute(
             """

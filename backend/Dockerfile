@@ -19,6 +19,8 @@ COPY requirements.txt ./
 RUN pip install --no-cache-dir --requirement requirements.txt
 
 COPY app ./app
+COPY db ./db
+COPY scripts ./scripts
 
 RUN mkdir -p /app/data/snapshots
 

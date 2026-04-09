@@ -174,7 +174,9 @@ def _run_ingestion(
             "event": "historical-storage-initialization-completed",
             "mode": mode,
             "scope": "once-per-ingestion-run",
+            "storage_backend": "postgresql",
             "maintenance_passes": [
+                "sql-first-migration-bootstrap",
                 "historical-player-identity-normalization",
                 "historical-match-identity-normalization",
             ],
