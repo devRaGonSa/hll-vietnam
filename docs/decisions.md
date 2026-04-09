@@ -148,3 +148,35 @@ transicional de backfill y validacion. `.sqlite3`, `/app/data/snapshots` y los
 file locks no pueden sobrevivir como dependencias runtime primarias una vez
 completado el cutover final. La arquitectura y el orden de dependencias quedan
 definidos en `docs/postgresql-target-architecture.md`.
+
+## Decision 015: backfill directo desde SQLite y regeneracion de snapshots desde PostgreSQL
+
+El cierre operativo de la migracion a PostgreSQL se hace con una estrategia
+hibrida y acotada:
+
+- los datos relacionales legacy se copian directamente desde el SQLite
+  existente hacia PostgreSQL
+- los snapshots JSON historicos no se promueven como nueva fuente de verdad:
+  se regeneran desde PostgreSQL despues del backfill relacional
+- `backend/data/` y `/app/data` pasan a ser superficies auxiliares de archivo,
+  export o rollback temporal, no almacenamiento primario del producto
+
+Esto evita conservar dependencias runtime sobre SQLite, WAL, `busy_timeout` o
+snapshots JSON en filesystem una vez firmado el cutover. El runbook completo de
+backfill, validacion, orden de cutover y limites de rollback queda en
+`docs/postgresql-cutover-runbook.md`.
+
+La secuencia operativa validada para el cierre real del cutover es:
+
+- `python scripts/postgresql-backfill.py plan`
+- `python scripts/postgresql-backfill.py execute --truncate-target-first`
+- `python scripts/postgresql-backfill.py validate`
+
+El backfill aprobado queda endurecido con:
+
+- batches de insercion en PostgreSQL
+- commits por tabla
+- sesion `UTF8` para datos Unicode legacy
+- manifest exacto de la corrida `execute` persistido en PostgreSQL para validar
+  tablas grandes sin depender de un nuevo `COUNT(*)` completo sobre todos los
+  conjuntos multimillonarios

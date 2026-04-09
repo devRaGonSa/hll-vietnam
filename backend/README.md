@@ -35,8 +35,9 @@ backend/
     `-- snapshots.py
 ```
 
-La persistencia local de desarrollo se crea bajo `backend/data/` cuando el
-colector la necesita por primera vez.
+PostgreSQL es ya el almacenamiento durable primario aprobado para runtime.
+`backend/data/` queda reservado para artefactos legacy de backfill, export o
+rollback temporal y no debe tratarse como fuente de verdad steady-state.
 
 `app` es el paquete Python del backend. El archivo correcto del paquete es
 `backend/app/__init__.py`; no debe existir una variante `init.py`.
@@ -73,8 +74,8 @@ Variables opcionales:
 - `HLL_RCON_HISTORICAL_CAPTURE_RETRY_DELAY_SECONDS`
 - `HLL_BACKEND_SQLITE_WRITER_TIMEOUT_SECONDS`
 - `HLL_BACKEND_SQLITE_BUSY_TIMEOUT_MS`
-- `HLL_BACKEND_WRITER_LOCK_TIMEOUT_SECONDS`
-- `HLL_BACKEND_WRITER_LOCK_POLL_INTERVAL_SECONDS`
+- `HLL_BACKEND_POSTGRES_ADVISORY_LOCK_TIMEOUT_SECONDS`
+- `HLL_BACKEND_POSTGRES_ADVISORY_LOCK_POLL_INTERVAL_SECONDS`
 - `HLL_HISTORICAL_CRCON_PAGE_SIZE`
 - `HLL_HISTORICAL_CRCON_TIMEOUT_SECONDS`
 - `HLL_HISTORICAL_CRCON_DETAIL_WORKERS`
@@ -88,8 +89,8 @@ Variables opcionales:
 - `HLL_HISTORICAL_REFRESH_RETRY_DELAY_SECONDS`
 - `HLL_BACKEND_SQLITE_WRITER_TIMEOUT_SECONDS`
 - `HLL_BACKEND_SQLITE_BUSY_TIMEOUT_MS`
-- `HLL_BACKEND_WRITER_LOCK_TIMEOUT_SECONDS`
-- `HLL_BACKEND_WRITER_LOCK_POLL_INTERVAL_SECONDS`
+- `HLL_BACKEND_POSTGRES_ADVISORY_LOCK_TIMEOUT_SECONDS`
+- `HLL_BACKEND_POSTGRES_ADVISORY_LOCK_POLL_INTERVAL_SECONDS`
 - `HLL_HISTORICAL_WEEKLY_FALLBACK_MIN_MATCHES`
 - `HLL_HISTORICAL_WEEKLY_FALLBACK_MAX_WEEKDAY`
 
@@ -101,6 +102,8 @@ Variables especialmente relevantes para Docker y Compose:
 - `HLL_BACKEND_ALLOWED_ORIGINS`
 - `HLL_BACKEND_LIVE_DATA_SOURCE`
 - `HLL_BACKEND_HISTORICAL_DATA_SOURCE`
+- `HLL_BACKEND_POSTGRES_ADVISORY_LOCK_TIMEOUT_SECONDS`
+- `HLL_BACKEND_POSTGRES_ADVISORY_LOCK_POLL_INTERVAL_SECONDS`
 - `HLL_BACKEND_RCON_TIMEOUT_SECONDS`
 - `HLL_BACKEND_RCON_TARGETS`
 - `HLL_HISTORICAL_CRCON_PAGE_SIZE`
@@ -130,7 +133,7 @@ Dentro del contenedor arranca por defecto con:
 
 - `HLL_BACKEND_HOST=0.0.0.0`
 - `HLL_BACKEND_PORT=8000`
-- `HLL_BACKEND_STORAGE_PATH=/app/data/hll_vietnam_dev.sqlite3`
+- `HLL_BACKEND_STORAGE_PATH=/app/runtime/legacy/hll_vietnam_dev.sqlite3`
 
 Build local:
 
@@ -144,13 +147,47 @@ Ejecucion local con persistencia bind-mounted:
 docker run --rm `
   -p 8000:8000 `
   --env-file backend/.env.example `
-  -v ${PWD}\backend\data:/app/data `
+  -v ${PWD}\backend\runtime:/app/runtime `
   hll-vietnam-backend
 ```
 
 Si se prefiere no usar `--env-file`, el contenedor puede arrancar solo con sus
-defaults para host, puerto y path de SQLite. El bind mount de `/app/data` sigue
-siendo la forma recomendada de no perder persistencia al recrear el contenedor.
+defaults para host, puerto y path legacy de SQLite. El bind mount de
+`/app/runtime` existe solo para archivos auxiliares de migracion, export o
+rollback temporal; la persistencia de producto steady-state vive en PostgreSQL.
+
+## PostgreSQL cutover
+
+Runbook operativo aprobado:
+
+- `docs/postgresql-cutover-runbook.md`
+
+Comando de backfill y validacion:
+
+```powershell
+python scripts/postgresql-backfill.py plan
+python scripts/postgresql-backfill.py execute --truncate-target-first
+python scripts/postgresql-backfill.py validate
+```
+
+Detalles operativos del backfill validado:
+
+- `execute` usa batches (`--batch-size`, por defecto `5000`) y confirma cada
+  tabla en PostgreSQL por separado para que el cutover no dependa de una sola
+  transaccion gigante.
+- el backfill se valido correctamente sobre un PostgreSQL `UTF8`; esa
+  codificacion es obligatoria para nombres legacy con Unicode
+- `validate` ya no se ejecuta implicitamente dentro de `execute`
+- para tablas pequenas, `validate` compara conteos exactos SQLite/PostgreSQL
+- para tablas grandes, `validate` compara SQLite contra el manifest exacto que
+  `execute` deja persistido en PostgreSQL durante la misma corrida
+
+Politica final:
+
+- los datos relacionales legacy se copian desde SQLite a PostgreSQL
+- los snapshots historicos se regeneran desde PostgreSQL
+- `/app/runtime/legacy` y `backend/data/` quedan solo como superficies de
+  archivo o rollback temporal
 
 El `frontend/index.html` viene preparado para volver a consultar el bloque de
 servidores cada `120000` ms (`120s`) sin recargar la pagina completa. La landing

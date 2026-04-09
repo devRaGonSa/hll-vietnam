@@ -32,6 +32,7 @@ services:
       HLL_BACKEND_LIVE_DATA_SOURCE: ${HLL_BACKEND_LIVE_DATA_SOURCE:-rcon}
       HLL_BACKEND_HISTORICAL_DATA_SOURCE: ${HLL_BACKEND_HISTORICAL_DATA_SOURCE:-rcon}
       HLL_BACKEND_RCON_TIMEOUT_SECONDS: ${HLL_BACKEND_RCON_TIMEOUT_SECONDS:-20}
+      HLL_BACKEND_STORAGE_PATH: ${HLL_BACKEND_STORAGE_PATH:-/app/runtime/legacy/hll_vietnam_dev.sqlite3}
       HLL_BACKEND_POSTGRES_HOST: ${HLL_BACKEND_POSTGRES_HOST:-postgres}
       HLL_BACKEND_POSTGRES_PORT: ${HLL_BACKEND_POSTGRES_PORT:-5432}
       HLL_BACKEND_POSTGRES_DB: ${HLL_BACKEND_POSTGRES_DB:-hll_vietnam}
@@ -39,12 +40,14 @@ services:
       HLL_BACKEND_POSTGRES_PASSWORD: ${HLL_BACKEND_POSTGRES_PASSWORD:-hll_vietnam_dev}
       HLL_BACKEND_POSTGRES_SSLMODE: ${HLL_BACKEND_POSTGRES_SSLMODE:-disable}
       HLL_BACKEND_POSTGRES_CONNECT_TIMEOUT_SECONDS: ${HLL_BACKEND_POSTGRES_CONNECT_TIMEOUT_SECONDS:-5}
+      HLL_BACKEND_POSTGRES_ADVISORY_LOCK_TIMEOUT_SECONDS: ${HLL_BACKEND_POSTGRES_ADVISORY_LOCK_TIMEOUT_SECONDS:-120}
+      HLL_BACKEND_POSTGRES_ADVISORY_LOCK_POLL_INTERVAL_SECONDS: ${HLL_BACKEND_POSTGRES_ADVISORY_LOCK_POLL_INTERVAL_SECONDS:-1}
       HLL_BACKEND_RCON_TARGETS: >-
         ${HLL_BACKEND_RCON_TARGETS:-[{"name":"Comunidad Hispana #01","slug":"comunidad-hispana-01","external_server_id":"comunidad-hispana-01","host":"152.114.195.174","port":7779,"password":"replace-me-01","source_name":"community-hispana-rcon","region":"ES","game_port":null,"query_port":null},{"name":"Comunidad Hispana #02","slug":"comunidad-hispana-02","external_server_id":"comunidad-hispana-02","host":"152.114.195.150","port":7879,"password":"replace-me-02","source_name":"community-hispana-rcon","region":"ES","game_port":null,"query_port":null},{"name":"Comunidad Hispana #03","slug":"comunidad-hispana-03","external_server_id":"comunidad-hispana-03","host":"5.196.78.45","port":27230,"password":"replace-me-03","source_name":"community-hispana-rcon","region":"ES","game_port":null,"query_port":null}]}
     ports:
       - "8000:8000"
     volumes:
-      - ./backend/data:/app/data
+      - ./backend/runtime:/app/runtime
     depends_on:
       postgres:
         condition: service_healthy
@@ -73,6 +76,7 @@ services:
       HLL_BACKEND_LIVE_DATA_SOURCE: ${HLL_BACKEND_LIVE_DATA_SOURCE:-rcon}
       HLL_BACKEND_HISTORICAL_DATA_SOURCE: ${HLL_BACKEND_HISTORICAL_DATA_SOURCE:-rcon}
       HLL_BACKEND_RCON_TIMEOUT_SECONDS: ${HLL_BACKEND_RCON_TIMEOUT_SECONDS:-20}
+      HLL_BACKEND_STORAGE_PATH: ${HLL_BACKEND_STORAGE_PATH:-/app/runtime/legacy/hll_vietnam_dev.sqlite3}
       HLL_BACKEND_POSTGRES_HOST: ${HLL_BACKEND_POSTGRES_HOST:-postgres}
       HLL_BACKEND_POSTGRES_PORT: ${HLL_BACKEND_POSTGRES_PORT:-5432}
       HLL_BACKEND_POSTGRES_DB: ${HLL_BACKEND_POSTGRES_DB:-hll_vietnam}
@@ -80,6 +84,8 @@ services:
       HLL_BACKEND_POSTGRES_PASSWORD: ${HLL_BACKEND_POSTGRES_PASSWORD:-hll_vietnam_dev}
       HLL_BACKEND_POSTGRES_SSLMODE: ${HLL_BACKEND_POSTGRES_SSLMODE:-disable}
       HLL_BACKEND_POSTGRES_CONNECT_TIMEOUT_SECONDS: ${HLL_BACKEND_POSTGRES_CONNECT_TIMEOUT_SECONDS:-5}
+      HLL_BACKEND_POSTGRES_ADVISORY_LOCK_TIMEOUT_SECONDS: ${HLL_BACKEND_POSTGRES_ADVISORY_LOCK_TIMEOUT_SECONDS:-120}
+      HLL_BACKEND_POSTGRES_ADVISORY_LOCK_POLL_INTERVAL_SECONDS: ${HLL_BACKEND_POSTGRES_ADVISORY_LOCK_POLL_INTERVAL_SECONDS:-1}
       HLL_BACKEND_RCON_TARGETS: >-
         ${HLL_BACKEND_RCON_TARGETS:-[{"name":"Comunidad Hispana #01","slug":"comunidad-hispana-01","external_server_id":"comunidad-hispana-01","host":"152.114.195.174","port":7779,"password":"replace-me-01","source_name":"community-hispana-rcon","region":"ES","game_port":null,"query_port":null},{"name":"Comunidad Hispana #02","slug":"comunidad-hispana-02","external_server_id":"comunidad-hispana-02","host":"152.114.195.150","port":7879,"password":"replace-me-02","source_name":"community-hispana-rcon","region":"ES","game_port":null,"query_port":null},{"name":"Comunidad Hispana #03","slug":"comunidad-hispana-03","external_server_id":"comunidad-hispana-03","host":"5.196.78.45","port":27230,"password":"replace-me-03","source_name":"community-hispana-rcon","region":"ES","game_port":null,"query_port":null}]}
     depends_on:
@@ -88,7 +94,7 @@ services:
       postgres:
         condition: service_healthy
     volumes:
-      - ./backend/data:/app/data
+      - ./backend/runtime:/app/runtime
     restart: unless-stopped
 
   rcon-historical-worker:
@@ -102,6 +108,7 @@ services:
       HLL_BACKEND_LIVE_DATA_SOURCE: ${HLL_BACKEND_LIVE_DATA_SOURCE:-rcon}
       HLL_BACKEND_HISTORICAL_DATA_SOURCE: ${HLL_BACKEND_HISTORICAL_DATA_SOURCE:-rcon}
       HLL_BACKEND_RCON_TIMEOUT_SECONDS: ${HLL_BACKEND_RCON_TIMEOUT_SECONDS:-20}
+      HLL_BACKEND_STORAGE_PATH: ${HLL_BACKEND_STORAGE_PATH:-/app/runtime/legacy/hll_vietnam_dev.sqlite3}
       HLL_BACKEND_POSTGRES_HOST: ${HLL_BACKEND_POSTGRES_HOST:-postgres}
       HLL_BACKEND_POSTGRES_PORT: ${HLL_BACKEND_POSTGRES_PORT:-5432}
       HLL_BACKEND_POSTGRES_DB: ${HLL_BACKEND_POSTGRES_DB:-hll_vietnam}
@@ -109,6 +116,8 @@ services:
       HLL_BACKEND_POSTGRES_PASSWORD: ${HLL_BACKEND_POSTGRES_PASSWORD:-hll_vietnam_dev}
       HLL_BACKEND_POSTGRES_SSLMODE: ${HLL_BACKEND_POSTGRES_SSLMODE:-disable}
       HLL_BACKEND_POSTGRES_CONNECT_TIMEOUT_SECONDS: ${HLL_BACKEND_POSTGRES_CONNECT_TIMEOUT_SECONDS:-5}
+      HLL_BACKEND_POSTGRES_ADVISORY_LOCK_TIMEOUT_SECONDS: ${HLL_BACKEND_POSTGRES_ADVISORY_LOCK_TIMEOUT_SECONDS:-120}
+      HLL_BACKEND_POSTGRES_ADVISORY_LOCK_POLL_INTERVAL_SECONDS: ${HLL_BACKEND_POSTGRES_ADVISORY_LOCK_POLL_INTERVAL_SECONDS:-1}
       HLL_BACKEND_RCON_TARGETS: >-
         ${HLL_BACKEND_RCON_TARGETS:-[{"name":"Comunidad Hispana #01","slug":"comunidad-hispana-01","external_server_id":"comunidad-hispana-01","host":"152.114.195.174","port":7779,"password":"replace-me-01","source_name":"community-hispana-rcon","region":"ES","game_port":null,"query_port":null},{"name":"Comunidad Hispana #02","slug":"comunidad-hispana-02","external_server_id":"comunidad-hispana-02","host":"152.114.195.150","port":7879,"password":"replace-me-02","source_name":"community-hispana-rcon","region":"ES","game_port":null,"query_port":null},{"name":"Comunidad Hispana #03","slug":"comunidad-hispana-03","external_server_id":"comunidad-hispana-03","host":"5.196.78.45","port":27230,"password":"replace-me-03","source_name":"community-hispana-rcon","region":"ES","game_port":null,"query_port":null}]}
       HLL_RCON_HISTORICAL_CAPTURE_INTERVAL_SECONDS: ${HLL_RCON_HISTORICAL_CAPTURE_INTERVAL_SECONDS:-600}
@@ -120,7 +129,7 @@ services:
       postgres:
         condition: service_healthy
     volumes:
-      - ./backend/data:/app/data
+      - ./backend/runtime:/app/runtime
     restart: unless-stopped
 
   frontend:
