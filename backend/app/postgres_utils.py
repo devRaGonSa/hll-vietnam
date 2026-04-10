@@ -16,7 +16,7 @@ from .config import get_postgres_connection_settings, get_postgres_migrations_pa
 _POSTGRES_MIGRATIONS_APPLIED = False
 
 
-def connect_postgres(*, autocommit: bool = False) -> Connection:
+def connect_postgres(*, autocommit: bool = False, application_name: str | None = None) -> Connection:
     """Open one PostgreSQL connection using the shared staged runtime contract."""
     settings = get_postgres_connection_settings()
     connection = connect(
@@ -24,6 +24,9 @@ def connect_postgres(*, autocommit: bool = False) -> Connection:
         row_factory=dict_row,
         autocommit=autocommit,
     )
+    if application_name:
+        with connection.cursor() as cursor:
+            cursor.execute("SELECT set_config('application_name', %s, false)", (application_name,))
     return connection
 
 
@@ -109,17 +112,23 @@ class PostgresCompatConnection:
 
 
 @contextmanager
-def postgres_cursor(*, autocommit: bool = False) -> Iterator:
+def postgres_cursor(*, autocommit: bool = False, application_name: str | None = None) -> Iterator:
     """Yield one PostgreSQL cursor and close the connection afterwards."""
-    with connect_postgres(autocommit=autocommit) as connection:
+    with connect_postgres(autocommit=autocommit, application_name=application_name) as connection:
         with connection.cursor() as cursor:
             yield cursor
 
 
-def connect_postgres_compat(*, autocommit: bool = False) -> PostgresCompatConnection:
+def connect_postgres_compat(
+    *,
+    autocommit: bool = False,
+    application_name: str | None = None,
+) -> PostgresCompatConnection:
     """Open a sqlite-like compatibility wrapper over a PostgreSQL connection."""
     ensure_postgres_migrations_applied()
-    return PostgresCompatConnection(connect_postgres(autocommit=autocommit))
+    return PostgresCompatConnection(
+        connect_postgres(autocommit=autocommit, application_name=application_name)
+    )
 
 
 def ensure_postgres_migrations_applied() -> list[dict[str, object]]:

@@ -48,9 +48,9 @@ def list_rcon_historical_recent_activity(
                 "region": item["region"],
             },
             "match_id": item["session_key"],
-            "started_at": item["first_seen_at"],
-            "ended_at": item["last_seen_at"],
-            "closed_at": item["last_seen_at"],
+            "started_at": _normalize_timestamp(item.get("first_seen_at")),
+            "ended_at": _normalize_timestamp(item.get("last_seen_at")),
+            "closed_at": _normalize_timestamp(item.get("last_seen_at")),
             "map": {
                 "name": item.get("map_name"),
                 "pretty_name": normalize_map_name(item.get("map_pretty_name") or item.get("map_name")),
@@ -167,16 +167,16 @@ def _build_server_summary(
             "status": "available" if int(item.get("window_count") or 0) > 0 else "empty",
             "window_count": int(item.get("window_count") or 0),
             "sample_count": sample_count,
-            "first_sample_at": item.get("first_seen_at"),
-            "last_sample_at": last_sample_at,
+            "first_sample_at": _normalize_timestamp(item.get("first_seen_at")),
+            "last_sample_at": _normalize_timestamp(last_sample_at),
             "coverage_hours": _calculate_coverage_hours(item.get("first_seen_at"), last_sample_at),
         },
         "freshness": {
-            "last_successful_capture_at": item.get("last_successful_capture_at"),
+            "last_successful_capture_at": _normalize_timestamp(item.get("last_successful_capture_at")),
             "minutes_since_last_capture": _minutes_since_timestamp(last_sample_at),
             "last_run_status": item.get("last_run_status"),
             "last_error": item.get("last_error"),
-            "last_error_at": item.get("last_error_at"),
+            "last_error_at": _normalize_timestamp(item.get("last_error_at")),
         },
         "activity": {
             "latest_players": latest_activity.get("player_count") if latest_activity else None,
@@ -185,8 +185,8 @@ def _build_server_summary(
             "latest_status": "captured" if latest_activity else None,
         },
         "time_range": {
-            "start": item.get("first_seen_at"),
-            "end": last_sample_at,
+            "start": _normalize_timestamp(item.get("first_seen_at")),
+            "end": _normalize_timestamp(last_sample_at),
         },
         "capabilities": describe_rcon_historical_read_model()["capabilities"],
     }
@@ -212,11 +212,11 @@ def _build_all_servers_summary(items: list[dict[str, object]]) -> dict[str, obje
             "status": "available" if total_samples > 0 else "empty",
             "sample_count": total_samples,
             "first_sample_at": None,
-            "last_sample_at": last_capture_at,
+            "last_sample_at": _normalize_timestamp(last_capture_at),
             "coverage_hours": None,
         },
         "freshness": {
-            "last_successful_capture_at": last_capture_at,
+            "last_successful_capture_at": _normalize_timestamp(last_capture_at),
             "minutes_since_last_capture": _minutes_since_timestamp(last_capture_at),
             "last_run_status": None,
             "last_error": None,
@@ -230,17 +230,17 @@ def _build_all_servers_summary(items: list[dict[str, object]]) -> dict[str, obje
         },
         "time_range": {
             "start": None,
-            "end": last_capture_at,
+            "end": _normalize_timestamp(last_capture_at),
         },
         "server_count": len(items),
         "capabilities": describe_rcon_historical_read_model()["capabilities"],
     }
 
 
-def _minutes_since_timestamp(timestamp: str | None) -> int | None:
-    if not timestamp:
+def _minutes_since_timestamp(timestamp: object) -> int | None:
+    captured_at = _coerce_timestamp(timestamp)
+    if captured_at is None:
         return None
-    captured_at = datetime.fromisoformat(timestamp.replace("Z", "+00:00"))
     if captured_at.tzinfo is None:
         captured_at = captured_at.replace(tzinfo=timezone.utc)
     delta = datetime.now(timezone.utc) - captured_at.astimezone(timezone.utc)
@@ -248,19 +248,36 @@ def _minutes_since_timestamp(timestamp: str | None) -> int | None:
 
 
 def _calculate_coverage_hours(
-    first_sample_at: str | None,
-    last_sample_at: str | None,
+    first_sample_at: object,
+    last_sample_at: object,
 ) -> float | None:
-    if not first_sample_at or not last_sample_at:
+    first_point = _coerce_timestamp(first_sample_at)
+    last_point = _coerce_timestamp(last_sample_at)
+    if first_point is None or last_point is None:
         return None
-    first_point = datetime.fromisoformat(first_sample_at.replace("Z", "+00:00"))
-    last_point = datetime.fromisoformat(last_sample_at.replace("Z", "+00:00"))
     if first_point.tzinfo is None:
         first_point = first_point.replace(tzinfo=timezone.utc)
     if last_point.tzinfo is None:
         last_point = last_point.replace(tzinfo=timezone.utc)
     delta = last_point.astimezone(timezone.utc) - first_point.astimezone(timezone.utc)
     return round(delta.total_seconds() / 3600, 2)
+
+
+def _normalize_timestamp(timestamp: object) -> str | None:
+    captured_at = _coerce_timestamp(timestamp)
+    if captured_at is None:
+        return None
+    if captured_at.tzinfo is None:
+        captured_at = captured_at.replace(tzinfo=timezone.utc)
+    return captured_at.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+def _coerce_timestamp(timestamp: object) -> datetime | None:
+    if not timestamp:
+        return None
+    if isinstance(timestamp, datetime):
+        return timestamp
+    return datetime.fromisoformat(str(timestamp).replace("Z", "+00:00"))
 
 
 def _resolve_presented_server_slug(

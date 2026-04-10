@@ -7,7 +7,8 @@ import json
 from collections import defaultdict
 from datetime import datetime, timezone
 from statistics import pstdev
-from typing import Iterable
+from time import perf_counter
+from typing import Callable, Iterable
 
 from .config import get_historical_data_source_kind
 from .data_sources import (
@@ -45,16 +46,18 @@ from .elo_mmr_models import (
     summarize_accuracy,
 )
 from .elo_mmr_storage import (
+    clear_elo_mmr_persisted_state,
     get_elo_mmr_player_profile,
     initialize_elo_mmr_storage,
     list_elo_mmr_canonical_match_rows,
     list_elo_mmr_match_results,
     list_elo_mmr_monthly_rankings,
+    persist_elo_mmr_match_results,
+    persist_elo_mmr_player_ratings,
     rebuild_elo_mmr_canonical_facts,
     replace_elo_mmr_monthly_state,
-    replace_elo_mmr_state,
 )
-from .historical_storage import ALL_SERVERS_SLUG, initialize_historical_storage
+from .historical_storage import ALL_SERVERS_SLUG, initialize_historical_storage, run_historical_storage_maintenance
 from .rcon_historical_read_model import get_rcon_historical_competitive_match_context
 from .writer_lock import backend_writer_lock, build_writer_lock_holder
 
@@ -96,84 +99,51 @@ ROLE_WEIGHTS = {
 
 
 def rebuild_elo_mmr_models(*, db_path=None) -> dict[str, object]:
-    """Rebuild persistent player ratings and monthly rankings from scratch."""
-    with backend_writer_lock(holder=build_writer_lock_holder("app.elo_mmr_engine rebuild")):
-        resolved_path = initialize_historical_storage(db_path=db_path)
-        initialize_elo_mmr_storage(db_path=resolved_path)
-        canonical_fact_layer = rebuild_elo_mmr_canonical_facts(db_path=resolved_path)
-        historical_source_policy = _build_historical_source_policy_for_elo()
-        rcon_read_model = get_rcon_historical_read_model()
-        match_rows = list_elo_mmr_canonical_match_rows(db_path=resolved_path)
-        grouped_matches = _group_match_rows(match_rows)
-        rcon_match_context_cache: dict[tuple[str, str | None, str | None], dict[str, object] | None] = {}
+    """Rebuild canonical facts, ratings, and monthly rankings from scratch."""
+    with backend_writer_lock(holder=build_writer_lock_holder("app.elo_mmr_engine rebuild-full")):
+        return _run_full_rebuild(db_path=db_path, command_name="rebuild-full", compatibility_mode=False)
 
-        ratings_by_scope: dict[str, dict[str, dict[str, object]]] = {SCOPE_ALL_SERVERS: {}}
-        player_ratings: list[dict[str, object]] = []
-        match_results: list[dict[str, object]] = []
-        monthly_checkpoints: list[dict[str, object]] = []
 
-        for match_group in grouped_matches:
-            server_scope = match_group["server_slug"]
-            ratings_by_scope.setdefault(server_scope, {})
-            rcon_match_context = None
-            if rcon_read_model is not None:
-                cache_key = (
-                    str(match_group["server_slug"]),
-                    str(match_group.get("ended_at")) if match_group.get("ended_at") is not None else None,
-                    str(match_group.get("map_pretty_name") or match_group.get("map_name") or "")
-                    or None,
-                )
-                if cache_key not in rcon_match_context_cache:
-                    rcon_match_context_cache[cache_key] = get_rcon_historical_competitive_match_context(
-                        server_key=str(match_group["server_slug"]),
-                        ended_at=match_group.get("ended_at"),
-                        map_name=match_group.get("map_pretty_name") or match_group.get("map_name"),
-                    )
-                rcon_match_context = rcon_match_context_cache[cache_key]
-            for scope_key in (server_scope, SCOPE_ALL_SERVERS):
-                match_results.extend(
-                    _score_match_for_scope(
-                        match_group=match_group,
-                        scope_key=scope_key,
-                        ratings_by_scope=ratings_by_scope[scope_key],
-                        rcon_match_context=rcon_match_context,
-                    )
-                )
-
-        for scope_ratings in ratings_by_scope.values():
-            player_ratings.extend(scope_ratings.values())
-
-        monthly_aggregation = _build_monthly_ranking_materialization(
-            match_results=match_results,
-            historical_source_policy=historical_source_policy,
+def rebuild_elo_mmr_canonical_model(*, db_path=None) -> dict[str, object]:
+    """Rebuild only the canonical Elo/MMR fact layer."""
+    with backend_writer_lock(holder=build_writer_lock_holder("app.elo_mmr_engine rebuild-canonical")):
+        resolved_path, phases = _prepare_operational_storage(db_path=db_path, command_name="rebuild-canonical")
+        canonical_fact_layer, phase_summary = _run_logged_phase(
+            "canonical-rebuild",
+            lambda: rebuild_elo_mmr_canonical_facts(
+                db_path=resolved_path,
+                application_name_prefix="app.elo_mmr_engine rebuild-canonical",
+            ),
         )
-        monthly_rankings = monthly_aggregation["monthly_rankings"]
-        monthly_checkpoints = monthly_aggregation["monthly_checkpoints"]
-
-        replace_elo_mmr_state(
-            player_ratings=player_ratings,
-            match_results=match_results,
-            monthly_rankings=monthly_rankings,
-            monthly_checkpoints=monthly_checkpoints,
-            db_path=resolved_path,
-        )
-        latest_month_by_scope = {
-            checkpoint["scope_key"]: checkpoint["month_key"] for checkpoint in monthly_checkpoints
-        }
+        phases.append(phase_summary)
         return {
             "status": "ok",
+            "command": "rebuild-canonical",
+            "resolved_path": str(resolved_path),
             "canonical_fact_layer": canonical_fact_layer,
-            "historical_source_policy": historical_source_policy,
+            "phases": phases,
+        }
+
+
+def rebuild_elo_mmr_ratings_from_canonical(*, db_path=None) -> dict[str, object]:
+    """Rebuild ratings and monthly materialization from existing canonical facts."""
+    with backend_writer_lock(holder=build_writer_lock_holder("app.elo_mmr_engine rebuild-ratings")):
+        resolved_path, phases = _prepare_operational_storage(db_path=db_path, command_name="rebuild-ratings")
+        ratings_result, ratings_phases = _rebuild_ratings_pipeline(
+            resolved_path=resolved_path,
+            command_name="rebuild-ratings",
+        )
+        phases.extend(ratings_phases)
+        return {
+            "status": "ok",
+            "command": "rebuild-ratings",
+            "resolved_path": str(resolved_path),
+            "historical_source_policy": ratings_result["historical_source_policy"],
             "persistent_rating_contract": _build_persistent_rating_contract_metadata(),
             "monthly_ranking_contract": _build_monthly_ranking_contract_metadata(),
-            "totals": {
-                "matches_scored": len({(row["scope_key"], row["external_match_id"]) for row in match_results}),
-                "player_ratings": len(player_ratings),
-                "match_results": len(match_results),
-                "monthly_rankings": len(monthly_rankings),
-                "monthly_checkpoints": len(monthly_checkpoints),
-            },
-            "latest_month_by_scope": latest_month_by_scope,
+            "totals": ratings_result["totals"],
+            "latest_month_by_scope": ratings_result["latest_month_by_scope"],
+            "phases": phases,
         }
 
 
@@ -198,30 +168,47 @@ def list_elo_mmr_leaderboard_payload(*, server_id: str | None, limit: int) -> di
 def refresh_elo_mmr_monthly_materialization_from_persisted_results(*, db_path=None) -> dict[str, object]:
     """Rebuild monthly rankings/checkpoints from persisted match results only."""
     with backend_writer_lock(holder=build_writer_lock_holder("app.elo_mmr_engine refresh-monthly")):
-        resolved_path = initialize_historical_storage(db_path=db_path)
-        initialize_elo_mmr_storage(db_path=resolved_path)
-        match_results = list_elo_mmr_match_results(db_path=resolved_path)
+        resolved_path, phases = _prepare_operational_storage(db_path=db_path, command_name="refresh-monthly")
+        match_results, match_result_phase = _run_logged_phase(
+            "load-persisted-match-results",
+            lambda: list_elo_mmr_match_results(db_path=resolved_path),
+        )
+        phases.append(match_result_phase)
         if not match_results:
             return {
                 "status": "no_data",
+                "command": "refresh-monthly",
                 "message": "No persisted Elo/MMR match results are available for monthly rematerialization.",
                 "totals": {
                     "match_results": 0,
                     "monthly_rankings": 0,
                     "monthly_checkpoints": 0,
                 },
+                "phases": phases,
             }
-        monthly_aggregation = _build_monthly_ranking_materialization(
-            match_results=match_results,
-            historical_source_policy=_build_historical_source_policy_for_elo(),
+        monthly_aggregation, materialize_phase = _run_logged_phase(
+            "monthly-materialization",
+            lambda: _build_monthly_ranking_materialization(
+                match_results=match_results,
+                historical_source_policy=_build_historical_source_policy_for_elo(),
+            ),
+            extra={"match_results": len(match_results)},
         )
-        replace_elo_mmr_monthly_state(
-            monthly_rankings=monthly_aggregation["monthly_rankings"],
-            monthly_checkpoints=monthly_aggregation["monthly_checkpoints"],
-            db_path=resolved_path,
+        phases.append(materialize_phase)
+        _, persist_phase = _run_logged_phase(
+            "persist-monthly",
+            lambda: replace_elo_mmr_monthly_state(
+                monthly_rankings=monthly_aggregation["monthly_rankings"],
+                monthly_checkpoints=monthly_aggregation["monthly_checkpoints"],
+                db_path=resolved_path,
+                application_name="app.elo_mmr_engine refresh-monthly materialize-monthly",
+            ),
+            extra={"monthly_rankings": len(monthly_aggregation["monthly_rankings"])},
         )
+        phases.append(persist_phase)
         return {
             "status": "ok",
+            "command": "refresh-monthly",
             "totals": {
                 "match_results": len(match_results),
                 "monthly_rankings": len(monthly_aggregation["monthly_rankings"]),
@@ -231,7 +218,234 @@ def refresh_elo_mmr_monthly_materialization_from_persisted_results(*, db_path=No
                 checkpoint["scope_key"]: checkpoint["month_key"]
                 for checkpoint in monthly_aggregation["monthly_checkpoints"]
             },
+            "phases": phases,
         }
+
+
+def run_historical_maintenance(*, db_path=None) -> dict[str, object]:
+    """Run explicit heavyweight historical normalization outside the rebuild hot path."""
+    with backend_writer_lock(holder=build_writer_lock_holder("app.elo_mmr_engine historical-maintenance")):
+        resolved_path, phases = _prepare_operational_storage(db_path=db_path, command_name="historical-maintenance")
+        maintenance_result, maintenance_phase = _run_logged_phase(
+            "historical-maintenance",
+            lambda: run_historical_storage_maintenance(db_path=resolved_path),
+        )
+        phases.append(maintenance_phase)
+        return {
+            "status": "ok",
+            "command": "historical-maintenance",
+            "resolved_path": str(maintenance_result),
+            "phases": phases,
+        }
+
+
+def _run_full_rebuild(*, db_path, command_name: str, compatibility_mode: bool) -> dict[str, object]:
+    resolved_path, phases = _prepare_operational_storage(db_path=db_path, command_name=command_name)
+    canonical_fact_layer, canonical_phase = _run_logged_phase(
+        "canonical-rebuild",
+        lambda: rebuild_elo_mmr_canonical_facts(
+            db_path=resolved_path,
+            application_name_prefix=f"app.elo_mmr_engine {command_name}",
+        ),
+    )
+    phases.append(canonical_phase)
+    ratings_result, ratings_phases = _rebuild_ratings_pipeline(
+        resolved_path=resolved_path,
+        command_name=command_name,
+    )
+    phases.extend(ratings_phases)
+    response = {
+        "status": "ok",
+        "command": command_name,
+        "resolved_path": str(resolved_path),
+        "canonical_fact_layer": canonical_fact_layer,
+        "historical_source_policy": ratings_result["historical_source_policy"],
+        "persistent_rating_contract": _build_persistent_rating_contract_metadata(),
+        "monthly_ranking_contract": _build_monthly_ranking_contract_metadata(),
+        "totals": ratings_result["totals"],
+        "latest_month_by_scope": ratings_result["latest_month_by_scope"],
+        "phases": phases,
+    }
+    if compatibility_mode:
+        response["compatibility_alias"] = {
+            "requested_command": "rebuild",
+            "effective_command": command_name,
+        }
+    return response
+
+
+def _prepare_operational_storage(*, db_path, command_name: str) -> tuple[object, list[dict[str, object]]]:
+    phases: list[dict[str, object]] = []
+    resolved_path, phase = _run_logged_phase(
+        "prepare",
+        lambda: _prepare_storage_for_command(db_path=db_path, command_name=command_name),
+    )
+    phases.append(phase)
+    return resolved_path, phases
+
+
+def _prepare_storage_for_command(*, db_path, command_name: str):
+    resolved_path = initialize_historical_storage(db_path=db_path)
+    initialize_elo_mmr_storage(
+        db_path=resolved_path,
+        application_name=f"app.elo_mmr_engine {command_name} prepare-storage",
+    )
+    return resolved_path
+
+
+def _rebuild_ratings_pipeline(*, resolved_path, command_name: str) -> tuple[dict[str, object], list[dict[str, object]]]:
+    phases: list[dict[str, object]] = []
+    scoring_result, scoring_phase = _run_logged_phase(
+        "ratings-scoring",
+        lambda: _compute_ratings_from_canonical(db_path=resolved_path),
+    )
+    phases.append(scoring_phase)
+    _, clear_phase = _run_logged_phase(
+        "persist-clear",
+        lambda: clear_elo_mmr_persisted_state(
+            db_path=resolved_path,
+            application_name=f"app.elo_mmr_engine {command_name} persist-clear",
+        ),
+    )
+    phases.append(clear_phase)
+    _, rating_phase = _run_logged_phase(
+        "persist-player-ratings",
+        lambda: persist_elo_mmr_player_ratings(
+            player_ratings=scoring_result["player_ratings"],
+            db_path=resolved_path,
+            application_name=f"app.elo_mmr_engine {command_name} persist-player-ratings",
+        ),
+        extra={"player_ratings": len(scoring_result["player_ratings"])},
+    )
+    phases.append(rating_phase)
+    _, results_phase = _run_logged_phase(
+        "persist-match-results",
+        lambda: persist_elo_mmr_match_results(
+            match_results=scoring_result["match_results"],
+            db_path=resolved_path,
+            application_name=f"app.elo_mmr_engine {command_name} persist-match-results",
+        ),
+        extra={"match_results": len(scoring_result["match_results"])},
+    )
+    phases.append(results_phase)
+    _, monthly_phase = _run_logged_phase(
+        "persist-monthly",
+        lambda: replace_elo_mmr_monthly_state(
+            monthly_rankings=scoring_result["monthly_rankings"],
+            monthly_checkpoints=scoring_result["monthly_checkpoints"],
+            db_path=resolved_path,
+            application_name=f"app.elo_mmr_engine {command_name} persist-monthly",
+        ),
+        extra={"monthly_rankings": len(scoring_result["monthly_rankings"])},
+    )
+    phases.append(monthly_phase)
+    return {
+        "historical_source_policy": scoring_result["historical_source_policy"],
+        "totals": scoring_result["totals"],
+        "latest_month_by_scope": scoring_result["latest_month_by_scope"],
+    }, phases
+
+
+def _compute_ratings_from_canonical(*, db_path=None) -> dict[str, object]:
+    historical_source_policy = _build_historical_source_policy_for_elo()
+    rcon_read_model = get_rcon_historical_read_model()
+    match_rows = list_elo_mmr_canonical_match_rows(db_path=db_path)
+    grouped_matches = _group_match_rows(match_rows)
+    rcon_match_context_cache: dict[tuple[str, str | None, str | None], dict[str, object] | None] = {}
+
+    ratings_by_scope: dict[str, dict[str, dict[str, object]]] = {SCOPE_ALL_SERVERS: {}}
+    player_ratings: list[dict[str, object]] = []
+    match_results: list[dict[str, object]] = []
+
+    for match_group in grouped_matches:
+        server_scope = match_group["server_slug"]
+        ratings_by_scope.setdefault(server_scope, {})
+        rcon_match_context = None
+        if rcon_read_model is not None:
+            cache_key = (
+                str(match_group["server_slug"]),
+                str(match_group.get("ended_at")) if match_group.get("ended_at") is not None else None,
+                str(match_group.get("map_pretty_name") or match_group.get("map_name") or "") or None,
+            )
+            if cache_key not in rcon_match_context_cache:
+                rcon_match_context_cache[cache_key] = get_rcon_historical_competitive_match_context(
+                    server_key=str(match_group["server_slug"]),
+                    ended_at=match_group.get("ended_at"),
+                    map_name=match_group.get("map_pretty_name") or match_group.get("map_name"),
+                )
+            rcon_match_context = rcon_match_context_cache[cache_key]
+        for scope_key in (server_scope, SCOPE_ALL_SERVERS):
+            match_results.extend(
+                _score_match_for_scope(
+                    match_group=match_group,
+                    scope_key=scope_key,
+                    ratings_by_scope=ratings_by_scope[scope_key],
+                    rcon_match_context=rcon_match_context,
+                )
+            )
+
+    for scope_ratings in ratings_by_scope.values():
+        player_ratings.extend(scope_ratings.values())
+
+    monthly_aggregation = _build_monthly_ranking_materialization(
+        match_results=match_results,
+        historical_source_policy=historical_source_policy,
+    )
+    monthly_rankings = monthly_aggregation["monthly_rankings"]
+    monthly_checkpoints = monthly_aggregation["monthly_checkpoints"]
+    latest_month_by_scope = {
+        checkpoint["scope_key"]: checkpoint["month_key"] for checkpoint in monthly_checkpoints
+    }
+    return {
+        "historical_source_policy": historical_source_policy,
+        "player_ratings": player_ratings,
+        "match_results": match_results,
+        "monthly_rankings": monthly_rankings,
+        "monthly_checkpoints": monthly_checkpoints,
+        "latest_month_by_scope": latest_month_by_scope,
+        "totals": {
+            "matches_scored": len({(row["scope_key"], row["external_match_id"]) for row in match_results}),
+            "player_ratings": len(player_ratings),
+            "match_results": len(match_results),
+            "monthly_rankings": len(monthly_rankings),
+            "monthly_checkpoints": len(monthly_checkpoints),
+        },
+    }
+
+
+def _run_logged_phase(
+    phase_name: str,
+    runner: Callable[[], object],
+    *,
+    extra: dict[str, object] | None = None,
+) -> tuple[object, dict[str, object]]:
+    _emit_cli_progress("phase-start", phase=phase_name, details=extra)
+    started = perf_counter()
+    result = runner()
+    elapsed_ms = round((perf_counter() - started) * 1000.0, 3)
+    summary = {
+        "phase": phase_name,
+        "status": "ok",
+        "elapsed_ms": elapsed_ms,
+    }
+    if extra:
+        summary["details"] = extra
+    _emit_cli_progress("phase-complete", phase=phase_name, elapsed_ms=elapsed_ms, details=extra)
+    return result, summary
+
+
+def _emit_cli_progress(event: str, **payload: object) -> None:
+    print(
+        json.dumps(
+            {
+                "event": event,
+                "timestamp": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+                **payload,
+            },
+            ensure_ascii=True,
+        ),
+        flush=True,
+    )
 
 
 def get_elo_mmr_player_payload(*, player_id: str, server_id: str | None) -> dict[str, object] | None:
@@ -245,12 +459,26 @@ def get_elo_mmr_player_payload(*, player_id: str, server_id: str | None) -> dict
 def build_arg_parser() -> argparse.ArgumentParser:
     """Build the CLI parser for Elo/MMR maintenance."""
     parser = argparse.ArgumentParser(
-        description="Rebuild or inspect the Elo/MMR monthly ranking system.",
+        description="Operate or inspect the Elo/MMR monthly ranking system.",
     )
     parser.add_argument(
         "mode",
-        choices=("rebuild", "leaderboard", "player"),
-        help="rebuild recomputes all persisted Elo/MMR state; leaderboard and player inspect the read model",
+        choices=(
+            "rebuild",
+            "rebuild-full",
+            "rebuild-canonical",
+            "rebuild-ratings",
+            "refresh-monthly",
+            "historical-maintenance",
+            "leaderboard",
+            "player",
+        ),
+        help=(
+            "rebuild is a compatibility alias for rebuild-full; rebuild-canonical refreshes only the canonical "
+            "fact layer; rebuild-ratings recalculates ratings from existing canonical facts; refresh-monthly "
+            "rematerializes monthly outputs from persisted match results; historical-maintenance runs explicit "
+            "global historical normalization"
+        ),
     )
     parser.add_argument("--server", dest="server_id", help="optional server scope")
     parser.add_argument("--limit", type=int, default=10, help="max rows for leaderboard mode")
@@ -263,7 +491,27 @@ def main(argv: Iterable[str] | None = None) -> int:
     parser = build_arg_parser()
     args = parser.parse_args(list(argv) if argv is not None else None)
     if args.mode == "rebuild":
+        result = rebuild_elo_mmr_models()
+        result["compatibility_alias"] = {
+            "requested_command": "rebuild",
+            "effective_command": "rebuild-full",
+        }
+        print(json.dumps(result, indent=2))
+        return 0
+    if args.mode == "rebuild-full":
         print(json.dumps(rebuild_elo_mmr_models(), indent=2))
+        return 0
+    if args.mode == "rebuild-canonical":
+        print(json.dumps(rebuild_elo_mmr_canonical_model(), indent=2))
+        return 0
+    if args.mode == "rebuild-ratings":
+        print(json.dumps(rebuild_elo_mmr_ratings_from_canonical(), indent=2))
+        return 0
+    if args.mode == "refresh-monthly":
+        print(json.dumps(refresh_elo_mmr_monthly_materialization_from_persisted_results(), indent=2))
+        return 0
+    if args.mode == "historical-maintenance":
+        print(json.dumps(run_historical_maintenance(), indent=2))
         return 0
     if args.mode == "leaderboard":
         print(json.dumps(list_elo_mmr_leaderboard_payload(server_id=args.server_id, limit=args.limit), indent=2))

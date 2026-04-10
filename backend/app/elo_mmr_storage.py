@@ -6,6 +6,7 @@ import json
 import sqlite3
 from datetime import datetime
 from pathlib import Path
+from time import perf_counter
 
 from .config import get_primary_storage_label
 from .elo_event_telemetry_contract import ELO_EVENT_TELEMETRY_CONTRACT_VERSION
@@ -22,32 +23,65 @@ from .postgres_utils import connect_postgres_compat, ensure_postgres_migrations_
 ELO_MMR_CANONICAL_FACT_SCHEMA_VERSION = "elo-canonical-v3"
 ELO_MMR_CANONICAL_SOURCE_INPUT_VERSION = "historical-closed-match-v1-plus-player-event-summary-v1"
 
+_CANONICAL_EVENT_DETAIL_TABLES = (
+    "elo_event_garrison_details",
+    "elo_event_outpost_details",
+    "elo_event_revive_details",
+    "elo_event_supply_details",
+    "elo_event_node_details",
+    "elo_event_repair_details",
+    "elo_event_mine_details",
+    "elo_event_commander_ability_details",
+    "elo_event_strongpoint_presence_details",
+    "elo_event_role_assignment_details",
+    "elo_event_disconnect_leave_admin_details",
+    "elo_event_death_classification_details",
+)
+_CANONICAL_EVENT_GRAPH_TABLES = ("elo_event_lineage_headers",)
+_CANONICAL_NORMALIZATION_TABLES = (
+    "elo_mmr_normalization_baselines",
+    "elo_mmr_normalization_buckets",
+)
+_CANONICAL_CORE_GRAPH_TABLES = (
+    "elo_mmr_canonical_player_match_facts",
+    "elo_mmr_canonical_matches",
+    "elo_mmr_canonical_players",
+)
 
-def initialize_elo_mmr_storage(*, db_path: Path | None = None) -> Path:
+
+def initialize_elo_mmr_storage(
+    *,
+    db_path: Path | None = None,
+    application_name: str | None = None,
+) -> Path:
     """Ensure PostgreSQL schema bootstrap exists for Elo/MMR persistence."""
     resolved_path = _resolve_db_path(db_path)
     ensure_postgres_migrations_applied()
-    with _connect_writer(resolved_path) as connection:
+    with _connect_writer(resolved_path, application_name=application_name) as connection:
         _seed_elo_event_capability_registry(connection)
     return resolved_path
 
 
-def replace_elo_mmr_state(
-    *,
-    player_ratings: list[dict[str, object]],
-    match_results: list[dict[str, object]],
-    monthly_rankings: list[dict[str, object]],
-    monthly_checkpoints: list[dict[str, object]],
-    db_path: Path | None = None,
-) -> Path:
-    """Replace the persisted Elo/MMR state with a freshly rebuilt dataset."""
-    resolved_path = initialize_elo_mmr_storage(db_path=db_path)
-    with _connect_writer(resolved_path) as connection:
+def clear_elo_mmr_persisted_state(*, db_path: Path | None = None, application_name: str | None = None) -> Path:
+    """Clear persisted rating and monthly read models before a phased rebuild."""
+    resolved_path = initialize_elo_mmr_storage(db_path=db_path, application_name=application_name)
+    with _connect_writer(resolved_path, application_name=application_name) as connection:
         connection.execute("DELETE FROM elo_mmr_monthly_checkpoints")
         connection.execute("DELETE FROM elo_mmr_monthly_rankings")
         connection.execute("DELETE FROM elo_mmr_match_results")
         connection.execute("DELETE FROM elo_mmr_player_ratings")
+    return resolved_path
 
+
+def persist_elo_mmr_player_ratings(
+    *,
+    player_ratings: list[dict[str, object]],
+    db_path: Path | None = None,
+    application_name: str | None = None,
+) -> Path:
+    """Persist rebuilt player ratings in one bounded phase."""
+    resolved_path = initialize_elo_mmr_storage(db_path=db_path, application_name=application_name)
+    with _connect_writer(resolved_path, application_name=application_name) as connection:
         connection.executemany(
             """
             INSERT INTO elo_mmr_player_ratings (
@@ -91,7 +125,18 @@ def replace_elo_mmr_state(
                 for row in player_ratings
             ],
         )
+    return resolved_path
 
+
+def persist_elo_mmr_match_results(
+    *,
+    match_results: list[dict[str, object]],
+    db_path: Path | None = None,
+    application_name: str | None = None,
+) -> Path:
+    """Persist rebuilt match results in one bounded phase."""
+    resolved_path = initialize_elo_mmr_storage(db_path=db_path, application_name=application_name)
+    with _connect_writer(resolved_path, application_name=application_name) as connection:
         connection.executemany(
             """
             INSERT INTO elo_mmr_match_results (
@@ -253,108 +298,26 @@ def replace_elo_mmr_state(
                 for row in match_results
             ],
         )
+    return resolved_path
 
-        connection.executemany(
-            """
-            INSERT INTO elo_mmr_monthly_rankings (
-                scope_key,
-                month_key,
-                stable_player_key,
-                player_name,
-                steam_id,
-                model_version,
-                formula_version,
-                contract_version,
-                current_mmr,
-                baseline_mmr,
-                mmr_gain,
-                avg_match_score,
-                strength_of_schedule,
-                consistency,
-                activity,
-                confidence,
-                penalty_points,
-                monthly_rank_score,
-                valid_matches,
-                total_matches,
-                total_time_seconds,
-                avg_participation_ratio,
-                eligible,
-                eligibility_reason,
-                accuracy_mode,
-                capabilities_json,
-                component_scores_json
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            [
-                (
-                    row["scope_key"],
-                    row["month_key"],
-                    row["stable_player_key"],
-                    row["player_name"],
-                    row.get("steam_id"),
-                    row.get("model_version", ""),
-                    row.get("formula_version", ""),
-                    row.get("contract_version", ""),
-                    row["current_mmr"],
-                    row["baseline_mmr"],
-                    row["mmr_gain"],
-                    row["avg_match_score"],
-                    row["strength_of_schedule"],
-                    row["consistency"],
-                    row["activity"],
-                    row["confidence"],
-                    row["penalty_points"],
-                    row["monthly_rank_score"],
-                    row["valid_matches"],
-                    row["total_matches"],
-                    row["total_time_seconds"],
-                    row.get("avg_participation_ratio", 0.0),
-                    1 if row["eligible"] else 0,
-                    row.get("eligibility_reason"),
-                    row["accuracy_mode"],
-                    json.dumps(row["capabilities"], ensure_ascii=True, separators=(",", ":")),
-                    json.dumps(row["component_scores"], ensure_ascii=True, separators=(",", ":")),
-                )
-                for row in monthly_rankings
-            ],
-        )
 
-        connection.executemany(
-            """
-            INSERT INTO elo_mmr_monthly_checkpoints (
-                scope_key,
-                month_key,
-                generated_at,
-                model_version,
-                formula_version,
-                contract_version,
-                player_count,
-                eligible_player_count,
-                source_policy_json,
-                capabilities_summary_json
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            [
-                (
-                    row["scope_key"],
-                    row["month_key"],
-                    row["generated_at"],
-                    row.get("model_version", ""),
-                    row.get("formula_version", ""),
-                    row.get("contract_version", ""),
-                    row["player_count"],
-                    row["eligible_player_count"],
-                    json.dumps(row["source_policy"], ensure_ascii=True, separators=(",", ":")),
-                    json.dumps(
-                        row["capabilities_summary"],
-                        ensure_ascii=True,
-                        separators=(",", ":"),
-                    ),
-                )
-                for row in monthly_checkpoints
-            ],
-        )
+def replace_elo_mmr_state(
+    *,
+    player_ratings: list[dict[str, object]],
+    match_results: list[dict[str, object]],
+    monthly_rankings: list[dict[str, object]],
+    monthly_checkpoints: list[dict[str, object]],
+    db_path: Path | None = None,
+) -> Path:
+    """Replace the persisted Elo/MMR state with a freshly rebuilt dataset."""
+    resolved_path = clear_elo_mmr_persisted_state(db_path=db_path)
+    persist_elo_mmr_player_ratings(player_ratings=player_ratings, db_path=resolved_path)
+    persist_elo_mmr_match_results(match_results=match_results, db_path=resolved_path)
+    replace_elo_mmr_monthly_state(
+        monthly_rankings=monthly_rankings,
+        monthly_checkpoints=monthly_checkpoints,
+        db_path=resolved_path,
+    )
     return resolved_path
 
 
@@ -363,10 +326,11 @@ def replace_elo_mmr_monthly_state(
     monthly_rankings: list[dict[str, object]],
     monthly_checkpoints: list[dict[str, object]],
     db_path: Path | None = None,
+    application_name: str | None = None,
 ) -> Path:
     """Replace only the persisted monthly Elo/MMR state with a freshly built dataset."""
-    resolved_path = initialize_elo_mmr_storage(db_path=db_path)
-    with _connect_writer(resolved_path) as connection:
+    resolved_path = initialize_elo_mmr_storage(db_path=db_path, application_name=application_name)
+    with _connect_writer(resolved_path, application_name=application_name) as connection:
         connection.execute("DELETE FROM elo_mmr_monthly_checkpoints")
         connection.execute("DELETE FROM elo_mmr_monthly_rankings")
 
@@ -501,28 +465,44 @@ def list_elo_mmr_match_results(*, db_path: Path | None = None) -> list[dict[str,
     return items
 
 
-def rebuild_elo_mmr_canonical_facts(*, db_path: Path | None = None) -> dict[str, object]:
+def rebuild_elo_mmr_canonical_facts(
+    *,
+    db_path: Path | None = None,
+    application_name_prefix: str = "app.elo_mmr_engine rebuild-canonical",
+) -> dict[str, object]:
     """Materialize the canonical Elo fact layer from persisted historical closed matches."""
-    resolved_path = initialize_elo_mmr_storage(db_path=db_path)
+    resolved_path = initialize_elo_mmr_storage(
+        db_path=db_path,
+        application_name=f"{application_name_prefix} prepare",
+    )
     initialize_player_event_storage(db_path=resolved_path)
-    with _connect_writer(resolved_path) as connection:
-        connection.execute("DELETE FROM elo_mmr_canonical_player_match_facts")
-        connection.execute("DELETE FROM elo_event_garrison_details")
-        connection.execute("DELETE FROM elo_event_outpost_details")
-        connection.execute("DELETE FROM elo_event_revive_details")
-        connection.execute("DELETE FROM elo_event_supply_details")
-        connection.execute("DELETE FROM elo_event_node_details")
-        connection.execute("DELETE FROM elo_event_repair_details")
-        connection.execute("DELETE FROM elo_event_mine_details")
-        connection.execute("DELETE FROM elo_event_commander_ability_details")
-        connection.execute("DELETE FROM elo_event_strongpoint_presence_details")
-        connection.execute("DELETE FROM elo_event_role_assignment_details")
-        connection.execute("DELETE FROM elo_event_disconnect_leave_admin_details")
-        connection.execute("DELETE FROM elo_event_death_classification_details")
-        connection.execute("DELETE FROM elo_event_lineage_headers")
-        connection.execute("DELETE FROM elo_mmr_canonical_matches")
-        connection.execute("DELETE FROM elo_mmr_canonical_players")
+    cleanup_phases = [
+        _run_postgres_canonical_cleanup_subphase(
+            resolved_path=resolved_path,
+            application_name=f"{application_name_prefix} canonical-cleanup event-graph",
+            phase_name="canonical-cleanup-event-graph",
+            table_names=_CANONICAL_EVENT_GRAPH_TABLES,
+            cascade=True,
+        ),
+        _run_postgres_canonical_cleanup_subphase(
+            resolved_path=resolved_path,
+            application_name=f"{application_name_prefix} canonical-cleanup normalization",
+            phase_name="canonical-cleanup-normalization",
+            table_names=_CANONICAL_NORMALIZATION_TABLES,
+        ),
+        _run_postgres_canonical_cleanup_subphase(
+            resolved_path=resolved_path,
+            application_name=f"{application_name_prefix} canonical-cleanup core-graph",
+            phase_name="canonical-cleanup-core-graph",
+            table_names=_CANONICAL_CORE_GRAPH_TABLES,
+            cascade=True,
+        ),
+    ]
 
+    with _connect_writer(
+        resolved_path,
+        application_name=f"{application_name_prefix} canonical-players",
+    ) as connection:
         connection.execute(
             """
             INSERT INTO elo_mmr_canonical_players (
@@ -563,6 +543,10 @@ def rebuild_elo_mmr_canonical_facts(*, db_path: Path | None = None) -> dict[str,
             (ELO_MMR_CANONICAL_FACT_SCHEMA_VERSION,),
         )
 
+    with _connect_writer(
+        resolved_path,
+        application_name=f"{application_name_prefix} canonical-matches",
+    ) as connection:
         connection.execute(
             """
             INSERT INTO elo_mmr_canonical_matches (
@@ -693,6 +677,10 @@ def rebuild_elo_mmr_canonical_facts(*, db_path: Path | None = None) -> dict[str,
             ),
         )
 
+    with _connect_writer(
+        resolved_path,
+        application_name=f"{application_name_prefix} canonical-facts",
+    ) as connection:
         _ingest_summary_backed_canonical_events(connection)
 
         connection.execute(
@@ -1060,6 +1048,10 @@ def rebuild_elo_mmr_canonical_facts(*, db_path: Path | None = None) -> dict[str,
         )
         _rebuild_normalization_baselines(connection)
 
+    with _connect_readonly(
+        resolved_path,
+        application_name=f"{application_name_prefix} canonical-totals",
+    ) as connection:
         totals_row = connection.execute(
             """
             SELECT
@@ -1080,6 +1072,7 @@ def rebuild_elo_mmr_canonical_facts(*, db_path: Path | None = None) -> dict[str,
         "fact_schema_version": ELO_MMR_CANONICAL_FACT_SCHEMA_VERSION,
         "source_input_version": ELO_MMR_CANONICAL_SOURCE_INPUT_VERSION,
         "source_kind": "historical-closed-match",
+        "cleanup_phases": cleanup_phases,
         "totals": {
             "players": int(totals_row["players_count"] or 0),
             "matches": int(totals_row["matches_count"] or 0),
@@ -1088,6 +1081,31 @@ def rebuild_elo_mmr_canonical_facts(*, db_path: Path | None = None) -> dict[str,
             "death_classification_events": int(totals_row["death_classification_event_count"] or 0),
             "normalization_buckets": int(totals_row["normalization_bucket_count"] or 0),
         },
+    }
+
+
+def _run_postgres_canonical_cleanup_subphase(
+    *,
+    resolved_path: Path,
+    application_name: str,
+    phase_name: str,
+    table_names: tuple[str, ...],
+    cascade: bool = False,
+) -> dict[str, object]:
+    started = perf_counter()
+    with _connect_writer(resolved_path, application_name=application_name) as connection:
+        truncate_sql = f"TRUNCATE TABLE {', '.join(table_names)}"
+        if cascade:
+            truncate_sql += " CASCADE"
+        connection.execute(truncate_sql)
+    return {
+        "phase": phase_name,
+        "strategy": "truncate",
+        "application_name": application_name,
+        "cascade": cascade,
+        "tables": list(table_names),
+        "cascade_targets": list(_CANONICAL_EVENT_DETAIL_TABLES) if table_names == _CANONICAL_EVENT_GRAPH_TABLES else [],
+        "elapsed_ms": round((perf_counter() - started) * 1000.0, 3),
     }
 
 
@@ -1912,12 +1930,14 @@ def get_latest_elo_mmr_generated_at(*, db_path: Path | None = None) -> datetime 
     return datetime.fromisoformat(latest_generated_at.replace("Z", "+00:00"))
 
 
-def _connect_writer(db_path: Path):
-    return connect_postgres_compat()
+def _connect_writer(db_path: Path, *, application_name: str | None = None):
+    del db_path
+    return connect_postgres_compat(application_name=application_name)
 
 
-def _connect_readonly(db_path: Path):
-    return connect_postgres_compat()
+def _connect_readonly(db_path: Path, *, application_name: str | None = None):
+    del db_path
+    return connect_postgres_compat(autocommit=True, application_name=application_name)
 
 
 def _resolve_db_path(db_path: Path | None) -> Path:

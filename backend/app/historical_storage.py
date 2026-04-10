@@ -65,15 +65,18 @@ def ensure_historical_storage(*, db_path: Path | None = None) -> Path:
 def run_historical_storage_maintenance(*, db_path: Path | None = None) -> Path:
     """Run bounded global repair passes after schema initialization."""
     resolved_path = ensure_historical_storage(db_path=db_path)
-    with _connect_writer(resolved_path) as connection:
+    with _connect_writer(
+        resolved_path,
+        application_name="app.historical_storage maintenance-normalize",
+    ) as connection:
         _normalize_historical_player_identities(connection)
         _normalize_historical_match_identities(connection)
     return resolved_path
 
 
 def initialize_historical_storage(*, db_path: Path | None = None) -> Path:
-    """Ensure PostgreSQL schema bootstrap and one-time normalization are ready."""
-    return run_historical_storage_maintenance(db_path=db_path)
+    """Ensure PostgreSQL schema bootstrap is ready without global normalization."""
+    return ensure_historical_storage(db_path=db_path)
 
 
 def list_historical_servers(*, db_path: Path | None = None) -> list[dict[str, object]]:
@@ -1847,12 +1850,14 @@ def _build_player_event_scope_sql(server_id: str | None) -> tuple[str, list[obje
     return "server_slug = ?", [normalized_server_id]
 
 
-def _connect_writer(db_path: Path) -> object:
-    return connect_postgres_compat()
+def _connect_writer(db_path: Path, *, application_name: str | None = None) -> object:
+    del db_path
+    return connect_postgres_compat(application_name=application_name)
 
 
-def _connect_readonly(db_path: Path) -> object:
-    return connect_postgres_compat()
+def _connect_readonly(db_path: Path, *, application_name: str | None = None) -> object:
+    del db_path
+    return connect_postgres_compat(autocommit=True, application_name=application_name)
 
 
 def _resolve_db_path(db_path: Path | None) -> Path:
