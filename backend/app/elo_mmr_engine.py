@@ -3,9 +3,13 @@
 from __future__ import annotations
 
 import argparse
+import gc
 import json
+import sys
+import traceback
 from collections import defaultdict
 from datetime import datetime, timezone
+from math import sqrt
 from statistics import pstdev
 from time import perf_counter
 from typing import Callable, Iterable
@@ -88,6 +92,8 @@ MONTHLY_RANK_WEIGHT_CONFIDENCE = 0.04
 MONTHLY_RANK_WEIGHT_ACTIVITY = 0.03
 EXACT_MODIFIER_K_SHARE = 0.06
 PROXY_MODIFIER_K_SHARE = 0.02
+MATCH_RESULT_PERSIST_BATCH_SIZE = 10000
+_CURRENT_CLI_PHASE: str | None = None
 
 ROLE_WEIGHTS = {
     ROLE_BUCKET_SUPPORT: {"combat": 0.18, "objective": 0.18, "utility": 0.42, "discipline": 0.22},
@@ -295,19 +301,23 @@ def _prepare_storage_for_command(*, db_path, command_name: str):
 
 def _rebuild_ratings_pipeline(*, resolved_path, command_name: str) -> tuple[dict[str, object], list[dict[str, object]]]:
     phases: list[dict[str, object]] = []
-    scoring_result, scoring_phase = _run_logged_phase(
-        "ratings-scoring",
-        lambda: _compute_ratings_from_canonical(db_path=resolved_path),
-    )
-    phases.append(scoring_phase)
     _, clear_phase = _run_logged_phase(
         "persist-clear",
         lambda: clear_elo_mmr_persisted_state(
             db_path=resolved_path,
             application_name=f"app.elo_mmr_engine {command_name} persist-clear",
         ),
+        extra={"source_phase": "ratings-scoring"},
     )
     phases.append(clear_phase)
+    scoring_result, scoring_phase = _run_logged_phase(
+        "ratings-scoring",
+        lambda: _compute_ratings_from_canonical(
+            db_path=resolved_path,
+            match_results_application_name=f"app.elo_mmr_engine {command_name} incremental-match-results",
+        ),
+    )
+    phases.append(scoring_phase)
     _, rating_phase = _run_logged_phase(
         "persist-player-ratings",
         lambda: persist_elo_mmr_player_ratings(
@@ -318,16 +328,6 @@ def _rebuild_ratings_pipeline(*, resolved_path, command_name: str) -> tuple[dict
         extra={"player_ratings": len(scoring_result["player_ratings"])},
     )
     phases.append(rating_phase)
-    _, results_phase = _run_logged_phase(
-        "persist-match-results",
-        lambda: persist_elo_mmr_match_results(
-            match_results=scoring_result["match_results"],
-            db_path=resolved_path,
-            application_name=f"app.elo_mmr_engine {command_name} persist-match-results",
-        ),
-        extra={"match_results": len(scoring_result["match_results"])},
-    )
-    phases.append(results_phase)
     _, monthly_phase = _run_logged_phase(
         "persist-monthly",
         lambda: replace_elo_mmr_monthly_state(
@@ -346,51 +346,141 @@ def _rebuild_ratings_pipeline(*, resolved_path, command_name: str) -> tuple[dict
     }, phases
 
 
-def _compute_ratings_from_canonical(*, db_path=None) -> dict[str, object]:
-    historical_source_policy = _build_historical_source_policy_for_elo()
-    rcon_read_model = get_rcon_historical_read_model()
-    match_rows = list_elo_mmr_canonical_match_rows(db_path=db_path)
-    grouped_matches = _group_match_rows(match_rows)
+def _compute_ratings_from_canonical(
+    *,
+    db_path=None,
+    match_results_application_name: str = "app.elo_mmr_engine incremental-match-results",
+) -> dict[str, object]:
+    historical_source_policy = _run_scoring_step(
+        "source-policy",
+        _build_historical_source_policy_for_elo,
+    )
+    rcon_read_model = _run_scoring_step(
+        "rcon-read-model-selection",
+        get_rcon_historical_read_model,
+    )
+    match_rows = _run_scoring_step(
+        "load-canonical-match-rows",
+        lambda: list_elo_mmr_canonical_match_rows(db_path=db_path),
+    )
+    total_grouped_matches = _run_scoring_step(
+        "count-canonical-match-groups",
+        lambda: _count_grouped_match_rows(match_rows),
+        extra={"canonical_rows": len(match_rows)},
+    )
     rcon_match_context_cache: dict[tuple[str, str | None, str | None], dict[str, object] | None] = {}
 
     ratings_by_scope: dict[str, dict[str, dict[str, object]]] = {SCOPE_ALL_SERVERS: {}}
     player_ratings: list[dict[str, object]] = []
-    match_results: list[dict[str, object]] = []
+    match_result_batch: list[dict[str, object]] = []
+    monthly_summaries: dict[tuple[str, str, str], dict[str, object]] = {}
+    match_result_count = 0
+    scoped_matches_scored = 0
 
-    for match_group in grouped_matches:
-        server_scope = match_group["server_slug"]
-        ratings_by_scope.setdefault(server_scope, {})
-        rcon_match_context = None
-        if rcon_read_model is not None:
-            cache_key = (
-                str(match_group["server_slug"]),
-                str(match_group.get("ended_at")) if match_group.get("ended_at") is not None else None,
-                str(match_group.get("map_pretty_name") or match_group.get("map_name") or "") or None,
-            )
-            if cache_key not in rcon_match_context_cache:
-                rcon_match_context_cache[cache_key] = get_rcon_historical_competitive_match_context(
-                    server_key=str(match_group["server_slug"]),
-                    ended_at=match_group.get("ended_at"),
-                    map_name=match_group.get("map_pretty_name") or match_group.get("map_name"),
+    def flush_match_result_batch(*, force: bool = False) -> None:
+        nonlocal match_result_count
+        if not match_result_batch or (not force and len(match_result_batch) < MATCH_RESULT_PERSIST_BATCH_SIZE):
+            return
+        persist_elo_mmr_match_results(
+            match_results=match_result_batch,
+            db_path=db_path,
+            application_name=match_results_application_name,
+        )
+        match_result_count += len(match_result_batch)
+        match_result_batch.clear()
+
+    def score_grouped_matches() -> None:
+        nonlocal scoped_matches_scored
+        for match_index, match_group in enumerate(_iter_grouped_match_rows(match_rows), start=1):
+            if match_index == 1 or match_index % 100 == 0 or match_index == total_grouped_matches:
+                _emit_cli_progress(
+                    "ratings-scoring-progress",
+                    step="score-grouped-matches",
+                    processed_matches=match_index - 1,
+                    total_matches=total_grouped_matches,
+                    persisted_match_results=match_result_count,
+                    pending_match_results=len(match_result_batch),
+                    **_process_memory_payload(),
                 )
-            rcon_match_context = rcon_match_context_cache[cache_key]
-        for scope_key in (server_scope, SCOPE_ALL_SERVERS):
-            match_results.extend(
-                _score_match_for_scope(
+            server_scope = match_group["server_slug"]
+            ratings_by_scope.setdefault(server_scope, {})
+            rcon_match_context = None
+            if rcon_read_model is not None:
+                cache_key = (
+                    str(match_group["server_slug"]),
+                    str(match_group.get("ended_at")) if match_group.get("ended_at") is not None else None,
+                    str(match_group.get("map_pretty_name") or match_group.get("map_name") or "") or None,
+                )
+                if cache_key not in rcon_match_context_cache:
+                    rcon_match_context_cache[cache_key] = get_rcon_historical_competitive_match_context(
+                        server_key=str(match_group["server_slug"]),
+                        ended_at=match_group.get("ended_at"),
+                        map_name=match_group.get("map_pretty_name") or match_group.get("map_name"),
+                    )
+                rcon_match_context = rcon_match_context_cache[cache_key]
+            for scope_key in (server_scope, SCOPE_ALL_SERVERS):
+                scoped_match_results = _score_match_for_scope(
                     match_group=match_group,
                     scope_key=scope_key,
                     ratings_by_scope=ratings_by_scope[scope_key],
                     rcon_match_context=rcon_match_context,
                 )
-            )
+                for result_row in scoped_match_results:
+                    _update_monthly_ranking_summary(monthly_summaries, result_row)
+                match_result_batch.extend(scoped_match_results)
+                scoped_matches_scored += 1
+                flush_match_result_batch()
+            if match_index % 100 == 0:
+                gc.collect()
+        flush_match_result_batch(force=True)
+        _emit_cli_progress(
+            "ratings-scoring-progress",
+            step="score-grouped-matches",
+            processed_matches=total_grouped_matches,
+            total_matches=total_grouped_matches,
+            persisted_match_results=match_result_count,
+            pending_match_results=len(match_result_batch),
+            **_process_memory_payload(),
+        )
 
-    for scope_ratings in ratings_by_scope.values():
-        player_ratings.extend(scope_ratings.values())
-
-    monthly_aggregation = _build_monthly_ranking_materialization(
-        match_results=match_results,
-        historical_source_policy=historical_source_policy,
+    _run_scoring_step(
+        "score-grouped-matches",
+        score_grouped_matches,
+        extra={
+            "grouped_matches": total_grouped_matches,
+            "rcon_read_model": rcon_read_model is not None,
+            "match_result_persist_batch_size": MATCH_RESULT_PERSIST_BATCH_SIZE,
+            "persistence": "incremental",
+        },
     )
+    match_rows.clear()
+    gc.collect()
+
+    def flatten_player_ratings() -> None:
+        for scope_ratings in ratings_by_scope.values():
+            player_ratings.extend(scope_ratings.values())
+
+    _run_scoring_step(
+        "flatten-player-ratings",
+        flatten_player_ratings,
+        extra={"scope_count": len(ratings_by_scope), "match_results": match_result_count},
+    )
+
+    monthly_aggregation = _run_scoring_step(
+        "monthly-materialization",
+        lambda: _build_monthly_ranking_materialization_from_summaries(
+            monthly_summaries=monthly_summaries,
+            historical_source_policy=historical_source_policy,
+        ),
+        extra={
+            "match_results": match_result_count,
+            "player_ratings": len(player_ratings),
+            "monthly_player_groups": len(monthly_summaries),
+            "source": "streaming-score-grouped-matches",
+        },
+    )
+    monthly_summaries.clear()
+    gc.collect()
     monthly_rankings = monthly_aggregation["monthly_rankings"]
     monthly_checkpoints = monthly_aggregation["monthly_checkpoints"]
     latest_month_by_scope = {
@@ -399,14 +489,14 @@ def _compute_ratings_from_canonical(*, db_path=None) -> dict[str, object]:
     return {
         "historical_source_policy": historical_source_policy,
         "player_ratings": player_ratings,
-        "match_results": match_results,
+        "match_results": [],
         "monthly_rankings": monthly_rankings,
         "monthly_checkpoints": monthly_checkpoints,
         "latest_month_by_scope": latest_month_by_scope,
         "totals": {
-            "matches_scored": len({(row["scope_key"], row["external_match_id"]) for row in match_results}),
+            "matches_scored": scoped_matches_scored,
             "player_ratings": len(player_ratings),
-            "match_results": len(match_results),
+            "match_results": match_result_count,
             "monthly_rankings": len(monthly_rankings),
             "monthly_checkpoints": len(monthly_checkpoints),
         },
@@ -419,9 +509,22 @@ def _run_logged_phase(
     *,
     extra: dict[str, object] | None = None,
 ) -> tuple[object, dict[str, object]]:
+    global _CURRENT_CLI_PHASE
+    _CURRENT_CLI_PHASE = phase_name
     _emit_cli_progress("phase-start", phase=phase_name, details=extra)
     started = perf_counter()
-    result = runner()
+    try:
+        result = runner()
+    except BaseException as exc:
+        elapsed_ms = round((perf_counter() - started) * 1000.0, 3)
+        _emit_cli_progress(
+            "phase-error",
+            phase=phase_name,
+            elapsed_ms=elapsed_ms,
+            details=extra,
+            **_exception_payload(exc),
+        )
+        raise
     elapsed_ms = round((perf_counter() - started) * 1000.0, 3)
     summary = {
         "phase": phase_name,
@@ -446,6 +549,115 @@ def _emit_cli_progress(event: str, **payload: object) -> None:
         ),
         flush=True,
     )
+    sys.stdout.flush()
+
+
+def _run_scoring_step(
+    step_name: str,
+    runner: Callable[[], object],
+    *,
+    extra: dict[str, object] | None = None,
+):
+    _emit_cli_progress("ratings-scoring-step-start", step=step_name, details=extra)
+    started = perf_counter()
+    try:
+        result = runner()
+    except BaseException as exc:
+        elapsed_ms = round((perf_counter() - started) * 1000.0, 3)
+        _emit_cli_progress(
+            "ratings-scoring-step-error",
+            step=step_name,
+            elapsed_ms=elapsed_ms,
+            details=extra,
+            **_exception_payload(exc),
+        )
+        raise
+    elapsed_ms = round((perf_counter() - started) * 1000.0, 3)
+    _emit_cli_progress(
+        "ratings-scoring-step-complete",
+        step=step_name,
+        elapsed_ms=elapsed_ms,
+        details=extra,
+        result_summary=_summarize_observable_result(result),
+    )
+    return result
+
+
+def _run_cli_operation(command_name: str, runner: Callable[[], dict[str, object]]) -> int:
+    _emit_cli_progress("rebuild-command-start", command=command_name)
+    try:
+        result = runner()
+    except BaseException as exc:
+        exit_code = _exit_code_for_exception(exc)
+        _emit_cli_progress(
+            "rebuild-terminal",
+            command=command_name,
+            status="error",
+            exit_code=exit_code,
+            terminal_phase=_CURRENT_CLI_PHASE,
+            **_exception_payload(exc),
+        )
+        raise
+    _emit_cli_progress(
+        "rebuild-terminal",
+        command=command_name,
+        status=str(result.get("status") or "ok"),
+        exit_code=0,
+        terminal_phase=_CURRENT_CLI_PHASE,
+        totals=result.get("totals"),
+    )
+    print(json.dumps(result, indent=2), flush=True)
+    sys.stdout.flush()
+    return 0
+
+
+def _exception_payload(exc: BaseException) -> dict[str, object]:
+    payload: dict[str, object] = {
+        "exception_type": type(exc).__name__,
+        "exception_message": str(exc),
+        "traceback": "".join(traceback.format_exception(type(exc), exc, exc.__traceback__)),
+    }
+    if isinstance(exc, SystemExit):
+        payload["system_exit_code"] = exc.code
+    return payload
+
+
+def _exit_code_for_exception(exc: BaseException) -> int:
+    if isinstance(exc, KeyboardInterrupt):
+        return 130
+    if isinstance(exc, SystemExit):
+        try:
+            return int(exc.code)
+        except (TypeError, ValueError):
+            return 1
+    return 1
+
+
+def _summarize_observable_result(result: object) -> dict[str, object]:
+    if isinstance(result, list):
+        return {"type": "list", "count": len(result)}
+    if isinstance(result, dict):
+        summary: dict[str, object] = {"type": "dict", "keys": sorted(result.keys())[:20]}
+        if "totals" in result:
+            summary["totals"] = result["totals"]
+        return summary
+    if result is None:
+        return {"type": "none"}
+    return {"type": type(result).__name__}
+
+
+def _process_memory_payload() -> dict[str, object]:
+    payload: dict[str, object] = {}
+    try:
+        with open("/proc/self/status", encoding="utf-8") as status_file:
+            for line in status_file:
+                if line.startswith("VmRSS:"):
+                    payload["memory_rss_kb"] = _safe_int(line.split()[1])
+                elif line.startswith("VmHWM:"):
+                    payload["memory_hwm_kb"] = _safe_int(line.split()[1])
+    except OSError:
+        return payload
+    return payload
 
 
 def get_elo_mmr_player_payload(*, player_id: str, server_id: str | None) -> dict[str, object] | None:
@@ -491,28 +703,25 @@ def main(argv: Iterable[str] | None = None) -> int:
     parser = build_arg_parser()
     args = parser.parse_args(list(argv) if argv is not None else None)
     if args.mode == "rebuild":
-        result = rebuild_elo_mmr_models()
-        result["compatibility_alias"] = {
-            "requested_command": "rebuild",
-            "effective_command": "rebuild-full",
-        }
-        print(json.dumps(result, indent=2))
-        return 0
+        def run_rebuild_alias() -> dict[str, object]:
+            result = rebuild_elo_mmr_models()
+            result["compatibility_alias"] = {
+                "requested_command": "rebuild",
+                "effective_command": "rebuild-full",
+            }
+            return result
+
+        return _run_cli_operation("rebuild", run_rebuild_alias)
     if args.mode == "rebuild-full":
-        print(json.dumps(rebuild_elo_mmr_models(), indent=2))
-        return 0
+        return _run_cli_operation("rebuild-full", rebuild_elo_mmr_models)
     if args.mode == "rebuild-canonical":
-        print(json.dumps(rebuild_elo_mmr_canonical_model(), indent=2))
-        return 0
+        return _run_cli_operation("rebuild-canonical", rebuild_elo_mmr_canonical_model)
     if args.mode == "rebuild-ratings":
-        print(json.dumps(rebuild_elo_mmr_ratings_from_canonical(), indent=2))
-        return 0
+        return _run_cli_operation("rebuild-ratings", rebuild_elo_mmr_ratings_from_canonical)
     if args.mode == "refresh-monthly":
-        print(json.dumps(refresh_elo_mmr_monthly_materialization_from_persisted_results(), indent=2))
-        return 0
+        return _run_cli_operation("refresh-monthly", refresh_elo_mmr_monthly_materialization_from_persisted_results)
     if args.mode == "historical-maintenance":
-        print(json.dumps(run_historical_maintenance(), indent=2))
-        return 0
+        return _run_cli_operation("historical-maintenance", run_historical_maintenance)
     if args.mode == "leaderboard":
         print(json.dumps(list_elo_mmr_leaderboard_payload(server_id=args.server_id, limit=args.limit), indent=2))
         return 0
@@ -523,34 +732,55 @@ def main(argv: Iterable[str] | None = None) -> int:
 
 
 def _group_match_rows(rows: list[dict[str, object]]) -> list[dict[str, object]]:
-    grouped: dict[tuple[str, str], list[dict[str, object]]] = defaultdict(list)
+    return list(_iter_grouped_match_rows(rows))
+
+
+def _count_grouped_match_rows(rows: Iterable[dict[str, object]]) -> int:
+    previous_key: tuple[str, str] | None = None
+    count = 0
     for row in rows:
-        grouped[(str(row["server_slug"]), str(row["external_match_id"]))].append(row)
-    items: list[dict[str, object]] = []
-    for (server_slug, match_id), players in grouped.items():
-        first = players[0]
-        items.append(
-            {
-                "server_slug": server_slug,
-                "server_name": first["server_name"],
-                "canonical_match_key": first.get("canonical_match_key"),
-                "external_match_id": match_id,
-                "started_at": first["started_at"],
-                "ended_at": first["ended_at"],
-                "game_mode": first["game_mode"],
-                "allied_score": _safe_int(first["allied_score"]),
-                "axis_score": _safe_int(first["axis_score"]),
-                "resolved_duration_seconds": _safe_int(first.get("resolved_duration_seconds")),
-                "duration_source_status": first.get("duration_source_status"),
-                "duration_bucket": first.get("duration_bucket"),
-                "player_count": _safe_int(first.get("player_count")),
-                "match_capability_status": first.get("match_capability_status"),
-                "fact_schema_version": first.get("fact_schema_version"),
-                "source_input_version": first.get("source_input_version"),
-                "players": players,
-            }
-        )
-    return items
+        key = (str(row["server_slug"]), str(row["external_match_id"]))
+        if key != previous_key:
+            count += 1
+            previous_key = key
+    return count
+
+
+def _iter_grouped_match_rows(rows: Iterable[dict[str, object]]):
+    current_key: tuple[str, str] | None = None
+    current_players: list[dict[str, object]] = []
+    for row in rows:
+        key = (str(row["server_slug"]), str(row["external_match_id"]))
+        if current_key is not None and key != current_key:
+            yield _build_match_group(server_slug=current_key[0], match_id=current_key[1], players=current_players)
+            current_players = []
+        current_key = key
+        current_players.append(row)
+    if current_key is not None:
+        yield _build_match_group(server_slug=current_key[0], match_id=current_key[1], players=current_players)
+
+
+def _build_match_group(*, server_slug: str, match_id: str, players: list[dict[str, object]]) -> dict[str, object]:
+    first = players[0]
+    return {
+        "server_slug": server_slug,
+        "server_name": first["server_name"],
+        "canonical_match_key": first.get("canonical_match_key"),
+        "external_match_id": match_id,
+        "started_at": first["started_at"],
+        "ended_at": first["ended_at"],
+        "game_mode": first["game_mode"],
+        "allied_score": _safe_int(first["allied_score"]),
+        "axis_score": _safe_int(first["axis_score"]),
+        "resolved_duration_seconds": _safe_int(first.get("resolved_duration_seconds")),
+        "duration_source_status": first.get("duration_source_status"),
+        "duration_bucket": first.get("duration_bucket"),
+        "player_count": _safe_int(first.get("player_count")),
+        "match_capability_status": first.get("match_capability_status"),
+        "fact_schema_version": first.get("fact_schema_version"),
+        "source_input_version": first.get("source_input_version"),
+        "players": players,
+    }
 
 
 def _score_match_for_scope(
@@ -1211,12 +1441,449 @@ def _build_monthly_rankings(match_results: list[dict[str, object]]) -> list[dict
     return rankings
 
 
+def _update_monthly_ranking_summary(
+    summaries: dict[tuple[str, str, str], dict[str, object]],
+    row: dict[str, object],
+) -> None:
+    key = (str(row["scope_key"]), str(row["month_key"]), str(row["stable_player_key"]))
+    summary = summaries.get(key)
+    if summary is None:
+        summary = {
+            "scope_key": key[0],
+            "month_key": key[1],
+            "stable_player_key": key[2],
+            "player_name": row["player_name"],
+            "steam_id": row.get("steam_id"),
+            "baseline_mmr": round(float(row["mmr_before"]), 3),
+            "current_mmr": round(float(row["mmr_after"]), 3),
+            "fact_schema_version": row.get("fact_schema_version"),
+            "source_input_version": row.get("source_input_version"),
+            "total_matches": 0,
+            "valid_matches": 0,
+            "total_time_seconds": 0,
+            "penalty_points": 0.0,
+            "capability_exact_sum": 0.0,
+            "capability_approximate_sum": 0.0,
+            "capability_unavailable_sum": 0.0,
+            "valid_match_score_sum": 0.0,
+            "valid_match_score_sum_squares": 0.0,
+            "elo_core_gain": 0.0,
+            "performance_modifier_gain": 0.0,
+            "proxy_modifier_gain": 0.0,
+            "exact_duration_match_count": 0,
+            "approximate_duration_match_count": 0,
+            "full_participation_match_count": 0,
+            "core_participation_match_count": 0,
+            "high_quality_match_count": 0,
+            "medium_quality_match_count": 0,
+            "low_quality_match_count": 0,
+            "participation_ratio_sum": 0.0,
+            "participation_quality_score_sum": 0.0,
+            "tactical_event_count_sum": 0.0,
+            "teamkill_exact_count_sum": 0.0,
+            "strength_of_schedule_sum": 0.0,
+            "kills_per_minute_sum": 0.0,
+            "combat_per_minute_sum": 0.0,
+            "support_per_minute_sum": 0.0,
+            "objective_proxy_per_minute_sum": 0.0,
+            "all_role_counts": defaultdict(int),
+            "valid_role_counts": defaultdict(int),
+            "valid_role_exact_count": 0,
+            "normalization_fallback_used": False,
+            "comparison_bucket_key": "",
+            "discipline_capability_status_counts": defaultdict(int),
+            "leave_admin_capability_status_counts": defaultdict(int),
+            "death_type_capability_status_counts": defaultdict(int),
+        }
+        summaries[key] = summary
+
+    summary["total_matches"] = int(summary["total_matches"]) + 1
+    summary["player_name"] = row["player_name"]
+    summary["steam_id"] = row.get("steam_id")
+    summary["current_mmr"] = round(float(row["mmr_after"]), 3)
+    summary["fact_schema_version"] = row.get("fact_schema_version")
+    summary["source_input_version"] = row.get("source_input_version")
+    summary["total_time_seconds"] = int(summary["total_time_seconds"]) + int(row["time_seconds"] or 0)
+    summary["penalty_points"] = float(summary["penalty_points"]) + float(row["penalty_points"])
+    capabilities = row["capabilities"]
+    summary["capability_exact_sum"] = float(summary["capability_exact_sum"]) + float(capabilities["exact_ratio"])
+    summary["capability_approximate_sum"] = float(summary["capability_approximate_sum"]) + float(capabilities["approximate_ratio"])
+    summary["capability_unavailable_sum"] = float(summary["capability_unavailable_sum"]) + float(capabilities["unavailable_ratio"])
+    summary["elo_core_gain"] = float(summary["elo_core_gain"]) + float(row.get("elo_core_delta") or 0.0)
+    summary["performance_modifier_gain"] = float(summary["performance_modifier_gain"]) + float(row.get("performance_modifier_delta") or 0.0)
+    summary["proxy_modifier_gain"] = float(summary["proxy_modifier_gain"]) + float(row.get("proxy_modifier_delta") or 0.0)
+    summary["participation_ratio_sum"] = float(summary["participation_ratio_sum"]) + float(row.get("participation_ratio") or 0.0)
+    summary["participation_quality_score_sum"] = float(summary["participation_quality_score_sum"]) + float(
+        row.get("participation_quality_score") or 0.0
+    )
+    summary["tactical_event_count_sum"] = float(summary["tactical_event_count_sum"]) + float(row.get("tactical_event_count") or 0.0)
+    summary["teamkill_exact_count_sum"] = float(summary["teamkill_exact_count_sum"]) + float(row.get("teamkill_exact_count") or 0.0)
+
+    if row.get("duration_source_status") == CAPABILITY_EXACT:
+        summary["exact_duration_match_count"] = int(summary["exact_duration_match_count"]) + 1
+    if row.get("duration_source_status") == CAPABILITY_APPROXIMATE:
+        summary["approximate_duration_match_count"] = int(summary["approximate_duration_match_count"]) + 1
+    role_bucket = str(row.get("role_bucket") or ROLE_BUCKET_GENERALIST)
+    summary["all_role_counts"][role_bucket] += 1
+    if row["match_valid"]:
+        if row.get("quality_bucket") == QUALITY_BUCKET_HIGH:
+            summary["high_quality_match_count"] = int(summary["high_quality_match_count"]) + 1
+        if row.get("quality_bucket") == QUALITY_BUCKET_MEDIUM:
+            summary["medium_quality_match_count"] = int(summary["medium_quality_match_count"]) + 1
+        if row.get("quality_bucket") == QUALITY_BUCKET_LOW:
+            summary["low_quality_match_count"] = int(summary["low_quality_match_count"]) + 1
+        summary["valid_matches"] = int(summary["valid_matches"]) + 1
+        match_score = float(row["match_score"])
+        summary["valid_match_score_sum"] = float(summary["valid_match_score_sum"]) + match_score
+        summary["valid_match_score_sum_squares"] = float(summary["valid_match_score_sum_squares"]) + (match_score * match_score)
+        summary["strength_of_schedule_sum"] = float(summary["strength_of_schedule_sum"]) + float(
+            row.get("strength_of_schedule_match") or 0.0
+        )
+        summary["kills_per_minute_sum"] = float(summary["kills_per_minute_sum"]) + float(row.get("kills_per_minute") or 0.0)
+        summary["combat_per_minute_sum"] = float(summary["combat_per_minute_sum"]) + float(row.get("combat_per_minute") or 0.0)
+        summary["support_per_minute_sum"] = float(summary["support_per_minute_sum"]) + float(row.get("support_per_minute") or 0.0)
+        summary["objective_proxy_per_minute_sum"] = float(summary["objective_proxy_per_minute_sum"]) + float(
+            row.get("objective_proxy_per_minute") or 0.0
+        )
+        summary["valid_role_counts"][role_bucket] += 1
+        if row.get("role_bucket_mode") == CAPABILITY_EXACT:
+            summary["valid_role_exact_count"] = int(summary["valid_role_exact_count"]) + 1
+        if row.get("participation_bucket") == PARTICIPATION_BUCKET_FULL:
+            summary["full_participation_match_count"] = int(summary["full_participation_match_count"]) + 1
+        if row.get("participation_bucket") == PARTICIPATION_BUCKET_CORE:
+            summary["core_participation_match_count"] = int(summary["core_participation_match_count"]) + 1
+
+    if row.get("normalization_fallback_reason"):
+        summary["normalization_fallback_used"] = True
+    if not summary["comparison_bucket_key"] and row.get("normalization_bucket_key"):
+        summary["comparison_bucket_key"] = str(
+            row.get("normalization_fallback_bucket_key") or row.get("normalization_bucket_key") or ""
+        )
+    for field_name in (
+        "discipline_capability_status",
+        "leave_admin_capability_status",
+        "death_type_capability_status",
+    ):
+        summary[f"{field_name}_counts"][str(row.get(field_name) or CAPABILITY_UNAVAILABLE)] += 1
+
+
+def _build_monthly_rankings_from_summaries(
+    summaries: dict[tuple[str, str, str], dict[str, object]],
+) -> list[dict[str, object]]:
+    rankings: list[dict[str, object]] = []
+    grouped_by_scope_month: dict[tuple[str, str], list[dict[str, object]]] = defaultdict(list)
+    for summary in summaries.values():
+        scope_key = str(summary["scope_key"])
+        month_key = str(summary["month_key"])
+        total_matches = int(summary["total_matches"])
+        valid_matches = int(summary["valid_matches"])
+        exact_ratio = round(float(summary["capability_exact_sum"]) / max(1, total_matches), 3)
+        approximate_ratio = round(float(summary["capability_approximate_sum"]) / max(1, total_matches), 3)
+        unavailable_ratio = round(float(summary["capability_unavailable_sum"]) / max(1, total_matches), 3)
+        accuracy_mode = "partial" if unavailable_ratio > 0 else "approximate" if approximate_ratio > 0 else "exact"
+        avg_match_score = round(float(summary["valid_match_score_sum"]) / max(1, valid_matches), 3)
+        current_mmr = round(float(summary["current_mmr"]), 3)
+        baseline_mmr = round(float(summary["baseline_mmr"]), 3)
+        mmr_gain = round(current_mmr - baseline_mmr, 3)
+        elo_core_gain = round(float(summary["elo_core_gain"]), 3)
+        performance_modifier_gain = round(float(summary["performance_modifier_gain"]), 3)
+        proxy_modifier_gain = round(float(summary["proxy_modifier_gain"]), 3)
+        avg_participation_ratio = round(float(summary["participation_ratio_sum"]) / max(1, total_matches), 3)
+        avg_participation_quality_score = round(float(summary["participation_quality_score_sum"]) / max(1, total_matches), 3)
+        avg_tactical_event_count = round(float(summary["tactical_event_count_sum"]) / max(1, total_matches), 3)
+        avg_teamkill_exact_count = round(float(summary["teamkill_exact_count_sum"]) / max(1, total_matches), 3)
+        strength_of_schedule = round(float(summary["strength_of_schedule_sum"]) / max(1, valid_matches), 3)
+        avg_kills_per_minute = round(float(summary["kills_per_minute_sum"]) / max(1, valid_matches), 3)
+        avg_combat_per_minute = round(float(summary["combat_per_minute_sum"]) / max(1, valid_matches), 3)
+        avg_support_per_minute = round(float(summary["support_per_minute_sum"]) / max(1, valid_matches), 3)
+        avg_objective_proxy_per_minute = round(float(summary["objective_proxy_per_minute_sum"]) / max(1, valid_matches), 3)
+        consistency = _build_consistency_score_from_summary(summary)
+        total_time_seconds = int(summary["total_time_seconds"])
+        activity = _build_activity_score_from_counts(valid_matches, total_time_seconds)
+        role_counts = summary["valid_role_counts"] if valid_matches else summary["all_role_counts"]
+        role_primary = max(role_counts.items(), key=lambda item: item[1])[0] if role_counts else ROLE_BUCKET_GENERALIST
+        role_primary_mode = (
+            CAPABILITY_EXACT
+            if valid_matches and int(summary["valid_role_exact_count"]) == valid_matches
+            else CAPABILITY_APPROXIMATE
+            if role_counts
+            else CAPABILITY_UNAVAILABLE
+        )
+        normalization_fallback_used = bool(summary["normalization_fallback_used"])
+        comparison_path = "role-all-parent-fallback" if normalization_fallback_used else "role-primary-bucket"
+        role_bucket_sample_sufficient = not normalization_fallback_used
+        confidence = round(
+            min(
+                100.0,
+                (valid_matches / MONTHLY_MIN_VALID_MATCHES) * 35.0
+                + (total_time_seconds / MONTHLY_MIN_TIME_SECONDS) * 30.0
+                + (avg_participation_ratio * 20.0)
+                + (exact_ratio * 15.0),
+            ),
+            3,
+        )
+        eligible = (
+            valid_matches >= MONTHLY_MIN_VALID_MATCHES
+            and total_time_seconds >= MONTHLY_MIN_TIME_SECONDS
+            and avg_participation_ratio >= MONTHLY_MIN_AVG_PARTICIPATION_RATIO
+            and avg_participation_quality_score >= 45.0
+        )
+        eligibility_reason = _build_monthly_eligibility_reason(
+            valid_match_count=valid_matches,
+            total_time_seconds=total_time_seconds,
+            avg_participation_ratio=avg_participation_ratio,
+            avg_participation_quality_score=avg_participation_quality_score,
+        )
+        grouped_by_scope_month[(scope_key, month_key)].append(
+            {
+                "scope_key": scope_key,
+                "month_key": month_key,
+                "stable_player_key": summary["stable_player_key"],
+                "player_name": summary["player_name"],
+                "steam_id": summary.get("steam_id"),
+                "model_version": MONTHLY_RANKING_MODEL_VERSION,
+                "formula_version": MONTHLY_RANKING_FORMULA_VERSION,
+                "contract_version": MONTHLY_RANKING_CONTRACT_VERSION,
+                "current_mmr": current_mmr,
+                "baseline_mmr": baseline_mmr,
+                "mmr_gain": mmr_gain,
+                "avg_match_score": avg_match_score,
+                "strength_of_schedule": strength_of_schedule,
+                "consistency": consistency,
+                "activity": activity,
+                "confidence": confidence,
+                "penalty_points": round(float(summary["penalty_points"]), 3),
+                "monthly_rank_score": 0.0,
+                "valid_matches": valid_matches,
+                "total_matches": total_matches,
+                "total_time_seconds": total_time_seconds,
+                "avg_participation_ratio": avg_participation_ratio,
+                "eligible": eligible,
+                "eligibility_reason": eligibility_reason,
+                "accuracy_mode": accuracy_mode,
+                "capabilities": _build_monthly_capabilities(
+                    accuracy_mode=accuracy_mode,
+                    exact_ratio=exact_ratio,
+                    approximate_ratio=approximate_ratio,
+                    unavailable_ratio=unavailable_ratio,
+                    role_primary_mode=role_primary_mode,
+                ),
+                "component_scores": _build_monthly_component_scores(
+                    summary=summary,
+                    avg_match_score=avg_match_score,
+                    mmr_gain=mmr_gain,
+                    elo_core_gain=elo_core_gain,
+                    performance_modifier_gain=performance_modifier_gain,
+                    proxy_modifier_gain=proxy_modifier_gain,
+                    strength_of_schedule=strength_of_schedule,
+                    consistency=consistency,
+                    activity=activity,
+                    confidence=confidence,
+                    avg_kills_per_minute=avg_kills_per_minute,
+                    avg_combat_per_minute=avg_combat_per_minute,
+                    avg_support_per_minute=avg_support_per_minute,
+                    avg_objective_proxy_per_minute=avg_objective_proxy_per_minute,
+                    avg_participation_ratio=avg_participation_ratio,
+                    avg_participation_quality_score=avg_participation_quality_score,
+                    avg_tactical_event_count=avg_tactical_event_count,
+                    avg_teamkill_exact_count=avg_teamkill_exact_count,
+                    role_primary=role_primary,
+                    role_primary_mode=role_primary_mode,
+                    comparison_path=comparison_path,
+                    role_bucket_sample_sufficient=role_bucket_sample_sufficient,
+                    normalization_fallback_used=normalization_fallback_used,
+                ),
+            }
+        )
+
+    for rows in grouped_by_scope_month.values():
+        max_avg = max((row["avg_match_score"] for row in rows), default=1.0) or 1.0
+        max_competitive_gain = max(
+            (max(0.0, float(row["component_scores"].get("competitive_gain") or 0.0)) for row in rows),
+            default=1.0,
+        ) or 1.0
+        max_sos = max((row["strength_of_schedule"] for row in rows), default=1.0) or 1.0
+        max_consistency = max((row["consistency"] for row in rows), default=1.0) or 1.0
+        max_activity = max((row["activity"] for row in rows), default=1.0) or 1.0
+        max_confidence = max((row["confidence"] for row in rows), default=1.0) or 1.0
+        for row in rows:
+            competitive_gain = max(0.0, float(row["component_scores"].get("competitive_gain") or 0.0))
+            normalized_gain = competitive_gain / max_competitive_gain if max_competitive_gain > 0 else 0.0
+            row["component_scores"]["normalized_mmr_gain"] = round(normalized_gain * 100.0, 3)
+            row["monthly_rank_score"] = round(
+                (MONTHLY_RANK_WEIGHT_COMPETITIVE_GAIN * normalized_gain * 100.0)
+                + (MONTHLY_RANK_WEIGHT_MATCH_SCORE * (row["avg_match_score"] / max_avg) * 100.0)
+                + (MONTHLY_RANK_WEIGHT_STRENGTH_OF_SCHEDULE * (row["strength_of_schedule"] / max_sos) * 100.0)
+                + (MONTHLY_RANK_WEIGHT_CONSISTENCY * (row["consistency"] / max_consistency) * 100.0)
+                + (MONTHLY_RANK_WEIGHT_ACTIVITY * (row["activity"] / max_activity) * 100.0)
+                + (MONTHLY_RANK_WEIGHT_CONFIDENCE * (row["confidence"] / max_confidence) * 100.0)
+                - row["penalty_points"],
+                3,
+            )
+            rankings.append(row)
+    return rankings
+
+
+def _build_consistency_score_from_summary(summary: dict[str, object]) -> float:
+    valid_count = int(summary["valid_matches"])
+    if valid_count <= 1:
+        return 100.0 if valid_count else 0.0
+    average = float(summary["valid_match_score_sum"]) / valid_count
+    if average <= 0:
+        return 0.0
+    variance = max(0.0, (float(summary["valid_match_score_sum_squares"]) / valid_count) - (average * average))
+    return round(100.0 * (1.0 - min(1.0, sqrt(variance) / max(average, 1.0))), 3)
+
+
+def _build_activity_score_from_counts(valid_match_count: int, total_time_seconds: int) -> float:
+    match_component = min(1.0, valid_match_count / MONTHLY_ACTIVITY_TARGET_MATCHES)
+    hour_component = min(1.0, (total_time_seconds / 3600.0) / MONTHLY_ACTIVITY_TARGET_HOURS)
+    return round(((0.6 * match_component) + (0.4 * hour_component)) * 100.0, 3)
+
+
+def _most_common_status_from_counts(counts: dict[str, int]) -> str:
+    if not counts:
+        return CAPABILITY_UNAVAILABLE
+    return max(counts.items(), key=lambda item: item[1])[0]
+
+
+def _build_monthly_capabilities(
+    *,
+    accuracy_mode: str,
+    exact_ratio: float,
+    approximate_ratio: float,
+    unavailable_ratio: float,
+    role_primary_mode: str,
+) -> dict[str, object]:
+    return {
+        "accuracy_mode": accuracy_mode,
+        "exact_ratio": exact_ratio,
+        "approximate_ratio": approximate_ratio,
+        "unavailable_ratio": unavailable_ratio,
+        "signals": [
+            build_signal("OutcomeScore", CAPABILITY_EXACT, "Uses final scores and team side."),
+            build_signal("CombatIndex", CAPABILITY_EXACT, "Uses historical player stats."),
+            build_signal("ObjectiveIndex", CAPABILITY_APPROXIMATE, "Uses offense and defense scores as a tactical proxy."),
+            build_signal("UtilityIndex", CAPABILITY_EXACT, "Uses support points."),
+            build_signal("LeadershipIndex", CAPABILITY_UNAVAILABLE, "No leadership telemetry exists yet."),
+            build_signal("DisciplineIndex", CAPABILITY_APPROXIMATE, "Uses teamkills exactly plus participation as a leave-risk proxy."),
+            build_signal("StrengthOfSchedule", CAPABILITY_APPROXIMATE, "Uses opponent average MMR pressure plus match quality, not a full roster graph."),
+            build_signal("DurationBucket", CAPABILITY_APPROXIMATE, "Duration buckets are materialized from exact timestamps when present or approximate duration fallbacks otherwise."),
+            build_signal("ParticipationBucket", CAPABILITY_APPROXIMATE, "Participation quality is explicit, but can inherit approximate duration boundaries when timestamps are missing."),
+            build_signal("MonthlyEligibility", CAPABILITY_EXACT, "Uses persisted valid-match count, playtime, participation ratio and participation quality thresholds."),
+            build_signal(
+                "MonthlyRoleComparison",
+                role_primary_mode if role_primary_mode in {CAPABILITY_EXACT, CAPABILITY_APPROXIMATE} else CAPABILITY_UNAVAILABLE,
+                "Uses role-primary bucket comparison when bucket coverage is sufficient and falls back to role-all parent buckets otherwise.",
+            ),
+        ],
+    }
+
+
+def _build_monthly_component_scores(
+    *,
+    summary: dict[str, object],
+    avg_match_score: float,
+    mmr_gain: float,
+    elo_core_gain: float,
+    performance_modifier_gain: float,
+    proxy_modifier_gain: float,
+    strength_of_schedule: float,
+    consistency: float,
+    activity: float,
+    confidence: float,
+    avg_kills_per_minute: float,
+    avg_combat_per_minute: float,
+    avg_support_per_minute: float,
+    avg_objective_proxy_per_minute: float,
+    avg_participation_ratio: float,
+    avg_participation_quality_score: float,
+    avg_tactical_event_count: float,
+    avg_teamkill_exact_count: float,
+    role_primary: str,
+    role_primary_mode: str,
+    comparison_path: str,
+    role_bucket_sample_sufficient: bool,
+    normalization_fallback_used: bool,
+) -> dict[str, object]:
+    return {
+        "model_version": MONTHLY_RANKING_MODEL_VERSION,
+        "ranking_formula_version": MONTHLY_RANKING_FORMULA_VERSION,
+        "persistent_rating_model_version": PERSISTENT_RATING_MODEL_VERSION,
+        "persistent_rating_formula_version": PERSISTENT_RATING_FORMULA_VERSION,
+        "persistent_rating_contract_version": PERSISTENT_RATING_CONTRACT_VERSION,
+        "match_result_contract_version": MATCH_RESULT_CONTRACT_VERSION,
+        "monthly_ranking_contract_version": MONTHLY_RANKING_CONTRACT_VERSION,
+        "canonical_fact_schema_version": summary.get("fact_schema_version"),
+        "canonical_source_input_version": summary.get("source_input_version"),
+        "avg_match_score": avg_match_score,
+        "mmr_gain_raw": mmr_gain,
+        "elo_core_gain": elo_core_gain,
+        "performance_modifier_gain": performance_modifier_gain,
+        "proxy_modifier_gain": proxy_modifier_gain,
+        "competitive_gain": round(elo_core_gain + (0.25 * performance_modifier_gain) + (0.10 * proxy_modifier_gain), 3),
+        "strength_of_schedule": strength_of_schedule,
+        "consistency": consistency,
+        "activity": activity,
+        "confidence": confidence,
+        "avg_kills_per_minute": avg_kills_per_minute,
+        "avg_combat_per_minute": avg_combat_per_minute,
+        "avg_support_per_minute": avg_support_per_minute,
+        "avg_objective_proxy_per_minute": avg_objective_proxy_per_minute,
+        "avg_participation_ratio": avg_participation_ratio,
+        "avg_participation_quality_score": avg_participation_quality_score,
+        "avg_tactical_event_count": avg_tactical_event_count,
+        "avg_teamkill_exact_count": avg_teamkill_exact_count,
+        "exact_duration_match_count": int(summary["exact_duration_match_count"]),
+        "approximate_duration_match_count": int(summary["approximate_duration_match_count"]),
+        "full_participation_match_count": int(summary["full_participation_match_count"]),
+        "core_participation_match_count": int(summary["core_participation_match_count"]),
+        "high_quality_match_count": int(summary["high_quality_match_count"]),
+        "medium_quality_match_count": int(summary["medium_quality_match_count"]),
+        "low_quality_match_count": int(summary["low_quality_match_count"]),
+        "role_primary": role_primary,
+        "role_primary_mode": role_primary_mode,
+        "comparison_path": comparison_path,
+        "comparison_bucket_key": str(summary["comparison_bucket_key"]),
+        "role_bucket_sample_sufficient": role_bucket_sample_sufficient,
+        "normalization_fallback_used": normalization_fallback_used,
+        "minimum_participation_quality_threshold": 45.0,
+        "discipline_capability_status": _most_common_status_from_counts(summary["discipline_capability_status_counts"]),
+        "leave_admin_capability_status": _most_common_status_from_counts(summary["leave_admin_capability_status_counts"]),
+        "death_type_capability_status": _most_common_status_from_counts(summary["death_type_capability_status_counts"]),
+        "penalty_points": round(float(summary["penalty_points"]), 3),
+    }
+
+
 def _build_monthly_ranking_materialization(
     *,
     match_results: list[dict[str, object]],
     historical_source_policy: dict[str, object],
 ) -> dict[str, list[dict[str, object]]]:
     monthly_rankings = _build_monthly_rankings(match_results)
+    return _build_monthly_ranking_materialization_from_rankings(
+        monthly_rankings=monthly_rankings,
+        historical_source_policy=historical_source_policy,
+    )
+
+
+def _build_monthly_ranking_materialization_from_summaries(
+    *,
+    monthly_summaries: dict[tuple[str, str, str], dict[str, object]],
+    historical_source_policy: dict[str, object],
+) -> dict[str, list[dict[str, object]]]:
+    monthly_rankings = _build_monthly_rankings_from_summaries(monthly_summaries)
+    return _build_monthly_ranking_materialization_from_rankings(
+        monthly_rankings=monthly_rankings,
+        historical_source_policy=historical_source_policy,
+    )
+
+
+def _build_monthly_ranking_materialization_from_rankings(
+    *,
+    monthly_rankings: list[dict[str, object]],
+    historical_source_policy: dict[str, object],
+) -> dict[str, list[dict[str, object]]]:
     checkpoint_groups: dict[tuple[str, str], list[dict[str, object]]] = defaultdict(list)
     for row in monthly_rankings:
         checkpoint_groups[(row["scope_key"], row["month_key"])].append(row)

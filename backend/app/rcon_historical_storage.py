@@ -442,6 +442,17 @@ def list_rcon_historical_competitive_summary_rows(
         with _connect_readonly(resolved_path) as connection:
             rows = connection.execute(
                 f"""
+            WITH window_summary AS (
+                SELECT
+                    target_id,
+                    COUNT(id) AS window_count,
+                    COALESCE(SUM(sample_count), 0) AS sample_count,
+                    MIN(first_seen_at) AS first_seen_at,
+                    MAX(last_seen_at) AS last_seen_at,
+                    COALESCE(MAX(peak_players), 0) AS peak_players
+                FROM rcon_historical_competitive_windows
+                GROUP BY target_id
+            )
             SELECT
                 targets.target_key,
                 targets.external_server_id,
@@ -451,18 +462,17 @@ def list_rcon_historical_competitive_summary_rows(
                 checkpoints.last_run_status,
                 checkpoints.last_error,
                 checkpoints.last_error_at,
-                COUNT(windows.id) AS window_count,
-                COALESCE(SUM(windows.sample_count), 0) AS sample_count,
-                MIN(windows.first_seen_at) AS first_seen_at,
-                MAX(windows.last_seen_at) AS last_seen_at,
-                COALESCE(MAX(windows.peak_players), 0) AS peak_players
+                COALESCE(window_summary.window_count, 0) AS window_count,
+                COALESCE(window_summary.sample_count, 0) AS sample_count,
+                window_summary.first_seen_at,
+                window_summary.last_seen_at,
+                COALESCE(window_summary.peak_players, 0) AS peak_players
             FROM rcon_historical_targets AS targets
             LEFT JOIN rcon_historical_checkpoints AS checkpoints
                 ON checkpoints.target_id = targets.id
-            LEFT JOIN rcon_historical_competitive_windows AS windows
-                ON windows.target_id = targets.id
+            LEFT JOIN window_summary
+                ON window_summary.target_id = targets.id
             {where_clause}
-            GROUP BY targets.id
             ORDER BY targets.display_name ASC, targets.target_key ASC
             """,
                 params,
