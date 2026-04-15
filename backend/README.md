@@ -1309,7 +1309,7 @@ Para dejar automatizado el refresh historico horario de los tres servidores del
 proyecto en local, el comando recomendado es:
 
 ```powershell
-python -m app.historical_runner --hourly
+python -m app.historical_runner loop --hourly
 ```
 
 Sin `--server`, ese runner refresca:
@@ -1333,7 +1333,7 @@ docker compose exec backend python -m app.historical_runner --max-runs 1
 Operativa local minima:
 
 1. Desde `backend/`, arrancar la API con `python -m app.main`.
-2. En otra terminal, dejar corriendo `python -m app.historical_runner --hourly`.
+2. En otra terminal, dejar corriendo `python -m app.historical_runner loop --hourly`.
 3. Verificar el proceso revisando la salida del runner: al arrancar imprime un
    bloque JSON con `event: "historical-refresh-loop-started"`, `server_scope`
    y `snapshot_scope`.
@@ -1351,7 +1351,7 @@ docker compose up -d backend historical-runner frontend
 ```
 
 El servicio `historical-runner` usa el mismo volumen persistente `./backend/data`
-y ejecuta `python -m app.historical_runner --hourly` como bucle operativo
+y ejecuta `python -m app.historical_runner loop --hourly` como bucle operativo
 dedicado, sin mezclar el scheduler con el proceso HTTP principal.
 
 En frontend, la landing ya no arranca con cards fake estaticas para servidores:

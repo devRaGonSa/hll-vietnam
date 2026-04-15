@@ -9,6 +9,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from .config import (
+    get_historical_refresh_overlap_hours,
     get_historical_full_snapshot_every_runs,
     get_historical_elo_mmr_min_new_samples,
     get_historical_elo_mmr_rebuild_interval_minutes,
@@ -20,6 +21,7 @@ from .config import (
 from .elo_mmr_engine import rebuild_elo_mmr_models
 from .elo_mmr_storage import get_latest_elo_mmr_generated_at
 from .historical_ingestion import run_incremental_refresh
+from .historical_storage import list_historical_coverage_report
 from .historical_snapshots import (
     generate_and_persist_historical_snapshots,
     generate_and_persist_priority_historical_snapshots,
@@ -69,6 +71,7 @@ def run_periodic_historical_refresh(
                 "snapshot_scope": _describe_snapshot_scope(server_slug),
             },
             indent=2,
+            default=_json_default,
         )
     )
     print("Press Ctrl+C to stop.")
@@ -87,7 +90,7 @@ def run_periodic_historical_refresh(
                 page_size=page_size,
                 run_number=completed_runs,
             )
-            print(json.dumps({"run": completed_runs, **payload}, indent=2))
+            print(json.dumps({"run": completed_runs, **payload}, indent=2, default=_json_default))
 
             if max_runs is not None and completed_runs >= max_runs:
                 break
@@ -340,6 +343,18 @@ def _run_manual_historical_phase_unlocked(
         run_number=run_number,
         rcon_capture_result=rcon_capture_result,
     )
+    _emit_runner_progress(
+        progress_callback,
+        {
+            "event": "historical-runner-classic-fallback-policy-resolved",
+            "mode": execution_mode,
+            "phase": phase,
+            "run_number": run_number,
+            "classic_fallback_used": should_run_classic_fallback,
+            "classic_fallback_reason": classic_fallback_reason,
+            "rcon_capture_status": rcon_capture_result.get("status"),
+        },
+    )
     if should_run_classic_fallback:
         refresh_result = _run_classic_refresh(
             server_slug=server_slug,
@@ -576,10 +591,65 @@ def _resolve_classic_fallback_policy(
     if server_slug:
         return True, "manual-server-scope-still-needs-classic-historical-fallback"
 
+    base_refresh_reason = _resolve_base_historical_refresh_need()
+    if base_refresh_reason:
+        return True, base_refresh_reason
+
     if run_number % get_historical_full_snapshot_every_runs() == 0:
         return True, "periodic-classic-fallback-for-competitive-historical-coverage"
 
     return False, "rcon-primary-cycle-succeeded-without-needing-classic-fallback"
+
+
+def _resolve_base_historical_refresh_need() -> str | None:
+    try:
+        coverage_report = list_historical_coverage_report()
+    except Exception:  # noqa: BLE001 - an unreadable base archive still needs classic refresh.
+        return "classic-historical-coverage-check-failed"
+    if not coverage_report:
+        return "classic-historical-coverage-missing"
+
+    stale_after_seconds = max(0, get_historical_refresh_overlap_hours()) * 3600
+    now = datetime.now(timezone.utc)
+    for item in coverage_report:
+        server = item.get("server")
+        server_slug = (
+            str(server.get("slug"))
+            if isinstance(server, dict) and server.get("slug")
+            else "unknown-server"
+        )
+        imported_matches_count = int(item.get("imported_matches_count") or 0)
+        if imported_matches_count <= 0:
+            return f"classic-historical-coverage-missing-for-{server_slug}"
+
+        last_match_at = _parse_policy_timestamp(item.get("last_match_at"))
+        if last_match_at is None:
+            return f"classic-historical-latest-match-unknown-for-{server_slug}"
+
+        age_seconds = max(0, int((now - last_match_at).total_seconds()))
+        if stale_after_seconds and age_seconds > stale_after_seconds:
+            return f"classic-historical-coverage-stale-for-{server_slug}"
+
+    return None
+
+
+def _parse_policy_timestamp(value: object) -> datetime | None:
+    if isinstance(value, datetime):
+        parsed = value
+    elif isinstance(value, str) and value.strip():
+        normalized = value.strip().replace("Z", "+00:00")
+        if normalized.endswith("+00"):
+            normalized = f"{normalized}:00"
+        try:
+            parsed = datetime.fromisoformat(normalized)
+        except ValueError:
+            return None
+    else:
+        return None
+
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
 
 
 def _rcon_capture_has_usable_results(rcon_capture_result: dict[str, Any]) -> bool:
@@ -671,7 +741,13 @@ def _emit_runner_progress(callback: Any, payload: dict[str, Any]) -> None:
 
 
 def _print_progress(payload: dict[str, Any]) -> None:
-    print(json.dumps(payload, ensure_ascii=True))
+    print(json.dumps(payload, ensure_ascii=True, default=_json_default))
+
+
+def _json_default(value: object) -> str:
+    if isinstance(value, datetime):
+        return value.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
+    return str(value)
 
 
 def build_arg_parser() -> argparse.ArgumentParser:
@@ -751,6 +827,8 @@ def main() -> None:
 
     if args.hourly:
         args.interval = HOURLY_INTERVAL_SECONDS
+        if args.mode == "run":
+            args.mode = "loop"
 
     if args.retries < 0:
         raise ValueError("--retries must be zero or positive.")
@@ -789,7 +867,7 @@ def main() -> None:
         page_size=args.page_size,
         run_number=1,
     )
-    print(json.dumps(payload, indent=2))
+    print(json.dumps(payload, indent=2, default=_json_default))
 
 
 if __name__ == "__main__":
