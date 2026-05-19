@@ -816,6 +816,83 @@ def list_recent_historical_matches(
     return items
 
 
+def get_historical_match_detail(
+    *,
+    server_slug: str,
+    match_id: str,
+    db_path: Path | None = None,
+) -> dict[str, object] | None:
+    """Return one persisted public-scoreboard match detail for the historical API layer."""
+    normalized_server_slug = _stringify(server_slug)
+    normalized_match_id = _stringify(match_id)
+    if not normalized_server_slug or not normalized_match_id:
+        return None
+    resolved_path = initialize_historical_storage(db_path=db_path)
+    with _connect(resolved_path) as connection:
+        row = connection.execute(
+            """
+            SELECT
+                historical_servers.slug AS server_slug,
+                historical_servers.display_name AS server_name,
+                historical_matches.external_match_id,
+                historical_matches.started_at,
+                historical_matches.ended_at,
+                historical_matches.map_pretty_name,
+                historical_matches.map_name,
+                historical_matches.allied_score,
+                historical_matches.axis_score,
+                historical_matches.raw_payload_ref,
+                historical_servers.scoreboard_base_url,
+                COUNT(historical_player_match_stats.id) AS player_count,
+                SUM(COALESCE(historical_player_match_stats.time_seconds, 0)) AS total_time_seconds
+            FROM historical_matches
+            INNER JOIN historical_servers
+                ON historical_servers.id = historical_matches.historical_server_id
+            LEFT JOIN historical_player_match_stats
+                ON historical_player_match_stats.historical_match_id = historical_matches.id
+            WHERE historical_servers.slug = ?
+              AND historical_matches.external_match_id = ?
+            GROUP BY historical_matches.id
+            LIMIT 1
+            """,
+            (normalized_server_slug, normalized_match_id),
+        ).fetchone()
+    if row is None:
+        return None
+    started_at = row["started_at"]
+    ended_at = row["ended_at"]
+    return {
+        "server": {
+            "slug": row["server_slug"],
+            "name": row["server_name"],
+        },
+        "match_id": row["external_match_id"],
+        "started_at": started_at,
+        "ended_at": ended_at,
+        "closed_at": ended_at or started_at,
+        "duration_seconds": _calculate_match_duration_seconds(started_at, ended_at),
+        "map": {
+            "name": row["map_name"],
+            "pretty_name": row["map_pretty_name"] or row["map_name"],
+        },
+        "result": {
+            "allied_score": _coerce_int(row["allied_score"]),
+            "axis_score": _coerce_int(row["axis_score"]),
+            "winner": _resolve_match_winner(
+                row["allied_score"],
+                row["axis_score"],
+            ),
+        },
+        "player_count": int(row["player_count"] or 0),
+        "total_time_seconds": _coerce_int(row["total_time_seconds"]),
+        "capture_basis": "public-scoreboard-match",
+        "match_url": _resolve_safe_match_url(
+            row["raw_payload_ref"],
+            row["scoreboard_base_url"],
+        ),
+    }
+
+
 def list_historical_server_summaries(
     *,
     server_slug: str | None = None,
@@ -3138,6 +3215,18 @@ def _resolve_safe_match_url(raw_payload_ref: object, scoreboard_base_url: object
     if candidate_parts.username or candidate_parts.password:
         return None
     return candidate
+
+
+def _calculate_match_duration_seconds(started_at: object, ended_at: object) -> int | None:
+    start_text = _stringify(started_at)
+    end_text = _stringify(ended_at)
+    if not start_text or not end_text:
+        return None
+    try:
+        duration = _parse_timestamp(end_text) - _parse_timestamp(start_text)
+    except ValueError:
+        return None
+    return max(0, int(duration.total_seconds()))
 
 
 def _start_of_week(value: datetime) -> datetime:

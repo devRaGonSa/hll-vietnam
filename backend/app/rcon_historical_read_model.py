@@ -8,6 +8,7 @@ from .historical_storage import ALL_SERVERS_SLUG
 from .normalizers import normalize_map_name
 from .rcon_historical_storage import (
     find_rcon_historical_competitive_window,
+    get_rcon_historical_competitive_window_by_session,
     list_rcon_historical_competitive_summary_rows,
     list_rcon_historical_competitive_windows,
 )
@@ -121,6 +122,48 @@ def get_rcon_historical_competitive_match_context(
         ended_at=ended_at,
         map_name=map_name,
     )
+
+
+def get_rcon_historical_match_detail(
+    *,
+    server_key: str,
+    match_id: str,
+) -> dict[str, object] | None:
+    """Return one RCON competitive window as a match-detail compatible payload."""
+    item = get_rcon_historical_competitive_window_by_session(
+        server_key=server_key,
+        session_key=match_id,
+    )
+    if item is None:
+        return None
+    return {
+        "server": {
+            "slug": item["target_key"],
+            "name": item["display_name"],
+            "external_server_id": item["external_server_id"],
+            "region": item["region"],
+        },
+        "match_id": item["session_key"],
+        "started_at": item["first_seen_at"],
+        "ended_at": item["last_seen_at"],
+        "closed_at": item["last_seen_at"],
+        "duration_seconds": item.get("duration_seconds"),
+        "map": {
+            "name": item.get("map_name"),
+            "pretty_name": normalize_map_name(item.get("map_pretty_name") or item.get("map_name")),
+        },
+        "result": {
+            "allied_score": None,
+            "axis_score": None,
+            "winner": None,
+        },
+        "player_count": int(round(float(item.get("average_players") or 0))),
+        "peak_players": item.get("peak_players"),
+        "sample_count": item.get("sample_count"),
+        "capture_basis": "rcon-competitive-window",
+        "capabilities": item.get("capabilities"),
+        "match_url": None,
+    }
 
 
 def _build_server_summary(item: dict[str, object]) -> dict[str, object]:

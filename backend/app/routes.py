@@ -13,6 +13,7 @@ from .payloads import (
     build_error_payload,
     build_health_payload,
     build_historical_leaderboard_payload,
+    build_historical_match_detail_payload,
     build_monthly_mvp_payload,
     build_monthly_mvp_v2_payload,
     build_monthly_leaderboard_payload,
@@ -252,6 +253,19 @@ def resolve_get_payload(path: str) -> tuple[HTTPStatus | None, dict[str, object]
         return HTTPStatus.OK, build_recent_historical_matches_snapshot_payload(
             limit=limit,
             server_slug=server_slug,
+        )
+
+    if parsed.path == "/api/historical/matches/detail":
+        params = parse_qs(parsed.query)
+        server_slug = params.get("server", [None])[0]
+        match_id = params.get("match", [None])[0]
+        if not server_slug:
+            return HTTPStatus.BAD_REQUEST, build_error_payload("Server parameter is required")
+        if not match_id:
+            return HTTPStatus.BAD_REQUEST, build_error_payload("Match parameter is required")
+        return HTTPStatus.OK, build_historical_match_detail_payload(
+            server_slug=server_slug,
+            match_id=match_id,
         )
 
     if parsed.path == "/api/historical/server-summary":

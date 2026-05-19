@@ -40,6 +40,7 @@ from .historical_snapshots import (
 from .historical_storage import (
     ALL_SERVERS_SLUG,
     DEFAULT_HISTORICAL_SERVERS,
+    get_historical_match_detail,
     get_historical_player_profile,
     list_historical_server_summaries,
     list_monthly_leaderboard,
@@ -47,6 +48,7 @@ from .historical_storage import (
     list_weekly_leaderboard,
     list_weekly_top_kills,
 )
+from .rcon_historical_read_model import get_rcon_historical_match_detail
 from .normalizers import normalize_map_name
 from .storage import list_latest_snapshots, list_server_history, list_snapshot_history
 
@@ -469,6 +471,72 @@ def build_recent_historical_matches_payload(
                 )
             ),
             "items": items,
+        },
+    }
+
+
+def build_historical_match_detail_payload(
+    *,
+    server_slug: str,
+    match_id: str,
+) -> dict[str, object]:
+    """Return available detail for one historical match without inventing external URLs."""
+    if get_historical_data_source_kind() == SOURCE_KIND_RCON:
+        item = get_rcon_historical_match_detail(
+            server_key=server_slug,
+            match_id=match_id,
+        )
+        if item is not None:
+            return {
+                "status": "ok",
+                "data": {
+                    "title": "Detalle de partida historica",
+                    "context": "historical-match-detail",
+                    "source": "rcon-historical-competitive-read-model",
+                    "found": True,
+                    **build_source_policy(
+                        primary_source=SOURCE_KIND_RCON,
+                        selected_source=SOURCE_KIND_RCON,
+                        source_attempts=[
+                            build_source_attempt(
+                                source=SOURCE_KIND_RCON,
+                                role="primary",
+                                status="success",
+                                reason="historical-match-detail-served-by-rcon",
+                            )
+                        ],
+                    ),
+                    "item": item,
+                },
+            }
+
+    item = get_historical_match_detail(server_slug=server_slug, match_id=match_id)
+    return {
+        "status": "ok",
+        "data": {
+            "title": "Detalle de partida historica",
+            "context": "historical-match-detail",
+            "source": "historical-crcon-storage",
+            "found": item is not None,
+            **(
+                _resolve_historical_fallback_policy(
+                    fallback_reason="rcon-historical-read-model-has-no-match-detail"
+                )
+                if get_historical_data_source_kind() == SOURCE_KIND_RCON
+                else build_source_policy(
+                    primary_source=SOURCE_KIND_PUBLIC_SCOREBOARD,
+                    selected_source=SOURCE_KIND_PUBLIC_SCOREBOARD,
+                    source_attempts=[
+                        build_source_attempt(
+                            source=SOURCE_KIND_PUBLIC_SCOREBOARD,
+                            role="primary",
+                            status="success" if item is not None else "empty",
+                            reason="historical-match-detail-served-by-public-scoreboard",
+                        )
+                    ],
+                )
+            ),
+            "item": item,
         },
     }
 

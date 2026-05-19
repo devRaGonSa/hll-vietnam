@@ -803,6 +803,7 @@ function hydrateMvpComparison(
 function renderRecentMatchCard(item) {
   const mapName = item.map?.pretty_name || item.map?.name || "Mapa no disponible";
   const matchUrl = normalizeExternalMatchUrl(item.match_url || item.source_url);
+  const detailUrl = buildInternalMatchDetailUrl(item);
   const matchLink = matchUrl
     ? `
         <a
@@ -814,7 +815,16 @@ function renderRecentMatchCard(item) {
           Ver partida
         </a>
       `
-    : "";
+    : detailUrl
+      ? `
+        <a
+          class="historical-match-card__link"
+          href="${escapeHtml(detailUrl)}"
+        >
+          Ver detalles
+        </a>
+      `
+      : "";
   return `
     <article class="historical-match-card">
       <div class="historical-match-card__top">
@@ -859,6 +869,24 @@ function normalizeExternalMatchUrl(value) {
   } catch (error) {
     return "";
   }
+}
+
+function buildInternalMatchDetailUrl(item) {
+  const serverSlug = item?.server?.slug;
+  const matchId = item?.match_id;
+  if (typeof serverSlug !== "string" || !serverSlug.trim()) {
+    return "";
+  }
+  if (typeof matchId !== "string" && typeof matchId !== "number") {
+    return "";
+  }
+  const normalizedMatchId = String(matchId).trim();
+  if (!normalizedMatchId) {
+    return "";
+  }
+  return `./historico-partida.html?server=${encodeURIComponent(
+    serverSlug.trim(),
+  )}&match=${encodeURIComponent(normalizedMatchId)}`;
 }
 
 function renderSummaryLoading(summaryNode) {

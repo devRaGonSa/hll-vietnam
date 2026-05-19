@@ -662,6 +662,79 @@ def find_rcon_historical_competitive_window(
     }
 
 
+def get_rcon_historical_competitive_window_by_session(
+    *,
+    server_key: str,
+    session_key: str,
+    db_path: Path | None = None,
+) -> dict[str, object] | None:
+    """Return one persisted competitive RCON window by its synthetic session key."""
+    normalized_session_key = str(session_key or "").strip()
+    if not normalized_session_key:
+        return None
+    resolved_path = _resolve_db_path(db_path)
+    aliases = _expand_target_key_aliases(server_key)
+    alias_placeholders = ", ".join("?" for _ in aliases)
+    try:
+        with _connect_readonly(resolved_path) as connection:
+            row = connection.execute(
+                f"""
+            SELECT
+                targets.target_key,
+                targets.external_server_id,
+                targets.display_name,
+                targets.region,
+                windows.session_key,
+                windows.map_name,
+                windows.map_pretty_name,
+                windows.first_seen_at,
+                windows.last_seen_at,
+                windows.sample_count,
+                windows.total_players,
+                windows.peak_players,
+                windows.confidence_mode,
+                windows.capabilities_json
+            FROM rcon_historical_competitive_windows AS windows
+            INNER JOIN rcon_historical_targets AS targets
+                ON targets.id = windows.target_id
+            WHERE windows.session_key = ?
+              AND (
+                targets.target_key IN ({alias_placeholders})
+                OR targets.external_server_id IN ({alias_placeholders})
+              )
+            LIMIT 1
+            """,
+                [normalized_session_key, *aliases, *aliases],
+            ).fetchone()
+    except sqlite3.OperationalError:
+        return None
+    if row is None:
+        return None
+    sample_count = int(row["sample_count"] or 0)
+    return {
+        "target_key": row["target_key"],
+        "external_server_id": row["external_server_id"],
+        "display_name": row["display_name"],
+        "region": row["region"],
+        "session_key": row["session_key"],
+        "first_seen_at": row["first_seen_at"],
+        "last_seen_at": row["last_seen_at"],
+        "duration_seconds": _calculate_duration_seconds(
+            row["first_seen_at"],
+            row["last_seen_at"],
+        ),
+        "map_name": row["map_name"],
+        "map_pretty_name": row["map_pretty_name"] or row["map_name"],
+        "sample_count": sample_count,
+        "average_players": round((int(row["total_players"] or 0) / sample_count), 2)
+        if sample_count > 0
+        else 0.0,
+        "peak_players": int(row["peak_players"] or 0),
+        "confidence_mode": row["confidence_mode"],
+        "capabilities": _deserialize_json_object(row["capabilities_json"]),
+    }
+
+
 def _connect(db_path: Path) -> sqlite3.Connection:
     return connect_sqlite_writer(db_path)
 
