@@ -212,6 +212,33 @@ class RconHistoricalDataSource:
         """Return recent RCON-backed competitive history without on-demand network calls."""
         return list_rcon_historical_recent_activity(server_key=server_key, limit=limit)
 
+    def has_server_summary_coverage(self, items: list[dict[str, object]]) -> bool:
+        """Return whether RCON summaries contain usable historical coverage."""
+        for item in items:
+            coverage = item.get("coverage") if isinstance(item, dict) else None
+            if not isinstance(coverage, dict):
+                continue
+            if coverage.get("status") == "available":
+                return True
+            if int(coverage.get("sample_count") or 0) > 0:
+                return True
+            if int(coverage.get("window_count") or 0) > 0:
+                return True
+            if coverage.get("last_sample_at"):
+                return True
+        return False
+
+    def has_recent_activity_coverage(self, items: list[dict[str, object]]) -> bool:
+        """Return whether RCON recent activity contains at least one usable item."""
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            if item.get("closed_at") or item.get("ended_at") or item.get("started_at"):
+                return True
+            if int(item.get("sample_count") or 0) > 0:
+                return True
+        return False
+
     def describe_capabilities(self) -> dict[str, object]:
         """Describe the supported RCON historical read surface."""
         return describe_rcon_historical_read_model()
