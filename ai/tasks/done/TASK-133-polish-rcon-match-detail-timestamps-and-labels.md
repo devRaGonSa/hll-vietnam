@@ -1,7 +1,7 @@
 ---
 id: TASK-133
 title: Polish RCON match detail timestamps and labels
-status: pending
+status: done
 type: frontend
 team: Frontend Senior
 supporting_teams:
@@ -125,7 +125,24 @@ Open:
 
 ## Outcome
 
-Document the validation performed, the timestamp confidence/derivation decision, and any skipped checks with a reason. If fixing timestamps requires a broader materialization redesign, implement the safe UI fallback in this task and create a follow-up task instead of expanding scope.
+- Added `timestamp_confidence` for materialized RCON read-model rows.
+- When materialized AdminLog start/end absolute timestamps are identical while server-time duration is positive, the read model exposes `started_at`/`ended_at` as unavailable and keeps `closed_at` only for ordering/recent-card continuity.
+- The detail UI now hides the raw technical match id from the hero subtitle and shows a friendly RCON materialized subtitle.
+- The detail UI shows unreliable start/end values as `No disponible` while preserving reliable duration.
+- Polished source/action wording, including `cierre RCON confirmado` and `Abrir en scoreboard`.
+- Kept recent match cards rendering and restored the static `Ver partida` external-action label expected by the UI regression check.
+- Browser plugin note: Browser was available, but the required browser-control execution tool was not exposed in this session; Playwright fallback via `npx` was blocked by npm certificate verification. Rendered validation used local headless Chrome instead.
+- Validation passed: `python -m compileall backend/app`.
+- Validation passed: `node --check frontend/assets/js/historico.js`.
+- Validation passed: `node --check frontend/assets/js/historico-partida.js`.
+- Validation passed: `node --check frontend/assets/js/historico-recent-live.js`.
+- Validation passed: `$env:PYTHONPATH='backend'; python -m unittest backend.tests.test_rcon_materialization_pipeline`.
+- Validation blocked: `python -m pytest backend/tests/test_rcon_materialization_pipeline.py` because `pytest` is not installed.
+- Validation passed: `docker compose up -d --build backend frontend`.
+- Validation passed: `/health` and `/api/historical/recent-matches?server=all-servers&limit=10`.
+- Manual/API verification passed for known Carentan match: duration `5400`, score `3 - 2`, winner `allied`, AntonioPruna `1/0` with `M1 GARAND`, victim death_by AntonioPruna.
+- Rendered Chrome validation passed for detail and recent pages at desktop/mobile screenshot sizes; visible text contains no `snapshot`, Elo/MMR block or Comunidad Hispana #03.
+- Operational note: an already-running advanced `rcon-historical-worker` caused transient SQLite open errors during Docker validation; it was stopped because the default deployment for this repo is `backend` + `frontend`.
 
 ## Change Budget
 

@@ -73,8 +73,48 @@ class RconMaterializationPipelineTests(unittest.TestCase):
             self.assertIsNotNone(detail)
             self.assertEqual(detail["result_source"], "admin-log-match-ended")
             self.assertEqual(detail["result"]["allied_score"], 5)
+            self.assertEqual(detail["timestamp_confidence"], "absolute")
             self.assertNotIn("player_id", detail["players"][0])
             self.assertIn("kd_ratio", detail["players"][0])
+            gc.collect()
+
+    def test_match_detail_marks_equal_materialized_timestamps_as_server_time_only(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = Path(tmpdir) / "historical.sqlite3"
+            previous_storage_path = os.environ.get("HLL_BACKEND_STORAGE_PATH")
+            os.environ["HLL_BACKEND_STORAGE_PATH"] = str(db_path)
+            try:
+                persist_rcon_admin_log_entries(
+                    target={
+                        "target_key": "comunidad-hispana-01",
+                        "external_server_id": "comunidad-hispana-01",
+                    },
+                    entries=[
+                        {
+                            "timestamp": "2026-05-01T12:00:00Z",
+                            "message": "[1 min (100)] MATCH START ST MARIE DU MONT Warfare",
+                        },
+                        {
+                            "timestamp": "2026-05-01T12:00:00Z",
+                            "message": "[91 min (5500)] MATCH ENDED `ST MARIE DU MONT Warfare` ALLIED (5 - 0) AXIS",
+                        },
+                    ],
+                    db_path=db_path,
+                )
+                materialize_rcon_admin_log(db_path=db_path)
+                detail = get_rcon_historical_match_detail(
+                    server_key="comunidad-hispana-01",
+                    match_id="comunidad-hispana-01:100:5500:stmariedumontwarfare",
+                )
+            finally:
+                _restore_env("HLL_BACKEND_STORAGE_PATH", previous_storage_path)
+
+            self.assertIsNotNone(detail)
+            self.assertIsNone(detail["started_at"])
+            self.assertIsNone(detail["ended_at"])
+            self.assertEqual(detail["closed_at"], "2026-05-01T12:00:00Z")
+            self.assertEqual(detail["timestamp_confidence"], "server-time-only")
+            self.assertEqual(detail["duration_seconds"], 5400)
             gc.collect()
 
     def test_match_detail_adds_safe_profile_summary_when_snapshot_exists(self) -> None:

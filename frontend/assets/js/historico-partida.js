@@ -65,7 +65,7 @@ function renderMatchDetail(item, nodes) {
   const mapName = item.map?.pretty_name || item.map?.name || "Mapa no disponible";
   const serverName = item.server?.name || item.server?.slug || "Servidor no disponible";
   nodes.title.textContent = mapName;
-  nodes.summary.textContent = `${serverName} | ${item.match_id || "partida sin id"}`;
+  nodes.summary.textContent = `${serverName} - ${formatDetailSubtitle(item)}`;
   nodes.note.textContent = buildDetailNote(item);
   nodes.grid.innerHTML = [
     renderDetailCard("Servidor", serverName),
@@ -74,8 +74,8 @@ function renderMatchDetail(item, nodes) {
     renderDetailCard("Marcador", formatScore(item.result)),
     renderDetailCard("Ganador", formatWinner(item.winner || item.result?.winner)),
     renderDetailCard("Resultado", formatMatchResult(item.result)),
-    renderDetailCard("Inicio", formatTimestamp(item.started_at)),
-    renderDetailCard("Fin", formatTimestamp(item.closed_at || item.ended_at)),
+    renderDetailCard("Inicio", formatMatchTimestamp(item, "start")),
+    renderDetailCard("Fin", formatMatchTimestamp(item, "end")),
     renderDetailCard("Duracion", formatDuration(item.duration_seconds)),
     renderDetailCard("Confianza", formatConfidence(item.confidence)),
     renderDetailCard(
@@ -173,7 +173,7 @@ function renderActions(item, actionsNode) {
       target="_blank"
       rel="noopener noreferrer"
     >
-      Ver scoreboard
+      Abrir en scoreboard
     </a>
   `;
   actionsNode.hidden = false;
@@ -191,9 +191,22 @@ function renderDetailCard(label, value) {
 function buildDetailNote(item) {
   const source = formatSourceBasis(item.source_basis || item.result_source);
   if (source) {
-    return `Detalle interno servido desde ${source}. Los campos sin cobertura se muestran como no disponibles.`;
+    return `Detalle servido desde ${source}. Los campos sin cobertura fiable se muestran como no disponibles.`;
   }
   return "Detalle servido desde el historico local disponible para esta partida.";
+}
+
+function formatDetailSubtitle(item) {
+  if (item.capture_basis === "rcon-materialized-admin-log") {
+    return "Partida RCON materializada";
+  }
+  if (item.capture_basis === "rcon-competitive-window") {
+    return "Partida RCON registrada";
+  }
+  if (item.result_source === "public-scoreboard-match") {
+    return "Partida del scoreboard";
+  }
+  return "Partida historica";
 }
 
 function formatCaptureBasis(value) {
@@ -211,10 +224,10 @@ function formatCaptureBasis(value) {
 
 function formatSourceBasis(value) {
   if (value === "admin-log-match-ended") {
-    return "cierre de partida RCON";
+    return "cierre RCON confirmado";
   }
   if (value === "rcon-session") {
-    return "sesion RCON";
+    return "sesion RCON registrada";
   }
   if (value === "public-scoreboard-match") {
     return "scoreboard externo";
@@ -374,6 +387,17 @@ function formatTimestamp(timestamp) {
     dateStyle: "short",
     timeStyle: "short",
   }).format(value);
+}
+
+function formatMatchTimestamp(item, kind) {
+  const timestamp = kind === "start" ? item.started_at : item.ended_at;
+  if (timestamp) {
+    return formatTimestamp(timestamp);
+  }
+  if (item.timestamp_confidence === "server-time-only") {
+    return "No disponible";
+  }
+  return "No disponible";
 }
 
 function normalizeExternalMatchUrl(value) {

@@ -823,7 +823,7 @@ function renderRecentMatchCard(item) {
           target="_blank"
           rel="noopener noreferrer"
         >
-          Ver scoreboard
+          Ver partida
         </a>
       `
       : "",
