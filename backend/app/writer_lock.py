@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import socket
 import sys
 import time
@@ -196,7 +197,11 @@ def _acquire_backend_writer_lock(
     if poll_interval_seconds <= 0:
         raise ValueError("Writer lock poll interval must be positive.")
 
-    deadline = time.monotonic() + timeout_seconds
+    started_monotonic = time.monotonic()
+    deadline = started_monotonic + timeout_seconds
+    wait_log_interval_seconds = max(5.0, poll_interval_seconds)
+    next_wait_log_at = started_monotonic
+    attempt_count = 0
     application_name = _normalize_postgres_application_name(holder)
     connection = connect_postgres(autocommit=True)
     try:
@@ -206,7 +211,16 @@ def _acquire_backend_writer_lock(
                 (application_name,),
             )
         metadata = _build_lock_metadata(holder=holder, application_name=application_name)
+        _emit_writer_lock_event(
+            "backend-writer-lock-acquire-started",
+            holder=holder,
+            waiter=holder,
+            timeout_seconds=timeout_seconds,
+            poll_interval_seconds=poll_interval_seconds,
+            action="wait-for-lock",
+        )
         while True:
+            attempt_count += 1
             with connection.cursor() as cursor:
                 cursor.execute(
                     "SELECT pg_try_advisory_lock(%s, %s) AS lock_acquired",
@@ -214,10 +228,35 @@ def _acquire_backend_writer_lock(
                 )
                 row = cursor.fetchone() or {}
             if bool(row.get("lock_acquired")):
+                waited_seconds = max(0.0, time.monotonic() - started_monotonic)
+                metadata["waited_seconds"] = round(waited_seconds, 3)
+                metadata["lock_acquire_attempts"] = attempt_count
                 metadata["connection"] = connection
+                _emit_writer_lock_event(
+                    "backend-writer-lock-acquired",
+                    holder=holder,
+                    waiter=holder,
+                    waited_seconds=waited_seconds,
+                    timeout_seconds=timeout_seconds,
+                    poll_interval_seconds=poll_interval_seconds,
+                    attempts=attempt_count,
+                    action="proceed",
+                )
                 return metadata
-            if time.monotonic() >= deadline:
+            now = time.monotonic()
+            if now >= deadline:
                 existing_metadata = _fetch_active_writer_lock_metadata()
+                _emit_writer_lock_event(
+                    "backend-writer-lock-timed-out",
+                    holder=holder,
+                    waiter=holder,
+                    waited_seconds=max(0.0, now - started_monotonic),
+                    timeout_seconds=timeout_seconds,
+                    poll_interval_seconds=poll_interval_seconds,
+                    attempts=attempt_count,
+                    action="abort",
+                    existing_metadata=existing_metadata,
+                )
                 raise BackendWriterLockTimeoutError(
                     _build_lock_timeout_message(
                         holder=holder,
@@ -225,7 +264,22 @@ def _acquire_backend_writer_lock(
                         existing_metadata=existing_metadata,
                     )
                 )
-            time.sleep(poll_interval_seconds)
+            if now >= next_wait_log_at:
+                existing_metadata = _fetch_active_writer_lock_metadata()
+                _emit_writer_lock_event(
+                    "backend-writer-lock-waiting",
+                    holder=holder,
+                    waiter=holder,
+                    waited_seconds=max(0.0, now - started_monotonic),
+                    timeout_seconds=timeout_seconds,
+                    poll_interval_seconds=poll_interval_seconds,
+                    attempts=attempt_count,
+                    action="retry",
+                    existing_metadata=existing_metadata,
+                )
+                next_wait_log_at = now + wait_log_interval_seconds
+            remaining_seconds = max(0.0, deadline - time.monotonic())
+            time.sleep(min(poll_interval_seconds, remaining_seconds))
     except Exception:
         connection.close()
         raise
@@ -235,12 +289,21 @@ def _release_backend_writer_lock() -> None:
     connection = _ACTIVE_LOCK_CONNECTION
     if connection is None:
         return
+    metadata = dict(_ACTIVE_LOCK_METADATA or {})
     try:
         with connection.cursor() as cursor:
             cursor.execute(
                 "SELECT pg_advisory_unlock(%s, %s)",
                 (_LOCK_KEY_CLASS_ID, _LOCK_KEY_OBJECT_ID),
             )
+        _emit_writer_lock_event(
+            "backend-writer-lock-released",
+            holder=metadata.get("holder") or "unknown-holder",
+            waiter=metadata.get("holder") or "unknown-holder",
+            waited_seconds=metadata.get("waited_seconds"),
+            attempts=metadata.get("lock_acquire_attempts"),
+            action="released",
+        )
     except Exception:
         pass
     finally:
@@ -454,6 +517,69 @@ def _normalize_query_text(query: object) -> str | None:
         return None
     compact_query = " ".join(query.split())
     return compact_query[:240] if compact_query else None
+
+
+def _emit_writer_lock_event(
+    event: str,
+    *,
+    holder: object,
+    waiter: object,
+    action: str,
+    waited_seconds: object | None = None,
+    timeout_seconds: object | None = None,
+    poll_interval_seconds: object | None = None,
+    attempts: object | None = None,
+    existing_metadata: dict[str, object] | None = None,
+) -> None:
+    payload: dict[str, object] = {
+        "event": event,
+        "lock_backend": "postgresql-session-advisory-lock",
+        "lock_scope": "backend-single-writer",
+        "lock_namespace": LOCK_NAMESPACE,
+        "lock_key_class_id": _LOCK_KEY_CLASS_ID,
+        "lock_key_object_id": _LOCK_KEY_OBJECT_ID,
+        "holder": holder,
+        "waiter": waiter,
+        "action": action,
+    }
+    if waited_seconds is not None:
+        payload["waited_seconds"] = round(float(waited_seconds), 3)
+    if timeout_seconds is not None:
+        payload["timeout_seconds"] = timeout_seconds
+    if poll_interval_seconds is not None:
+        payload["poll_interval_seconds"] = poll_interval_seconds
+    if attempts is not None:
+        payload["attempts"] = attempts
+    if existing_metadata:
+        payload.update(
+            {
+                "active_holder": existing_metadata.get("holder"),
+                "active_holder_scope": existing_metadata.get("holder_scope"),
+                "active_lock_age_seconds": existing_metadata.get("lock_age_seconds"),
+                "active_started_at": existing_metadata.get("started_at"),
+                "active_hostname": existing_metadata.get("active_hostname"),
+                "active_pid": existing_metadata.get("active_pid"),
+                "active_runtime_scope": existing_metadata.get("active_runtime_scope"),
+                "active_postgres_user": existing_metadata.get("postgres_user"),
+                "active_postgres_application_name": existing_metadata.get(
+                    "postgres_application_name"
+                ),
+                "active_postgres_state": existing_metadata.get("postgres_state"),
+                "active_postgres_wait_event_type": existing_metadata.get(
+                    "postgres_wait_event_type"
+                ),
+                "active_postgres_wait_event": existing_metadata.get("postgres_wait_event"),
+                "active_postgres_query_started_at": existing_metadata.get(
+                    "postgres_query_started_at"
+                ),
+                "active_postgres_query": existing_metadata.get("postgres_query"),
+                "retry_or_abort": action,
+            }
+        )
+    else:
+        payload["active_holder"] = None
+        payload["retry_or_abort"] = action
+    print(json.dumps(payload, default=str), flush=True)
 
 
 def _current_backend_pid() -> int:

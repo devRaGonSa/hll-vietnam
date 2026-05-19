@@ -7,6 +7,9 @@ from pathlib import Path
 from typing import Mapping
 
 from .config import (
+    get_historical_repair_lookback_days,
+    get_historical_repair_max_duration_seconds,
+    get_historical_repair_min_duration_seconds,
     get_historical_refresh_overlap_hours,
     get_historical_weekly_fallback_max_weekday,
     get_historical_weekly_fallback_min_matches,
@@ -455,13 +458,44 @@ def upsert_historical_match(
         map_id = _upsert_historical_map(connection, match_payload)
         match_row = connection.execute(
             """
-            SELECT id
+            SELECT
+                id,
+                historical_map_id,
+                created_at_source,
+                started_at,
+                ended_at,
+                map_name,
+                map_pretty_name,
+                game_mode,
+                image_name,
+                allied_score,
+                axis_score,
+                raw_payload_ref
             FROM historical_matches
             WHERE historical_server_id = ? AND external_match_id = ?
             """,
             (server_row["id"], match_external_id),
         ).fetchone()
         match_exists = match_row is not None
+        player_payloads = _coerce_list(match_payload.get("player_stats"))
+        detail_status, detail_reason = _classify_match_detail_quality(match_payload, player_payloads)
+        incoming_match_values = {
+            "historical_map_id": map_id,
+            "created_at_source": _normalize_timestamp(match_payload.get("creation_time")),
+            "started_at": _normalize_timestamp(match_payload.get("start")),
+            "ended_at": _normalize_timestamp(match_payload.get("end")),
+            "map_name": _extract_map_name(match_payload),
+            "map_pretty_name": _extract_map_pretty_name(match_payload),
+            "game_mode": _extract_map_game_mode(match_payload),
+            "image_name": _extract_map_image_name(match_payload),
+            "allied_score": _coerce_int(_get_nested(match_payload, "result", "allied")),
+            "axis_score": _coerce_int(_get_nested(match_payload, "result", "axis")),
+            "raw_payload_ref": f"{server_row['scoreboard_base_url']}/games/{match_external_id}",
+        }
+        match_changed = bool(
+            match_row is not None
+            and _row_values_changed(match_row, incoming_match_values)
+        )
 
         connection.execute(
             """
@@ -479,8 +513,12 @@ def upsert_historical_match(
                 allied_score,
                 axis_score,
                 last_seen_at,
-                raw_payload_ref
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                raw_payload_ref,
+                detail_status,
+                detail_quality_reason,
+                detail_last_attempt_at,
+                detail_last_error
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)
             ON CONFLICT(historical_server_id, external_match_id) DO UPDATE SET
                 historical_map_id = excluded.historical_map_id,
                 created_at_source = excluded.created_at_source,
@@ -494,23 +532,34 @@ def upsert_historical_match(
                 axis_score = excluded.axis_score,
                 last_seen_at = excluded.last_seen_at,
                 raw_payload_ref = excluded.raw_payload_ref,
+                detail_status = excluded.detail_status,
+                detail_quality_reason = excluded.detail_quality_reason,
+                detail_last_attempt_at = excluded.detail_last_attempt_at,
+                detail_last_error = NULL,
+                detail_retry_count = CASE
+                    WHEN excluded.detail_status = 'complete' THEN historical_matches.detail_retry_count
+                    ELSE historical_matches.detail_retry_count + 1
+                END,
                 updated_at = CURRENT_TIMESTAMP
             """,
             (
                 server_row["id"],
                 match_external_id,
-                map_id,
-                _normalize_timestamp(match_payload.get("creation_time")),
-                _normalize_timestamp(match_payload.get("start")),
-                _normalize_timestamp(match_payload.get("end")),
-                _extract_map_name(match_payload),
-                _extract_map_pretty_name(match_payload),
-                _extract_map_game_mode(match_payload),
-                _extract_map_image_name(match_payload),
-                _coerce_int(_get_nested(match_payload, "result", "allied")),
-                _coerce_int(_get_nested(match_payload, "result", "axis")),
+                incoming_match_values["historical_map_id"],
+                incoming_match_values["created_at_source"],
+                incoming_match_values["started_at"],
+                incoming_match_values["ended_at"],
+                incoming_match_values["map_name"],
+                incoming_match_values["map_pretty_name"],
+                incoming_match_values["game_mode"],
+                incoming_match_values["image_name"],
+                incoming_match_values["allied_score"],
+                incoming_match_values["axis_score"],
                 _utc_now_iso(),
-                f"{server_row['scoreboard_base_url']}/games/{match_external_id}",
+                incoming_match_values["raw_payload_ref"],
+                detail_status,
+                detail_reason,
+                _utc_now_iso(),
             ),
         )
         match_id_row = connection.execute(
@@ -526,16 +575,51 @@ def upsert_historical_match(
 
         player_rows_inserted = 0
         player_rows_updated = 0
-        for player_payload in _coerce_list(match_payload.get("player_stats")):
+        for player_payload in player_payloads:
             player_id = _upsert_historical_player(connection, player_payload)
             stat_exists = connection.execute(
                 """
-                SELECT id
+                SELECT
+                    id,
+                    match_player_ref,
+                    team_side,
+                    level,
+                    kills,
+                    deaths,
+                    teamkills,
+                    time_seconds,
+                    kills_per_minute,
+                    deaths_per_minute,
+                    kill_death_ratio,
+                    combat,
+                    offense,
+                    defense,
+                    support
                 FROM historical_player_match_stats
                 WHERE historical_match_id = ? AND historical_player_id = ?
                 """,
                 (match_id_row["id"], player_id),
             ).fetchone()
+            incoming_stat_values = {
+                "match_player_ref": _stringify(player_payload.get("id")),
+                "team_side": _stringify(_get_nested(player_payload, "team", "side")),
+                "level": _coerce_int(player_payload.get("level")),
+                "kills": _coerce_int(player_payload.get("kills")),
+                "deaths": _coerce_int(player_payload.get("deaths")),
+                "teamkills": _coerce_int(player_payload.get("teamkills")),
+                "time_seconds": _coerce_int(player_payload.get("time_seconds")),
+                "kills_per_minute": _coerce_float(player_payload.get("kills_per_minute")),
+                "deaths_per_minute": _coerce_float(player_payload.get("deaths_per_minute")),
+                "kill_death_ratio": _coerce_float(player_payload.get("kill_death_ratio")),
+                "combat": _coerce_int(player_payload.get("combat")),
+                "offense": _coerce_int(player_payload.get("offense")),
+                "defense": _coerce_int(player_payload.get("defense")),
+                "support": _coerce_int(player_payload.get("support")),
+            }
+            stat_changed = bool(
+                stat_exists is not None
+                and _row_values_changed(stat_exists, incoming_stat_values)
+            )
             connection.execute(
                 """
                 INSERT INTO historical_player_match_stats (
@@ -576,32 +660,193 @@ def upsert_historical_match(
                 (
                     match_id_row["id"],
                     player_id,
-                    _stringify(player_payload.get("id")),
-                    _stringify(_get_nested(player_payload, "team", "side")),
-                    _coerce_int(player_payload.get("level")),
-                    _coerce_int(player_payload.get("kills")),
-                    _coerce_int(player_payload.get("deaths")),
-                    _coerce_int(player_payload.get("teamkills")),
-                    _coerce_int(player_payload.get("time_seconds")),
-                    _coerce_float(player_payload.get("kills_per_minute")),
-                    _coerce_float(player_payload.get("deaths_per_minute")),
-                    _coerce_float(player_payload.get("kill_death_ratio")),
-                    _coerce_int(player_payload.get("combat")),
-                    _coerce_int(player_payload.get("offense")),
-                    _coerce_int(player_payload.get("defense")),
-                    _coerce_int(player_payload.get("support")),
+                    incoming_stat_values["match_player_ref"],
+                    incoming_stat_values["team_side"],
+                    incoming_stat_values["level"],
+                    incoming_stat_values["kills"],
+                    incoming_stat_values["deaths"],
+                    incoming_stat_values["teamkills"],
+                    incoming_stat_values["time_seconds"],
+                    incoming_stat_values["kills_per_minute"],
+                    incoming_stat_values["deaths_per_minute"],
+                    incoming_stat_values["kill_death_ratio"],
+                    incoming_stat_values["combat"],
+                    incoming_stat_values["offense"],
+                    incoming_stat_values["defense"],
+                    incoming_stat_values["support"],
                 ),
             )
             if stat_exists is None:
                 player_rows_inserted += 1
-            else:
+            elif stat_changed:
                 player_rows_updated += 1
 
     return {
         "matches_inserted": 0 if match_exists else 1,
-        "matches_updated": 1 if match_exists else 0,
+        "matches_updated": 1 if match_changed else 0,
         "player_rows_inserted": player_rows_inserted,
         "player_rows_updated": player_rows_updated,
+    }
+
+
+def persist_minimal_historical_match_detail_failure(
+    *,
+    server_slug: str,
+    match_summary: Mapping[str, object],
+    error_message: str,
+    db_path: Path | None = None,
+) -> dict[str, int]:
+    """Persist a traceable summary-only match when detail fetch fails before full upsert."""
+    resolved_path = ensure_historical_storage(db_path=db_path)
+    match_external_id = _stringify(match_summary.get("id"))
+    if not match_external_id:
+        return {
+            "matches_inserted": 0,
+            "matches_updated": 0,
+            "player_rows_inserted": 0,
+            "player_rows_updated": 0,
+        }
+
+    with _connect_writer(resolved_path) as connection:
+        server_row = _resolve_historical_server(connection, server_slug)
+        map_id = _upsert_historical_map(connection, match_summary)
+        match_row = connection.execute(
+            """
+            SELECT
+                id,
+                historical_map_id,
+                created_at_source,
+                started_at,
+                ended_at,
+                map_name,
+                map_pretty_name,
+                game_mode,
+                image_name,
+                allied_score,
+                axis_score,
+                raw_payload_ref,
+                detail_status
+            FROM historical_matches
+            WHERE historical_server_id = ? AND external_match_id = ?
+            """,
+            (server_row["id"], match_external_id),
+        ).fetchone()
+        match_exists = match_row is not None
+        raw_payload_ref = f"{server_row['scoreboard_base_url']}/games/{match_external_id}"
+        incoming_match_values = {
+            "historical_map_id": map_id,
+            "created_at_source": _normalize_timestamp(match_summary.get("creation_time")),
+            "started_at": _normalize_timestamp(match_summary.get("start")),
+            "ended_at": _normalize_timestamp(match_summary.get("end")),
+            "map_name": _extract_map_name(match_summary),
+            "map_pretty_name": _extract_map_pretty_name(match_summary),
+            "game_mode": _extract_map_game_mode(match_summary),
+            "image_name": _extract_map_image_name(match_summary),
+            "allied_score": _coerce_int(_get_nested(match_summary, "result", "allied")),
+            "axis_score": _coerce_int(_get_nested(match_summary, "result", "axis")),
+            "raw_payload_ref": raw_payload_ref,
+        }
+        effective_match_values = (
+            {
+                key: (
+                    incoming_value
+                    if incoming_value is not None
+                    else match_row[key]
+                )
+                for key, incoming_value in incoming_match_values.items()
+            }
+            if match_row is not None
+            else incoming_match_values
+        )
+        match_changed = bool(
+            match_row is not None
+            and match_row["detail_status"] != "complete"
+            and _row_values_changed(match_row, effective_match_values)
+        )
+
+        connection.execute(
+            """
+            INSERT INTO historical_matches (
+                historical_server_id,
+                external_match_id,
+                historical_map_id,
+                created_at_source,
+                started_at,
+                ended_at,
+                map_name,
+                map_pretty_name,
+                game_mode,
+                image_name,
+                allied_score,
+                axis_score,
+                last_seen_at,
+                raw_payload_ref,
+                detail_status,
+                detail_quality_reason,
+                detail_last_attempt_at,
+                detail_last_error,
+                detail_retry_count
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'failed', 'provider-detail-fetch-failed', ?, ?, 1)
+            ON CONFLICT(historical_server_id, external_match_id) DO UPDATE SET
+                historical_map_id = COALESCE(excluded.historical_map_id, historical_matches.historical_map_id),
+                created_at_source = COALESCE(excluded.created_at_source, historical_matches.created_at_source),
+                started_at = COALESCE(excluded.started_at, historical_matches.started_at),
+                ended_at = COALESCE(excluded.ended_at, historical_matches.ended_at),
+                map_name = COALESCE(excluded.map_name, historical_matches.map_name),
+                map_pretty_name = COALESCE(excluded.map_pretty_name, historical_matches.map_pretty_name),
+                game_mode = COALESCE(excluded.game_mode, historical_matches.game_mode),
+                image_name = COALESCE(excluded.image_name, historical_matches.image_name),
+                allied_score = COALESCE(excluded.allied_score, historical_matches.allied_score),
+                axis_score = COALESCE(excluded.axis_score, historical_matches.axis_score),
+                last_seen_at = excluded.last_seen_at,
+                raw_payload_ref = COALESCE(historical_matches.raw_payload_ref, excluded.raw_payload_ref),
+                detail_status = CASE
+                    WHEN historical_matches.detail_status = 'complete' THEN historical_matches.detail_status
+                    ELSE excluded.detail_status
+                END,
+                detail_quality_reason = CASE
+                    WHEN historical_matches.detail_status = 'complete' THEN historical_matches.detail_quality_reason
+                    ELSE excluded.detail_quality_reason
+                END,
+                detail_last_attempt_at = CASE
+                    WHEN historical_matches.detail_status = 'complete' THEN historical_matches.detail_last_attempt_at
+                    ELSE excluded.detail_last_attempt_at
+                END,
+                detail_last_error = CASE
+                    WHEN historical_matches.detail_status = 'complete' THEN historical_matches.detail_last_error
+                    ELSE excluded.detail_last_error
+                END,
+                detail_retry_count = CASE
+                    WHEN historical_matches.detail_status = 'complete' THEN historical_matches.detail_retry_count
+                    ELSE historical_matches.detail_retry_count + 1
+                END,
+                updated_at = CURRENT_TIMESTAMP
+            """,
+            (
+                server_row["id"],
+                match_external_id,
+                incoming_match_values["historical_map_id"],
+                incoming_match_values["created_at_source"],
+                incoming_match_values["started_at"],
+                incoming_match_values["ended_at"],
+                incoming_match_values["map_name"],
+                incoming_match_values["map_pretty_name"],
+                incoming_match_values["game_mode"],
+                incoming_match_values["image_name"],
+                incoming_match_values["allied_score"],
+                incoming_match_values["axis_score"],
+                _utc_now_iso(),
+                incoming_match_values["raw_payload_ref"],
+                _utc_now_iso(),
+                error_message[:1000],
+            ),
+        )
+
+    return {
+        "matches_inserted": 0 if match_exists else 1,
+        "matches_updated": 1 if match_changed else 0,
+        "player_rows_inserted": 0,
+        "player_rows_updated": 0,
     }
 
 
@@ -639,6 +884,144 @@ def get_refresh_cutoff_for_server(
 
     cutoff = _parse_timestamp(latest_seen_at) - timedelta(hours=resolved_overlap_hours)
     return cutoff.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+def list_recent_historical_repair_candidates(
+    *,
+    server_slug: str | None = None,
+    limit: int = 100,
+    lookback_days: int | None = None,
+    min_duration_seconds: int | None = None,
+    max_duration_seconds: int | None = None,
+    db_path: Path | None = None,
+) -> list[dict[str, object]]:
+    """Return recent matches whose persisted detail should be retried."""
+    resolved_path = _resolve_existing_db_path(db_path)
+    if resolved_path is None:
+        return []
+
+    resolved_lookback_days = lookback_days or get_historical_repair_lookback_days()
+    min_duration = (
+        get_historical_repair_min_duration_seconds()
+        if min_duration_seconds is None
+        else min_duration_seconds
+    )
+    max_duration = (
+        get_historical_repair_max_duration_seconds()
+        if max_duration_seconds is None
+        else max_duration_seconds
+    )
+    lookback_start = (
+        datetime.now(timezone.utc) - timedelta(days=resolved_lookback_days)
+    ).isoformat().replace("+00:00", "Z")
+
+    where_clauses = [
+        "COALESCE(historical_matches.ended_at, historical_matches.started_at, historical_matches.created_at_source) >= ?",
+        "("
+        "historical_matches.detail_status <> 'complete' "
+        "OR historical_matches.ended_at IS NULL "
+        "OR historical_matches.started_at IS NULL "
+        "OR historical_matches.started_at >= historical_matches.ended_at "
+        "OR (historical_matches.axis_score IS NULL AND historical_matches.allied_score IS NULL) "
+        "OR (historical_matches.ended_at IS NOT NULL AND COALESCE(player_counts.player_count, 0) = 0) "
+        "OR (historical_matches.started_at IS NOT NULL AND historical_matches.ended_at IS NOT NULL "
+        "AND EXTRACT(EPOCH FROM (historical_matches.ended_at - historical_matches.started_at)) < ?) "
+        "OR (historical_matches.started_at IS NOT NULL AND historical_matches.ended_at IS NOT NULL "
+        "AND EXTRACT(EPOCH FROM (historical_matches.ended_at - historical_matches.started_at)) > ?)"
+        ")",
+    ]
+    params: list[object] = [lookback_start, min_duration, max_duration]
+    if server_slug and not _is_all_servers_selector(server_slug):
+        where_clauses.append("historical_servers.slug = ?")
+        params.append(server_slug)
+    params.append(limit)
+
+    with _connect_readonly(resolved_path) as connection:
+        rows = connection.execute(
+            f"""
+            WITH player_counts AS (
+                SELECT historical_match_id, COUNT(*) AS player_count
+                FROM historical_player_match_stats
+                GROUP BY historical_match_id
+            )
+            SELECT
+                historical_servers.slug AS server_slug,
+                historical_servers.scoreboard_base_url,
+                historical_matches.external_match_id,
+                historical_matches.started_at,
+                historical_matches.ended_at,
+                historical_matches.allied_score,
+                historical_matches.axis_score,
+                COALESCE(player_counts.player_count, 0) AS player_count,
+                historical_matches.detail_status,
+                historical_matches.detail_quality_reason,
+                historical_matches.detail_retry_count
+            FROM historical_matches
+            INNER JOIN historical_servers
+                ON historical_servers.id = historical_matches.historical_server_id
+            LEFT JOIN player_counts
+                ON player_counts.historical_match_id = historical_matches.id
+            WHERE {" AND ".join(where_clauses)}
+            ORDER BY
+                COALESCE(
+                    historical_matches.detail_last_attempt_at,
+                    historical_matches.updated_at,
+                    historical_matches.created_at
+                ) ASC,
+                COALESCE(historical_matches.ended_at, historical_matches.started_at) DESC
+            LIMIT ?
+            """,
+            params,
+        ).fetchall()
+
+    return [
+        {
+            "server_slug": row["server_slug"],
+            "scoreboard_base_url": row["scoreboard_base_url"],
+            "external_match_id": row["external_match_id"],
+            "started_at": row["started_at"],
+            "ended_at": row["ended_at"],
+            "allied_score": _coerce_int(row["allied_score"]),
+            "axis_score": _coerce_int(row["axis_score"]),
+            "player_count": int(row["player_count"] or 0),
+            "detail_status": row["detail_status"],
+            "detail_quality_reason": row["detail_quality_reason"],
+            "detail_retry_count": int(row["detail_retry_count"] or 0),
+        }
+        for row in rows
+    ]
+
+
+def mark_historical_match_detail_repair_failed(
+    *,
+    server_slug: str,
+    external_match_id: str,
+    error_message: str,
+    db_path: Path | None = None,
+) -> None:
+    """Record a temporary detail repair failure without failing the pipeline."""
+    resolved_path = ensure_historical_storage(db_path=db_path)
+    with _connect_writer(resolved_path) as connection:
+        server_row = _resolve_historical_server(connection, server_slug)
+        connection.execute(
+            """
+            UPDATE historical_matches
+            SET detail_status = 'failed',
+                detail_quality_reason = 'provider-detail-fetch-failed',
+                detail_last_attempt_at = ?,
+                detail_last_error = ?,
+                detail_retry_count = detail_retry_count + 1,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE historical_server_id = ?
+              AND external_match_id = ?
+            """,
+            (
+                _utc_now_iso(),
+                error_message[:1000],
+                server_row["id"],
+                external_match_id,
+            ),
+        )
 
 
 def list_recent_historical_matches(
@@ -2363,6 +2746,68 @@ def _coerce_float(value: object) -> float | None:
         return float(value)
     except (TypeError, ValueError):
         return None
+
+
+def _row_values_changed(row: Mapping[str, object], incoming_values: Mapping[str, object]) -> bool:
+    for key, incoming_value in incoming_values.items():
+        current_value = row[key]
+        if isinstance(incoming_value, float) or isinstance(current_value, float):
+            if _coerce_float(current_value) != _coerce_float(incoming_value):
+                return True
+            continue
+        if _comparable_storage_value(current_value) != _comparable_storage_value(incoming_value):
+            return True
+    return False
+
+
+def _comparable_storage_value(value: object) -> str | None:
+    if isinstance(value, datetime):
+        return value.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
+    text = _stringify(value)
+    if not text:
+        return None
+    try:
+        return _parse_timestamp(text).astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
+    except ValueError:
+        return text
+
+
+def _classify_match_detail_quality(
+    match_payload: Mapping[str, object],
+    player_payloads: list[Mapping[str, object]],
+) -> tuple[str, str | None]:
+    started_at = _normalize_timestamp(match_payload.get("start"))
+    ended_at = _normalize_timestamp(match_payload.get("end"))
+    allied_score = _coerce_int(_get_nested(match_payload, "result", "allied"))
+    axis_score = _coerce_int(_get_nested(match_payload, "result", "axis"))
+    reasons: list[str] = []
+
+    if not started_at:
+        reasons.append("missing-started-at")
+    if not ended_at:
+        reasons.append("missing-ended-at")
+    if started_at and ended_at:
+        try:
+            duration_seconds = int(
+                (_parse_timestamp(ended_at) - _parse_timestamp(started_at)).total_seconds()
+            )
+        except ValueError:
+            reasons.append("invalid-duration")
+        else:
+            if duration_seconds <= 0:
+                reasons.append("non-positive-duration")
+            if duration_seconds < get_historical_repair_min_duration_seconds():
+                reasons.append("duration-too-short")
+            if duration_seconds > get_historical_repair_max_duration_seconds():
+                reasons.append("duration-too-long")
+    if allied_score is None and axis_score is None:
+        reasons.append("missing-scores")
+    if ended_at and not player_payloads:
+        reasons.append("closed-match-missing-player-detail")
+
+    if reasons:
+        return "partial", ",".join(reasons)
+    return "complete", None
 
 
 def _stringify(value: object) -> str | None:

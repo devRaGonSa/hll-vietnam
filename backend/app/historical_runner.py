@@ -13,17 +13,23 @@ from .config import (
     get_historical_full_snapshot_every_runs,
     get_historical_elo_mmr_min_new_samples,
     get_historical_elo_mmr_rebuild_interval_minutes,
+    get_historical_heavy_rebuild_min_player_row_changes,
+    get_historical_recent_sweep_enabled,
+    get_historical_recent_sweep_page_size,
+    get_historical_recent_sweep_pages,
     get_historical_refresh_interval_seconds,
     get_historical_refresh_max_retries,
     get_historical_refresh_retry_delay_seconds,
     get_historical_data_source_kind,
+    get_historical_known_rcon_degraded_targets,
 )
 from .elo_mmr_engine import rebuild_elo_mmr_models
 from .elo_mmr_storage import get_latest_elo_mmr_generated_at
-from .historical_ingestion import run_incremental_refresh
+from .historical_ingestion import run_incremental_refresh, run_recent_repair_sweep
 from .historical_storage import list_historical_coverage_report
 from .historical_snapshots import (
     generate_and_persist_historical_snapshots,
+    generate_and_persist_light_historical_snapshots,
     generate_and_persist_priority_historical_snapshots,
 )
 from .rcon_historical_storage import count_rcon_historical_samples_since
@@ -69,6 +75,8 @@ def run_periodic_historical_refresh(
                 "retry_delay_seconds": retry_delay_seconds,
                 "server_scope": _describe_refresh_scope(server_slug),
                 "snapshot_scope": _describe_snapshot_scope(server_slug),
+                "operational_degraded_rcon_targets": _describe_degraded_rcon_scope(server_slug),
+                "degraded_target_policy": "rcon-primary-public-scoreboard-fallback-operable",
             },
             indent=2,
             default=_json_default,
@@ -219,14 +227,14 @@ def run_manual_historical_phase(
     ) as writer_lock_metadata:
         return {
             **_run_manual_historical_phase_unlocked(
-            phase=normalized_phase,
-            execution_mode=execution_mode,
-            manual_full_elo_rebuild=manual_full_elo_rebuild,
-            server_slug=server_slug,
-            max_pages=max_pages,
-            page_size=page_size,
-            run_number=run_number,
-            progress_callback=progress_callback,
+                phase=normalized_phase,
+                execution_mode=execution_mode,
+                manual_full_elo_rebuild=manual_full_elo_rebuild,
+                server_slug=server_slug,
+                max_pages=max_pages,
+                page_size=page_size,
+                run_number=run_number,
+                progress_callback=progress_callback,
             ),
             "writer_lock_metadata": writer_lock_metadata,
         }
@@ -251,6 +259,8 @@ def _run_manual_historical_phase_unlocked(
             "phase": phase,
             "run_number": run_number,
             "server_scope": _describe_refresh_scope(server_slug),
+            "operational_degraded_rcon_targets": _describe_degraded_rcon_scope(server_slug),
+            "degraded_target_policy": "rcon-primary-public-scoreboard-fallback-operable",
             "max_pages": max_pages,
             "page_size": page_size,
             "bounded_debug": any(value is not None for value in (server_slug, max_pages, page_size)),
@@ -353,6 +363,7 @@ def _run_manual_historical_phase_unlocked(
             "classic_fallback_used": should_run_classic_fallback,
             "classic_fallback_reason": classic_fallback_reason,
             "rcon_capture_status": rcon_capture_result.get("status"),
+            "operational_degraded_rcon_targets": _describe_degraded_rcon_scope(server_slug),
         },
     )
     if should_run_classic_fallback:
@@ -362,37 +373,63 @@ def _run_manual_historical_phase_unlocked(
             page_size=page_size,
             progress_callback=progress_callback,
         )
-        snapshot_result = generate_historical_snapshots(
+        recent_sweep_result = _run_recent_repair_sweep(
+            server_slug=server_slug,
+            progress_callback=progress_callback,
+        )
+        snapshot_result = _generate_snapshots_after_ingestion(
             server_slug=server_slug,
             run_number=run_number,
+            refresh_result=refresh_result,
+            recent_sweep_result=recent_sweep_result,
         )
-        elo_mmr_result = _resolve_elo_mmr_follow_up(
+        elo_mmr_result = _resolve_heavy_postprocess_follow_up(
             execution_mode=execution_mode,
             manual_full_elo_rebuild=manual_full_elo_rebuild,
             rcon_capture_result=rcon_capture_result,
+            refresh_result=refresh_result,
+            recent_sweep_result=recent_sweep_result,
+            run_number=run_number,
             default_skip_reason="manual-full-cycle-defaults-to-no-elo-rebuild",
             auto_skip_reason="rcon-primary-cycle-had-classic-fallback-but-auto-elo-policy-not-due",
         )
     else:
+        recent_sweep_result = _run_recent_repair_sweep(
+            server_slug=server_slug,
+            progress_callback=progress_callback,
+        )
         should_generate_snapshots = _rcon_capture_has_new_useful_data(rcon_capture_result)
         refresh_result = {
             "status": "skipped",
             "reason": "rcon-primary-cycle-no-classic-fallback-needed",
         }
-        if should_generate_snapshots:
-            snapshot_result = generate_historical_snapshots(
-                server_slug=server_slug,
-                run_number=run_number,
+        recent_sweep_has_changes = _ingestion_result_has_changes(recent_sweep_result)
+        if should_generate_snapshots or recent_sweep_has_changes:
+            snapshot_result = (
+                _generate_snapshots_after_ingestion(
+                    server_slug=server_slug,
+                    run_number=run_number,
+                    refresh_result=refresh_result,
+                    recent_sweep_result=recent_sweep_result,
+                )
+                if recent_sweep_has_changes
+                else generate_historical_snapshots(
+                    server_slug=server_slug,
+                    run_number=run_number,
+                )
             )
             snapshot_result = {
                 **snapshot_result,
                 "generation_policy": "rcon-primary-useful-cycle",
-                "reason": "rcon-primary-cycle-produced-new-useful-coverage",
+                "reason": "rcon-primary-or-recent-sweep-produced-useful-coverage",
             }
-            elo_mmr_result = _resolve_elo_mmr_follow_up(
+            elo_mmr_result = _resolve_heavy_postprocess_follow_up(
                 execution_mode=execution_mode,
                 manual_full_elo_rebuild=manual_full_elo_rebuild,
                 rcon_capture_result=rcon_capture_result,
+                refresh_result=refresh_result,
+                recent_sweep_result=recent_sweep_result,
+                run_number=run_number,
                 default_skip_reason="manual-full-cycle-defaults-to-no-elo-rebuild",
                 auto_skip_reason="rcon-primary-useful-cycle-elo-rebuild-throttled",
             )
@@ -418,6 +455,7 @@ def _run_manual_historical_phase_unlocked(
         "classic_fallback_used": should_run_classic_fallback,
         "classic_fallback_reason": classic_fallback_reason,
         "refresh_result": refresh_result,
+        "recent_sweep_result": recent_sweep_result,
         "snapshot_result": snapshot_result,
         "elo_mmr_result": elo_mmr_result,
     }
@@ -452,6 +490,84 @@ def _run_classic_refresh(
         page_size=page_size,
         rebuild_snapshots=False,
         progress_callback=progress_callback,
+    )
+
+
+def _run_recent_repair_sweep(
+    *,
+    server_slug: str | None,
+    progress_callback: Any = None,
+) -> dict[str, Any]:
+    if not get_historical_recent_sweep_enabled():
+        return _build_phase_skip_result("recent-sweep-disabled")
+    return run_recent_repair_sweep(
+        server_slug=server_slug,
+        pages=get_historical_recent_sweep_pages(),
+        page_size=get_historical_recent_sweep_page_size(),
+        rebuild_snapshots=False,
+        progress_callback=progress_callback,
+    )
+
+
+def _generate_snapshots_after_ingestion(
+    *,
+    server_slug: str | None,
+    run_number: int,
+    refresh_result: dict[str, Any],
+    recent_sweep_result: dict[str, Any],
+) -> dict[str, Any]:
+    affected_servers = _collect_affected_servers_from_ingestion(
+        refresh_result,
+        recent_sweep_result,
+    )
+    if affected_servers and server_slug is None:
+        result = generate_and_persist_light_historical_snapshots(
+            server_keys=affected_servers,
+            include_all_servers=True,
+        )
+        return {
+            **result,
+            "status": "ok",
+            "run_number": run_number,
+            "affected_servers": affected_servers,
+        }
+    if affected_servers or server_slug:
+        result = generate_and_persist_light_historical_snapshots(
+            server_keys=affected_servers or ([server_slug] if server_slug else []),
+            include_all_servers=True,
+        )
+        return {
+            **result,
+            "run_number": run_number,
+            "affected_servers": affected_servers or ([server_slug] if server_slug else []),
+        }
+    return {
+        "status": "skipped",
+        "reason": "no-recent-ingestion-changes",
+        "generation_policy": "selective-postprocess-noop",
+    }
+
+
+def _collect_affected_servers_from_ingestion(*results: dict[str, Any]) -> list[str]:
+    affected: set[str] = set()
+    for result in results:
+        for server_slug in result.get("affected_servers") or []:
+            affected.add(str(server_slug))
+    return sorted(affected)
+
+
+def _ingestion_result_has_changes(result: dict[str, Any]) -> bool:
+    totals = result.get("totals")
+    if not isinstance(totals, dict):
+        return False
+    return any(
+        int(totals.get(key) or 0) > 0
+        for key in (
+            "matches_inserted",
+            "matches_updated",
+            "player_rows_inserted",
+            "player_rows_updated",
+        )
     )
 
 
@@ -503,6 +619,107 @@ def _resolve_elo_mmr_follow_up(
         requested_explicitly=False,
         **elo_policy,
     )
+
+
+def _resolve_heavy_postprocess_follow_up(
+    *,
+    execution_mode: str,
+    manual_full_elo_rebuild: bool,
+    rcon_capture_result: dict[str, Any],
+    refresh_result: dict[str, Any],
+    recent_sweep_result: dict[str, Any],
+    run_number: int,
+    default_skip_reason: str,
+    auto_skip_reason: str,
+) -> dict[str, Any]:
+    if execution_mode == "manual" and manual_full_elo_rebuild:
+        return _resolve_elo_mmr_follow_up(
+            execution_mode=execution_mode,
+            manual_full_elo_rebuild=manual_full_elo_rebuild,
+            rcon_capture_result=rcon_capture_result,
+            default_skip_reason=default_skip_reason,
+            auto_skip_reason=auto_skip_reason,
+        )
+
+    policy = _build_heavy_postprocess_policy(
+        refresh_result=refresh_result,
+        recent_sweep_result=recent_sweep_result,
+        rcon_capture_result=rcon_capture_result,
+        run_number=run_number,
+    )
+    if not bool(policy["due"]):
+        policy_details = dict(policy)
+        reason = str(policy_details.pop("reason"))
+        return _build_elo_mmr_follow_up_result(
+            workload="skipped",
+            reason=reason,
+            policy_mode="selective-heavy-postprocess",
+            requested_explicitly=False,
+            **policy_details,
+        )
+    return {
+        **rebuild_elo_mmr_models(),
+        "workload": "full",
+        "policy_mode": "selective-heavy-postprocess",
+        "requested_explicitly": manual_full_elo_rebuild,
+        "generation_policy": "selective-heavy-postprocess-due",
+        **policy,
+    }
+
+
+def _build_heavy_postprocess_policy(
+    *,
+    refresh_result: dict[str, Any],
+    recent_sweep_result: dict[str, Any],
+    rcon_capture_result: dict[str, Any],
+    run_number: int,
+) -> dict[str, Any]:
+    totals = _sum_ingestion_totals(refresh_result, recent_sweep_result)
+    player_row_changes = totals["player_rows_inserted"] + totals["player_rows_updated"]
+    player_row_threshold = get_historical_heavy_rebuild_min_player_row_changes()
+    periodic_due = run_number % get_historical_full_snapshot_every_runs() == 0
+    due = (
+        totals["matches_inserted"] > 0
+        or totals["matches_updated"] > 0
+        or player_row_changes >= player_row_threshold
+        or periodic_due
+    )
+    reason = "selective-heavy-postprocess-not-due"
+    if totals["matches_inserted"] > 0:
+        reason = "new-matches-inserted"
+    elif totals["matches_updated"] > 0:
+        reason = "closed-match-material-fields-updated"
+    elif player_row_changes >= player_row_threshold:
+        reason = "player-row-change-threshold-met"
+    elif periodic_due:
+        reason = "periodic-heavy-postprocess-due"
+    elif _rcon_capture_has_new_useful_data(rcon_capture_result):
+        reason = "rcon-primary-useful-cycle-heavy-throttled"
+    return {
+        "policy": "material-match-changes-or-player-row-threshold-or-periodic",
+        "due": due,
+        "reason": reason,
+        "ingestion_totals": totals,
+        "player_row_changes": player_row_changes,
+        "player_row_threshold": player_row_threshold,
+        "periodic_due": periodic_due,
+    }
+
+
+def _sum_ingestion_totals(*results: dict[str, Any]) -> dict[str, int]:
+    totals = {
+        "matches_inserted": 0,
+        "matches_updated": 0,
+        "player_rows_inserted": 0,
+        "player_rows_updated": 0,
+    }
+    for result in results:
+        result_totals = result.get("totals")
+        if not isinstance(result_totals, dict):
+            continue
+        for key in totals:
+            totals[key] += int(result_totals.get(key) or 0)
+    return totals
 
 
 def _build_elo_mmr_follow_up_result(
@@ -565,6 +782,22 @@ def _describe_snapshot_scope(server_slug: str | None) -> list[str]:
     if server_slug:
         return [server_slug, "all-servers"]
     return [*DEFAULT_HISTORICAL_SERVER_SCOPE, "all-servers"]
+
+
+def _describe_degraded_rcon_scope(server_slug: str | None) -> list[str]:
+    known = {
+        target.strip().lower(): target.strip()
+        for target in get_historical_known_rcon_degraded_targets()
+        if target.strip()
+    }
+    if server_slug:
+        normalized = server_slug.strip().lower()
+        return [known[normalized]] if normalized in known else []
+    return [
+        known[slug.lower()]
+        for slug in DEFAULT_HISTORICAL_SERVER_SCOPE
+        if slug.lower() in known
+    ]
 
 
 def _run_primary_rcon_capture() -> dict[str, Any]:

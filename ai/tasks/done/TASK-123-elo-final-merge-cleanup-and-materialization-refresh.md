@@ -185,3 +185,44 @@ Required follow-up before closing the task:
 - run the rebuild/materialization flow to successful completion in an environment where the current local SQLite dataset can finish the operation
 - re-run the HTTP validation after that successful rebuild/materialization
 - only then move this task to `ai/tasks/done`
+
+### 2026-04-15 administrative close
+
+Status: done.
+
+This task is closed administratively because the original blocking criteria are now covered by later branch work and current runtime validation.
+
+Original scope now covered:
+
+- The accidental runtime/data artifacts named by this task are no longer tracked and are not present on disk:
+  - `backend/backend/data/elo_mmr_task001_validation.sqlite3`
+  - `backend/backend/data/hll_vietnam_dev.sqlite3`
+  - `backend/data/hll_vietnam_dev.writer.lock`
+- Later Elo/MMR stabilization work made `app.elo_mmr_engine rebuild-full` complete against the real PostgreSQL dataset. TASK-147 documents final successful rebuild evidence with `phase-complete ratings-scoring` and `rebuild-terminal` reporting `status=ok`, `exit_code=0`.
+- The current runtime has live historical data, fresh historical snapshots/materializations, populated Elo/MMR persisted tables, and working Elo/MMR HTTP payloads.
+- Later daemon/runtime and writer-lock tasks validated that reactivating `historical-runner` and `rcon-historical-worker` does not empty the Elo/MMR tables.
+
+Administrative validation executed on 2026-04-15:
+
+- `git status --short`
+- `docker compose ps -a postgres backend historical-runner rcon-historical-worker`
+- `docker compose exec -T postgres psql -U hll_vietnam -d hll_vietnam -c "SELECT COUNT(*) AS historical_matches, MIN(ended_at) AS first_ended_at, MAX(ended_at) AS last_ended_at FROM historical_matches; SELECT COUNT(*) AS ratings_count FROM elo_mmr_player_ratings; SELECT COUNT(*) AS match_results_count FROM elo_mmr_match_results; SELECT COUNT(*) AS monthly_rankings_count FROM elo_mmr_monthly_rankings; SELECT COUNT(*) AS monthly_checkpoints_count FROM elo_mmr_monthly_checkpoints;"`
+- HTTP validation of:
+  - `/api/historical/elo-mmr/leaderboard?server=all-servers&limit=5`
+  - `/api/historical/elo-mmr/player?server=all-servers&player=steam:76561198071222648`
+- `docker compose exec -T postgres psql -U hll_vietnam -d hll_vietnam -c "SELECT scope_key, month_key, model_version, formula_version, contract_version, player_count, eligible_player_count, generated_at, updated_at FROM elo_mmr_monthly_checkpoints ORDER BY updated_at DESC LIMIT 5; SELECT scope_key, month_key, player_name, monthly_rank_score, current_mmr, valid_matches, eligible, updated_at FROM elo_mmr_monthly_rankings WHERE scope_key='all-servers' ORDER BY monthly_rank_score DESC LIMIT 5;"`
+- `docker compose exec -T postgres psql -U hll_vietnam -d hll_vietnam -c "SELECT COUNT(*) AS snapshot_payloads, MAX(generated_at) AS latest_generated_at, BOOL_OR(is_stale) AS any_stale FROM historical_snapshot_payloads;"`
+
+Observed close evidence:
+
+- `historical_matches = 9852`, with first `ended_at = 2024-05-17 20:48:40+00` and last `ended_at = 2026-04-14 21:36:54+00`.
+- `elo_mmr_player_ratings = 345150`.
+- `elo_mmr_match_results = 2161476`.
+- `elo_mmr_monthly_rankings = 558762`.
+- `elo_mmr_monthly_checkpoints = 58`.
+- `historical_snapshot_payloads = 44`, latest `generated_at = 2026-04-15 10:00:22.365224+00`, `any_stale = false`.
+- Elo/MMR leaderboard endpoint returned `status=ok`, `found=true`, 5 items, `generated_at = 2026-04-15T09:16:03.427309Z`, `month_key = 2026-04`.
+- Elo/MMR player endpoint returned `status=ok`, `found=true`, with a populated `profile`.
+- Latest checkpoint rows expose `model_version = elo-pdf-v3-monthly-practical`, `formula_version = elo-pdf-v3-monthly-rev4`, and `contract_version = elo-mmr-monthly-checkpoint-v4`.
+
+No source-code implementation was performed as part of this administrative close.

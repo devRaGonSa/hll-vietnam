@@ -35,6 +35,14 @@ DEFAULT_HISTORICAL_REFRESH_RETRY_DELAY_SECONDS = 30
 DEFAULT_HISTORICAL_FULL_SNAPSHOT_EVERY_RUNS = 4
 DEFAULT_HISTORICAL_ELO_MMR_REBUILD_INTERVAL_MINUTES = 180
 DEFAULT_HISTORICAL_ELO_MMR_MIN_NEW_SAMPLES = 12
+DEFAULT_HISTORICAL_RECENT_SWEEP_ENABLED = True
+DEFAULT_HISTORICAL_RECENT_SWEEP_PAGES = 5
+DEFAULT_HISTORICAL_RECENT_SWEEP_PAGE_SIZE = 10
+DEFAULT_HISTORICAL_KNOWN_RCON_DEGRADED_TARGETS = ("comunidad-hispana-03",)
+DEFAULT_HISTORICAL_REPAIR_LOOKBACK_DAYS = 14
+DEFAULT_HISTORICAL_REPAIR_MIN_DURATION_SECONDS = 600
+DEFAULT_HISTORICAL_REPAIR_MAX_DURATION_SECONDS = 10800
+DEFAULT_HISTORICAL_HEAVY_REBUILD_MIN_PLAYER_ROW_CHANGES = 250
 DEFAULT_HISTORICAL_WEEKLY_FALLBACK_MIN_MATCHES = 3
 DEFAULT_HISTORICAL_WEEKLY_FALLBACK_MAX_WEEKDAY = 2
 DEFAULT_PLAYER_EVENT_REFRESH_INTERVAL_SECONDS = 1800
@@ -487,6 +495,103 @@ def get_historical_elo_mmr_min_new_samples() -> int:
     if min_samples <= 0:
         raise ValueError("HLL_HISTORICAL_ELO_MMR_MIN_NEW_SAMPLES must be positive.")
     return min_samples
+
+
+def get_historical_recent_sweep_enabled() -> bool:
+    """Return whether the runner should always reread recent scoreboard pages."""
+    configured_value = os.getenv(
+        "HLL_HISTORICAL_RECENT_SWEEP_ENABLED",
+        str(DEFAULT_HISTORICAL_RECENT_SWEEP_ENABLED),
+    )
+    return configured_value.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def get_historical_recent_sweep_pages() -> int:
+    """Return how many recent scoreboard pages are reread per sweep."""
+    configured_value = os.getenv(
+        "HLL_HISTORICAL_RECENT_SWEEP_PAGES",
+        str(DEFAULT_HISTORICAL_RECENT_SWEEP_PAGES),
+    )
+    pages = int(configured_value)
+    if pages <= 0:
+        raise ValueError("HLL_HISTORICAL_RECENT_SWEEP_PAGES must be positive.")
+    return pages
+
+
+def get_historical_recent_sweep_page_size() -> int:
+    """Return the recent sweep page size."""
+    configured_value = os.getenv(
+        "HLL_HISTORICAL_RECENT_SWEEP_PAGE_SIZE",
+        str(DEFAULT_HISTORICAL_RECENT_SWEEP_PAGE_SIZE),
+    )
+    page_size = int(configured_value)
+    if page_size <= 0:
+        raise ValueError("HLL_HISTORICAL_RECENT_SWEEP_PAGE_SIZE must be positive.")
+    return page_size
+
+
+def get_historical_known_rcon_degraded_targets() -> tuple[str, ...]:
+    """Return RCON targets that are operationally expected to use scoreboard fallback."""
+    configured_value = os.getenv(
+        "HLL_HISTORICAL_KNOWN_RCON_DEGRADED_TARGETS",
+        ",".join(DEFAULT_HISTORICAL_KNOWN_RCON_DEGRADED_TARGETS),
+    )
+    targets = tuple(
+        target.strip()
+        for target in configured_value.split(",")
+        if target.strip()
+    )
+    return targets
+
+
+def get_historical_repair_lookback_days() -> int:
+    """Return how far back recent incomplete match repair should inspect."""
+    configured_value = os.getenv(
+        "HLL_HISTORICAL_REPAIR_LOOKBACK_DAYS",
+        str(DEFAULT_HISTORICAL_REPAIR_LOOKBACK_DAYS),
+    )
+    lookback_days = int(configured_value)
+    if lookback_days <= 0:
+        raise ValueError("HLL_HISTORICAL_REPAIR_LOOKBACK_DAYS must be positive.")
+    return lookback_days
+
+
+def get_historical_repair_min_duration_seconds() -> int:
+    """Return the suspiciously short match duration threshold."""
+    configured_value = os.getenv(
+        "HLL_HISTORICAL_REPAIR_MIN_DURATION_SECONDS",
+        str(DEFAULT_HISTORICAL_REPAIR_MIN_DURATION_SECONDS),
+    )
+    duration_seconds = int(configured_value)
+    if duration_seconds < 0:
+        raise ValueError("HLL_HISTORICAL_REPAIR_MIN_DURATION_SECONDS must be zero or positive.")
+    return duration_seconds
+
+
+def get_historical_repair_max_duration_seconds() -> int:
+    """Return the suspiciously long match duration threshold."""
+    configured_value = os.getenv(
+        "HLL_HISTORICAL_REPAIR_MAX_DURATION_SECONDS",
+        str(DEFAULT_HISTORICAL_REPAIR_MAX_DURATION_SECONDS),
+    )
+    duration_seconds = int(configured_value)
+    if duration_seconds <= 0:
+        raise ValueError("HLL_HISTORICAL_REPAIR_MAX_DURATION_SECONDS must be positive.")
+    return duration_seconds
+
+
+def get_historical_heavy_rebuild_min_player_row_changes() -> int:
+    """Return the player-row change threshold for automatic heavy rebuilds."""
+    configured_value = os.getenv(
+        "HLL_HISTORICAL_HEAVY_REBUILD_MIN_PLAYER_ROW_CHANGES",
+        str(DEFAULT_HISTORICAL_HEAVY_REBUILD_MIN_PLAYER_ROW_CHANGES),
+    )
+    row_count = int(configured_value)
+    if row_count < 0:
+        raise ValueError(
+            "HLL_HISTORICAL_HEAVY_REBUILD_MIN_PLAYER_ROW_CHANGES must be zero or positive."
+        )
+    return row_count
 
 
 def get_historical_weekly_fallback_min_matches() -> int:

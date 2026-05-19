@@ -362,6 +362,75 @@ def generate_and_persist_priority_historical_snapshots(
     }
 
 
+def generate_and_persist_light_historical_snapshots(
+    *,
+    server_keys: list[str],
+    include_all_servers: bool = True,
+    generated_at: datetime | None = None,
+    leaderboard_limit: int = DEFAULT_WEEKLY_LEADERBOARD_LIMIT,
+    recent_matches_limit: int = DEFAULT_RECENT_MATCHES_LIMIT,
+    db_path: Path | None = None,
+) -> dict[str, object]:
+    """Build and persist the lightweight snapshots affected by recent repairs."""
+    from .historical_snapshot_storage import persist_historical_snapshot_batch
+
+    generated_at_value = _as_utc(generated_at or datetime.now(timezone.utc))
+    target_keys = _dedupe_snapshot_keys(
+        [
+            *(server_key.strip() for server_key in server_keys if server_key.strip()),
+            *([ALL_SERVERS_SLUG] if include_all_servers else []),
+        ]
+    )
+    snapshots: list[dict[str, object]] = []
+    for server_key in target_keys:
+        snapshots.append(
+            _build_server_summary_snapshot(server_key, generated_at_value, db_path=db_path)
+        )
+        for metric in SNAPSHOT_LEADERBOARD_METRICS:
+            snapshots.append(
+                _build_weekly_leaderboard_snapshot(
+                    server_key,
+                    metric,
+                    generated_at_value,
+                    limit=leaderboard_limit,
+                    db_path=db_path,
+                )
+            )
+            snapshots.append(
+                _build_monthly_leaderboard_snapshot(
+                    server_key,
+                    metric,
+                    generated_at_value,
+                    limit=leaderboard_limit,
+                    db_path=db_path,
+                )
+            )
+        snapshots.append(
+            _build_recent_matches_snapshot(
+                server_key,
+                generated_at_value,
+                limit=recent_matches_limit,
+                db_path=db_path,
+            )
+        )
+
+    persisted_records = persist_historical_snapshot_batch(snapshots, db_path=db_path)
+    snapshots_by_server: dict[str, int] = {}
+    for record in persisted_records:
+        snapshots_by_server.setdefault(record.server_key, 0)
+        snapshots_by_server[record.server_key] += 1
+
+    return {
+        "generated_at": _to_iso(generated_at_value),
+        "snapshot_policy": "lightweight-recent-repair",
+        "snapshot_storage_backend": "postgresql-jsonb-materialization",
+        "server_keys": target_keys,
+        "snapshot_count": len(persisted_records),
+        "servers_processed": len(snapshots_by_server),
+        "snapshots_by_server": snapshots_by_server,
+    }
+
+
 def _build_server_summary_snapshot(
     server_key: str,
     generated_at: datetime,
@@ -654,6 +723,17 @@ def _resolve_snapshot_target_keys(
         return [ALL_SERVERS_SLUG]
 
     return [normalized_server_key, ALL_SERVERS_SLUG]
+
+
+def _dedupe_snapshot_keys(server_keys: list[str]) -> list[str]:
+    result: list[str] = []
+    seen: set[str] = set()
+    for server_key in server_keys:
+        if server_key in seen:
+            continue
+        seen.add(server_key)
+        result.append(server_key)
+    return result
 
 
 def _list_player_event_snapshot_items(

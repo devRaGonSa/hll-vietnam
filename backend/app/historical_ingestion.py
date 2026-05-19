@@ -8,13 +8,17 @@ import threading
 import time
 from contextlib import contextmanager
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
+from enum import Enum
 from typing import Callable, Iterable
 
 from .config import (
     get_historical_crcon_detail_workers,
     get_historical_crcon_page_size,
     get_historical_data_source_kind,
+    get_historical_known_rcon_degraded_targets,
+    get_historical_recent_sweep_page_size,
+    get_historical_recent_sweep_pages,
     get_historical_refresh_overlap_hours,
 )
 from .data_sources import (
@@ -33,7 +37,10 @@ from .historical_storage import (
     get_refresh_cutoff_for_server,
     initialize_historical_storage,
     list_historical_coverage_report,
+    list_recent_historical_repair_candidates,
     list_historical_servers,
+    mark_historical_match_detail_repair_failed,
+    persist_minimal_historical_match_detail_failure,
     mark_backfill_progress_page_completed,
     mark_backfill_progress_started,
     start_ingestion_run,
@@ -127,6 +134,38 @@ def run_incremental_refresh(
         )
 
 
+def run_recent_repair_sweep(
+    *,
+    server_slug: str | None = None,
+    pages: int | None = None,
+    page_size: int | None = None,
+    detail_workers: int | None = None,
+    rebuild_snapshots: bool = False,
+    progress_callback: ProgressCallback | None = None,
+) -> dict[str, object]:
+    """Reread recent scoreboard pages independently from historical checkpoints."""
+    resolved_pages = pages or get_historical_recent_sweep_pages()
+    if resolved_pages <= 0:
+        raise ValueError("recent sweep pages must be positive.")
+    with backend_writer_lock(
+        holder=build_writer_lock_holder(
+            f"app.historical_ingestion recent-sweep:{server_slug or 'all-servers'}"
+        )
+    ):
+        return _run_ingestion(
+            mode="recent-sweep",
+            server_slug=server_slug,
+            max_pages=resolved_pages,
+            page_size=page_size or get_historical_recent_sweep_page_size(),
+            start_page=1,
+            detail_workers=detail_workers,
+            overlap_hours=None,
+            incremental=False,
+            rebuild_snapshots=rebuild_snapshots,
+            progress_callback=progress_callback,
+        )
+
+
 def _run_ingestion(
     *,
     mode: str,
@@ -156,6 +195,9 @@ def _run_ingestion(
             "start_page": start_page,
             "detail_workers": detail_workers or get_historical_crcon_detail_workers(),
             "overlap_hours": overlap_hours if incremental else None,
+            "operational_degraded_rcon_targets": list(
+                get_historical_known_rcon_degraded_targets()
+            ),
         },
     )
     _emit_progress(
@@ -214,6 +256,9 @@ def _run_ingestion(
             "selected_source": source_policy.get("selected_source"),
             "fallback_used": bool(source_policy.get("fallback_used")),
             "fallback_reason": source_policy.get("fallback_reason"),
+            "operational_degraded_rcon_targets": source_policy.get(
+                "operational_degraded_targets"
+            ),
         },
     )
 
@@ -240,22 +285,66 @@ def _run_ingestion(
                     server_slug=str(server["slug"]),
                     mode=mode,
                 )
-                server_stats = _ingest_server(
-                    server=server,
-                    server_index=server_index,
-                    server_count=len(selected_servers),
-                    mode=mode,
-                    run_id=run_id,
-                    stats=stats,
-                    data_source=fallback_data_source,
-                    max_pages=max_pages,
-                    page_size=page_size,
-                    start_page=resolved_start_page,
-                    detail_workers=detail_workers,
-                    cutoff=cutoff,
-                    progress_callback=progress_callback,
-                    source_policy=source_policy,
-                )
+                try:
+                    server_stats = _ingest_server(
+                        server=server,
+                        server_index=server_index,
+                        server_count=len(selected_servers),
+                        mode=mode,
+                        run_id=run_id,
+                        stats=stats,
+                        data_source=fallback_data_source,
+                        max_pages=max_pages,
+                        page_size=page_size,
+                        start_page=resolved_start_page,
+                        detail_workers=detail_workers,
+                        cutoff=cutoff,
+                        progress_callback=progress_callback,
+                        source_policy=source_policy,
+                    )
+                except Exception as exc:
+                    if mode == "bootstrap":
+                        raise
+                    server_stats = _build_failed_server_result(
+                        server=server,
+                        source_provider=fallback_data_source.source_kind,
+                        start_page=resolved_start_page,
+                        cutoff=cutoff,
+                        error=exc,
+                    )
+                    processed_servers.append(server_stats)
+                    finalize_ingestion_run(
+                        run_id,
+                        status="failed",
+                        pages_processed=0,
+                        matches_seen=0,
+                        matches_inserted=0,
+                        matches_updated=0,
+                        player_rows_inserted=0,
+                        player_rows_updated=0,
+                        notes=str(exc),
+                    )
+                    finalize_backfill_progress(
+                        server_slug=str(server["slug"]),
+                        mode=mode,
+                        run_id=run_id,
+                        status="failed",
+                        error_message=str(exc),
+                    )
+                    active_runs.pop(str(server["slug"]), None)
+                    _emit_progress(
+                        progress_callback,
+                        {
+                            "event": "historical-ingestion-server-failed",
+                            "mode": mode,
+                            "server_slug": server["slug"],
+                            "server_index": server_index,
+                            "server_count": len(selected_servers),
+                            "message": str(exc),
+                            "next_step": "continuing-with-next-server",
+                        },
+                    )
+                    continue
                 processed_servers.append(server_stats)
                 finalize_ingestion_run(
                     run_id,
@@ -276,6 +365,18 @@ def _run_ingestion(
                     archive_exhausted=bool(server_stats["archive_exhausted"]),
                 )
                 active_runs.pop(str(server["slug"]), None)
+        repair_result = (
+            _repair_recent_incomplete_matches(
+                selected_servers=selected_servers,
+                data_source=fallback_data_source,
+                detail_workers=detail_workers,
+                stats=stats,
+                progress_callback=progress_callback,
+                source_policy=source_policy,
+            )
+            if mode == "recent-sweep" and use_classic_fallback
+            else {"status": "skipped", "reason": "not-a-recent-sweep"}
+        )
         if rebuild_snapshots:
             snapshot_result = generate_and_persist_historical_snapshots(server_key=server_slug)
             elo_mmr_result = rebuild_elo_mmr_models()
@@ -322,6 +423,7 @@ def _run_ingestion(
         "overlap_hours": resolved_overlap_hours if incremental else None,
         "servers": processed_servers,
         "coverage": list_historical_coverage_report(server_slug=server_slug),
+        "repair_result": repair_result,
         "snapshot_result": snapshot_result,
         "elo_mmr_result": elo_mmr_result,
         "totals": {
@@ -332,6 +434,10 @@ def _run_ingestion(
             "player_rows_inserted": stats.player_rows_inserted,
             "player_rows_updated": stats.player_rows_updated,
         },
+        "affected_servers": _collect_affected_servers(
+            processed_servers,
+            repair_result=repair_result,
+        ),
     }
     _emit_progress(
         progress_callback,
@@ -431,6 +537,7 @@ def _ingest_server(
         last_page_processed = page_number
         stop_after_page = False
         match_ids_to_fetch: list[str] = []
+        match_summaries_by_id: dict[str, dict[str, object]] = {}
 
         for match_summary in page_matches:
             local_stats.matches_seen += 1
@@ -444,6 +551,7 @@ def _ingest_server(
             match_id = _stringify(match_summary.get("id"))
             if match_id:
                 match_ids_to_fetch.append(match_id)
+                match_summaries_by_id[match_id] = match_summary
 
         _emit_progress(
             progress_callback,
@@ -478,13 +586,18 @@ def _ingest_server(
                 },
             ),
         ):
-            detail_payloads = list(
-                data_source.fetch_match_details(
-                    base_url=str(server["scoreboard_base_url"]),
-                    match_ids=match_ids_to_fetch,
-                    max_workers=resolved_detail_workers,
-                )
+            detail_payloads, detail_failure_delta = _fetch_match_details_resilient(
+                data_source=data_source,
+                server=server,
+                match_ids=match_ids_to_fetch,
+                match_summaries_by_id=match_summaries_by_id,
+                max_workers=resolved_detail_workers,
+                mode=mode,
+                page_number=page_number,
+                progress_callback=progress_callback,
             )
+            local_stats.apply(detail_failure_delta)
+            stats.apply(detail_failure_delta)
 
         with _progress_stage(
             progress_callback,
@@ -545,6 +658,7 @@ def _ingest_server(
             break
 
     server_result = {
+        "status": "success",
         "server_slug": server["slug"],
         "public_name": _extract_public_name(public_info),
         "server_number": public_info.get("server_number") or server.get("server_number"),
@@ -579,6 +693,129 @@ def _ingest_server(
     return server_result
 
 
+def _build_failed_server_result(
+    *,
+    server: dict[str, object],
+    source_provider: str,
+    start_page: int,
+    cutoff: str | None,
+    error: Exception,
+) -> dict[str, object]:
+    return {
+        "status": "failed",
+        "server_slug": server["slug"],
+        "public_name": None,
+        "server_number": server.get("server_number"),
+        "source_provider": source_provider,
+        "pages_processed": 0,
+        "matches_seen": 0,
+        "discovered_total_matches": None,
+        "matches_inserted": 0,
+        "matches_updated": 0,
+        "player_rows_inserted": 0,
+        "player_rows_updated": 0,
+        "start_page": start_page,
+        "last_page_processed": None,
+        "cutoff": cutoff,
+        "archive_exhausted": False,
+        "error": str(error),
+    }
+
+
+def _fetch_match_details_resilient(
+    *,
+    data_source: HistoricalDataSource,
+    server: dict[str, object],
+    match_ids: list[str],
+    match_summaries_by_id: dict[str, dict[str, object]] | None = None,
+    max_workers: int,
+    mode: str,
+    page_number: int,
+    progress_callback: ProgressCallback | None,
+) -> tuple[list[dict[str, object]], dict[str, int]]:
+    """Fetch a detail batch without letting one transient match failure abort the run."""
+    if not match_ids:
+        return [], _empty_delta()
+    base_url = str(server["scoreboard_base_url"])
+    server_slug = str(server["slug"])
+    try:
+        return (
+            list(
+                data_source.fetch_match_details(
+                    base_url=base_url,
+                    match_ids=match_ids,
+                    max_workers=max_workers,
+                )
+            ),
+            _empty_delta(),
+        )
+    except Exception as exc:  # noqa: BLE001 - degrade to per-match repair handling.
+        _emit_progress(
+            progress_callback,
+            {
+                "event": "historical-ingestion-detail-batch-failed",
+                "mode": mode,
+                "server_slug": server_slug,
+                "page": page_number,
+                "match_count": len(match_ids),
+                "message": str(exc),
+                "next_step": "retrying-details-individually",
+            },
+        )
+
+    detail_payloads: list[dict[str, object]] = []
+    failure_delta = _empty_delta()
+    for match_id in match_ids:
+        try:
+            detail_payloads.extend(
+                data_source.fetch_match_details(
+                    base_url=base_url,
+                    match_ids=[match_id],
+                    max_workers=1,
+                )
+            )
+        except Exception as exc:  # noqa: BLE001 - mark only this match for retry.
+            match_summary = (match_summaries_by_id or {}).get(match_id)
+            if match_summary:
+                delta = persist_minimal_historical_match_detail_failure(
+                    server_slug=server_slug,
+                    match_summary=match_summary,
+                    error_message=str(exc),
+                )
+                for key, value in delta.items():
+                    failure_delta[key] += value
+            else:
+                mark_historical_match_detail_repair_failed(
+                    server_slug=server_slug,
+                    external_match_id=match_id,
+                    error_message=str(exc),
+                )
+            _emit_progress(
+                progress_callback,
+                {
+                    "event": "historical-ingestion-detail-fetch-failed",
+                    "mode": mode,
+                    "server_slug": server_slug,
+                    "page": page_number,
+                    "external_match_id": match_id,
+                    "message": str(exc),
+                    "detail_status": "failed",
+                    "summary_placeholder_persisted": bool(match_summary),
+                    "next_step": "will-retry-in-future-recent-sweep",
+                },
+            )
+    return detail_payloads, failure_delta
+
+
+def _empty_delta() -> dict[str, int]:
+    return {
+        "matches_inserted": 0,
+        "matches_updated": 0,
+        "player_rows_inserted": 0,
+        "player_rows_updated": 0,
+    }
+
+
 def _resolve_start_page(
     *,
     start_page: int | None,
@@ -590,6 +827,145 @@ def _resolve_start_page(
     if mode != "bootstrap":
         return 1
     return get_backfill_resume_page(server_slug, mode=mode)
+
+
+def _repair_recent_incomplete_matches(
+    *,
+    selected_servers: list[dict[str, object]],
+    data_source: HistoricalDataSource,
+    detail_workers: int | None,
+    stats: IngestionStats,
+    progress_callback: ProgressCallback | None,
+    source_policy: dict[str, object],
+) -> dict[str, object]:
+    resolved_detail_workers = detail_workers or get_historical_crcon_detail_workers()
+    totals = IngestionStats()
+    repaired_servers: dict[str, dict[str, int]] = {}
+    candidates_seen = 0
+    errors: list[dict[str, object]] = []
+
+    for server in selected_servers:
+        server_slug = str(server["slug"])
+        candidates = list_recent_historical_repair_candidates(server_slug=server_slug)
+        candidates_seen += len(candidates)
+        if not candidates:
+            continue
+        repaired_servers.setdefault(
+            server_slug,
+            {
+                "candidates": 0,
+                "matches_inserted": 0,
+                "matches_updated": 0,
+                "player_rows_inserted": 0,
+                "player_rows_updated": 0,
+                "fetch_errors": 0,
+            },
+        )
+        repaired_servers[server_slug]["candidates"] += len(candidates)
+        _emit_progress(
+            progress_callback,
+            {
+                "event": "historical-recent-repair-candidates-found",
+                "mode": "recent-sweep",
+                "server_slug": server_slug,
+                "selected_source": source_policy.get("selected_source"),
+                "candidate_count": len(candidates),
+            },
+        )
+        for candidate in candidates:
+            match_id = str(candidate["external_match_id"])
+            try:
+                detail_payloads = list(
+                    data_source.fetch_match_details(
+                        base_url=str(server["scoreboard_base_url"]),
+                        match_ids=[match_id],
+                        max_workers=resolved_detail_workers,
+                    )
+                )
+            except Exception as exc:  # noqa: BLE001 - repairs should not stop ingestion.
+                errors.append(
+                    {
+                        "server_slug": server_slug,
+                        "external_match_id": match_id,
+                        "message": str(exc),
+                    }
+                )
+                repaired_servers[server_slug]["fetch_errors"] += 1
+                mark_historical_match_detail_repair_failed(
+                    server_slug=server_slug,
+                    external_match_id=match_id,
+                    error_message=str(exc),
+                )
+                continue
+            for detail_payload in detail_payloads:
+                delta = upsert_historical_match(
+                    server_slug=server_slug,
+                    match_payload=detail_payload,
+                )
+                totals.apply(delta)
+                stats.apply(delta)
+                for key in (
+                    "matches_inserted",
+                    "matches_updated",
+                    "player_rows_inserted",
+                    "player_rows_updated",
+                ):
+                    repaired_servers[server_slug][key] += int(delta.get(key, 0))
+
+    return {
+        "status": "ok",
+        "source_provider": data_source.source_kind,
+        "candidates_seen": candidates_seen,
+        "servers": repaired_servers,
+        "errors": errors[:20],
+        "totals": {
+            "matches_inserted": totals.matches_inserted,
+            "matches_updated": totals.matches_updated,
+            "player_rows_inserted": totals.player_rows_inserted,
+            "player_rows_updated": totals.player_rows_updated,
+        },
+    }
+
+
+def _collect_affected_servers(
+    processed_servers: list[dict[str, object]],
+    *,
+    repair_result: dict[str, object] | None = None,
+) -> list[str]:
+    affected: list[str] = []
+    for server in processed_servers:
+        total_changes = sum(
+            int(server.get(key) or 0)
+            for key in (
+                "matches_inserted",
+                "matches_updated",
+                "player_rows_inserted",
+                "player_rows_updated",
+            )
+        )
+        if total_changes > 0 and server.get("server_slug"):
+            affected.append(str(server["server_slug"]))
+    repair_servers = (
+        repair_result.get("servers")
+        if isinstance(repair_result, dict)
+        else None
+    )
+    if isinstance(repair_servers, dict):
+        for server_slug, counters in repair_servers.items():
+            if not isinstance(counters, dict):
+                continue
+            total_changes = sum(
+                int(counters.get(key) or 0)
+                for key in (
+                    "matches_inserted",
+                    "matches_updated",
+                    "player_rows_inserted",
+                    "player_rows_updated",
+                )
+            )
+            if total_changes > 0:
+                affected.append(str(server_slug))
+    return sorted(set(affected))
 
 
 def _attempt_primary_rcon_writer(
@@ -621,6 +997,7 @@ def _attempt_primary_rcon_writer(
         return result
 
     target_scope = server_slug or "all-configured-rcon-targets"
+    known_degraded_targets = _known_degraded_targets_in_scope(selected_servers)
     _emit_progress(
         progress_callback,
         {
@@ -628,8 +1005,21 @@ def _attempt_primary_rcon_writer(
             "mode": mode,
             "target_scope": target_scope,
             "servers": [str(server["slug"]) for server in selected_servers],
+            "operational_degraded_rcon_targets": known_degraded_targets,
         },
     )
+    if known_degraded_targets:
+        _emit_progress(
+            progress_callback,
+            {
+                "event": "historical-ingestion-rcon-targets-degraded-but-operable",
+                "mode": mode,
+                "target_scope": target_scope,
+                "targets": known_degraded_targets,
+                "policy": "rcon-primary-public-scoreboard-fallback-operable",
+                "next_step": "attempt-rcon-capture-then-use-public-scoreboard-for-classic-ingestion",
+            },
+        )
     try:
         capture_result = run_rcon_historical_capture_unlocked(target_key=server_slug)
     except Exception as exc:  # noqa: BLE001 - fallback remains explicit and controlled
@@ -641,6 +1031,7 @@ def _attempt_primary_rcon_writer(
             "fallback_used": True,
             "fallback_reason": "rcon-historical-writer-request-failed",
             "message": str(exc),
+            "operational_degraded_targets": known_degraded_targets,
         }
         _emit_progress(
             progress_callback,
@@ -665,6 +1056,7 @@ def _attempt_primary_rcon_writer(
             "fallback_used": True,
             "fallback_reason": "rcon-primary-writer-succeeded-but-classic-match-archive-still-needs-fallback",
             "capture_result": capture_result,
+            "operational_degraded_targets": known_degraded_targets,
         }
         _emit_progress(
             progress_callback,
@@ -675,6 +1067,7 @@ def _attempt_primary_rcon_writer(
                 "captured_targets": len(targets),
                 "run_status": capture_run_status,
                 "next_step": "classic-public-scoreboard-fallback-required",
+                "operational_degraded_rcon_targets": known_degraded_targets,
             },
         )
         return result
@@ -688,6 +1081,7 @@ def _attempt_primary_rcon_writer(
         "fallback_reason": "rcon-historical-writer-returned-no-usable-samples",
         "capture_result": capture_result,
         "message": json.dumps(errors, separators=(",", ":")) if errors else None,
+        "operational_degraded_targets": known_degraded_targets,
     }
     _emit_progress(
         progress_callback,
@@ -697,9 +1091,26 @@ def _attempt_primary_rcon_writer(
             "target_scope": target_scope,
             "run_status": capture_run_status,
             "errors": len(errors),
+            "operational_degraded_rcon_targets": known_degraded_targets,
         },
     )
     return result
+
+
+def _known_degraded_targets_in_scope(
+    selected_servers: list[dict[str, object]],
+) -> list[str]:
+    known = {
+        target.strip().lower(): target.strip()
+        for target in get_historical_known_rcon_degraded_targets()
+        if target.strip()
+    }
+    in_scope: list[str] = []
+    for server in selected_servers:
+        slug = str(server.get("slug") or "").strip().lower()
+        if slug in known:
+            in_scope.append(known[slug])
+    return in_scope
 
 
 def _should_use_classic_fallback(primary_writer_result: dict[str, object]) -> bool:
@@ -928,8 +1339,11 @@ def build_arg_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "mode",
-        choices=("bootstrap", "refresh"),
-        help="bootstrap imports the archive, refresh only recent pages",
+        choices=("bootstrap", "refresh", "recent-sweep"),
+        help=(
+            "bootstrap imports the archive, refresh reads recent pages, "
+            "recent-sweep rereads page 1..N independently from checkpoints"
+        ),
     )
     parser.add_argument(
         "--server",
@@ -970,7 +1384,7 @@ def main(argv: Iterable[str] | None = None) -> int:
     args = parser.parse_args(list(argv) if argv is not None else None)
 
     def _print_progress(payload: dict[str, object]) -> None:
-        print(json.dumps(payload, ensure_ascii=True))
+        print(json.dumps(payload, ensure_ascii=True, default=_json_default))
 
     if args.mode == "bootstrap":
         result = run_bootstrap(
@@ -979,6 +1393,15 @@ def main(argv: Iterable[str] | None = None) -> int:
             page_size=args.page_size,
             start_page=args.start_page,
             detail_workers=args.detail_workers,
+            progress_callback=_print_progress,
+        )
+    elif args.mode == "recent-sweep":
+        result = run_recent_repair_sweep(
+            server_slug=args.server_slug,
+            pages=args.max_pages,
+            page_size=args.page_size,
+            detail_workers=args.detail_workers,
+            rebuild_snapshots=False,
             progress_callback=_print_progress,
         )
     else:
@@ -992,8 +1415,18 @@ def main(argv: Iterable[str] | None = None) -> int:
             progress_callback=_print_progress,
         )
 
-    print(json.dumps(result, indent=2))
+    print(json.dumps(result, indent=2, default=_json_default))
     return 0
+
+
+def _json_default(value: object) -> str:
+    if isinstance(value, datetime):
+        return value.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
+    if isinstance(value, date):
+        return value.isoformat()
+    if isinstance(value, Enum):
+        return str(value.value)
+    return str(value)
 
 
 if __name__ == "__main__":
