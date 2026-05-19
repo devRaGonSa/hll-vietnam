@@ -10,6 +10,11 @@ document.addEventListener("DOMContentLoaded", () => {
   const stateNode = document.getElementById("match-detail-state");
   const gridNode = document.getElementById("match-detail-grid");
   const actionsNode = document.getElementById("match-detail-actions");
+  const playersSectionNode = document.getElementById("match-detail-players-section");
+  const playersNoteNode = document.getElementById("match-detail-players-note");
+  const playersStateNode = document.getElementById("match-detail-players-state");
+  const playersTableShellNode = document.getElementById("match-detail-players-table-shell");
+  const playersBodyNode = document.getElementById("match-detail-players-body");
 
   if (!serverSlug || !matchId) {
     titleNode.textContent = "Partida no seleccionada";
@@ -29,6 +34,11 @@ document.addEventListener("DOMContentLoaded", () => {
     stateNode,
     gridNode,
     actionsNode,
+    playersSectionNode,
+    playersNoteNode,
+    playersStateNode,
+    playersTableShellNode,
+    playersBodyNode,
   });
 });
 
@@ -42,6 +52,11 @@ async function loadMatchDetail({
   stateNode,
   gridNode,
   actionsNode,
+  playersSectionNode,
+  playersNoteNode,
+  playersStateNode,
+  playersTableShellNode,
+  playersBodyNode,
 }) {
   try {
     const payload = await fetchJson(
@@ -68,6 +83,11 @@ async function loadMatchDetail({
       stateNode,
       gridNode,
       actionsNode,
+      playersSectionNode,
+      playersNoteNode,
+      playersStateNode,
+      playersTableShellNode,
+      playersBodyNode,
     });
   } catch (error) {
     titleNode.textContent = "Detalle no disponible";
@@ -79,7 +99,19 @@ async function loadMatchDetail({
 
 function renderMatchDetail(
   item,
-  { titleNode, summaryNode, noteNode, stateNode, gridNode, actionsNode },
+  {
+    titleNode,
+    summaryNode,
+    noteNode,
+    stateNode,
+    gridNode,
+    actionsNode,
+    playersSectionNode,
+    playersNoteNode,
+    playersStateNode,
+    playersTableShellNode,
+    playersBodyNode,
+  },
 ) {
   const mapName = item.map?.pretty_name || item.map?.name || "Mapa no disponible";
   const serverName = item.server?.name || "Servidor no disponible";
@@ -88,17 +120,76 @@ function renderMatchDetail(
   noteNode.textContent = buildDetailNote(item);
   gridNode.innerHTML = [
     renderDetailCard("Servidor", serverName),
+    renderDetailCard("Mapa", mapName),
     renderDetailCard("Inicio", formatTimestamp(item.started_at)),
-    renderDetailCard("Cierre", formatTimestamp(item.closed_at || item.ended_at)),
+    renderDetailCard("Fin", formatTimestamp(item.closed_at || item.ended_at)),
     renderDetailCard("Duracion", formatDuration(item.duration_seconds)),
-    renderDetailCard("Jugadores", formatPlayerCount(item)),
+    renderDetailCard("Jugadores media", formatNumber(item.player_count)),
+    renderDetailCard("Pico jugadores", formatOptionalNumber(item.peak_players)),
+    renderDetailCard("Muestras RCON", formatOptionalNumber(item.sample_count)),
     renderDetailCard("Marcador", formatScore(item.result)),
     renderDetailCard("Resultado", formatMatchResult(item.result)),
     renderDetailCard("Base de captura", formatCaptureBasis(item.capture_basis)),
+    renderDetailCard("Capacidades", formatCapabilities(item.capabilities)),
   ].join("");
+  renderPlayerSection(item, {
+    playersSectionNode,
+    playersNoteNode,
+    playersStateNode,
+    playersTableShellNode,
+    playersBodyNode,
+  });
   renderActions(item, actionsNode);
   stateNode.hidden = true;
   gridNode.hidden = false;
+}
+
+function renderPlayerSection(
+  item,
+  {
+    playersSectionNode,
+    playersNoteNode,
+    playersStateNode,
+    playersTableShellNode,
+    playersBodyNode,
+  },
+) {
+  const players = Array.isArray(item.players) ? item.players : [];
+  playersSectionNode.hidden = false;
+  if (players.length === 0) {
+    playersNoteNode.textContent =
+      "Esta partida no tiene estadisticas por jugador disponibles en el detalle interno.";
+    setState(
+      playersStateNode,
+      item.capture_basis === "rcon-competitive-window"
+        ? "Las ventanas RCON actuales no incluyen desglose por jugador."
+        : "No hay filas de jugador registradas para esta partida.",
+    );
+    playersTableShellNode.hidden = true;
+    playersBodyNode.innerHTML = "";
+    return;
+  }
+
+  playersNoteNode.textContent = `${formatNumber(players.length)} jugadores con estadisticas locales.`;
+  playersStateNode.hidden = true;
+  playersBodyNode.innerHTML = players.map((player) => renderPlayerRow(player)).join("");
+  playersTableShellNode.hidden = false;
+}
+
+function renderPlayerRow(player) {
+  return `
+    <tr>
+      <td>${escapeHtml(player.name || "Jugador no identificado")}</td>
+      <td>${escapeHtml(formatTeamSide(player.team_side))}</td>
+      <td>${escapeHtml(formatOptionalNumber(player.level))}</td>
+      <td>${escapeHtml(formatOptionalNumber(player.kills))}</td>
+      <td>${escapeHtml(formatOptionalNumber(player.deaths))}</td>
+      <td>${escapeHtml(formatOptionalNumber(player.teamkills))}</td>
+      <td>${escapeHtml(formatOptionalNumber(player.combat))}</td>
+      <td>${escapeHtml(formatOptionalNumber(player.support))}</td>
+      <td>${escapeHtml(formatDuration(player.time_seconds))}</td>
+    </tr>
+  `;
 }
 
 function renderActions(item, actionsNode) {
@@ -152,6 +243,50 @@ function formatPlayerCount(item) {
     return `${formatNumber(item.player_count)} media / ${formatNumber(item.peak_players)} pico`;
   }
   return formatNumber(item.player_count);
+}
+
+function formatOptionalNumber(value) {
+  return value === null || value === undefined ? "No disponible" : formatNumber(value);
+}
+
+function formatCapabilities(capabilities) {
+  if (!capabilities || typeof capabilities !== "object") {
+    return "No disponibles";
+  }
+  const labels = Object.entries(capabilities)
+    .filter(([, value]) => value !== null && value !== undefined)
+    .map(([key, value]) => `${formatCapabilityKey(key)}: ${formatCapabilityValue(value)}`);
+  return labels.length > 0 ? labels.join(" | ") : "No disponibles";
+}
+
+function formatCapabilityKey(key) {
+  return String(key).replaceAll("_", " ");
+}
+
+function formatCapabilityValue(value) {
+  if (value === "exact") {
+    return "exacto";
+  }
+  if (value === "approximate") {
+    return "aproximado";
+  }
+  if (value === "partial") {
+    return "parcial";
+  }
+  if (value === "unavailable") {
+    return "no disponible";
+  }
+  return String(value);
+}
+
+function formatTeamSide(value) {
+  if (value === "allies") {
+    return "Aliados";
+  }
+  if (value === "axis") {
+    return "Axis";
+  }
+  return value || "No disponible";
 }
 
 function formatDuration(value) {

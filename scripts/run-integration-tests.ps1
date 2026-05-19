@@ -55,6 +55,8 @@ if status is None or payload.get("status") != "ok":
 
 $backendImportCheck | python -
 
+powershell -ExecutionPolicy Bypass -File scripts/run-historical-ui-regression-tests.ps1
+
 Write-Host "No product integration tests are configured for this platform-only scope."
 Write-Host "Backend startup import check passed."
 Write-Host "Platform validation passed."

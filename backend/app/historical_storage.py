@@ -6,7 +6,6 @@ import sqlite3
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Mapping
-from urllib.parse import urlparse
 
 from .config import (
     get_historical_refresh_overlap_hours,
@@ -17,28 +16,22 @@ from .config import (
 from .historical_models import HistoricalServerDefinition
 from .monthly_mvp import build_monthly_mvp_rankings
 from .monthly_mvp_v2 import build_monthly_mvp_v2_rankings
+from .scoreboard_origins import (
+    list_trusted_public_scoreboard_origins,
+    resolve_trusted_scoreboard_match_url,
+)
 from .sqlite_utils import connect_sqlite_writer
 
 
-DEFAULT_HISTORICAL_SERVERS = (
+DEFAULT_HISTORICAL_SERVERS = tuple(
     HistoricalServerDefinition(
-        slug="comunidad-hispana-01",
-        display_name="Comunidad Hispana #01",
-        scoreboard_base_url="https://scoreboard.comunidadhll.es",
-        server_number=1,
-    ),
-    HistoricalServerDefinition(
-        slug="comunidad-hispana-02",
-        display_name="Comunidad Hispana #02",
-        scoreboard_base_url="https://scoreboard.comunidadhll.es:5443",
-        server_number=2,
-    ),
-    HistoricalServerDefinition(
-        slug="comunidad-hispana-03",
-        display_name="Comunidad Hispana #03",
-        scoreboard_base_url="https://scoreboard.comunidadhll.es:3443",
-        server_number=3,
-    ),
+        slug=origin.slug,
+        display_name=origin.display_name,
+        scoreboard_base_url=origin.base_url,
+        server_number=origin.server_number,
+        source_kind=origin.source_kind,
+    )
+    for origin in list_trusted_public_scoreboard_origins()
 )
 ALL_SERVERS_SLUG = "all-servers"
 ALL_SERVERS_DISPLAY_NAME = "Todos"
@@ -768,6 +761,7 @@ def list_recent_historical_matches(
                 historical_matches.allied_score,
                 historical_matches.axis_score,
                 historical_matches.raw_payload_ref,
+                historical_servers.slug,
                 historical_servers.scoreboard_base_url,
                 COUNT(historical_player_match_stats.id) AS player_count
             FROM historical_matches
@@ -809,7 +803,7 @@ def list_recent_historical_matches(
                 "player_count": int(row["player_count"] or 0),
                 "match_url": _resolve_safe_match_url(
                     row["raw_payload_ref"],
-                    row["scoreboard_base_url"],
+                    row["server_slug"],
                 ),
             }
         )
@@ -832,6 +826,7 @@ def get_historical_match_detail(
         row = connection.execute(
             """
             SELECT
+                historical_matches.id AS match_pk,
                 historical_servers.slug AS server_slug,
                 historical_servers.display_name AS server_name,
                 historical_matches.external_match_id,
@@ -842,6 +837,7 @@ def get_historical_match_detail(
                 historical_matches.allied_score,
                 historical_matches.axis_score,
                 historical_matches.raw_payload_ref,
+                historical_servers.slug,
                 historical_servers.scoreboard_base_url,
                 COUNT(historical_player_match_stats.id) AS player_count,
                 SUM(COALESCE(historical_player_match_stats.time_seconds, 0)) AS total_time_seconds
@@ -857,6 +853,33 @@ def get_historical_match_detail(
             """,
             (normalized_server_slug, normalized_match_id),
         ).fetchone()
+        player_rows = []
+        if row is not None:
+            player_rows = connection.execute(
+                """
+                SELECT
+                    historical_players.display_name,
+                    historical_players.stable_player_key,
+                    historical_player_match_stats.team_side,
+                    historical_player_match_stats.level,
+                    historical_player_match_stats.kills,
+                    historical_player_match_stats.deaths,
+                    historical_player_match_stats.teamkills,
+                    historical_player_match_stats.combat,
+                    historical_player_match_stats.offense,
+                    historical_player_match_stats.defense,
+                    historical_player_match_stats.support,
+                    historical_player_match_stats.time_seconds
+                FROM historical_player_match_stats
+                INNER JOIN historical_players
+                    ON historical_players.id = historical_player_match_stats.historical_player_id
+                WHERE historical_player_match_stats.historical_match_id = ?
+                ORDER BY
+                    COALESCE(historical_player_match_stats.kills, 0) DESC,
+                    historical_players.display_name ASC
+                """,
+                (row["match_pk"],),
+            ).fetchall()
     if row is None:
         return None
     started_at = row["started_at"]
@@ -885,10 +908,27 @@ def get_historical_match_detail(
         },
         "player_count": int(row["player_count"] or 0),
         "total_time_seconds": _coerce_int(row["total_time_seconds"]),
+        "players": [
+            {
+                "name": player_row["display_name"],
+                "stable_player_key": player_row["stable_player_key"],
+                "team_side": player_row["team_side"],
+                "level": _coerce_int(player_row["level"]),
+                "kills": _coerce_int(player_row["kills"]),
+                "deaths": _coerce_int(player_row["deaths"]),
+                "teamkills": _coerce_int(player_row["teamkills"]),
+                "combat": _coerce_int(player_row["combat"]),
+                "offense": _coerce_int(player_row["offense"]),
+                "defense": _coerce_int(player_row["defense"]),
+                "support": _coerce_int(player_row["support"]),
+                "time_seconds": _coerce_int(player_row["time_seconds"]),
+            }
+            for player_row in player_rows
+        ],
         "capture_basis": "public-scoreboard-match",
         "match_url": _resolve_safe_match_url(
             row["raw_payload_ref"],
-            row["scoreboard_base_url"],
+            row["server_slug"],
         ),
     }
 
@@ -3198,23 +3238,8 @@ def _is_all_servers_selector(value: str | None) -> bool:
     return isinstance(value, str) and value.strip() == ALL_SERVERS_SLUG
 
 
-def _resolve_safe_match_url(raw_payload_ref: object, scoreboard_base_url: object) -> str | None:
-    candidate = _stringify(raw_payload_ref)
-    base_url = _stringify(scoreboard_base_url)
-    if not candidate or not base_url:
-        return None
-
-    candidate_parts = urlparse(candidate)
-    base_parts = urlparse(base_url)
-    if candidate_parts.scheme not in {"http", "https"}:
-        return None
-    if candidate_parts.scheme != base_parts.scheme or candidate_parts.netloc != base_parts.netloc:
-        return None
-    if not candidate_parts.path.startswith("/games/"):
-        return None
-    if candidate_parts.username or candidate_parts.password:
-        return None
-    return candidate
+def _resolve_safe_match_url(raw_payload_ref: object, server_slug: object) -> str | None:
+    return resolve_trusted_scoreboard_match_url(raw_payload_ref, server_slug)
 
 
 def _calculate_match_duration_seconds(started_at: object, ended_at: object) -> int | None:

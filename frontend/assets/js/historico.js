@@ -802,7 +802,7 @@ function hydrateMvpComparison(
 
 function renderRecentMatchCard(item) {
   const mapName = item.map?.pretty_name || item.map?.name || "Mapa no disponible";
-  const matchUrl = normalizeExternalMatchUrl(item.match_url || item.source_url);
+  const matchUrl = normalizeExternalMatchUrl(item.match_url);
   const detailUrl = buildInternalMatchDetailUrl(item);
   const matchLink = matchUrl
     ? `

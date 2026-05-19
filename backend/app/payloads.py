@@ -39,7 +39,6 @@ from .historical_snapshots import (
 )
 from .historical_storage import (
     ALL_SERVERS_SLUG,
-    DEFAULT_HISTORICAL_SERVERS,
     get_historical_match_detail,
     get_historical_player_profile,
     list_historical_server_summaries,
@@ -50,6 +49,7 @@ from .historical_storage import (
 )
 from .rcon_historical_read_model import get_rcon_historical_match_detail
 from .normalizers import normalize_map_name
+from .scoreboard_origins import get_trusted_public_scoreboard_origin
 from .storage import list_latest_snapshots, list_server_history, list_snapshot_history
 
 
@@ -1910,7 +1910,5 @@ def _resolve_community_history_url(external_server_id: object) -> str | None:
     normalized_server_id = str(external_server_id or "").strip()
     if not normalized_server_id:
         return None
-    for server in DEFAULT_HISTORICAL_SERVERS:
-        if server.slug == normalized_server_id:
-            return f"{server.scoreboard_base_url}/games"
-    return None
+    origin = get_trusted_public_scoreboard_origin(normalized_server_id)
+    return f"{origin.base_url}/games" if origin else None
