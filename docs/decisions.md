@@ -126,3 +126,16 @@ Las claves estables son:
 Esto permite bootstrap, refresco incremental e idempotencia sin mezclar
 semanticas de estado actual con historico persistido. El modelo detallado queda
 en `docs/historical-domain-model.md`.
+
+## Decision 014: despliegue normal simplificado sin servidor #03
+
+El despliegue operativo normal vuelve a quedar reducido a `backend` +
+`frontend`. Los servicios `historical-runner` y `rcon-historical-worker` se
+mantienen disponibles solo para uso avanzado y explicito mediante el perfil
+Compose `advanced`.
+
+Comunidad Hispana #03 deja de formar parte de los targets RCON por defecto
+porque ya no es una fuente operativa vigente. El codigo historico, los datos
+persistidos, las migraciones y las piezas Elo/MMR no se eliminan; quedan
+pausadas operativamente para esta fase y pueden reintroducirse mediante una
+task futura si se valida de nuevo la fuente y el coste de mantenimiento.

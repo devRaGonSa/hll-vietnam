@@ -278,7 +278,7 @@ Valores soportados en esta fase:
 Defaults actuales:
 
 - `HLL_BACKEND_LIVE_DATA_SOURCE=rcon`
-- `HLL_BACKEND_HISTORICAL_DATA_SOURCE=rcon`
+- `HLL_BACKEND_HISTORICAL_DATA_SOURCE=public-scoreboard`
 
 La seleccion efectiva se resuelve en `app/data_sources.py` y en adapters
 dedicados dentro de `app/providers/`:
@@ -399,8 +399,12 @@ Runbook operativo minimo:
 
 - modo recomendado por defecto:
   - `HLL_BACKEND_LIVE_DATA_SOURCE=rcon`
-  - `HLL_BACKEND_HISTORICAL_DATA_SOURCE=rcon`
-  - definir `HLL_BACKEND_RCON_TARGETS` fuera de la repo
+  - `HLL_BACKEND_HISTORICAL_DATA_SOURCE=public-scoreboard`
+  - usar solo `comunidad-hispana-01` y `comunidad-hispana-02` en los targets
+    RCON por defecto
+- modo historico/RCON avanzado:
+  - iniciar workers solo de forma explicita
+  - no reintroducir `comunidad-hispana-03` salvo validacion nueva
 - override legacy completo:
   - `HLL_BACKEND_LIVE_DATA_SOURCE=a2s`
   - `HLL_BACKEND_HISTORICAL_DATA_SOURCE=public-scoreboard`
@@ -1211,8 +1215,8 @@ Flags utiles del runner:
 - `--retry-delay 10` para bajar la espera entre fallos
 - `--max-runs 1` para una validacion puntual sin bucle indefinido
 
-Para dejar automatizado el refresh historico horario de los tres servidores del
-proyecto en local, el comando recomendado es:
+Para dejar automatizado el refresh historico horario en local, el comando
+avanzado sigue disponible:
 
 ```powershell
 python -m app.historical_runner --hourly
@@ -1250,15 +1254,16 @@ Operativa local minima:
    - `backend/data/snapshots/comunidad-hispana-03/weekly-kills.json`
    - `backend/data/snapshots/all-servers/monthly-kills.json`
 
-Operativa minima con Docker Compose:
+Operativa avanzada con Docker Compose:
 
 ```powershell
-docker compose up -d backend historical-runner frontend
+docker compose --profile advanced up -d backend historical-runner frontend
 ```
 
 El servicio `historical-runner` usa el mismo volumen persistente `./backend/data`
 y ejecuta `python -m app.historical_runner --hourly` como bucle operativo
-dedicado, sin mezclar el scheduler con el proceso HTTP principal.
+dedicado, sin mezclar el scheduler con el proceso HTTP principal. No forma
+parte del despliegue normal, que queda limitado a `backend` + `frontend`.
 
 En frontend, la landing ya no arranca con cards fake estaticas para servidores:
 
@@ -1340,7 +1345,7 @@ Comprobaciones utiles con Compose:
 Compose para captura prospectiva RCON:
 
 ```powershell
-docker compose up -d rcon-historical-worker
+docker compose --profile advanced up -d rcon-historical-worker
 docker compose logs -f rcon-historical-worker
 docker compose exec backend python -m app.rcon_historical_worker capture
 ```

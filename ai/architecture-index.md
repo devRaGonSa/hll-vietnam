@@ -76,5 +76,7 @@ Community website repository with a static landing in the current phase and a pl
 - The V1 monthly MVP scoring proposal for persisted historical player metrics is documented in `docs/monthly-mvp-ranking-scoring-design.md`.
 - The audited boundary between direct live RCON and future event-driven RCON metrics is documented in `docs/rcon-data-capability-audit.md`.
 - The first V2 player-event foundation now lives in dedicated `player_event_*` backend modules and starts from CRCON match-detail summaries, not from live RCON.
+- The default operational deployment is simplified to `backend` + `frontend`; historical workers and RCON historical capture are advanced/manual services.
+- Comunidad Hispana #03 is disabled from default RCON targets, while existing historical/Elo code and persisted data remain available for explicit future reintroduction.
 - Frontend data consumption should remain progressive, endpoint by endpoint, with static fallbacks preserved during migration.
 - The frontend integration strategy is documented in `docs/frontend-data-consumption-plan.md`.

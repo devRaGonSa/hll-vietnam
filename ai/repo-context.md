@@ -19,6 +19,8 @@ This repository is in foundation stage. The objective is to grow in a controlled
 - Backend: not implemented yet, but planned in Python
 - AI Platform: integrated to coordinate planning and task execution
 - Product goal in current phase: maintain a clean landing and repository structure
+- Default deployment: `backend` + `frontend`; historical workers are advanced/manual only.
+- Comunidad Hispana #03 is not part of default RCON targets. Historical/Elo code and persisted data are preserved but paused operationally.
 
 ## Repository Areas
 

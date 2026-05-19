@@ -91,11 +91,24 @@ estado live de `/api/servers`, pero el histÃ³rico sigue dependiendo del
 scoreboard pÃºblico porque no hay todavÃ­a una canalizaciÃ³n persistente basada
 en eventos/logs RCON.
 
+Modo normal recomendado:
+
+- levantar solo `backend` + `frontend`
+- mantener `historical-runner` y `rcon-historical-worker` como servicios
+  avanzados bajo demanda
+- mantener Comunidad Hispana #03 fuera de los targets RCON por defecto
+- dejar Elo/MMR y la materializacion historica compleja en pausa operativa
+  hasta una reintroduccion explicita
+
 Primer arranque:
 
 ```powershell
 docker compose up --build
 ```
+
+Con la configuracion actual, ese comando levanta solo `backend` y `frontend`.
+Los workers historicos estan en el perfil Compose `advanced` y no forman parte
+del arranque normal.
 
 Accesos locales esperados:
 
@@ -170,8 +183,16 @@ Buenas practicas:
   despliegue
 - mantener `HLL_BACKEND_HISTORICAL_DATA_SOURCE=public-scoreboard` hasta tener
   una ingesta historica RCON realmente persistida
+- no reintroducir Comunidad Hispana #03 en `HLL_BACKEND_RCON_TARGETS` salvo que
+  una task nueva valide su disponibilidad
 
-## Operaciones historicas con Docker
+## Operaciones historicas avanzadas con Docker
+
+Estas operaciones quedan disponibles para uso explicito, pero no son parte del
+arranque recomendado. La ruta normal de despliegue es `backend` + `frontend`.
+El codigo, las migraciones, los snapshots historicos y Elo/MMR se conservan en
+la repo, pero Elo/MMR y la materializacion historica compleja quedan pausados
+operativamente en esta fase.
 
 Refresh historico puntual dentro del contenedor backend:
 
@@ -191,17 +212,18 @@ Regeneracion puntual de snapshots mediante refresh controlado:
 docker compose exec backend python -m app.historical_runner --max-runs 1
 ```
 
-Automatizacion horaria recomendada:
+Automatizacion horaria avanzada:
 
 ```powershell
-docker compose up -d backend historical-runner frontend
+docker compose --profile advanced up -d backend historical-runner frontend
 ```
 
 `historical-runner` es un servicio Compose separado que ejecuta
-`python -m app.historical_runner --hourly`, refresca el historico de
-`comunidad-hispana-01`, `comunidad-hispana-02` y `comunidad-hispana-03`, y
-regenera snapshots al terminar cada refresh correcto sin acoplar ese bucle al
-proceso HTTP del backend.
+`python -m app.historical_runner --hourly`. Sigue disponible para tareas
+historicas explicitas, pero no se recomienda como requisito normal de
+despliegue. Los targets RCON por defecto solo incluyen `comunidad-hispana-01`
+y `comunidad-hispana-02`; `comunidad-hispana-03` queda deshabilitado en la
+configuracion por defecto porque ya no es una fuente operativa vigente.
 
 Verificacion minima:
 
