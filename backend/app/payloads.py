@@ -20,10 +20,6 @@ from .data_sources import (
     get_live_data_source,
     get_rcon_historical_read_model,
 )
-from .elo_mmr_engine import (
-    get_elo_mmr_player_payload,
-    list_elo_mmr_leaderboard_payload,
-)
 from .historical_snapshot_storage import get_historical_snapshot
 from .historical_snapshots import (
     DEFAULT_MONTHLY_SNAPSHOT_WINDOW,
@@ -1097,6 +1093,22 @@ def build_elo_mmr_leaderboard_payload(
     server_id: str | None = None,
 ) -> dict[str, object]:
     """Return the current Elo/MMR monthly leaderboard."""
+    engine = _load_elo_mmr_engine()
+    if engine is None:
+        return _build_elo_mmr_unavailable_payload(
+            context="historical-elo-mmr-leaderboard",
+            title=(
+                "Leaderboard mensual Elo/MMR global"
+                if server_id == ALL_SERVERS_SLUG
+                else "Leaderboard mensual Elo/MMR por servidor"
+            ),
+            server_id=server_id,
+            limit=limit,
+            extra={"items": []},
+            operation="elo-mmr-leaderboard",
+        )
+
+    list_elo_mmr_leaderboard_payload = engine[1]
     payload = list_elo_mmr_leaderboard_payload(server_id=server_id, limit=limit)
     is_all_servers = server_id == ALL_SERVERS_SLUG
     accuracy_contract = _build_elo_accuracy_contract(payload.get("capabilities_summary"))
@@ -1137,6 +1149,21 @@ def build_elo_mmr_player_payload(
     server_id: str | None = None,
 ) -> dict[str, object]:
     """Return one Elo/MMR player profile."""
+    engine = _load_elo_mmr_engine()
+    if engine is None:
+        return _build_elo_mmr_unavailable_payload(
+            context="historical-elo-mmr-player",
+            title="Perfil Elo/MMR de jugador",
+            server_id=server_id,
+            extra={
+                "player_id": player_id,
+                "found": False,
+                "profile": None,
+            },
+            operation="elo-mmr-player",
+        )
+
+    get_elo_mmr_player_payload, list_elo_mmr_leaderboard_payload = engine
     profile = get_elo_mmr_player_payload(player_id=player_id, server_id=server_id)
     source_policy = list_elo_mmr_leaderboard_payload(server_id=server_id, limit=1).get("source_policy")
     accuracy_contract = _build_elo_player_accuracy_contract(profile)
@@ -1157,6 +1184,52 @@ def build_elo_mmr_player_payload(
             "model_contract": _build_elo_model_contract(accuracy_contract),
             "profile": _enrich_elo_profile(profile, accuracy_contract=accuracy_contract),
         },
+    }
+
+
+def _load_elo_mmr_engine():
+    try:
+        from .elo_mmr_engine import (  # noqa: PLC0415 - lazy boundary for paused Elo/MMR
+            get_elo_mmr_player_payload,
+            list_elo_mmr_leaderboard_payload,
+        )
+    except ImportError:
+        return None
+    return get_elo_mmr_player_payload, list_elo_mmr_leaderboard_payload
+
+
+def _build_elo_mmr_unavailable_payload(
+    *,
+    context: str,
+    title: str,
+    server_id: str | None,
+    operation: str,
+    limit: int | None = None,
+    extra: dict[str, object] | None = None,
+) -> dict[str, object]:
+    accuracy_contract = _build_elo_accuracy_contract(None)
+    data = {
+        "title": title,
+        "context": context,
+        "source": "elo-mmr-paused",
+        "server_slug": server_id,
+        "available": False,
+        "unavailable_reason": "elo-mmr-engine-import-unavailable",
+        **_resolve_historical_fallback_policy(
+            operation=operation,
+            fallback_reason="elo-mmr-operationally-paused",
+        ),
+        "capabilities_summary": None,
+        "accuracy_contract": accuracy_contract,
+        "model_contract": _build_elo_model_contract(accuracy_contract),
+    }
+    if limit is not None:
+        data["limit"] = limit
+    if extra:
+        data.update(extra)
+    return {
+        "status": "ok",
+        "data": data,
     }
 
 

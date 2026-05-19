@@ -42,6 +42,20 @@ if (-not (Test-Path "ai/reports/.gitkeep")) {
     throw "Missing ai/reports/.gitkeep"
 }
 
+$backendImportCheck = @'
+import sys
+sys.path.insert(0, "backend")
+import app.main
+from app.routes import resolve_get_payload
+
+status, payload = resolve_get_payload("/health")
+if status is None or payload.get("status") != "ok":
+    raise SystemExit("Backend health route did not resolve to an ok payload.")
+'@
+
+$backendImportCheck | python -
+
 Write-Host "No product integration tests are configured for this platform-only scope."
+Write-Host "Backend startup import check passed."
 Write-Host "Platform validation passed."
 exit 0
