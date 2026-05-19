@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import time
 from dataclasses import dataclass
 from typing import Iterable
@@ -14,6 +15,7 @@ from .config import (
     get_rcon_historical_capture_retry_delay_seconds,
     get_rcon_request_timeout_seconds,
 )
+from .rcon_admin_log_ingestion import ingest_rcon_admin_logs
 from .rcon_client import (
     RconQueryError,
     build_rcon_target_key,
@@ -38,6 +40,10 @@ class RconHistoricalCaptureStats:
     samples_inserted: int = 0
     duplicate_samples: int = 0
     failed_targets: int = 0
+    admin_log_events_seen: int = 0
+    admin_log_events_inserted: int = 0
+    admin_log_duplicate_events: int = 0
+    admin_log_failed_targets: int = 0
 
 
 def run_rcon_historical_capture(
@@ -60,12 +66,14 @@ def run_rcon_historical_capture_unlocked(
     """Capture one prospective RCON sample assuming the shared writer lock is already held."""
     initialize_rcon_historical_storage()
     selected_targets = _select_targets(target_key)
+    admin_log_lookback_minutes = get_rcon_admin_log_lookback_minutes()
     captured_at = utc_now().isoformat().replace("+00:00", "Z")
     target_scope = target_key or "all-configured-rcon-targets"
     run_id = start_rcon_historical_capture_run(mode="capture", target_scope=target_scope)
     stats = RconHistoricalCaptureStats()
     items: list[dict[str, object]] = []
     errors: list[dict[str, object]] = []
+    admin_log_errors: list[dict[str, object]] = []
     timeout_seconds = get_rcon_request_timeout_seconds()
 
     try:
@@ -108,6 +116,17 @@ def run_rcon_historical_capture_unlocked(
                 )
                 errors.append(_serialize_capture_error(target, exc, timeout_seconds=timeout_seconds))
 
+            admin_log_result = _ingest_target_admin_log(
+                target_key=str(target_metadata["target_key"]),
+                minutes=admin_log_lookback_minutes,
+            )
+            _merge_admin_log_result(
+                stats=stats,
+                admin_log_errors=admin_log_errors,
+                target=target_metadata,
+                result=admin_log_result,
+            )
+
         status = "success" if not errors else ("partial" if items else "failed")
         finalize_rcon_historical_capture_run(
             run_id,
@@ -135,14 +154,20 @@ def run_rcon_historical_capture_unlocked(
         "run_status": status,
         "captured_at": captured_at,
         "target_scope": target_scope,
+        "admin_log_lookback_minutes": admin_log_lookback_minutes,
         "targets": items,
         "errors": errors,
+        "admin_log_errors": admin_log_errors,
         "storage_status": list_rcon_historical_target_statuses(),
         "totals": {
             "targets_seen": stats.targets_seen,
             "samples_inserted": stats.samples_inserted,
             "duplicate_samples": stats.duplicate_samples,
             "failed_targets": stats.failed_targets,
+            "admin_log_events_seen": stats.admin_log_events_seen,
+            "admin_log_events_inserted": stats.admin_log_events_inserted,
+            "admin_log_duplicate_events": stats.admin_log_duplicate_events,
+            "admin_log_failed_targets": stats.admin_log_failed_targets,
         },
     }
 
@@ -229,6 +254,72 @@ def _select_targets(target_key: str | None) -> list[object]:
     if not selected:
         raise ValueError(f"Unknown RCON target key: {target_key}")
     return selected
+
+
+def get_rcon_admin_log_lookback_minutes() -> int:
+    """Return the AdminLog lookback window used by periodic RCON capture."""
+    configured_value = os.getenv("HLL_BACKEND_RCON_ADMIN_LOG_LOOKBACK_MINUTES", "60")
+    lookback_minutes = int(configured_value)
+    if lookback_minutes <= 0:
+        raise ValueError("HLL_BACKEND_RCON_ADMIN_LOG_LOOKBACK_MINUTES must be positive.")
+    return lookback_minutes
+
+
+def _ingest_target_admin_log(
+    *,
+    target_key: str,
+    minutes: int,
+) -> dict[str, object]:
+    try:
+        return ingest_rcon_admin_logs(minutes=minutes, target_key=target_key)
+    except Exception as exc:  # noqa: BLE001 - worker reports per-target AdminLog failures
+        return {
+            "status": "error",
+            "errors": [
+                {
+                    "target_key": target_key,
+                    "status": "error",
+                    "error_type": type(exc).__name__,
+                    "message": str(exc),
+                }
+            ],
+            "totals": {
+                "events_seen": 0,
+                "events_inserted": 0,
+                "duplicate_events": 0,
+                "failed_targets": 1,
+            },
+        }
+
+
+def _merge_admin_log_result(
+    *,
+    stats: RconHistoricalCaptureStats,
+    admin_log_errors: list[dict[str, object]],
+    target: dict[str, object],
+    result: dict[str, object],
+) -> None:
+    totals = result.get("totals")
+    if isinstance(totals, dict):
+        stats.admin_log_events_seen += int(totals.get("events_seen") or 0)
+        stats.admin_log_events_inserted += int(totals.get("events_inserted") or 0)
+        stats.admin_log_duplicate_events += int(totals.get("duplicate_events") or 0)
+        stats.admin_log_failed_targets += int(totals.get("failed_targets") or 0)
+
+    errors = result.get("errors")
+    if isinstance(errors, list):
+        for error in errors:
+            if isinstance(error, dict):
+                admin_log_errors.append(
+                    {
+                        "target_key": target["target_key"],
+                        "external_server_id": target.get("external_server_id"),
+                        "name": target.get("name"),
+                        "status": "error",
+                        "error_type": error.get("error_type"),
+                        "message": error.get("message"),
+                    }
+                )
 
 
 def _serialize_target(target: object) -> dict[str, object]:
