@@ -12,6 +12,7 @@ Community website repository with a static landing in the current phase and a pl
 
 - `README.md`
 - `AGENTS.md`
+- `ai-platform.json`
 - `docs/current-hll-servers-source-plan.md`
 - `docs/`
 
@@ -32,6 +33,7 @@ Community website repository with a static landing in the current phase and a pl
 - `ai/`
 - `ai/orchestrator/`
 - `ai/prompts/`
+- `ai/reports/`
 - `ai/tasks/`
 
 ### Automation And Support
@@ -50,6 +52,7 @@ Community website repository with a static landing in the current phase and a pl
 
 - Product-facing changes usually start in `frontend/`.
 - Process and coordination changes usually start in `ai/`, `AGENTS.md` and `scripts/`.
+- Local AI worker configuration starts in `ai-platform.json`.
 - Backend changes must remain preparatory unless a task explicitly changes that scope.
 
 ## Validation Expectations

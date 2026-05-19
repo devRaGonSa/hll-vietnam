@@ -2,9 +2,38 @@ param(
     [int]$PollIntervalSeconds = 30
 )
 
-Write-Host "HLL Vietnam Codex worker started..."
+$configPath = "ai-platform.json"
 
-$lockFile = "ai/worker.lock"
+function Get-PlatformConfig {
+    param(
+        [string]$Path
+    )
+
+    if (-not (Test-Path $Path)) {
+        return $null
+    }
+
+    try {
+        return Get-Content -Raw $Path | ConvertFrom-Json
+    }
+    catch {
+        Write-Host "Unable to read $Path. Falling back to default worker paths."
+        return $null
+    }
+}
+
+$platformConfig = Get-PlatformConfig -Path $configPath
+$projectName = if ($platformConfig.project.name) { $platformConfig.project.name } else { "HLL Vietnam" }
+$taskPaths = $platformConfig.workflow.task_paths
+$runnerConfig = $platformConfig.runner
+
+$pendingTasksPath = if ($taskPaths.pending) { $taskPaths.pending } else { "ai/tasks/pending" }
+$lockFile = if ($runnerConfig.lock_file) { $runnerConfig.lock_file } else { "ai/worker.lock" }
+$metricsFile = if ($runnerConfig.metrics_file) { $runnerConfig.metrics_file } else { "ai/system-metrics.md" }
+$integrationTestsScript = if ($runnerConfig.integration_tests_script) { $runnerConfig.integration_tests_script } else { "scripts/run-integration-tests.ps1" }
+$codexPrompt = if ($runnerConfig.codex_prompt) { $runnerConfig.codex_prompt } else { "Follow AGENTS.md, read the platform context in ai/, and process the pending tasks without acting outside task scope." }
+
+Write-Host "$projectName Codex worker started..."
 
 function Test-WorkerProcessActive {
     param(
@@ -43,7 +72,7 @@ while ($true) {
         Remove-Item $lockFile -Force -ErrorAction SilentlyContinue
     }
 
-    $pendingTasks = Get-ChildItem "ai/tasks/pending" -Filter *.md -ErrorAction SilentlyContinue
+    $pendingTasks = Get-ChildItem $pendingTasksPath -Filter *.md -ErrorAction SilentlyContinue
 
     if (-not $pendingTasks) {
         Write-Host "No pending tasks found."
@@ -60,19 +89,19 @@ while ($true) {
 
     try {
         $startTime = Get-Date
-        codex "Follow AGENTS.md, read the platform context in ai/, and process the pending tasks without acting outside task scope."
+        codex $codexPrompt
         $codexExitCode = $LASTEXITCODE
         $duration = [math]::Round(((Get-Date) - $startTime).TotalSeconds, 2)
 
         if ($codexExitCode -eq 0) {
-            Add-Content "ai/system-metrics.md" "$(Get-Date -Format s) | worker-cycle | $duration sec | success | codex-runner"
+            Add-Content $metricsFile "$(Get-Date -Format s) | worker-cycle | $duration sec | success | codex-runner"
 
-            if (Test-Path "scripts/run-integration-tests.ps1") {
-                powershell -ExecutionPolicy Bypass -File "scripts/run-integration-tests.ps1"
+            if (Test-Path $integrationTestsScript) {
+                powershell -ExecutionPolicy Bypass -File $integrationTestsScript
             }
         }
         else {
-            Add-Content "ai/system-metrics.md" "$(Get-Date -Format s) | worker-cycle | $duration sec | failed($codexExitCode) | codex-runner"
+            Add-Content $metricsFile "$(Get-Date -Format s) | worker-cycle | $duration sec | failed($codexExitCode) | codex-runner"
         }
     }
     finally {

@@ -17,11 +17,18 @@ Task locations:
 
 - Pending: `ai/tasks/pending`
 - In progress: `ai/tasks/in-progress`
+- Review: `ai/tasks/review`
+- Blocked: `ai/tasks/blocked`
+- Obsolete: `ai/tasks/obsolete`
 - Done: `ai/tasks/done`
 
 Every new task must follow:
 
 - `ai/task-template.md`
+
+Local platform scripts should read repository-specific paths and worker settings from:
+
+- `ai-platform.json`
 
 ## Core Workflow
 
@@ -31,7 +38,7 @@ Every new task must follow:
 4. The worker reads the files listed in `Files to Read First`.
 5. The worker performs only the scoped change defined by the task.
 6. The worker validates the change with the documented checks.
-7. The worker moves the completed task to `ai/tasks/done`.
+7. The worker moves completed work to `ai/tasks/done` when validation is complete, or to `ai/tasks/review` when human/orchestrator review is explicitly required.
 8. The worker documents any relevant architectural or process decision.
 
 Codex must not act freely outside tasks except for repository inspection, platform maintenance, or explicitly requested integration work like this one.
