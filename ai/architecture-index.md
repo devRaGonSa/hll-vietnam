@@ -80,3 +80,6 @@ Community website repository with a static landing in the current phase and a pl
 - Comunidad Hispana #03 is disabled from default RCON targets, while existing historical/Elo code and persisted data remain available for explicit future reintroduction. Elo/MMR remains paused and decoupled from backend startup.
 - Frontend data consumption should remain progressive, endpoint by endpoint, with static fallbacks preserved during migration.
 - The frontend integration strategy is documented in `docs/frontend-data-consumption-plan.md`.
+- Historical RCON architecture is RCON-first end to end: session capture, AdminLog ingestion, parsed event storage, materialized matches/player stats and optional profile-snapshot enrichment.
+- Public-scoreboard data remains optional enrichment/link source or fallback only; it must not become the normal primary historical path while RCON coverage is available.
+- Manual RCON validation commands include `docker compose exec backend python -m app.rcon_admin_log_ingestion --minutes 1440` and `docker compose exec backend python -m app.rcon_historical_worker capture`.

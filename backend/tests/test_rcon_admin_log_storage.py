@@ -1,4 +1,5 @@
 import gc
+import json
 import sqlite3
 
 from app.rcon_admin_log_storage import (
@@ -37,6 +38,7 @@ def test_initialize_rcon_admin_log_storage_creates_event_table(tmp_path):
         gc.collect()
 
     assert "rcon_admin_log_events" in table_names
+    assert "rcon_player_profile_snapshots" in table_names
     assert {
         "target_key",
         "event_type",
@@ -82,6 +84,87 @@ def test_persist_rcon_admin_log_entries_inserts_then_reports_duplicates(tmp_path
         "duplicate_events": 2,
     }
     gc.collect()
+
+
+def test_profile_message_snapshots_are_materialized_and_deduped(tmp_path):
+    db_path = tmp_path / "admin_log.sqlite3"
+    entry = {
+        "timestamp": "2026-05-19T10:00:00Z",
+        "message": (
+            "[21:34:19 hours (1779108340)] MESSAGE: player [Jugador Uno(steam-profile-1)], "
+            "content [─ Jugador Uno ─\n"
+            "▒ Totales ▒\n"
+            "sesiones : 12\n"
+            "partidas jugadas : 9\n"
+            "bajas : 141 (6 TKs)\n"
+            "muertes : 268 (5 TKs)\n"
+            "K/D : 0.53\n"
+            "▒ VÃ­ctimas ▒\n"
+            "Rival Dos : 7\n"
+            "▒ NÃ©mesis ▒\n"
+            "Rival Tres : 4\n"
+            "▒ Armas favoritas ▒\n"
+            "M1 GARAND : 31\n"
+            "▒ Promedios ▒\n"
+            "bajas por partida : 15.6\n"
+            "▒ Sanciones ▒\n"
+            "kicks : 1]"
+        ),
+    }
+
+    persist_rcon_admin_log_entries(target=TARGET, entries=[entry], db_path=db_path)
+    persist_rcon_admin_log_entries(target=TARGET, entries=[entry], db_path=db_path)
+
+    connection = sqlite3.connect(db_path)
+    connection.row_factory = sqlite3.Row
+    try:
+        rows = connection.execute("SELECT * FROM rcon_player_profile_snapshots").fetchall()
+    finally:
+        connection.close()
+        gc.collect()
+
+    assert len(rows) == 1
+    row = rows[0]
+    assert row["target_key"] == "test-rcon-target"
+    assert row["player_id"] == "steam-profile-1"
+    assert row["source_server_time"] == 1779108340
+    assert row["sessions"] == 12
+    assert row["matches_played"] == 9
+    assert row["total_kills"] == 141
+    assert row["total_deaths"] == 268
+    assert row["teamkills_done"] == 6
+    assert row["teamkills_received"] == 5
+    assert row["kd_ratio"] == 0.53
+    assert json.loads(row["favorite_weapons_json"]) == {"M1 GARAND": 31}
+    assert json.loads(row["victims_json"]) == {"Rival Dos": 7}
+    assert json.loads(row["nemesis_json"]) == {"Rival Tres": 4}
+    assert "bajas : 141" in row["raw_content"]
+
+
+def test_non_profile_messages_do_not_create_profile_snapshots(tmp_path):
+    db_path = tmp_path / "admin_log.sqlite3"
+
+    persist_rcon_admin_log_entries(
+        target=TARGET,
+        entries=[
+            {
+                "timestamp": "2026-05-19T10:00:00Z",
+                "message": "[1:00 min (100)] MESSAGE: player [Player One(steam-1)], content [hello]",
+            }
+        ],
+        db_path=db_path,
+    )
+
+    connection = sqlite3.connect(db_path)
+    try:
+        count = connection.execute(
+            "SELECT COUNT(*) FROM rcon_player_profile_snapshots"
+        ).fetchone()[0]
+    finally:
+        connection.close()
+        gc.collect()
+
+    assert count == 0
 
 
 def test_canonical_message_dedupes_changing_relative_prefixes(tmp_path):

@@ -147,6 +147,19 @@ La politica por defecto para historico vuelve a ser RCON-first:
 mantiene como fallback controlado cuando RCON falla, no tiene cobertura util o
 no soporta todavia una operacion competitiva concreta.
 
+La arquitectura historica RCON-first se compone de captura de sesiones RCON,
+ingesta de AdminLog, parser de eventos, almacenamiento de eventos/snapshots y
+materializacion de partidas y estadisticas por jugador. Los snapshots de perfil
+procedentes de `MESSAGE` enriquecen lecturas de jugador, pero no sustituyen los
+hechos de partida derivados de eventos RCON.
+
+Comandos operativos manuales:
+
+```powershell
+docker compose exec backend python -m app.rcon_admin_log_ingestion --minutes 1440
+docker compose exec backend python -m app.rcon_historical_worker capture
+```
+
 Esta decision no reactiva Elo/MMR dentro del arranque normal del backend. Las
 piezas Elo/MMR, migraciones, datos persistidos y modulos historicos se
 conservan, pero su operativa compleja sigue pausada y desacoplada salvo task

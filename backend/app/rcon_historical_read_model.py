@@ -206,6 +206,7 @@ def get_rcon_historical_match_detail(
 
 def _build_materialized_recent_item(item: dict[str, object]) -> dict[str, object]:
     server_slug = item.get("external_server_id") or item.get("target_key")
+    timestamps = _build_materialized_timestamp_payload(item)
     return {
         "server": {
             "slug": item.get("target_key"),
@@ -215,9 +216,10 @@ def _build_materialized_recent_item(item: dict[str, object]) -> dict[str, object
         },
         "match_id": item.get("match_key"),
         "internal_detail_match_id": item.get("match_key"),
-        "started_at": item.get("started_at"),
-        "ended_at": item.get("ended_at"),
-        "closed_at": item.get("ended_at") or item.get("started_at"),
+        "started_at": timestamps["started_at"],
+        "ended_at": timestamps["ended_at"],
+        "closed_at": timestamps["closed_at"],
+        "timestamp_confidence": timestamps["timestamp_confidence"],
         "map": {
             "name": item.get("map_name"),
             "pretty_name": item.get("map_pretty_name") or normalize_map_name(item.get("map_name")),
@@ -244,8 +246,8 @@ def _build_materialized_recent_item(item: dict[str, object]) -> dict[str, object
         "match_url": resolve_rcon_scoreboard_match_url(
             server_slug=server_slug,
             map_name=item.get("map_pretty_name") or item.get("map_name"),
-            started_at=item.get("started_at"),
-            ended_at=item.get("ended_at"),
+            started_at=timestamps["started_at"],
+            ended_at=timestamps["ended_at"],
             duration_seconds=_calculate_match_duration_seconds(item),
         ),
         "capabilities": describe_rcon_historical_read_model()["capabilities"],
@@ -253,9 +255,21 @@ def _build_materialized_recent_item(item: dict[str, object]) -> dict[str, object
 
 
 def _build_materialized_detail_item(materialized: dict[str, object]) -> dict[str, object]:
+    from .rcon_admin_log_storage import get_latest_rcon_player_profile_summaries
+
     match = materialized["match"]
     recent_item = _build_materialized_recent_item(match)
-    players = [_build_player_row(row) for row in materialized["players"]]
+    profile_summaries = get_latest_rcon_player_profile_summaries(
+        target_key=str(match["target_key"]),
+        player_ids=[str(row["player_id"]) for row in materialized["players"] if row.get("player_id")],
+    )
+    players = [
+        _build_player_row(
+            row,
+            profile_summary=profile_summaries.get(str(row.get("player_id"))),
+        )
+        for row in materialized["players"]
+    ]
     return {
         **recent_item,
         "match_id": match["match_key"],
@@ -270,10 +284,14 @@ def _build_materialized_detail_item(materialized: dict[str, object]) -> dict[str
     }
 
 
-def _build_player_row(row: dict[str, object]) -> dict[str, object]:
+def _build_player_row(
+    row: dict[str, object],
+    *,
+    profile_summary: dict[str, object] | None = None,
+) -> dict[str, object]:
     kills = _coerce_optional_int(row.get("kills")) or 0
     deaths = _coerce_optional_int(row.get("deaths")) or 0
-    return {
+    player = {
         "player_name": row.get("player_name"),
         "team": row.get("team"),
         "kills": kills,
@@ -284,6 +302,9 @@ def _build_player_row(row: dict[str, object]) -> dict[str, object]:
         "most_killed": _top_counter(row.get("most_killed_json")),
         "death_by": _top_counter(row.get("death_by_json")),
     }
+    if profile_summary:
+        player["profile_summary"] = profile_summary
+    return player
 
 
 def _top_counter(raw_value: object, *, limit: int = 5) -> list[dict[str, object]]:
@@ -302,6 +323,26 @@ def _top_counter(raw_value: object, *, limit: int = 5) -> list[dict[str, object]
     ]
     rows.sort(key=lambda item: (-int(item["count"]), str(item["name"])))
     return rows[:limit]
+
+
+def _build_materialized_timestamp_payload(item: dict[str, object]) -> dict[str, object]:
+    started_at = item.get("started_at")
+    ended_at = item.get("ended_at")
+    duration_seconds = _calculate_match_duration_seconds(item)
+    has_server_time_duration = bool(duration_seconds and duration_seconds > 0)
+    if started_at and ended_at and started_at == ended_at and has_server_time_duration:
+        return {
+            "started_at": None,
+            "ended_at": None,
+            "closed_at": ended_at,
+            "timestamp_confidence": "server-time-only",
+        }
+    return {
+        "started_at": started_at,
+        "ended_at": ended_at,
+        "closed_at": ended_at or started_at,
+        "timestamp_confidence": "absolute" if started_at or ended_at else "server-time-only",
+    }
 
 
 def _merge_recent_items(

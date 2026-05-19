@@ -426,6 +426,28 @@ Captura historica prospectiva por RCON:
   como fallback para operaciones competitivas que aun no tienen paridad RCON
 - no promete backfill retroactivo de matches ya perdidos
 
+Arquitectura RCON-first de datos historicos:
+
+- `app.rcon_historical_worker` captura sesiones RCON y mantiene ventanas
+  competitivas prospectivas.
+- `app.rcon_admin_log_ingestion` ingiere AdminLog para el periodo solicitado.
+- `app.rcon_admin_log_parser` normaliza eventos como inicio/cierre de partida,
+  kills, cambios de equipo, chat y mensajes de perfil.
+- `app.rcon_admin_log_storage` persiste eventos AdminLog deduplicados y
+  snapshots de perfil de jugador.
+- `app.rcon_admin_log_materialization` materializa partidas cerradas y
+  estadisticas por jugador desde eventos RCON.
+- `app.rcon_historical_read_model` expone las lecturas historicas actuales y
+  solo recurre a `public-scoreboard` como fallback/enriquecimiento cuando RCON
+  no cubre la operacion.
+
+Comandos manuales equivalentes dentro de Docker Compose:
+
+```powershell
+docker compose exec backend python -m app.rcon_admin_log_ingestion --minutes 1440
+docker compose exec backend python -m app.rcon_historical_worker capture
+```
+
 Comandos manuales desde `backend/`:
 
 ```powershell

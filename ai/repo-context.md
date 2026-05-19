@@ -22,6 +22,8 @@ This repository is in foundation stage. The objective is to grow in a controlled
 - Default deployment: `backend` + `frontend`; historical workers are advanced/manual only.
 - Live and historical defaults are RCON-first, with public-scoreboard kept only as historical fallback.
 - Comunidad Hispana #03 is not part of default RCON targets. Historical/Elo code and persisted data are preserved, while Elo/MMR remains paused and decoupled from backend startup.
+- RCON historical data flow is session capture plus AdminLog ingestion, parsed event storage, materialized matches/player stats and optional player profile snapshot enrichment.
+- Public scoreboard may enrich links or fill unsupported historical gaps, but it is not the primary historical source when RCON coverage exists.
 
 ## Repository Areas
 

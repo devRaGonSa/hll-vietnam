@@ -10,6 +10,7 @@ from pathlib import Path
 
 from .config import get_storage_path
 from .rcon_admin_log_parser import parse_rcon_admin_log_entry
+from .rcon_admin_log_parser import parse_rcon_player_profile_snapshot
 from .rcon_historical_storage import initialize_rcon_historical_storage
 from .sqlite_utils import connect_sqlite_writer
 
@@ -44,6 +45,37 @@ def initialize_rcon_admin_log_storage(*, db_path: Path | None = None) -> Path:
 
             CREATE INDEX IF NOT EXISTS idx_rcon_admin_log_events_type
             ON rcon_admin_log_events(event_type);
+
+            CREATE TABLE IF NOT EXISTS rcon_player_profile_snapshots (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                target_key TEXT NOT NULL,
+                external_server_id TEXT,
+                player_id TEXT NOT NULL,
+                player_name TEXT NOT NULL,
+                source_server_time INTEGER NOT NULL,
+                event_timestamp TEXT,
+                first_seen TEXT,
+                sessions INTEGER,
+                matches_played INTEGER,
+                play_time TEXT,
+                total_kills INTEGER,
+                total_deaths INTEGER,
+                teamkills_done INTEGER,
+                teamkills_received INTEGER,
+                kd_ratio REAL,
+                favorite_weapons_json TEXT NOT NULL DEFAULT '{}',
+                victims_json TEXT NOT NULL DEFAULT '{}',
+                nemesis_json TEXT NOT NULL DEFAULT '{}',
+                averages_json TEXT NOT NULL DEFAULT '{}',
+                sanctions_json TEXT NOT NULL DEFAULT '{}',
+                raw_content TEXT NOT NULL,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(target_key, player_id, source_server_time)
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_rcon_player_profile_snapshots_player
+            ON rcon_player_profile_snapshots(target_key, player_id, source_server_time DESC);
             """
         )
         _ensure_canonical_message_column(connection)
@@ -115,12 +147,100 @@ def persist_rcon_admin_log_entries(
                 inserted += 1
             else:
                 duplicates += 1
+            _persist_profile_snapshot_if_present(
+                connection,
+                target_key=target_key,
+                external_server_id=external_server_id,
+                parsed=parsed,
+            )
 
     return {
         "events_seen": len(entries),
         "events_inserted": inserted,
         "duplicate_events": duplicates,
     }
+
+
+def _persist_profile_snapshot_if_present(
+    connection: sqlite3.Connection,
+    *,
+    target_key: str,
+    external_server_id: object,
+    parsed: dict[str, object],
+) -> None:
+    snapshot = parse_rcon_player_profile_snapshot(parsed)
+    if snapshot is None:
+        return
+    connection.execute(
+        """
+        INSERT INTO rcon_player_profile_snapshots (
+            target_key,
+            external_server_id,
+            player_id,
+            player_name,
+            source_server_time,
+            event_timestamp,
+            first_seen,
+            sessions,
+            matches_played,
+            play_time,
+            total_kills,
+            total_deaths,
+            teamkills_done,
+            teamkills_received,
+            kd_ratio,
+            favorite_weapons_json,
+            victims_json,
+            nemesis_json,
+            averages_json,
+            sanctions_json,
+            raw_content
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(target_key, player_id, source_server_time) DO UPDATE SET
+            external_server_id = excluded.external_server_id,
+            player_name = excluded.player_name,
+            event_timestamp = excluded.event_timestamp,
+            first_seen = excluded.first_seen,
+            sessions = excluded.sessions,
+            matches_played = excluded.matches_played,
+            play_time = excluded.play_time,
+            total_kills = excluded.total_kills,
+            total_deaths = excluded.total_deaths,
+            teamkills_done = excluded.teamkills_done,
+            teamkills_received = excluded.teamkills_received,
+            kd_ratio = excluded.kd_ratio,
+            favorite_weapons_json = excluded.favorite_weapons_json,
+            victims_json = excluded.victims_json,
+            nemesis_json = excluded.nemesis_json,
+            averages_json = excluded.averages_json,
+            sanctions_json = excluded.sanctions_json,
+            raw_content = excluded.raw_content,
+            updated_at = CURRENT_TIMESTAMP
+        """,
+        (
+            target_key,
+            external_server_id,
+            snapshot.player_id,
+            snapshot.player_name,
+            snapshot.source_server_time,
+            snapshot.event_timestamp,
+            snapshot.first_seen,
+            snapshot.sessions,
+            snapshot.matches_played,
+            snapshot.play_time,
+            snapshot.total_kills,
+            snapshot.total_deaths,
+            snapshot.teamkills_done,
+            snapshot.teamkills_received,
+            snapshot.kd_ratio,
+            json.dumps(snapshot.favorite_weapons, ensure_ascii=False, separators=(",", ":")),
+            json.dumps(snapshot.victims, ensure_ascii=False, separators=(",", ":")),
+            json.dumps(snapshot.nemesis, ensure_ascii=False, separators=(",", ":")),
+            json.dumps(snapshot.averages, ensure_ascii=False, separators=(",", ":")),
+            json.dumps(snapshot.sanctions, ensure_ascii=False, separators=(",", ":")),
+            snapshot.raw_content,
+        ),
+    )
 
 
 _PREFIX_RE = re.compile(r"^\[.*?\(\d+\)\]\s+", re.DOTALL)
@@ -178,3 +298,74 @@ def list_rcon_admin_log_event_counts(*, db_path: Path | None = None) -> list[dic
         ).fetchall()
 
     return [dict(row) for row in rows]
+
+
+def get_latest_rcon_player_profile_summaries(
+    *,
+    target_key: str,
+    player_ids: list[str],
+    db_path: Path | None = None,
+) -> dict[str, dict[str, object]]:
+    """Return safe latest profile summaries keyed by player id."""
+    requested_ids = [str(player_id).strip() for player_id in player_ids if str(player_id).strip()]
+    if not target_key or not requested_ids:
+        return {}
+
+    resolved_path = db_path or get_storage_path()
+    initialize_rcon_admin_log_storage(db_path=resolved_path)
+    placeholders = ",".join("?" for _ in requested_ids)
+    with sqlite3.connect(resolved_path) as connection:
+        connection.row_factory = sqlite3.Row
+        rows = connection.execute(
+            f"""
+            SELECT snapshots.*
+            FROM rcon_player_profile_snapshots AS snapshots
+            INNER JOIN (
+                SELECT player_id, MAX(source_server_time) AS latest_source_server_time
+                FROM rcon_player_profile_snapshots
+                WHERE target_key = ?
+                  AND player_id IN ({placeholders})
+                GROUP BY player_id
+            ) AS latest
+              ON latest.player_id = snapshots.player_id
+             AND latest.latest_source_server_time = snapshots.source_server_time
+            WHERE snapshots.target_key = ?
+            """,
+            [target_key, *requested_ids, target_key],
+        ).fetchall()
+
+    return {str(row["player_id"]): _build_safe_profile_summary(row) for row in rows}
+
+
+def _build_safe_profile_summary(row: sqlite3.Row) -> dict[str, object]:
+    return {
+        "player_name": row["player_name"],
+        "source_server_time": row["source_server_time"],
+        "event_timestamp": row["event_timestamp"],
+        "first_seen": row["first_seen"],
+        "sessions": row["sessions"],
+        "matches_played": row["matches_played"],
+        "play_time": row["play_time"],
+        "totals": {
+            "kills": row["total_kills"],
+            "deaths": row["total_deaths"],
+            "teamkills_done": row["teamkills_done"],
+            "teamkills_received": row["teamkills_received"],
+            "kd_ratio": row["kd_ratio"],
+        },
+        "favorite_weapons": _json_mapping(row["favorite_weapons_json"]),
+        "victims": _json_mapping(row["victims_json"]),
+        "nemesis": _json_mapping(row["nemesis_json"]),
+        "averages": _json_mapping(row["averages_json"]),
+        "sanctions": _json_mapping(row["sanctions_json"]),
+    }
+
+
+def _json_mapping(raw_value: object) -> dict[str, object]:
+    if not isinstance(raw_value, str) or not raw_value.strip():
+        return {}
+    try:
+        parsed = json.loads(raw_value)
+    except json.JSONDecodeError:
+        return {}
+    return parsed if isinstance(parsed, dict) else {}
