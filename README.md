@@ -77,19 +77,18 @@ El repositorio ya incluye:
 - `docker-compose.yml`
 - `backend/.env.example`
 
-SelecciÃ³n de proveedor por entorno hoy:
+Seleccion de proveedor por entorno hoy:
 
 - desarrollo:
-  - `HLL_BACKEND_LIVE_DATA_SOURCE=a2s`
-  - `HLL_BACKEND_HISTORICAL_DATA_SOURCE=public-scoreboard`
-- producciÃ³n realista en esta fase:
   - `HLL_BACKEND_LIVE_DATA_SOURCE=rcon`
-  - `HLL_BACKEND_HISTORICAL_DATA_SOURCE=public-scoreboard`
+  - `HLL_BACKEND_HISTORICAL_DATA_SOURCE=rcon`
+- produccion realista en esta fase:
+  - `HLL_BACKEND_LIVE_DATA_SOURCE=rcon`
+  - `HLL_BACKEND_HISTORICAL_DATA_SOURCE=rcon`
 
-Esto refleja el estado real de la repo: el proveedor RCON ya existe para el
-estado live de `/api/servers`, pero el histÃ³rico sigue dependiendo del
-scoreboard pÃºblico porque no hay todavÃ­a una canalizaciÃ³n persistente basada
-en eventos/logs RCON.
+Esto refleja la politica operativa actual: RCON es la fuente primaria para
+live e historico. El scoreboard publico queda como fallback historico cuando
+RCON falla, no cubre una operacion concreta o aun no tiene cobertura suficiente.
 
 Modo normal recomendado:
 
@@ -160,7 +159,7 @@ Modo live con RCON en Docker Compose:
 
 ```powershell
 $env:HLL_BACKEND_LIVE_DATA_SOURCE='rcon'
-$env:HLL_BACKEND_HISTORICAL_DATA_SOURCE='public-scoreboard'
+$env:HLL_BACKEND_HISTORICAL_DATA_SOURCE='rcon'
 $env:HLL_BACKEND_RCON_TARGETS='[
   {
     "name": "Comunidad Hispana #01",
@@ -181,8 +180,8 @@ Buenas practicas:
 - no versionar credenciales reales en `backend/.env.example`
 - preferir exportarlas como variables de entorno del host o del secreto del
   despliegue
-- mantener `HLL_BACKEND_HISTORICAL_DATA_SOURCE=public-scoreboard` hasta tener
-  una ingesta historica RCON realmente persistida
+- mantener `HLL_BACKEND_HISTORICAL_DATA_SOURCE=rcon` como valor normal y usar
+  `public-scoreboard` solo como fallback historico controlado
 - no reintroducir Comunidad Hispana #03 en `HLL_BACKEND_RCON_TARGETS` salvo que
   una task nueva valide su disponibilidad
 
