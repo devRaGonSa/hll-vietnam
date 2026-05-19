@@ -20,7 +20,8 @@ This repository is in foundation stage. The objective is to grow in a controlled
 - AI Platform: integrated to coordinate planning and task execution
 - Product goal in current phase: maintain a clean landing and repository structure
 - Default deployment: `backend` + `frontend`; historical workers are advanced/manual only.
-- Comunidad Hispana #03 is not part of default RCON targets. Historical/Elo code and persisted data are preserved but paused operationally.
+- Live and historical defaults are RCON-first, with public-scoreboard kept only as historical fallback.
+- Comunidad Hispana #03 is not part of default RCON targets. Historical/Elo code and persisted data are preserved, while Elo/MMR remains paused and decoupled from backend startup.
 
 ## Repository Areas
 

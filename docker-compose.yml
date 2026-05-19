@@ -7,7 +7,7 @@ services:
       - ./backend/.env.example
     environment:
       HLL_BACKEND_LIVE_DATA_SOURCE: ${HLL_BACKEND_LIVE_DATA_SOURCE:-rcon}
-      HLL_BACKEND_HISTORICAL_DATA_SOURCE: ${HLL_BACKEND_HISTORICAL_DATA_SOURCE:-public-scoreboard}
+      HLL_BACKEND_HISTORICAL_DATA_SOURCE: ${HLL_BACKEND_HISTORICAL_DATA_SOURCE:-rcon}
       HLL_BACKEND_RCON_TIMEOUT_SECONDS: ${HLL_BACKEND_RCON_TIMEOUT_SECONDS:-20}
       HLL_BACKEND_RCON_TARGETS: >-
         ${HLL_BACKEND_RCON_TARGETS:-[{"name":"Comunidad Hispana #01","slug":"comunidad-hispana-01","external_server_id":"comunidad-hispana-01","host":"152.114.195.174","port":7779,"password":"replace-me-01","source_name":"community-hispana-rcon","region":"ES","game_port":null,"query_port":null},{"name":"Comunidad Hispana #02","slug":"comunidad-hispana-02","external_server_id":"comunidad-hispana-02","host":"152.114.195.150","port":7879,"password":"replace-me-02","source_name":"community-hispana-rcon","region":"ES","game_port":null,"query_port":null}]}

@@ -70,13 +70,13 @@ Community website repository with a static landing in the current phase and a pl
 - The phased source strategy for that provisional block is documented in `docs/current-hll-servers-source-plan.md`.
 - The ingestion strategy for converting that provisional block into normalized server snapshots is documented in `docs/current-hll-data-ingestion-plan.md`.
 - The logical storage foundation for persisting server snapshots is documented in `docs/stats-database-schema-foundation.md`.
-- Historical match and player statistics must come from the public CRCON scoreboard JSON layer, not from A2S or the `/games` HTML shell.
+- Historical ingestion defaults to RCON-first; the public CRCON scoreboard JSON layer is a fallback for operations where RCON fails or lacks coverage, not the normal primary historical source.
 - The validated discovery for those historical sources is documented in `docs/historical-crcon-source-discovery.md`.
 - The persisted historical domain model for CRCON matches, players and ingestion runs is documented in `docs/historical-domain-model.md`.
 - The V1 monthly MVP scoring proposal for persisted historical player metrics is documented in `docs/monthly-mvp-ranking-scoring-design.md`.
 - The audited boundary between direct live RCON and future event-driven RCON metrics is documented in `docs/rcon-data-capability-audit.md`.
 - The first V2 player-event foundation now lives in dedicated `player_event_*` backend modules and starts from CRCON match-detail summaries, not from live RCON.
 - The default operational deployment is simplified to `backend` + `frontend`; historical workers and RCON historical capture are advanced/manual services.
-- Comunidad Hispana #03 is disabled from default RCON targets, while existing historical/Elo code and persisted data remain available for explicit future reintroduction.
+- Comunidad Hispana #03 is disabled from default RCON targets, while existing historical/Elo code and persisted data remain available for explicit future reintroduction. Elo/MMR remains paused and decoupled from backend startup.
 - Frontend data consumption should remain progressive, endpoint by endpoint, with static fallbacks preserved during migration.
 - The frontend integration strategy is documented in `docs/frontend-data-consumption-plan.md`.

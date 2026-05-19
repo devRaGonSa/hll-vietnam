@@ -139,3 +139,15 @@ porque ya no es una fuente operativa vigente. El codigo historico, los datos
 persistidos, las migraciones y las piezas Elo/MMR no se eliminan; quedan
 pausadas operativamente para esta fase y pueden reintroducirse mediante una
 task futura si se valida de nuevo la fuente y el coste de mantenimiento.
+
+## Decision 015: historico RCON-first con fallback publico
+
+La politica por defecto para historico vuelve a ser RCON-first:
+`HLL_BACKEND_HISTORICAL_DATA_SOURCE=rcon`. El scoreboard publico de CRCON se
+mantiene como fallback controlado cuando RCON falla, no tiene cobertura util o
+no soporta todavia una operacion competitiva concreta.
+
+Esta decision no reactiva Elo/MMR dentro del arranque normal del backend. Las
+piezas Elo/MMR, migraciones, datos persistidos y modulos historicos se
+conservan, pero su operativa compleja sigue pausada y desacoplada salvo task
+explicita.

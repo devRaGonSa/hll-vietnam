@@ -273,12 +273,12 @@ Valores soportados en esta fase:
   - `a2s` como fallback legacy o override explicito
 - historico:
   - `rcon` como camino primario recomendado para captura y writer path primario
-  - `public-scoreboard` como fallback legacy o override explicito
+  - `public-scoreboard` como fallback legacy controlado
 
 Defaults actuales:
 
 - `HLL_BACKEND_LIVE_DATA_SOURCE=rcon`
-- `HLL_BACKEND_HISTORICAL_DATA_SOURCE=public-scoreboard`
+- `HLL_BACKEND_HISTORICAL_DATA_SOURCE=rcon`
 
 La seleccion efectiva se resuelve en `app/data_sources.py` y en adapters
 dedicados dentro de `app/providers/`:
@@ -297,7 +297,7 @@ Proveedores operativos en esta fase:
 - live `rcon`
 - live `a2s`
 - historico `rcon` solo para read model minimo y captura prospectiva
-- historico `public-scoreboard`
+- historico `public-scoreboard` como fallback para cobertura competitiva sin paridad RCON
 
 Politica funcional actual:
 
@@ -399,15 +399,15 @@ Runbook operativo minimo:
 
 - modo recomendado por defecto:
   - `HLL_BACKEND_LIVE_DATA_SOURCE=rcon`
-  - `HLL_BACKEND_HISTORICAL_DATA_SOURCE=public-scoreboard`
+  - `HLL_BACKEND_HISTORICAL_DATA_SOURCE=rcon`
   - usar solo `comunidad-hispana-01` y `comunidad-hispana-02` en los targets
     RCON por defecto
 - modo historico/RCON avanzado:
   - iniciar workers solo de forma explicita
   - no reintroducir `comunidad-hispana-03` salvo validacion nueva
-- override legacy completo:
+- override legacy live/A2S:
   - `HLL_BACKEND_LIVE_DATA_SOURCE=a2s`
-  - `HLL_BACKEND_HISTORICAL_DATA_SOURCE=public-scoreboard`
+  - `HLL_BACKEND_HISTORICAL_DATA_SOURCE=rcon`
 
 Verificacion minima del proveedor activo:
 
@@ -422,7 +422,8 @@ Captura historica prospectiva por RCON:
 
 - se ejecuta fuera del request path HTTP
 - persiste muestras live hacia delante en tablas `rcon_historical_*`
-- no sustituye todavia el historico competitivo basado en `public-scoreboard`
+- usa RCON como camino historico primario y mantiene `public-scoreboard` solo
+  como fallback para operaciones competitivas que aun no tienen paridad RCON
 - no promete backfill retroactivo de matches ya perdidos
 
 Comandos manuales desde `backend/`:
@@ -638,7 +639,7 @@ Ejemplos:
 
 - `backend/data/snapshots/comunidad-hispana-01/server-summary.json`
 - `backend/data/snapshots/comunidad-hispana-01/weekly-kills.json`
-- `backend/data/snapshots/comunidad-hispana-03/recent-matches.json`
+- `backend/data/snapshots/comunidad-hispana-02/recent-matches.json`
 - `backend/data/snapshots/all-servers/weekly-support.json`
 - `backend/data/snapshots/all-servers/monthly-mvp.json`
 
@@ -1088,7 +1089,7 @@ docker compose exec backend python -m app.historical_runner --interval 1800
 Flags utiles:
 
 - `--server comunidad-hispana-01` para limitar a un servidor
-- `--server comunidad-hispana-03` para validar solo el tercer scoreboard historico
+- `--server comunidad-hispana-02` para validar solo el segundo servidor activo
 - `--overlap-hours 48` para releer una ventana reciente mayor sin relanzar bootstrap
 - `--max-pages 2` para validacion local acotada
 - `--page-size 25` para ajustar paginacion
@@ -1191,7 +1192,7 @@ fallback clasico entra de forma controlada. Por defecto:
   periodica de fallback para mantener rankings y snapshots clasicos
 - refresca cada `900` segundos
 - prewarmea en cada ciclo:
-  - `server-summary` para `comunidad-hispana-01`, `comunidad-hispana-02`, `comunidad-hispana-03` y `all-servers`
+  - `server-summary` para `comunidad-hispana-01`, `comunidad-hispana-02` y `all-servers`
   - `weekly-leaderboard` de la metrica por defecto `kills` para esos mismos alcances
   - `monthly-leaderboard` de la metrica por defecto `kills` para esos mismos alcances
   - `recent-matches` para esos mismos alcances
@@ -1226,7 +1227,6 @@ Sin `--server`, ese runner refresca:
 
 - `comunidad-hispana-01`
 - `comunidad-hispana-02`
-- `comunidad-hispana-03`
 
 Despues de cada fallback clasico correcto, recompone snapshots para los
 servidores afectados y vuelve a alinear el agregado `all-servers`. Si el ciclo
@@ -1251,7 +1251,7 @@ Operativa local minima:
    en archivos bajo `backend/data/snapshots/`, por ejemplo:
    - `backend/data/snapshots/comunidad-hispana-01/server-summary.json`
    - `backend/data/snapshots/comunidad-hispana-02/recent-matches.json`
-   - `backend/data/snapshots/comunidad-hispana-03/weekly-kills.json`
+   - `backend/data/snapshots/comunidad-hispana-02/weekly-kills.json`
    - `backend/data/snapshots/all-servers/monthly-kills.json`
 
 Operativa avanzada con Docker Compose:
@@ -1536,9 +1536,10 @@ Estado real a fecha de esta fase:
 - leaderboards semanales/mensuales, MVP V1/V2 y player-events siguen teniendo
   fallback a `public-scoreboard` mientras RCON no disponga de señal competitiva
   por jugador con paridad suficiente
-- Elo/MMR pasa a consumir primero contexto competitivo RCON-backed para
-  cobertura y calidad de match cuando existe, pero sigue necesitando
-  `public-scoreboard` como suplemento para estadisticas por jugador
+- Elo/MMR permanece pausado y desacoplado del arranque del backend; cuando se
+  reactive mediante una task explicita, debera respetar el contexto
+  RCON-backed primario y usar `public-scoreboard` solo como suplemento/fallback
+  para estadisticas por jugador sin paridad RCON
 
 ## Elo/MMR Monthly Ranking
 

@@ -32,7 +32,6 @@ HOURLY_INTERVAL_SECONDS = 3600
 DEFAULT_HISTORICAL_SERVER_SCOPE = (
     "comunidad-hispana-01",
     "comunidad-hispana-02",
-    "comunidad-hispana-03",
 )
 
 
