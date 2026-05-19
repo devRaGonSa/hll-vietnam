@@ -1,7 +1,7 @@
 ---
 id: TASK-121
 title: Add RCON AdminLog storage read tests
-status: pending
+status: done
 type: backend
 team: Backend Senior
 supporting_teams:
@@ -72,3 +72,17 @@ AdminLog storage and manual ingestion exist, and real validation confirmed canon
 - Stage only intended files.
 - Commit the completed implementation.
 - Push the branch to origin.
+
+## Outcome
+
+- Added deterministic offline storage tests in `backend/tests/test_rcon_admin_log_storage.py`.
+- Covered AdminLog table initialization, first insert behavior, duplicate reporting, canonical-message dedupe when relative prefixes change, and event-count grouping.
+- Tests use pytest `tmp_path` temporary SQLite paths and do not use real RCON or the runtime database.
+
+## Validation Result
+
+- `python -m compileall backend/app` passed.
+- `python -m pytest backend/tests/test_rcon_admin_log_parser.py backend/tests/test_rcon_admin_log_storage.py` could not run locally because `pytest` is not installed.
+- `docker compose exec backend python -m pytest backend/tests/test_rcon_admin_log_parser.py backend/tests/test_rcon_admin_log_storage.py` also could not run because `pytest` is not installed in the backend image.
+- Direct Python invocation of the new storage test functions passed with `PYTHONPATH=backend`.
+- `git diff --name-only` matched the expected task scope after accounting for the new untracked test file.
