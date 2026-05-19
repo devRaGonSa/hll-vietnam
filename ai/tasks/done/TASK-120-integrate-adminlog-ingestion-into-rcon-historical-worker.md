@@ -1,7 +1,7 @@
 ---
 id: TASK-120
 title: Integrate AdminLog ingestion into RCON historical worker
-status: pending
+status: done
 type: backend
 team: Backend Senior
 supporting_teams:
@@ -81,3 +81,19 @@ HLL Vietnam is moving to an RCON-first historical/live data platform. Manual Adm
 - Stage only intended files.
 - Commit the completed implementation.
 - Push the branch to origin.
+
+## Outcome
+
+- Integrated AdminLog ingestion into the RCON historical capture worker using the existing ingestion/storage path.
+- Added `HLL_BACKEND_RCON_ADMIN_LOG_LOOKBACK_MINUTES`, defaulting to 60 minutes.
+- Added worker result totals for AdminLog events seen, inserted, duplicated and failed targets.
+- Verified a temporary bad RCON target reports one session failure and one AdminLog failure while a valid target still captures successfully.
+
+## Validation Result
+
+- `python -m compileall backend/app` passed.
+- `docker compose up -d --build backend rcon-historical-worker` passed.
+- `docker compose exec backend python -m app.rcon_historical_worker capture` passed and returned AdminLog metrics.
+- `docker compose exec backend python -m app.rcon_admin_log_ingestion --minutes 1440` run twice; second run reported 143 duplicate events and 0 inserted events.
+- `/health` returned `status: ok`.
+- `git diff --name-only` matched the expected task scope.
