@@ -174,6 +174,58 @@ def get_rcon_historical_match_detail(
     }
 
 
+def _build_rcon_result(latest_payload: object) -> dict[str, object]:
+    payload = latest_payload if isinstance(latest_payload, dict) else {}
+    allied_score = _coerce_optional_int(payload.get("allied_score"))
+    axis_score = _coerce_optional_int(payload.get("axis_score"))
+    winner = payload.get("winner")
+    if not isinstance(winner, str) or not winner:
+        winner = _resolve_result_winner(allied_score, axis_score)
+    return {
+        "allied_score": allied_score,
+        "axis_score": axis_score,
+        "winner": winner,
+    }
+
+
+def _build_rcon_gamestate(latest_payload: object) -> dict[str, object]:
+    payload = latest_payload if isinstance(latest_payload, dict) else {}
+    return {
+        "game_mode": payload.get("game_mode"),
+        "allied_faction": payload.get("allied_faction"),
+        "axis_faction": payload.get("axis_faction"),
+        "allied_players": _coerce_optional_int(payload.get("allied_players")),
+        "axis_players": _coerce_optional_int(payload.get("axis_players")),
+        "remaining_match_time_seconds": _coerce_optional_int(
+            payload.get("remaining_match_time_seconds")
+        ),
+        "match_time_seconds": _coerce_optional_int(payload.get("match_time_seconds")),
+        "queue_count": _coerce_optional_int(payload.get("queue_count")),
+        "max_queue_count": _coerce_optional_int(payload.get("max_queue_count")),
+        "vip_queue_count": _coerce_optional_int(payload.get("vip_queue_count")),
+        "max_vip_queue_count": _coerce_optional_int(payload.get("max_vip_queue_count")),
+    }
+
+
+def _resolve_result_winner(allied_score: int | None, axis_score: int | None) -> str | None:
+    if allied_score is None or axis_score is None:
+        return None
+    if allied_score > axis_score:
+        return "allied"
+    if axis_score > allied_score:
+        return "axis"
+    return "draw"
+
+
+def _coerce_optional_int(value: object) -> int | None:
+    if value is None:
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
 def _build_server_summary(item: dict[str, object]) -> dict[str, object]:
     sample_count = int(item.get("sample_count") or 0)
     first_last_points = list_rcon_historical_recent_activity(
