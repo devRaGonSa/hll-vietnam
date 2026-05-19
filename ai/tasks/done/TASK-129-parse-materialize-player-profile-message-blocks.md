@@ -1,7 +1,7 @@
 ---
 id: TASK-129
 title: Parse and materialize player profile MESSAGE blocks
-status: pending
+status: done
 type: backend
 team: Backend Senior
 supporting_teams:
@@ -74,3 +74,12 @@ Observed AdminLog `MESSAGE` blocks can include profile-like stats such as first 
 - Stage only intended files.
 - Commit the completed implementation.
 - Push the branch to origin.
+
+## Outcome
+
+- Added profile MESSAGE parsing for anonymized long-term player snapshot fields.
+- Added `rcon_player_profile_snapshots` storage with idempotent upsert by target, player id and source server time.
+- Verified non-profile MESSAGE entries are ignored.
+- Validation: `python -m compileall backend/app` passed.
+- Validation blocked: `python -m pytest backend/tests/test_rcon_admin_log_parser.py backend/tests/test_rcon_admin_log_storage.py` could not run because `pytest` is not installed in this environment.
+- Supplemental check: direct Python execution of the new parser/storage checks passed.

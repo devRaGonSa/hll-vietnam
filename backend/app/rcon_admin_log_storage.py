@@ -10,6 +10,7 @@ from pathlib import Path
 
 from .config import get_storage_path
 from .rcon_admin_log_parser import parse_rcon_admin_log_entry
+from .rcon_admin_log_parser import parse_rcon_player_profile_snapshot
 from .rcon_historical_storage import initialize_rcon_historical_storage
 from .sqlite_utils import connect_sqlite_writer
 
@@ -44,6 +45,37 @@ def initialize_rcon_admin_log_storage(*, db_path: Path | None = None) -> Path:
 
             CREATE INDEX IF NOT EXISTS idx_rcon_admin_log_events_type
             ON rcon_admin_log_events(event_type);
+
+            CREATE TABLE IF NOT EXISTS rcon_player_profile_snapshots (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                target_key TEXT NOT NULL,
+                external_server_id TEXT,
+                player_id TEXT NOT NULL,
+                player_name TEXT NOT NULL,
+                source_server_time INTEGER NOT NULL,
+                event_timestamp TEXT,
+                first_seen TEXT,
+                sessions INTEGER,
+                matches_played INTEGER,
+                play_time TEXT,
+                total_kills INTEGER,
+                total_deaths INTEGER,
+                teamkills_done INTEGER,
+                teamkills_received INTEGER,
+                kd_ratio REAL,
+                favorite_weapons_json TEXT NOT NULL DEFAULT '{}',
+                victims_json TEXT NOT NULL DEFAULT '{}',
+                nemesis_json TEXT NOT NULL DEFAULT '{}',
+                averages_json TEXT NOT NULL DEFAULT '{}',
+                sanctions_json TEXT NOT NULL DEFAULT '{}',
+                raw_content TEXT NOT NULL,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(target_key, player_id, source_server_time)
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_rcon_player_profile_snapshots_player
+            ON rcon_player_profile_snapshots(target_key, player_id, source_server_time DESC);
             """
         )
         _ensure_canonical_message_column(connection)
@@ -115,12 +147,100 @@ def persist_rcon_admin_log_entries(
                 inserted += 1
             else:
                 duplicates += 1
+            _persist_profile_snapshot_if_present(
+                connection,
+                target_key=target_key,
+                external_server_id=external_server_id,
+                parsed=parsed,
+            )
 
     return {
         "events_seen": len(entries),
         "events_inserted": inserted,
         "duplicate_events": duplicates,
     }
+
+
+def _persist_profile_snapshot_if_present(
+    connection: sqlite3.Connection,
+    *,
+    target_key: str,
+    external_server_id: object,
+    parsed: dict[str, object],
+) -> None:
+    snapshot = parse_rcon_player_profile_snapshot(parsed)
+    if snapshot is None:
+        return
+    connection.execute(
+        """
+        INSERT INTO rcon_player_profile_snapshots (
+            target_key,
+            external_server_id,
+            player_id,
+            player_name,
+            source_server_time,
+            event_timestamp,
+            first_seen,
+            sessions,
+            matches_played,
+            play_time,
+            total_kills,
+            total_deaths,
+            teamkills_done,
+            teamkills_received,
+            kd_ratio,
+            favorite_weapons_json,
+            victims_json,
+            nemesis_json,
+            averages_json,
+            sanctions_json,
+            raw_content
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(target_key, player_id, source_server_time) DO UPDATE SET
+            external_server_id = excluded.external_server_id,
+            player_name = excluded.player_name,
+            event_timestamp = excluded.event_timestamp,
+            first_seen = excluded.first_seen,
+            sessions = excluded.sessions,
+            matches_played = excluded.matches_played,
+            play_time = excluded.play_time,
+            total_kills = excluded.total_kills,
+            total_deaths = excluded.total_deaths,
+            teamkills_done = excluded.teamkills_done,
+            teamkills_received = excluded.teamkills_received,
+            kd_ratio = excluded.kd_ratio,
+            favorite_weapons_json = excluded.favorite_weapons_json,
+            victims_json = excluded.victims_json,
+            nemesis_json = excluded.nemesis_json,
+            averages_json = excluded.averages_json,
+            sanctions_json = excluded.sanctions_json,
+            raw_content = excluded.raw_content,
+            updated_at = CURRENT_TIMESTAMP
+        """,
+        (
+            target_key,
+            external_server_id,
+            snapshot.player_id,
+            snapshot.player_name,
+            snapshot.source_server_time,
+            snapshot.event_timestamp,
+            snapshot.first_seen,
+            snapshot.sessions,
+            snapshot.matches_played,
+            snapshot.play_time,
+            snapshot.total_kills,
+            snapshot.total_deaths,
+            snapshot.teamkills_done,
+            snapshot.teamkills_received,
+            snapshot.kd_ratio,
+            json.dumps(snapshot.favorite_weapons, ensure_ascii=False, separators=(",", ":")),
+            json.dumps(snapshot.victims, ensure_ascii=False, separators=(",", ":")),
+            json.dumps(snapshot.nemesis, ensure_ascii=False, separators=(",", ":")),
+            json.dumps(snapshot.averages, ensure_ascii=False, separators=(",", ":")),
+            json.dumps(snapshot.sanctions, ensure_ascii=False, separators=(",", ":")),
+            snapshot.raw_content,
+        ),
+    )
 
 
 _PREFIX_RE = re.compile(r"^\[.*?\(\d+\)\]\s+", re.DOTALL)

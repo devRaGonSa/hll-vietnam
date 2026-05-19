@@ -1,6 +1,9 @@
 ﻿from app.rcon_admin_log_parser import parse_rcon_admin_log_message
 
 
+from app.rcon_admin_log_parser import parse_rcon_player_profile_snapshot
+
+
 def test_parse_match_start():
     parsed = parse_rcon_admin_log_message(
         "[2:09:15 hours (1779178245)] MATCH START UTAH BEACH Warfare"
@@ -105,3 +108,59 @@ def test_parse_message_profile():
     assert parsed.player_name == "Ekenef"
     assert parsed.player_id == "76561198109813520"
     assert "bajas : 141" in parsed.content
+
+
+def test_parse_player_profile_snapshot_spanish_sections():
+    parsed = parse_rcon_admin_log_message(
+        "[21:34:19 hours (1779108340)] MESSAGE: player [Jugador Uno(steam-profile-1)], "
+        "content [─ Jugador Uno ─\n"
+        "▒ Totales ▒\n"
+        "Visto por primera vez : 2026-01-01\n"
+        "sesiones : 12\n"
+        "partidas jugadas : 9\n"
+        "tiempo jugado : 18 h 30 min\n"
+        "bajas : 141 (6 TKs)\n"
+        "muertes : 268 (5 TKs)\n"
+        "K/D : 0,53\n"
+        "▒ VÃ­ctimas ▒\n"
+        "Rival Dos : 7\n"
+        "▒ NÃ©mesis ▒\n"
+        "Rival Tres : 4\n"
+        "▒ Armas favoritas ▒\n"
+        "M1 GARAND : 31\n"
+        "▒ Promedios ▒\n"
+        "bajas por partida : 15,6\n"
+        "▒ Sanciones ▒\n"
+        "kicks : 1]"
+    )
+
+    snapshot = parse_rcon_player_profile_snapshot(
+        parsed,
+        event_timestamp="2026-05-19T10:00:00Z",
+    )
+
+    assert snapshot is not None
+    assert snapshot.player_name == "Jugador Uno"
+    assert snapshot.player_id == "steam-profile-1"
+    assert snapshot.source_server_time == 1779108340
+    assert snapshot.sessions == 12
+    assert snapshot.matches_played == 9
+    assert snapshot.total_kills == 141
+    assert snapshot.total_deaths == 268
+    assert snapshot.teamkills_done == 6
+    assert snapshot.teamkills_received == 5
+    assert snapshot.kd_ratio == 0.53
+    assert snapshot.favorite_weapons == {"M1 GARAND": 31}
+    assert snapshot.victims == {"Rival Dos": 7}
+    assert snapshot.nemesis == {"Rival Tres": 4}
+    assert snapshot.averages == {"bajas por partida": 15.6}
+    assert snapshot.sanctions == {"kicks": 1.0}
+
+
+def test_non_profile_message_does_not_parse_as_profile_snapshot():
+    parsed = parse_rcon_admin_log_message(
+        "[21:34:19 hours (1779108340)] MESSAGE: player [Jugador Uno(steam-profile-1)], "
+        "content [Bienvenido al servidor]"
+    )
+
+    assert parse_rcon_player_profile_snapshot(parsed) is None
