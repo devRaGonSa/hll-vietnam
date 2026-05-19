@@ -163,6 +163,7 @@ def get_rcon_historical_match_detail(
         "player_count": int(round(float(item.get("average_players") or 0))),
         "peak_players": item.get("peak_players"),
         "sample_count": item.get("sample_count"),
+        "players": [],
         "capture_basis": "rcon-competitive-window",
         "capabilities": item.get("capabilities"),
         "match_url": resolve_rcon_scoreboard_match_url(

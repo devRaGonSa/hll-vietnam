@@ -826,6 +826,7 @@ def get_historical_match_detail(
         row = connection.execute(
             """
             SELECT
+                historical_matches.id AS match_pk,
                 historical_servers.slug AS server_slug,
                 historical_servers.display_name AS server_name,
                 historical_matches.external_match_id,
@@ -852,6 +853,33 @@ def get_historical_match_detail(
             """,
             (normalized_server_slug, normalized_match_id),
         ).fetchone()
+        player_rows = []
+        if row is not None:
+            player_rows = connection.execute(
+                """
+                SELECT
+                    historical_players.display_name,
+                    historical_players.stable_player_key,
+                    historical_player_match_stats.team_side,
+                    historical_player_match_stats.level,
+                    historical_player_match_stats.kills,
+                    historical_player_match_stats.deaths,
+                    historical_player_match_stats.teamkills,
+                    historical_player_match_stats.combat,
+                    historical_player_match_stats.offense,
+                    historical_player_match_stats.defense,
+                    historical_player_match_stats.support,
+                    historical_player_match_stats.time_seconds
+                FROM historical_player_match_stats
+                INNER JOIN historical_players
+                    ON historical_players.id = historical_player_match_stats.historical_player_id
+                WHERE historical_player_match_stats.historical_match_id = ?
+                ORDER BY
+                    COALESCE(historical_player_match_stats.kills, 0) DESC,
+                    historical_players.display_name ASC
+                """,
+                (row["match_pk"],),
+            ).fetchall()
     if row is None:
         return None
     started_at = row["started_at"]
@@ -880,6 +908,23 @@ def get_historical_match_detail(
         },
         "player_count": int(row["player_count"] or 0),
         "total_time_seconds": _coerce_int(row["total_time_seconds"]),
+        "players": [
+            {
+                "name": player_row["display_name"],
+                "stable_player_key": player_row["stable_player_key"],
+                "team_side": player_row["team_side"],
+                "level": _coerce_int(player_row["level"]),
+                "kills": _coerce_int(player_row["kills"]),
+                "deaths": _coerce_int(player_row["deaths"]),
+                "teamkills": _coerce_int(player_row["teamkills"]),
+                "combat": _coerce_int(player_row["combat"]),
+                "offense": _coerce_int(player_row["offense"]),
+                "defense": _coerce_int(player_row["defense"]),
+                "support": _coerce_int(player_row["support"]),
+                "time_seconds": _coerce_int(player_row["time_seconds"]),
+            }
+            for player_row in player_rows
+        ],
         "capture_basis": "public-scoreboard-match",
         "match_url": _resolve_safe_match_url(
             row["raw_payload_ref"],

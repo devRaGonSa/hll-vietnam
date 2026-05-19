@@ -63,6 +63,36 @@
               Cargando detalle...
             </p>
             <div class="historical-summary-grid" id="match-detail-grid" hidden></div>
+            <div class="historical-detail-section" id="match-detail-players-section" hidden>
+              <div class="historical-detail-section__header">
+                <div>
+                  <p class="eyebrow eyebrow--section">Jugadores</p>
+                  <h3>Registro de jugadores</h3>
+                </div>
+                <p class="historical-panel__note" id="match-detail-players-note">
+                  Revisando si existen estadisticas por jugador.
+                </p>
+              </div>
+              <p class="historical-state" id="match-detail-players-state" hidden></p>
+              <div class="historical-table-shell" id="match-detail-players-table-shell" hidden>
+                <table class="historical-table historical-table--players">
+                  <thead>
+                    <tr>
+                      <th>Jugador</th>
+                      <th>Equipo</th>
+                      <th>Nivel</th>
+                      <th>K</th>
+                      <th>D</th>
+                      <th>TK</th>
+                      <th>Combate</th>
+                      <th>Apoyo</th>
+                      <th>Tiempo</th>
+                    </tr>
+                  </thead>
+                  <tbody id="match-detail-players-body"></tbody>
+                </table>
+              </div>
+            </div>
             <div class="historical-match-card__actions" id="match-detail-actions" hidden></div>
           </div>
         </section>

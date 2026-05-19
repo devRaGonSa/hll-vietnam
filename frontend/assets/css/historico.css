@@ -444,6 +444,24 @@
   overflow-x: auto;
 }
 
+.historical-detail-section {
+  display: grid;
+  gap: 14px;
+  margin-top: 18px;
+}
+
+.historical-detail-section__header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.historical-detail-section__header h3 {
+  margin: 0;
+  font-size: 1.08rem;
+}
+
 .historical-table {
   width: 100%;
   border-collapse: collapse;
@@ -628,6 +646,7 @@
   .historical-hero__layout,
   .historical-hero__topline,
   .historical-panel__header,
+  .historical-detail-section__header,
   .historical-match-card__top {
     flex-direction: column;
     align-items: flex-start;
