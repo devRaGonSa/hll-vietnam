@@ -452,6 +452,23 @@ def query_live_server_sample(
             "current_map": (
                 _string_or_none(session.get("mapId")) or _string_or_none(session.get("mapName"))
             ),
+            "game_mode": _string_or_none(session.get("gameMode")),
+            "allied_score": _coerce_optional_int(session.get("alliedScore")),
+            "axis_score": _coerce_optional_int(session.get("axisScore")),
+            "winner": _resolve_rcon_winner(
+                _coerce_optional_int(session.get("alliedScore")),
+                _coerce_optional_int(session.get("axisScore")),
+            ),
+            "allied_faction": _string_or_none(session.get("alliedFaction")),
+            "axis_faction": _string_or_none(session.get("axisFaction")),
+            "allied_players": _coerce_optional_int(session.get("alliedPlayerCount")),
+            "axis_players": _coerce_optional_int(session.get("axisPlayerCount")),
+            "remaining_match_time_seconds": _coerce_optional_int(session.get("remainingMatchTime")),
+            "match_time_seconds": _coerce_optional_int(session.get("matchTime")),
+            "queue_count": _coerce_optional_int(session.get("queueCount")),
+            "max_queue_count": _coerce_optional_int(session.get("maxQueueCount")),
+            "vip_queue_count": _coerce_optional_int(session.get("vipQueueCount")),
+            "max_vip_queue_count": _coerce_optional_int(session.get("maxVipQueueCount")),
             "region": target.region,
             "source_name": target.source_name,
             "snapshot_origin": "real-rcon",

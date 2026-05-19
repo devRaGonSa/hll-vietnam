@@ -446,7 +446,8 @@ def list_rcon_historical_competitive_windows(
                 windows.max_players,
                 windows.status,
                 windows.confidence_mode,
-                windows.capabilities_json
+                windows.capabilities_json,
+                windows.latest_payload_json
             FROM rcon_historical_competitive_windows AS windows
             INNER JOIN rcon_historical_targets AS targets
                 ON targets.id = windows.target_id
@@ -485,6 +486,7 @@ def list_rcon_historical_competitive_windows(
                 "status": row["status"],
                 "confidence_mode": row["confidence_mode"],
                 "capabilities": _deserialize_json_object(row["capabilities_json"]),
+                "latest_payload": _deserialize_json_object(row["latest_payload_json"]),
             }
         )
     return items
@@ -611,7 +613,8 @@ def find_rcon_historical_competitive_window(
                 windows.total_players,
                 windows.peak_players,
                 windows.confidence_mode,
-                windows.capabilities_json
+                windows.capabilities_json,
+                windows.latest_payload_json
             FROM rcon_historical_competitive_windows AS windows
             INNER JOIN rcon_historical_targets AS targets
                 ON targets.id = windows.target_id
@@ -732,6 +735,7 @@ def get_rcon_historical_competitive_window_by_session(
         "peak_players": int(row["peak_players"] or 0),
         "confidence_mode": row["confidence_mode"],
         "capabilities": _deserialize_json_object(row["capabilities_json"]),
+        "latest_payload": _deserialize_json_object(row["latest_payload_json"]),
     }
 
 
@@ -986,6 +990,8 @@ def _build_competitive_capabilities() -> dict[str, object]:
         "recent_matches": COMPETITIVE_MODE_APPROXIMATE,
         "server_summary": COMPETITIVE_MODE_EXACT,
         "competitive_quality": COMPETITIVE_MODE_PARTIAL,
+        "result": "session-score",
+        "gamestate": "session",
         "player_stats": "unavailable",
     }
 
