@@ -230,6 +230,30 @@ Verificacion minima:
 - `docker compose logs -f historical-runner`
 - revisar `generated_at` en `backend/data/snapshots/`
 
+## Arquitectura historica RCON-first
+
+La linea historica actual usa RCON como fuente primaria. El flujo previsto es:
+
+- captura de sesiones RCON para cobertura, frescura y ventanas competitivas
+- ingesta de AdminLog mediante `app.rcon_admin_log_ingestion`
+- parsing de eventos AdminLog hacia eventos normalizados
+- almacenamiento en tablas `rcon_admin_log_*` y `rcon_historical_*`
+- materializacion de partidas cerradas y estadisticas de jugador desde eventos RCON
+- enriquecimiento opcional con snapshots de perfil de jugador, sin tratarlos
+  como hechos autoritativos de una partida
+
+El scoreboard publico queda limitado a enriquecimiento, links confiables o
+fallback historico cuando RCON falla, no tiene cobertura suficiente o no cubre
+una operacion concreta. Elo/MMR sigue pausado y Comunidad Hispana #03 permanece
+fuera de los targets RCON por defecto.
+
+Comandos manuales RCON dentro del contenedor backend:
+
+```powershell
+docker compose exec backend python -m app.rcon_admin_log_ingestion --minutes 1440
+docker compose exec backend python -m app.rcon_historical_worker capture
+```
+
 Si se prefiere operar fuera de Docker, el backend sigue pudiendo arrancar localmente con `python -m app.main` desde `backend/`.
 
 ## Evolucion prevista

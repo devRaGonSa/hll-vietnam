@@ -1,7 +1,7 @@
 ---
 id: TASK-132
 title: Document RCON-first historical architecture
-status: pending
+status: done
 type: documentation
 team: PM
 supporting_teams:
@@ -84,3 +84,10 @@ HLL Vietnam is building a historical/live data platform for Comunidad Hispana se
 - Stage only intended files.
 - Commit the completed implementation.
 - Push the branch to origin.
+
+## Outcome
+
+- Documented the RCON-first historical architecture in README, backend README, decisions and AI context.
+- Covered RCON session capture, AdminLog ingestion/parser/storage, materialized matches/player stats, profile snapshot enrichment, public-scoreboard fallback boundaries, Elo/MMR paused state and Comunidad Hispana #03 disabled defaults.
+- Added the requested manual Docker commands for AdminLog ingestion and historical capture.
+- Validation: `powershell -ExecutionPolicy Bypass -File scripts/run-integration-tests.ps1` returned exit code 0, but its nested historical UI regression check emitted an existing frontend assertion about the missing recent-match external action label. No frontend/backend behavior files were changed in this documentation-only task.
