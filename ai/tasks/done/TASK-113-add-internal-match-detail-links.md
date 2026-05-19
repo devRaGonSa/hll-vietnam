@@ -168,6 +168,43 @@ Before committing, also review:
 
 Document the validation performed, notable implementation decisions, and any follow-up task that should be created instead of expanding this task.
 
+Completed.
+
+Validation performed:
+
+- Confirmed `/api/historical/snapshots/recent-matches?server=all-servers&limit=5` returns `selected_source: "rcon"` with RCON competitive-window items such as `31:2026-04-13T13:59:26.174488Z`, `capture_basis: "rcon-competitive-window"` and no `match_url`.
+- Ran `node --check frontend/assets/js/historico.js`.
+- Ran `node --check frontend/assets/js/historico-partida.js`.
+- Ran Python syntax compilation for the touched backend modules.
+- Ran `powershell -ExecutionPolicy Bypass -File scripts/run-integration-tests.ps1`; the script reports no product integration tests are configured for this platform-only scope and passed the backend startup import check.
+- Ran `docker compose down`.
+- Ran `docker compose up -d --build`.
+- Ran `docker compose ps`; backend and frontend were up on ports 8000 and 8080.
+- Verified `http://localhost:8000/health`.
+- Verified `http://localhost:8080`.
+- Verified `http://localhost:8000/api/historical/snapshots/recent-matches?server=all-servers&limit=5`.
+- Verified `http://localhost:8000/api/historical/matches/detail?server=comunidad-hispana-01&match=31%3A2026-04-13T13%3A59%3A26.174488Z` returns the RCON detail internally with `match_url: null`.
+- Used headless Chrome against `http://localhost:8080/historico.html`; recent RCON cards render `Ver detalles`.
+- Used headless Chrome against `http://localhost:8080/historico-partida.html?...`; the internal detail page renders available RCON data and the `Ventana competitiva RCON` capture basis.
+- Confirmed no `backend/runtime/` path exists.
+
+Implementation decisions:
+
+- Preserved the existing safe external `match_url` behavior and added `Ver detalles` only when no safe external URL exists.
+- Added `frontend/historico-partida.html` and `frontend/assets/js/historico-partida.js` as a direct-browser-compatible internal detail page.
+- Added `/api/historical/matches/detail?server={serverSlug}&match={matchId}`.
+- Added persisted public-scoreboard detail lookup and exact RCON competitive-window detail lookup.
+- Kept synthetic RCON match IDs internal and did not fabricate external scoreboard URLs.
+- Did not reintroduce paused MVP/Elo UI or Comunidad Hispana #03 in the frontend selector.
+
+Scope note:
+
+- The task exceeded the preferred 5-file/200-line budget because it required both a new internal frontend page and a backend detail endpoint/read path for two historical sources. No migrations, persisted data, Docker config, `.env`, Elo/MMR implementation files or unrelated frontend pages were changed.
+
+Follow-up:
+
+- No follow-up task is required from this implementation. A future task could add richer player-level detail if the RCON historical model later exposes player stats.
+
 ## Change Budget
 
 - Prefer fewer than 5 modified files.
