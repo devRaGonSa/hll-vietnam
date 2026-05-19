@@ -1,7 +1,7 @@
 ---
 id: TASK-131
 title: Add RCON data pipeline validation script
-status: pending
+status: done
 type: platform
 team: Backend Senior
 supporting_teams:
@@ -74,3 +74,12 @@ The RCON data pipeline now spans parsing, storage, AdminLog ingestion, materiali
 - Stage only intended files.
 - Commit the completed implementation.
 - Push the branch to origin.
+
+## Outcome
+
+- Added `scripts/run-rcon-data-pipeline-tests.ps1`.
+- The script compiles backend modules, runs RCON parser/storage/materialization/link checks without real RCON credentials, and performs an optional backend health smoke check only when Docker Compose already has `backend` running.
+- The script prefers `pytest` when available and falls back to deterministic offline checks plus unittest suites when `pytest` is absent.
+- Validation: `powershell -ExecutionPolicy Bypass -File scripts/run-rcon-data-pipeline-tests.ps1` passed.
+- Validation: `powershell -ExecutionPolicy Bypass -File scripts/run-integration-tests.ps1` returned exit code 0, but its nested historical UI regression check emitted an existing frontend assertion about the missing recent-match external action label. No frontend files were changed in this platform task.
+- Real RCON checks were skipped by design because the script must run without RCON credentials.
