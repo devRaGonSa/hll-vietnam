@@ -1,7 +1,7 @@
 ---
 id: TASK-123
 title: Materialize RCON player match stats
-status: pending
+status: done
 type: backend
 team: Backend Senior
 supporting_teams:
@@ -78,3 +78,19 @@ The internal match detail page should eventually show a simplified scoreboard-li
 - Stage only intended files.
 - Commit the completed implementation.
 - Push the branch to origin.
+
+## Outcome
+
+Implemented AdminLog-derived `rcon_match_player_stats` materialization in `backend/app/rcon_admin_log_materialization.py`. The materializer associates kill/presence events to materialized matches by target and server-time range, rebuilds stats deterministically on each run, and handles Steam-style and non-Steam player identifiers without exposing them in the match-detail read model.
+
+Kill logic now records kills, deaths, teamkills, deaths by teamkill, weapon counts, death-by weapon counts, most-killed summaries and death-by summaries. Presence events are used when they include stable player identity, while team-switch rows without player IDs are ignored for identity creation to avoid duplicate display-name-only player rows.
+
+Non-blocking follow-up note: suspicious live/session queue fields remain worth reviewing separately. In previous worker output, `vip_queue_count` appeared as `464/434` while `max_vip_queue_count` was `2`; this batch did not change that parser path.
+
+## Validation Result
+
+- Passed: `python -m compileall backend/app`
+- Pytest was not installed in the local Python environment.
+- Passed deterministic fallback: `$env:PYTHONPATH='backend'; python -m unittest backend.tests.test_rcon_materialization_pipeline backend.tests.test_scoreboard_match_links`
+- Passed Docker AdminLog ingestion: `docker compose exec backend python -m app.rcon_admin_log_ingestion --minutes 1440` reported `events_seen: 143`, `errors: []`.
+- Passed Docker materialization: `docker compose exec backend python -m app.rcon_admin_log_materialization` reported `player_stats_seen: 22`, `player_stats_materialized: 22`, `errors: []`.

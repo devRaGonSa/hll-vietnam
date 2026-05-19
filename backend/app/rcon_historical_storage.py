@@ -696,7 +696,8 @@ def get_rcon_historical_competitive_window_by_session(
                 windows.total_players,
                 windows.peak_players,
                 windows.confidence_mode,
-                windows.capabilities_json
+                windows.capabilities_json,
+                windows.latest_payload_json
             FROM rcon_historical_competitive_windows AS windows
             INNER JOIN rcon_historical_targets AS targets
                 ON targets.id = windows.target_id

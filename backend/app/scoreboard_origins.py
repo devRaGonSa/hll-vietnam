@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import re
 from urllib.parse import urlparse
 
 
@@ -31,6 +32,8 @@ TRUSTED_PUBLIC_SCOREBOARD_ORIGINS = (
         server_number=2,
     ),
 )
+
+_TRUSTED_GAME_PATH_RE = re.compile(r"^/games/\d+/?$")
 
 
 def list_trusted_public_scoreboard_origins() -> tuple[TrustedScoreboardOrigin, ...]:
@@ -71,6 +74,8 @@ def resolve_trusted_scoreboard_match_url(
         return None
     if candidate_parts.username or candidate_parts.password:
         return None
-    if not candidate_parts.path.startswith("/games/"):
+    if not _TRUSTED_GAME_PATH_RE.match(candidate_parts.path):
+        return None
+    if candidate_parts.params or candidate_parts.query or candidate_parts.fragment:
         return None
     return candidate

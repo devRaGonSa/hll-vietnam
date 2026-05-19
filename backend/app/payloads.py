@@ -388,8 +388,14 @@ def build_recent_historical_matches_payload(
                 )
 
             if not bool(rcon_source_policy.get("fallback_used")):
-                if 0 < len(items) < limit:
-                    fallback_items = list_recent_historical_matches(limit=limit, server_slug=server_slug)
+                if 0 < len(items) < limit and not _recent_items_include_rcon_results(items):
+                    fallback_items = [
+                        _with_recent_result_source(item, "public-scoreboard-fallback")
+                        for item in list_recent_historical_matches(
+                            limit=limit,
+                            server_slug=server_slug,
+                        )
+                    ]
                     merged_items = _merge_recent_match_items(
                         primary_items=items,
                         fallback_items=fallback_items,
@@ -453,7 +459,10 @@ def build_recent_historical_matches_payload(
                         "capabilities": capabilities,
                     },
                 }
-    items = list_recent_historical_matches(limit=limit, server_slug=server_slug)
+    items = [
+        _with_recent_result_source(item, "public-scoreboard-fallback")
+        for item in list_recent_historical_matches(limit=limit, server_slug=server_slug)
+    ]
     return {
         "status": "ok",
         "data": {
@@ -1826,6 +1835,23 @@ def _merge_recent_match_items(
         merged.append(item)
     merged.sort(key=_recent_match_sort_key, reverse=True)
     return merged[:limit]
+
+
+def _with_recent_result_source(
+    item: dict[str, object],
+    result_source: str,
+) -> dict[str, object]:
+    enriched = dict(item)
+    enriched.setdefault("result_source", result_source)
+    return enriched
+
+
+def _recent_items_include_rcon_results(items: list[dict[str, object]]) -> bool:
+    return any(
+        item.get("result_source") in {"admin-log-match-ended", "rcon-session"}
+        for item in items
+        if isinstance(item, dict)
+    )
 
 
 def _build_recent_match_dedupe_key(item: dict[str, object]) -> str:

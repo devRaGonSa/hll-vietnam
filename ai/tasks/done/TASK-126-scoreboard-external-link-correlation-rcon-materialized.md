@@ -1,7 +1,7 @@
 ---
 id: TASK-126
 title: Correlate scoreboard links with RCON materialized matches
-status: pending
+status: done
 type: backend
 team: Backend Senior
 supporting_teams:
@@ -75,3 +75,19 @@ Match cards should link to the public scoreboard only when safe correlation exis
 - Stage only intended files.
 - Commit the completed implementation.
 - Push the branch to origin.
+
+## Outcome
+
+Kept scoreboard correlation as optional enrichment over RCON-backed match data. Materialized RCON recent/detail payloads call the existing correlation path and only expose `match_url` when the persisted public scoreboard candidate belongs to the trusted origin for the active server.
+
+Hardened trusted scoreboard URL validation so only the known #01 and #02 origins and `/games/<id>` paths are accepted. Arbitrary domains, wrong ports, non-game paths, credentials, query strings and fragments are rejected. Comunidad Hispana #03 was not reintroduced.
+
+If correlation fails, the internal materialized detail payload still works and simply returns `match_url: null`.
+
+## Validation Result
+
+- Passed: `python -m compileall backend/app`
+- Pytest was not installed in the local Python environment.
+- Passed deterministic fallback: `$env:PYTHONPATH='backend'; python -m unittest backend.tests.test_rcon_materialization_pipeline backend.tests.test_scoreboard_match_links`
+- Passed safe URL allowlist coverage for Comunidad Hispana #01 and #02 in `backend.tests.test_rcon_materialization_pipeline`.
+- Passed existing scoreboard correlation regression suite in `backend.tests.test_scoreboard_match_links`.
