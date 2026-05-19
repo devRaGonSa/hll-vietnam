@@ -8,10 +8,6 @@ const HISTORICAL_SERVERS = Object.freeze([
     label: "Comunidad Hispana #02",
   },
   {
-    slug: "comunidad-hispana-03",
-    label: "Comunidad Hispana #03",
-  },
-  {
     slug: "all-servers",
     label: "Todos",
   },
@@ -93,27 +89,6 @@ document.addEventListener("DOMContentLoaded", () => {
   const weeklyStateNode = document.getElementById("weekly-leaderboard-state");
   const weeklyTableNode = document.getElementById("weekly-leaderboard-table");
   const weeklyBodyNode = document.getElementById("weekly-leaderboard-body");
-  const monthlyMvpTitleNode = document.getElementById("monthly-mvp-title");
-  const monthlyMvpStateNode = document.getElementById("monthly-mvp-state");
-  const monthlyMvpListNode = document.getElementById("monthly-mvp-list");
-  const monthlyMvpNoteNode = document.getElementById("monthly-mvp-note");
-  const monthlyMvpSnapshotMetaNode = document.getElementById(
-    "monthly-mvp-snapshot-meta",
-  );
-  const monthlyMvpV2TitleNode = document.getElementById("monthly-mvp-v2-title");
-  const monthlyMvpV2StateNode = document.getElementById("monthly-mvp-v2-state");
-  const monthlyMvpV2ListNode = document.getElementById("monthly-mvp-v2-list");
-  const monthlyMvpV2NoteNode = document.getElementById("monthly-mvp-v2-note");
-  const monthlyMvpV2SnapshotMetaNode = document.getElementById(
-    "monthly-mvp-v2-snapshot-meta",
-  );
-  const comparisonStateNode = document.getElementById("mvp-comparison-state");
-  const comparisonListNode = document.getElementById("mvp-comparison-list");
-  const comparisonNoteNode = document.getElementById("mvp-comparison-note");
-  const eloMmrStateNode = document.getElementById("elo-mmr-state");
-  const eloMmrListNode = document.getElementById("elo-mmr-list");
-  const eloMmrNoteNode = document.getElementById("elo-mmr-note");
-  const eloMmrMetaNode = document.getElementById("elo-mmr-meta");
   const weeklyValueHeadingNode = document.getElementById("weekly-leaderboard-value-heading");
   const weeklyWindowNoteNode = document.getElementById("weekly-window-note");
   const weeklySnapshotMetaNode = document.getElementById(
@@ -136,12 +111,7 @@ document.addEventListener("DOMContentLoaded", () => {
   const summaryCache = new Map();
   const recentMatchesCache = new Map();
   const leaderboardCache = new Map();
-  const monthlyMvpCache = new Map();
-  const monthlyMvpV2Cache = new Map();
-  const eloMmrCache = new Map();
   const pendingRequestCache = new Map();
-  let latestMonthlyMvpResult = null;
-  let latestMonthlyMvpV2Result = null;
 
   const getSummarySnapshot = (serverSlug) =>
     getCachedJson(
@@ -165,30 +135,6 @@ document.addEventListener("DOMContentLoaded", () => {
       pendingRequestCache,
       buildLeaderboardSnapshotKey(serverSlug, timeframeKey, metricKey),
       `${backendBaseUrl}/api/historical/snapshots/leaderboard?server=${encodeURIComponent(serverSlug)}&timeframe=${encodeURIComponent(timeframeKey)}&metric=${encodeURIComponent(metricKey)}&limit=10`,
-    );
-
-  const getMonthlyMvpSnapshot = (serverSlug) =>
-    getCachedJson(
-      monthlyMvpCache,
-      pendingRequestCache,
-      buildMonthlyMvpSnapshotKey(serverSlug),
-      `${backendBaseUrl}/api/historical/snapshots/monthly-mvp?server=${encodeURIComponent(serverSlug)}&limit=3`,
-    );
-
-  const getMonthlyMvpV2Snapshot = (serverSlug) =>
-    getCachedJson(
-      monthlyMvpV2Cache,
-      pendingRequestCache,
-      buildMonthlyMvpV2SnapshotKey(serverSlug),
-      `${backendBaseUrl}/api/historical/snapshots/monthly-mvp-v2?server=${encodeURIComponent(serverSlug)}&limit=3`,
-    );
-
-  const getEloMmrLeaderboard = (serverSlug) =>
-    getCachedJson(
-      eloMmrCache,
-      pendingRequestCache,
-      buildEloMmrSnapshotKey(serverSlug),
-      `${backendBaseUrl}/api/historical/elo-mmr/leaderboard?server=${encodeURIComponent(serverSlug)}&limit=5`,
     );
 
   const refreshServerContent = async () => {
@@ -218,32 +164,6 @@ document.addEventListener("DOMContentLoaded", () => {
     summaryNoteNode.textContent = `La vista esta leyendo snapshots precalculados del historico local para ${activeServerLabel}.`;
     setSnapshotMeta(summarySnapshotMetaNode, "Cargando snapshot de resumen...");
     renderSummaryLoading(summaryNode);
-    monthlyMvpTitleNode.textContent = `Top 3 MVP mensual V1 - ${activeServerLabel}`;
-    monthlyMvpNoteNode.textContent = "Cargando periodo del MVP mensual V1...";
-    setState(monthlyMvpStateNode, "Cargando Top 3 MVP mensual V1...");
-    monthlyMvpListNode.innerHTML = "";
-    setSnapshotMeta(
-      monthlyMvpSnapshotMetaNode,
-      "Cargando snapshot del MVP mensual V1...",
-    );
-    monthlyMvpV2TitleNode.textContent = `Top 3 MVP mensual V2 - ${activeServerLabel}`;
-    monthlyMvpV2NoteNode.textContent = "Cargando lectura avanzada del MVP mensual V2...";
-    setState(monthlyMvpV2StateNode, "Cargando Top 3 MVP mensual V2...");
-    monthlyMvpV2ListNode.innerHTML = "";
-    setSnapshotMeta(
-      monthlyMvpV2SnapshotMetaNode,
-      "Cargando snapshot del MVP mensual V2...",
-    );
-    latestMonthlyMvpResult = null;
-    latestMonthlyMvpV2Result = null;
-    comparisonListNode.innerHTML = "";
-    comparisonNoteNode.textContent =
-      "Cargando comparativa entre los rankings mensuales V1 y V2...";
-    setState(comparisonStateNode, "Preparando comparativa V1 vs V2...");
-    eloMmrListNode.innerHTML = "";
-    eloMmrNoteNode.textContent = "Cargando lectura del rating persistente y score mensual...";
-    setState(eloMmrStateNode, "Cargando leaderboard Elo/MMR...");
-    setSnapshotMeta(eloMmrMetaNode, "Cargando metadata de Elo/MMR...");
     weeklyWindowNoteNode.textContent = "Cargando snapshot del ranking activo...";
     setSnapshotMeta(
       weeklySnapshotMetaNode,
@@ -265,66 +185,6 @@ document.addEventListener("DOMContentLoaded", () => {
         rangeNode,
         summaryNoteNode,
         summarySnapshotMetaNode,
-      );
-    }
-
-    const cachedMonthlyMvpPayload = readCachedPayload(
-      monthlyMvpCache,
-      buildMonthlyMvpSnapshotKey(activeServerSlug),
-    );
-    if (cachedMonthlyMvpPayload) {
-      latestMonthlyMvpResult = { status: "fulfilled", value: cachedMonthlyMvpPayload };
-      hydrateMonthlyMvp(
-        { status: "fulfilled", value: cachedMonthlyMvpPayload },
-        monthlyMvpStateNode,
-        monthlyMvpListNode,
-        monthlyMvpTitleNode,
-        monthlyMvpNoteNode,
-        monthlyMvpSnapshotMetaNode,
-      );
-      hydrateMvpComparison(
-        latestMonthlyMvpResult,
-        latestMonthlyMvpV2Result,
-        comparisonStateNode,
-        comparisonListNode,
-        comparisonNoteNode,
-      );
-    }
-
-    const cachedMonthlyMvpV2Payload = readCachedPayload(
-      monthlyMvpV2Cache,
-      buildMonthlyMvpV2SnapshotKey(activeServerSlug),
-    );
-    if (cachedMonthlyMvpV2Payload) {
-      latestMonthlyMvpV2Result = { status: "fulfilled", value: cachedMonthlyMvpV2Payload };
-      hydrateMonthlyMvpV2(
-        { status: "fulfilled", value: cachedMonthlyMvpV2Payload },
-        monthlyMvpV2StateNode,
-        monthlyMvpV2ListNode,
-        monthlyMvpV2TitleNode,
-        monthlyMvpV2NoteNode,
-        monthlyMvpV2SnapshotMetaNode,
-      );
-      hydrateMvpComparison(
-        latestMonthlyMvpResult,
-        latestMonthlyMvpV2Result,
-        comparisonStateNode,
-        comparisonListNode,
-        comparisonNoteNode,
-      );
-    }
-
-    const cachedEloMmrPayload = readCachedPayload(
-      eloMmrCache,
-      buildEloMmrSnapshotKey(activeServerSlug),
-    );
-    if (cachedEloMmrPayload) {
-      hydrateEloMmr(
-        { status: "fulfilled", value: cachedEloMmrPayload },
-        eloMmrStateNode,
-        eloMmrListNode,
-        eloMmrNoteNode,
-        eloMmrMetaNode,
       );
     }
 
@@ -443,86 +303,6 @@ document.addEventListener("DOMContentLoaded", () => {
       );
     });
 
-    void settlePromise(getMonthlyMvpSnapshot(targetServerSlug)).then((monthlyMvpResult) => {
-      if (
-        !isActiveServerRequest(
-          requestId,
-          targetServerSlug,
-          targetTimeframe,
-          targetMetric,
-        )
-      ) {
-        return;
-      }
-
-      latestMonthlyMvpResult = monthlyMvpResult;
-      hydrateMonthlyMvp(
-        monthlyMvpResult,
-        monthlyMvpStateNode,
-        monthlyMvpListNode,
-        monthlyMvpTitleNode,
-        monthlyMvpNoteNode,
-        monthlyMvpSnapshotMetaNode,
-      );
-      hydrateMvpComparison(
-        latestMonthlyMvpResult,
-        latestMonthlyMvpV2Result,
-        comparisonStateNode,
-        comparisonListNode,
-        comparisonNoteNode,
-      );
-    });
-
-    void settlePromise(getMonthlyMvpV2Snapshot(targetServerSlug)).then((monthlyMvpV2Result) => {
-      if (
-        !isActiveServerRequest(
-          requestId,
-          targetServerSlug,
-          targetTimeframe,
-          targetMetric,
-        )
-      ) {
-        return;
-      }
-
-      latestMonthlyMvpV2Result = monthlyMvpV2Result;
-      hydrateMonthlyMvpV2(
-        monthlyMvpV2Result,
-        monthlyMvpV2StateNode,
-        monthlyMvpV2ListNode,
-        monthlyMvpV2TitleNode,
-        monthlyMvpV2NoteNode,
-        monthlyMvpV2SnapshotMetaNode,
-      );
-      hydrateMvpComparison(
-        latestMonthlyMvpResult,
-        latestMonthlyMvpV2Result,
-        comparisonStateNode,
-        comparisonListNode,
-        comparisonNoteNode,
-      );
-    });
-
-    void settlePromise(getEloMmrLeaderboard(targetServerSlug)).then((eloMmrResult) => {
-      if (
-        !isActiveServerRequest(
-          requestId,
-          targetServerSlug,
-          targetTimeframe,
-          targetMetric,
-        )
-      ) {
-        return;
-      }
-
-      hydrateEloMmr(
-        eloMmrResult,
-        eloMmrStateNode,
-        eloMmrListNode,
-        eloMmrNoteNode,
-        eloMmrMetaNode,
-      );
-    });
   };
 
   const refreshLeaderboardContent = async () => {
