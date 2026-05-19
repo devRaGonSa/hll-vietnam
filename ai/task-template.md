@@ -1,4 +1,15 @@
-# TASK-XXX
+---
+id: TASK-XXX
+title: Short task title
+status: pending
+type: platform | frontend | backend | documentation | research
+team: PM | Analista | Backend Senior | Frontend Senior | Arquitecto de Base de Datos | Arquitecto Python | Disenador grafico | Experto en interfaz
+supporting_teams: []
+roadmap_item: foundation
+priority: medium
+---
+
+# TASK-XXX - Short task title
 
 ## Goal
 
@@ -7,6 +18,8 @@ Describe the smallest useful objective for this task.
 ## Context
 
 Explain where the change happens in HLL Vietnam and why it is needed now.
+
+Preserve the current product identity: Spanish-speaking HLL Vietnam community, military/Vietnam/tactical/sober visual direction and controlled repository evolution.
 
 ## Steps
 
@@ -49,6 +62,8 @@ Rules:
 - Preserve HLL Vietnam project identity.
 - Do not introduce unnecessary frameworks or dependencies.
 - Do not implement backend functionality unless the task explicitly requires it.
+- Do not expand Elo/MMR, historical workers or RCON server #03 handling unless the task explicitly requires it.
+- Do not overwrite repository-specific context with generic platform template text.
 
 ## Validation
 
@@ -57,6 +72,12 @@ Before completing the task ensure:
 - scoped checks pass
 - no unrelated files were modified
 - documentation remains consistent with the repository state
+- `git diff --name-only` matches the expected scope
+- integration tests are run when relevant and configured
+
+## Outcome
+
+Document the validation performed, notable decisions, and any follow-up task that should be created instead of expanding this task.
 
 ## Change Budget
 

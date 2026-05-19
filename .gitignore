@@ -11,8 +11,11 @@ Thumbs.db
 
 # Local AI worker/runtime artifacts
 ai/worker.lock
+ai/reports/*.md
+!ai/reports/.gitkeep
 
 # Local backend runtime data
+backend/runtime/
 backend/data/*.sqlite3
 !backend/data/.gitkeep
 backend/data/snapshots/**

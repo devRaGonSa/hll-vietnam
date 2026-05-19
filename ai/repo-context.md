@@ -56,9 +56,11 @@ This area is a reserved foundation for the future Python backend. Do not add fun
 ### AI Platform
 
 - `ai/task-template.md`
+- `ai-platform.json`
 - `ai/repo-context.md`
 - `ai/architecture-index.md`
 - `ai/system-metrics.md`
+- `ai/reports/`
 - `ai/prompts/`
 - `ai/orchestrator/`
 - `ai/tasks/`
@@ -81,4 +83,7 @@ Tasks move through:
 
 - `ai/tasks/pending`
 - `ai/tasks/in-progress`
+- `ai/tasks/review`
+- `ai/tasks/blocked`
+- `ai/tasks/obsolete`
 - `ai/tasks/done`

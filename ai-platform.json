@@ -1,0 +1,34 @@
+{
+  "schema_version": 1,
+  "project": {
+    "name": "HLL Vietnam",
+    "type": "community website",
+    "identity": "Spanish-speaking HLL Vietnam Discord community",
+    "visual_direction": "military, Vietnam, tactical, sober"
+  },
+  "workflow": {
+    "orchestrator": "ChatGPT coordinates with the human client/product owner and prepares scoped tasks.",
+    "worker": "Codex CLI workers execute only explicit tasks and follow AGENTS.md.",
+    "task_template": "ai/task-template.md",
+    "task_paths": {
+      "pending": "ai/tasks/pending",
+      "in_progress": "ai/tasks/in-progress",
+      "review": "ai/tasks/review",
+      "blocked": "ai/tasks/blocked",
+      "obsolete": "ai/tasks/obsolete",
+      "done": "ai/tasks/done"
+    }
+  },
+  "runner": {
+    "lock_file": "ai/worker.lock",
+    "metrics_file": "ai/system-metrics.md",
+    "reports_path": "ai/reports",
+    "integration_tests_script": "scripts/run-integration-tests.ps1",
+    "codex_prompt": "Follow AGENTS.md, read the platform context in ai/, and process the pending tasks without acting outside task scope."
+  },
+  "constraints": {
+    "frontend": "Keep HTML, CSS and vanilla JavaScript compatible with direct browser opening when applicable.",
+    "backend": "Python is the planned backend baseline. Do not add backend behavior without a task.",
+    "scope": "Preserve HLL Vietnam context. Do not expand Elo/MMR, historical workers or RCON server #03 handling from platform tasks."
+  }
+}
