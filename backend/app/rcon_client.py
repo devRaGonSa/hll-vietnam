@@ -565,6 +565,16 @@ def _string_or_none(value: object) -> str | None:
     return normalized or None
 
 
+def _resolve_rcon_winner(allied_score: int | None, axis_score: int | None) -> str | None:
+    if allied_score is None or axis_score is None:
+        return None
+    if allied_score > axis_score:
+        return "allied"
+    if axis_score > allied_score:
+        return "axis"
+    return "draw"
+
+
 def _coerce_optional_int(value: object) -> int | None:
     if value is None:
         return None
