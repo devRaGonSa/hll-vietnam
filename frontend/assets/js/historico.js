@@ -161,18 +161,18 @@ document.addEventListener("DOMContentLoaded", () => {
     );
     weeklyValueHeadingNode.textContent = activeMetricConfig.valueHeading;
     setRangeBadge(rangeNode, "Cargando rango temporal", false);
-    summaryNoteNode.textContent = `La vista esta leyendo snapshots precalculados del historico local para ${activeServerLabel}.`;
-    setSnapshotMeta(summarySnapshotMetaNode, "Cargando snapshot de resumen...");
+    summaryNoteNode.textContent = `La vista esta leyendo datos precalculados del historico local para ${activeServerLabel}.`;
+    setSnapshotMeta(summarySnapshotMetaNode, "Cargando datos de resumen...");
     renderSummaryLoading(summaryNode);
-    weeklyWindowNoteNode.textContent = "Cargando snapshot del ranking activo...";
+    weeklyWindowNoteNode.textContent = "Cargando datos del ranking activo...";
     setSnapshotMeta(
       weeklySnapshotMetaNode,
-      `Preparando snapshot ${activeTimeframeConfig.shortLabel}...`,
+      `Preparando datos ${activeTimeframeConfig.shortLabel}...`,
     );
     recentListNode.innerHTML = "";
     recentNoteNode.textContent = buildRecentMatchesNote(activeServerSlug);
     setState(recentStateNode, "Cargando partidas recientes...");
-    setSnapshotMeta(recentSnapshotMetaNode, "Cargando snapshot de partidas...");
+    setSnapshotMeta(recentSnapshotMetaNode, "Cargando datos de partidas...");
 
     const cachedSummaryPayload = readCachedPayload(
       summaryCache,
@@ -352,10 +352,10 @@ document.addEventListener("DOMContentLoaded", () => {
       return;
     }
 
-    weeklyWindowNoteNode.textContent = "Cargando snapshot del ranking activo...";
+    weeklyWindowNoteNode.textContent = "Cargando datos del ranking activo...";
     setSnapshotMeta(
       weeklySnapshotMetaNode,
-      `Cargando snapshot ${timeframeConfig.shortLabel}...`,
+      `Cargando datos ${timeframeConfig.shortLabel}...`,
     );
     setState(
       weeklyStateNode,
@@ -469,10 +469,10 @@ function hydrateSummary(result, summaryNode, rangeNode, noteNode, snapshotMetaNo
   const emptyState = getHistoricalEmptyState(activeServerSlug);
   if (result.status !== "fulfilled") {
     renderSummaryError(summaryNode);
-    setRangeBadge(rangeNode, "Snapshot de resumen no disponible", false);
+    setRangeBadge(rangeNode, "Resumen no disponible", false);
     noteNode.textContent =
       "No se pudo leer el resumen precalculado para el alcance seleccionado.";
-    setSnapshotMeta(snapshotMetaNode, "Error al leer el snapshot de resumen.");
+    setSnapshotMeta(snapshotMetaNode, "Error al leer los datos de resumen.");
     return;
   }
 
@@ -487,8 +487,8 @@ function hydrateSummary(result, summaryNode, rangeNode, noteNode, snapshotMetaNo
     setSnapshotMeta(
       snapshotMetaNode,
       payload?.generated_at
-        ? buildSnapshotMetaText(payload, "Snapshot de resumen pendiente de generacion.")
-        : "Snapshot de resumen pendiente de generacion.",
+        ? buildSnapshotMetaText(payload, "Resumen pendiente de generacion.")
+        : "Resumen pendiente de generacion.",
     );
     return;
   }
@@ -512,7 +512,7 @@ function hydrateSummary(result, summaryNode, rangeNode, noteNode, snapshotMetaNo
   );
   setSnapshotMeta(
     snapshotMetaNode,
-    buildSnapshotMetaText(payload, "Snapshot de resumen sin timestamp."),
+    buildSnapshotMetaText(payload, "Resumen sin fecha de actualizacion."),
   );
   summaryNode.innerHTML = [
     renderSummaryCard("Servidor", summary.server?.name || "Servidor no disponible"),
@@ -557,7 +557,7 @@ function hydrateWeeklyLeaderboard(
     );
     noteNode.textContent =
       "No se pudo leer los datos precalculados para esta metrica.";
-    setSnapshotMeta(snapshotMetaNode, "Error al leer el snapshot del ranking.");
+    setSnapshotMeta(snapshotMetaNode, "Error al leer los datos del ranking.");
     setState(
       stateNode,
       `No se pudo cargar el ranking ${getLeaderboardTimeframeConfig(resolvedTimeframeKey).shortLabel}.`,
@@ -576,7 +576,7 @@ function hydrateWeeklyLeaderboard(
   noteNode.textContent = buildWeeklyWindowNote(payload);
   setSnapshotMeta(
     snapshotMetaNode,
-    buildSnapshotMetaText(payload, "Snapshot del ranking pendiente de generacion."),
+    buildSnapshotMetaText(payload, "Ranking pendiente de generacion."),
   );
   if (!payload?.found) {
     setState(
@@ -625,14 +625,14 @@ function hydrateRecentMatches(result, stateNode, listNode, snapshotMetaNode) {
   const emptyState = getHistoricalEmptyState(activeServerSlug);
   if (result.status !== "fulfilled") {
     setState(stateNode, "No se pudieron cargar las partidas recientes.", true);
-    setSnapshotMeta(snapshotMetaNode, "Error al leer el snapshot de partidas.");
+    setSnapshotMeta(snapshotMetaNode, "Error al leer los datos de partidas.");
     return;
   }
 
   const payload = result.value?.data;
   setSnapshotMeta(
     snapshotMetaNode,
-    buildSnapshotMetaText(payload, "Snapshot de partidas pendiente de generacion."),
+    buildSnapshotMetaText(payload, "Partidas pendientes de generacion."),
   );
   if (!payload?.found) {
     setState(stateNode, emptyState.recentMessage);
@@ -659,8 +659,8 @@ function hydrateMonthlyMvp(
 ) {
   if (result.status !== "fulfilled") {
     titleNode.textContent = `Top 3 MVP mensual V1 - ${getHistoricalServerLabel(activeServerSlug)}`;
-    noteNode.textContent = "No se pudo leer el snapshot mensual del MVP V1.";
-    setSnapshotMeta(snapshotMetaNode, "Error al leer el snapshot del MVP mensual V1.");
+    noteNode.textContent = "No se pudo leer el registro mensual del MVP V1.";
+    setSnapshotMeta(snapshotMetaNode, "Error al leer el registro del MVP mensual V1.");
     setState(stateNode, "No se pudo cargar el Top 3 MVP mensual V1.", true);
     listNode.innerHTML = "";
     return;
@@ -673,7 +673,7 @@ function hydrateMonthlyMvp(
   noteNode.textContent = buildMonthlyMvpNote(payload);
   setSnapshotMeta(
     snapshotMetaNode,
-    buildSnapshotMetaText(payload, "Snapshot del MVP mensual V1 pendiente de generacion."),
+    buildSnapshotMetaText(payload, "Registro del MVP mensual V1 pendiente de generacion."),
   );
 
   if (!payload?.found) {
@@ -709,8 +709,8 @@ function hydrateMonthlyMvpV2(
 ) {
   if (result.status !== "fulfilled") {
     titleNode.textContent = `Top 3 MVP mensual V2 - ${getHistoricalServerLabel(activeServerSlug)}`;
-    noteNode.textContent = "No se pudo leer el snapshot mensual del MVP V2.";
-    setSnapshotMeta(snapshotMetaNode, "Error al leer el snapshot del MVP mensual V2.");
+    noteNode.textContent = "No se pudo leer el registro mensual del MVP V2.";
+    setSnapshotMeta(snapshotMetaNode, "Error al leer el registro del MVP mensual V2.");
     setState(stateNode, "No se pudo cargar el Top 3 MVP mensual V2.", true);
     listNode.innerHTML = "";
     return;
@@ -723,7 +723,7 @@ function hydrateMonthlyMvpV2(
   noteNode.textContent = buildMonthlyMvpV2Note(payload);
   setSnapshotMeta(
     snapshotMetaNode,
-    buildSnapshotMetaText(payload, "Snapshot del MVP mensual V2 pendiente de generacion."),
+    buildSnapshotMetaText(payload, "Registro del MVP mensual V2 pendiente de generacion."),
   );
 
   if (!payload?.found) {
@@ -802,6 +802,19 @@ function hydrateMvpComparison(
 
 function renderRecentMatchCard(item) {
   const mapName = item.map?.pretty_name || item.map?.name || "Mapa no disponible";
+  const matchUrl = normalizeExternalMatchUrl(item.match_url || item.source_url);
+  const matchLink = matchUrl
+    ? `
+        <a
+          class="historical-match-card__link"
+          href="${escapeHtml(matchUrl)}"
+          target="_blank"
+          rel="noopener noreferrer"
+        >
+          Ver partida
+        </a>
+      `
+    : "";
   return `
     <article class="historical-match-card">
       <div class="historical-match-card__top">
@@ -809,7 +822,10 @@ function renderRecentMatchCard(item) {
           <p class="historical-match-meta__label">Partida ${escapeHtml(item.match_id || "sin id")}</p>
           <h3 class="historical-match-card__title">${escapeHtml(mapName)}</h3>
         </div>
-        <span class="historical-match-card__result">${escapeHtml(formatMatchResult(item.result))}</span>
+        <div class="historical-match-card__actions">
+          <span class="historical-match-card__result">${escapeHtml(formatMatchResult(item.result))}</span>
+          ${matchLink}
+        </div>
       </div>
       <div class="historical-match-meta">
         <article>
@@ -831,6 +847,18 @@ function renderRecentMatchCard(item) {
       </div>
     </article>
   `;
+}
+
+function normalizeExternalMatchUrl(value) {
+  if (typeof value !== "string" || !value.trim()) {
+    return "";
+  }
+  try {
+    const url = new URL(value.trim());
+    return ["http:", "https:"].includes(url.protocol) ? url.href : "";
+  } catch (error) {
+    return "";
+  }
 }
 
 function renderSummaryLoading(summaryNode) {
@@ -1244,7 +1272,7 @@ function buildSummaryNote(summaryBasis, weeklyWindowDays, coverage, serverSlug) 
     return `Este bloque resume ${basisLabel}. La cobertura registrada todavia es inicial y puede crecer en los proximos dias.`;
   }
   if (serverSlug === "all-servers") {
-    return `Resumen de los servidore desde ${basisLabel} y combinado solo los servidores actuales de la comunidad.`;
+    return `Resumen de los servidores desde ${basisLabel}, combinado solo con los servidores actuales de la comunidad.`;
   }
   return `Resumen servido desde ${basisLabel}.`;
 }
@@ -1263,13 +1291,7 @@ function buildWeeklyWindowNote(payload) {
     payload?.window_label ||
     (payload?.timeframe === "monthly" ? "Mes activo" : "Semana activa");
   if (payload?.uses_fallback) {
-    const currentPeriodMatches =
-      payload?.current_week_closed_matches ??
-      payload?.current_month_closed_matches ??
-      payload?.sufficient_sample?.current_week_closed_matches ??
-      payload?.sufficient_sample?.current_month_closed_matches ??
-      0;
-    return `${windowLabel}: ${start} a ${end}. Se muestra el ultimo periodo cerrado porque el actual todavia solo suma ${formatNumber(currentPeriodMatches)} cierres.`;
+    return `${windowLabel}: ${start} a ${end}.`;
   }
   return `${windowLabel}: ${start} a ${end}.`;
 }
@@ -1288,7 +1310,7 @@ function buildRecentMatchesNote(serverSlug) {
 
 function buildMonthlyMvpNote(payload) {
   if (!payload?.found) {
-    return "El Top 3 mensual V1 aparecera cuando exista un snapshot MVP listo para este alcance.";
+    return "El Top 3 mensual V1 aparecera cuando exista un registro MVP listo para este alcance.";
   }
   const periodLabel =
     payload?.window_label && payload?.month_key
@@ -1308,7 +1330,7 @@ function buildMonthlyMvpFooter(item, payload) {
 
 function buildMonthlyMvpV2Note(payload) {
   if (!payload?.found) {
-    return "El Top 3 mensual V2 aparecera cuando exista un snapshot alineado con la cobertura de eventos.";
+    return "El Top 3 mensual V2 aparecera cuando exista un registro alineado con la cobertura de eventos.";
   }
   const periodLabel =
     payload?.window_label && payload?.month_key
@@ -1712,7 +1734,7 @@ function getHistoricalEmptyState(serverSlug) {
     rangeLabel: "Sin cobertura registrada",
     summaryMessage: "Sin datos historicos suficientes",
     summaryNote:
-      "Todavia no existe un snapshot de resumen listo para el alcance seleccionado.",
+      "Todavia no existe un resumen listo para el alcance seleccionado.",
     recentMessage: "Todavia no hay partidas recientes disponibles.",
   };
 }
