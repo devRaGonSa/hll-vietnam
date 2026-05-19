@@ -1,7 +1,7 @@
 ---
 id: TASK-130
 title: Add player profile enrichment API
-status: pending
+status: done
 type: backend
 team: Backend Senior
 supporting_teams:
@@ -71,3 +71,13 @@ Profile MESSAGE snapshots can enrich player rows later, but they are historical 
 - Stage only intended files.
 - Commit the completed implementation.
 - Push the branch to origin.
+
+## Outcome
+
+- Added safe latest profile summaries for stored RCON profile snapshots.
+- Enriched materialized RCON match detail player rows with optional `profile_summary` when a snapshot exists.
+- Kept raw full `MESSAGE` content and player ids out of the public match-detail row.
+- Missing snapshots remain omitted and do not break match detail.
+- Validation: `python -m compileall backend/app` passed.
+- Validation: `$env:PYTHONPATH='backend'; python -m unittest backend.tests.test_rcon_materialization_pipeline` passed.
+- Validation blocked: `python -m pytest backend/tests/test_rcon_materialization_pipeline.py` could not run because `pytest` is not installed in this environment.

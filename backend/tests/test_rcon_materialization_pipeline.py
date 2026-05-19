@@ -77,6 +77,58 @@ class RconMaterializationPipelineTests(unittest.TestCase):
             self.assertIn("kd_ratio", detail["players"][0])
             gc.collect()
 
+    def test_match_detail_adds_safe_profile_summary_when_snapshot_exists(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = Path(tmpdir) / "historical.sqlite3"
+            previous_storage_path = os.environ.get("HLL_BACKEND_STORAGE_PATH")
+            os.environ["HLL_BACKEND_STORAGE_PATH"] = str(db_path)
+            try:
+                _persist_admin_log_fixture(db_path)
+                persist_rcon_admin_log_entries(
+                    target={
+                        "target_key": "comunidad-hispana-01",
+                        "external_server_id": "comunidad-hispana-01",
+                    },
+                    entries=[
+                        {
+                            "timestamp": "2026-05-01T10:30:00Z",
+                            "message": (
+                                "[31 min (300)] MESSAGE: player [Alpha(76561198000000001)], "
+                                "content [─ Alpha ─\n"
+                                "▒ Totales ▒\n"
+                                "sesiones : 12\n"
+                                "partidas jugadas : 9\n"
+                                "bajas : 141 (6 TKs)\n"
+                                "muertes : 268 (5 TKs)\n"
+                                "K/D : 0.53\n"
+                                "▒ Armas favoritas ▒\n"
+                                "M1 Garand : 31]"
+                            ),
+                        }
+                    ],
+                    db_path=db_path,
+                )
+                materialize_rcon_admin_log(db_path=db_path)
+                detail = get_rcon_historical_match_detail(
+                    server_key="comunidad-hispana-01",
+                    match_id="comunidad-hispana-01:100:500:stmariedumontwarfare",
+                )
+            finally:
+                _restore_env("HLL_BACKEND_STORAGE_PATH", previous_storage_path)
+
+            self.assertIsNotNone(detail)
+            players = {row["player_name"]: row for row in detail["players"]}
+            self.assertIn("profile_summary", players["Alpha"])
+            self.assertNotIn("profile_summary", players["Bravo"])
+            profile_summary = players["Alpha"]["profile_summary"]
+            self.assertEqual(profile_summary["sessions"], 12)
+            self.assertEqual(profile_summary["matches_played"], 9)
+            self.assertEqual(profile_summary["totals"]["kills"], 141)
+            self.assertEqual(profile_summary["favorite_weapons"], {"M1 Garand": 31})
+            self.assertNotIn("raw_content", profile_summary)
+            self.assertNotIn("player_id", players["Alpha"])
+            gc.collect()
+
     def test_recent_matches_prefer_materialized_rcon_over_scoreboard_fallback(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             db_path = Path(tmpdir) / "historical.sqlite3"

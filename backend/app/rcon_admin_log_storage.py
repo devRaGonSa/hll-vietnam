@@ -298,3 +298,74 @@ def list_rcon_admin_log_event_counts(*, db_path: Path | None = None) -> list[dic
         ).fetchall()
 
     return [dict(row) for row in rows]
+
+
+def get_latest_rcon_player_profile_summaries(
+    *,
+    target_key: str,
+    player_ids: list[str],
+    db_path: Path | None = None,
+) -> dict[str, dict[str, object]]:
+    """Return safe latest profile summaries keyed by player id."""
+    requested_ids = [str(player_id).strip() for player_id in player_ids if str(player_id).strip()]
+    if not target_key or not requested_ids:
+        return {}
+
+    resolved_path = db_path or get_storage_path()
+    initialize_rcon_admin_log_storage(db_path=resolved_path)
+    placeholders = ",".join("?" for _ in requested_ids)
+    with sqlite3.connect(resolved_path) as connection:
+        connection.row_factory = sqlite3.Row
+        rows = connection.execute(
+            f"""
+            SELECT snapshots.*
+            FROM rcon_player_profile_snapshots AS snapshots
+            INNER JOIN (
+                SELECT player_id, MAX(source_server_time) AS latest_source_server_time
+                FROM rcon_player_profile_snapshots
+                WHERE target_key = ?
+                  AND player_id IN ({placeholders})
+                GROUP BY player_id
+            ) AS latest
+              ON latest.player_id = snapshots.player_id
+             AND latest.latest_source_server_time = snapshots.source_server_time
+            WHERE snapshots.target_key = ?
+            """,
+            [target_key, *requested_ids, target_key],
+        ).fetchall()
+
+    return {str(row["player_id"]): _build_safe_profile_summary(row) for row in rows}
+
+
+def _build_safe_profile_summary(row: sqlite3.Row) -> dict[str, object]:
+    return {
+        "player_name": row["player_name"],
+        "source_server_time": row["source_server_time"],
+        "event_timestamp": row["event_timestamp"],
+        "first_seen": row["first_seen"],
+        "sessions": row["sessions"],
+        "matches_played": row["matches_played"],
+        "play_time": row["play_time"],
+        "totals": {
+            "kills": row["total_kills"],
+            "deaths": row["total_deaths"],
+            "teamkills_done": row["teamkills_done"],
+            "teamkills_received": row["teamkills_received"],
+            "kd_ratio": row["kd_ratio"],
+        },
+        "favorite_weapons": _json_mapping(row["favorite_weapons_json"]),
+        "victims": _json_mapping(row["victims_json"]),
+        "nemesis": _json_mapping(row["nemesis_json"]),
+        "averages": _json_mapping(row["averages_json"]),
+        "sanctions": _json_mapping(row["sanctions_json"]),
+    }
+
+
+def _json_mapping(raw_value: object) -> dict[str, object]:
+    if not isinstance(raw_value, str) or not raw_value.strip():
+        return {}
+    try:
+        parsed = json.loads(raw_value)
+    except json.JSONDecodeError:
+        return {}
+    return parsed if isinstance(parsed, dict) else {}
