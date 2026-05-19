@@ -6,7 +6,6 @@ import sqlite3
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Mapping
-from urllib.parse import urlparse
 
 from .config import (
     get_historical_refresh_overlap_hours,
@@ -17,28 +16,22 @@ from .config import (
 from .historical_models import HistoricalServerDefinition
 from .monthly_mvp import build_monthly_mvp_rankings
 from .monthly_mvp_v2 import build_monthly_mvp_v2_rankings
+from .scoreboard_origins import (
+    list_trusted_public_scoreboard_origins,
+    resolve_trusted_scoreboard_match_url,
+)
 from .sqlite_utils import connect_sqlite_writer
 
 
-DEFAULT_HISTORICAL_SERVERS = (
+DEFAULT_HISTORICAL_SERVERS = tuple(
     HistoricalServerDefinition(
-        slug="comunidad-hispana-01",
-        display_name="Comunidad Hispana #01",
-        scoreboard_base_url="https://scoreboard.comunidadhll.es",
-        server_number=1,
-    ),
-    HistoricalServerDefinition(
-        slug="comunidad-hispana-02",
-        display_name="Comunidad Hispana #02",
-        scoreboard_base_url="https://scoreboard.comunidadhll.es:5443",
-        server_number=2,
-    ),
-    HistoricalServerDefinition(
-        slug="comunidad-hispana-03",
-        display_name="Comunidad Hispana #03",
-        scoreboard_base_url="https://scoreboard.comunidadhll.es:3443",
-        server_number=3,
-    ),
+        slug=origin.slug,
+        display_name=origin.display_name,
+        scoreboard_base_url=origin.base_url,
+        server_number=origin.server_number,
+        source_kind=origin.source_kind,
+    )
+    for origin in list_trusted_public_scoreboard_origins()
 )
 ALL_SERVERS_SLUG = "all-servers"
 ALL_SERVERS_DISPLAY_NAME = "Todos"
@@ -768,6 +761,7 @@ def list_recent_historical_matches(
                 historical_matches.allied_score,
                 historical_matches.axis_score,
                 historical_matches.raw_payload_ref,
+                historical_servers.slug,
                 historical_servers.scoreboard_base_url,
                 COUNT(historical_player_match_stats.id) AS player_count
             FROM historical_matches
@@ -809,7 +803,7 @@ def list_recent_historical_matches(
                 "player_count": int(row["player_count"] or 0),
                 "match_url": _resolve_safe_match_url(
                     row["raw_payload_ref"],
-                    row["scoreboard_base_url"],
+                    row["server_slug"],
                 ),
             }
         )
@@ -842,6 +836,7 @@ def get_historical_match_detail(
                 historical_matches.allied_score,
                 historical_matches.axis_score,
                 historical_matches.raw_payload_ref,
+                historical_servers.slug,
                 historical_servers.scoreboard_base_url,
                 COUNT(historical_player_match_stats.id) AS player_count,
                 SUM(COALESCE(historical_player_match_stats.time_seconds, 0)) AS total_time_seconds
@@ -888,7 +883,7 @@ def get_historical_match_detail(
         "capture_basis": "public-scoreboard-match",
         "match_url": _resolve_safe_match_url(
             row["raw_payload_ref"],
-            row["scoreboard_base_url"],
+            row["server_slug"],
         ),
     }
 
@@ -3198,23 +3193,8 @@ def _is_all_servers_selector(value: str | None) -> bool:
     return isinstance(value, str) and value.strip() == ALL_SERVERS_SLUG
 
 
-def _resolve_safe_match_url(raw_payload_ref: object, scoreboard_base_url: object) -> str | None:
-    candidate = _stringify(raw_payload_ref)
-    base_url = _stringify(scoreboard_base_url)
-    if not candidate or not base_url:
-        return None
-
-    candidate_parts = urlparse(candidate)
-    base_parts = urlparse(base_url)
-    if candidate_parts.scheme not in {"http", "https"}:
-        return None
-    if candidate_parts.scheme != base_parts.scheme or candidate_parts.netloc != base_parts.netloc:
-        return None
-    if not candidate_parts.path.startswith("/games/"):
-        return None
-    if candidate_parts.username or candidate_parts.password:
-        return None
-    return candidate
+def _resolve_safe_match_url(raw_payload_ref: object, server_slug: object) -> str | None:
+    return resolve_trusted_scoreboard_match_url(raw_payload_ref, server_slug)
 
 
 def _calculate_match_duration_seconds(started_at: object, ended_at: object) -> int | None:

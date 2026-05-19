@@ -151,3 +151,16 @@ Esta decision no reactiva Elo/MMR dentro del arranque normal del backend. Las
 piezas Elo/MMR, migraciones, datos persistidos y modulos historicos se
 conservan, pero su operativa compleja sigue pausada y desacoplada salvo task
 explicita.
+
+## Decision 016: catalogo confiable de scoreboards publicos activos
+
+Los origenes publicos de scoreboard que el backend puede exponer o validar se
+centralizan en un catalogo explicito de servidores activos. En esta fase solo
+son confiables `comunidad-hispana-01`, con origen
+`https://scoreboard.comunidadhll.es`, y `comunidad-hispana-02`, con origen
+`https://scoreboard.comunidadhll.es:5443`.
+
+`comunidad-hispana-03` no forma parte de ese catalogo ni de los seeds por
+defecto nuevos. Los datos historicos ya persistidos no se eliminan, pero las
+URLs publicas de partidas solo se aceptan si el `raw_payload_ref` usa HTTP(S),
+apunta al origen confiable del servidor activo y mantiene una ruta `/games/`.
