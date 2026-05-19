@@ -16,6 +16,8 @@ from app.historical_storage import (
     upsert_historical_match,
 )
 from app.rcon_historical_storage import initialize_rcon_historical_storage
+from app.rcon_historical_storage import persist_rcon_historical_sample
+from app.rcon_historical_storage import start_rcon_historical_capture_run
 from app.rcon_historical_read_model import get_rcon_historical_match_detail
 
 
@@ -88,21 +90,145 @@ class PersistedScoreboardMatchLinkTests(unittest.TestCase):
             self.assertIsNone(detail)
             gc.collect()
 
+    def test_rcon_match_detail_exposes_correlated_scoreboard_url_on_strong_evidence(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = Path(tmpdir) / "historical.sqlite3"
+            previous_storage_path = os.environ.get("HLL_BACKEND_STORAGE_PATH")
+            os.environ["HLL_BACKEND_STORAGE_PATH"] = str(db_path)
+            try:
+                _persist_match(
+                    db_path,
+                    server_slug="comunidad-hispana-01",
+                    match_id="1561515",
+                    map_name="St. Mere Eglise",
+                    started_at="2026-04-12T16:20:00Z",
+                    ended_at="2026-04-12T17:45:00Z",
+                )
+                session_key = _persist_rcon_window(
+                    db_path,
+                    map_name="St. Mere Eglise",
+                    first_seen_at="2026-04-12T16:28:55.761810Z",
+                    last_seen_at="2026-04-12T16:43:55.761810Z",
+                    players=94,
+                    max_players=98,
+                )
 
-def _persist_match(db_path: Path, *, server_slug: str, match_id: str) -> None:
+                detail = get_rcon_historical_match_detail(
+                    server_key="comunidad-hispana-01",
+                    match_id=session_key,
+                )
+            finally:
+                if previous_storage_path is None:
+                    os.environ.pop("HLL_BACKEND_STORAGE_PATH", None)
+                else:
+                    os.environ["HLL_BACKEND_STORAGE_PATH"] = previous_storage_path
+
+            self.assertIsNotNone(detail)
+            self.assertEqual(
+                detail["match_url"],
+                "https://scoreboard.comunidadhll.es/games/1561515",
+            )
+            gc.collect()
+
+    def test_rcon_match_detail_keeps_low_confidence_correlation_unlinked(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = Path(tmpdir) / "historical.sqlite3"
+            previous_storage_path = os.environ.get("HLL_BACKEND_STORAGE_PATH")
+            os.environ["HLL_BACKEND_STORAGE_PATH"] = str(db_path)
+            try:
+                _persist_match(
+                    db_path,
+                    server_slug="comunidad-hispana-01",
+                    match_id="1561515",
+                    map_name="Carentan",
+                    started_at="2026-04-12T10:00:00Z",
+                    ended_at="2026-04-12T11:30:00Z",
+                )
+                session_key = _persist_rcon_window(
+                    db_path,
+                    map_name="St. Mere Eglise",
+                    first_seen_at="2026-04-12T16:28:55.761810Z",
+                    last_seen_at="2026-04-12T16:43:55.761810Z",
+                    players=94,
+                    max_players=98,
+                )
+
+                detail = get_rcon_historical_match_detail(
+                    server_key="comunidad-hispana-01",
+                    match_id=session_key,
+                )
+            finally:
+                if previous_storage_path is None:
+                    os.environ.pop("HLL_BACKEND_STORAGE_PATH", None)
+                else:
+                    os.environ["HLL_BACKEND_STORAGE_PATH"] = previous_storage_path
+
+            self.assertIsNotNone(detail)
+            self.assertIsNone(detail["match_url"])
+            gc.collect()
+
+
+def _persist_match(
+    db_path: Path,
+    *,
+    server_slug: str,
+    match_id: str,
+    map_name: str = "carentan",
+    started_at: str = "2026-05-01T10:00:00Z",
+    ended_at: str = "2026-05-01T11:20:00Z",
+) -> None:
     upsert_historical_match(
         server_slug=server_slug,
         match_payload={
             "id": match_id,
-            "creation_time": "2026-05-01T10:00:00Z",
-            "start": "2026-05-01T10:00:00Z",
-            "end": "2026-05-01T11:20:00Z",
-            "map": {"name": "carentan"},
+            "creation_time": started_at,
+            "start": started_at,
+            "end": ended_at,
+            "map": {"name": map_name},
             "result": {"allied": 3, "axis": 2},
             "player_stats": [],
         },
         db_path=db_path,
     )
+
+
+def _persist_rcon_window(
+    db_path: Path,
+    *,
+    map_name: str,
+    first_seen_at: str,
+    last_seen_at: str,
+    players: int,
+    max_players: int,
+) -> str:
+    initialize_rcon_historical_storage(db_path=db_path)
+    run_id = start_rcon_historical_capture_run(
+        mode="test",
+        target_scope="comunidad-hispana-01",
+        db_path=db_path,
+    )
+    target = {
+        "target_key": "comunidad-hispana-01",
+        "external_server_id": "comunidad-hispana-01",
+        "name": "Comunidad Hispana #01",
+        "host": "127.0.0.1",
+        "port": 7779,
+    }
+    for captured_at in (first_seen_at, last_seen_at):
+        persist_rcon_historical_sample(
+            run_id=run_id,
+            captured_at=captured_at,
+            target=target,
+            normalized_payload={
+                "status": "online",
+                "players": players,
+                "max_players": max_players,
+                "current_map": map_name,
+            },
+            raw_payload={},
+            db_path=db_path,
+        )
+    return f"1:{first_seen_at}"
 
 
 def _set_raw_payload_ref(db_path: Path, *, match_id: str, raw_payload_ref: str) -> None:

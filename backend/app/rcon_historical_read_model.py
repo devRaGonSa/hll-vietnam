@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 
 from .historical_storage import ALL_SERVERS_SLUG
 from .normalizers import normalize_map_name
+from .rcon_scoreboard_correlation import resolve_rcon_scoreboard_match_url
 from .rcon_historical_storage import (
     find_rcon_historical_competitive_window,
     get_rcon_historical_competitive_window_by_session,
@@ -136,6 +137,8 @@ def get_rcon_historical_match_detail(
     )
     if item is None:
         return None
+    player_count = int(round(float(item.get("average_players") or 0)))
+    server_slug = item["external_server_id"] or item["target_key"]
     return {
         "server": {
             "slug": item["target_key"],
@@ -162,7 +165,15 @@ def get_rcon_historical_match_detail(
         "sample_count": item.get("sample_count"),
         "capture_basis": "rcon-competitive-window",
         "capabilities": item.get("capabilities"),
-        "match_url": None,
+        "match_url": resolve_rcon_scoreboard_match_url(
+            server_slug=server_slug,
+            map_name=item.get("map_pretty_name") or item.get("map_name"),
+            started_at=item["first_seen_at"],
+            ended_at=item["last_seen_at"],
+            duration_seconds=item.get("duration_seconds"),
+            player_count=player_count,
+            peak_players=item.get("peak_players"),
+        ),
     }
 
 
