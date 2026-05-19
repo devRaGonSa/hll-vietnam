@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from datetime import datetime, timezone
 
 from .historical_storage import ALL_SERVERS_SLUG
@@ -13,6 +14,9 @@ from .rcon_historical_storage import (
     list_rcon_historical_competitive_summary_rows,
     list_rcon_historical_competitive_windows,
 )
+
+MATCH_RESULT_SOURCE = "admin-log-match-ended"
+SESSION_RESULT_SOURCE = "rcon-session"
 
 
 def list_rcon_historical_server_summaries(
@@ -41,9 +45,23 @@ def list_rcon_historical_recent_activity(
     limit: int = 20,
 ) -> list[dict[str, object]]:
     """Return recent RCON-backed competitive windows for one or all targets."""
+    from .rcon_admin_log_materialization import list_materialized_rcon_matches
+
     normalized_server_key = None if server_key == ALL_SERVERS_SLUG else server_key
-    items = list_rcon_historical_competitive_windows(target_key=normalized_server_key, limit=limit)
-    return [
+    materialized_items = list_materialized_rcon_matches(
+        target_key=normalized_server_key,
+        only_ended=True,
+        limit=limit,
+    )
+    primary_items = [_build_materialized_recent_item(item) for item in materialized_items]
+    if primary_items:
+        return primary_items[:limit]
+
+    session_items = list_rcon_historical_competitive_windows(
+        target_key=normalized_server_key,
+        limit=limit,
+    )
+    fallback_items = [
         {
             "server": {
                 "slug": item["target_key"],
@@ -52,6 +70,7 @@ def list_rcon_historical_recent_activity(
                 "region": item["region"],
             },
             "match_id": item["session_key"],
+            "internal_detail_match_id": item["session_key"],
             "started_at": item["first_seen_at"],
             "ended_at": item["last_seen_at"],
             "closed_at": item["last_seen_at"],
@@ -66,11 +85,13 @@ def list_rcon_historical_recent_activity(
             "sample_count": item.get("sample_count"),
             "duration_seconds": item.get("duration_seconds"),
             "capture_basis": "rcon-competitive-window",
+            "result_source": SESSION_RESULT_SOURCE,
             "capabilities": item.get("capabilities"),
             "minutes_since_capture": _minutes_since_timestamp(item.get("last_seen_at")),
         }
-        for item in items
+        for item in session_items
     ]
+    return _merge_recent_items(primary_items, fallback_items, limit=limit)
 
 
 def describe_rcon_historical_read_model() -> dict[str, object]:
@@ -95,11 +116,11 @@ def describe_rcon_historical_read_model() -> dict[str, object]:
         ],
         "capabilities": {
             "server_summary": "exact",
-            "recent_matches": "approximate",
+            "recent_matches": "exact-when-admin-log-match-ended",
             "competitive_quality": "partial",
-            "result": "session-score",
-            "gamestate": "session",
-            "player_stats": "unavailable",
+            "result": "admin-log-match-ended",
+            "gamestate": "session-fallback",
+            "player_stats": "admin-log-derived",
         },
         "limitations": [
             "No retroactive backfill of closed matches.",
@@ -130,6 +151,12 @@ def get_rcon_historical_match_detail(
     match_id: str,
 ) -> dict[str, object] | None:
     """Return one RCON competitive window as a match-detail compatible payload."""
+    from .rcon_admin_log_materialization import get_materialized_rcon_match_detail
+
+    materialized = get_materialized_rcon_match_detail(server_key=server_key, match_key=match_id)
+    if materialized is not None:
+        return _build_materialized_detail_item(materialized)
+
     item = get_rcon_historical_competitive_window_by_session(
         server_key=server_key,
         session_key=match_id,
@@ -161,6 +188,9 @@ def get_rcon_historical_match_detail(
         "sample_count": item.get("sample_count"),
         "players": [],
         "capture_basis": "rcon-competitive-window",
+        "confidence": item.get("confidence_mode"),
+        "source_basis": "rcon-session",
+        "result_source": SESSION_RESULT_SOURCE,
         "capabilities": item.get("capabilities"),
         "match_url": resolve_rcon_scoreboard_match_url(
             server_slug=server_slug,
@@ -172,6 +202,137 @@ def get_rcon_historical_match_detail(
             peak_players=item.get("peak_players"),
         ),
     }
+
+
+def _build_materialized_recent_item(item: dict[str, object]) -> dict[str, object]:
+    server_slug = item.get("external_server_id") or item.get("target_key")
+    return {
+        "server": {
+            "slug": item.get("target_key"),
+            "name": _server_display_name(item.get("external_server_id") or item.get("target_key")),
+            "external_server_id": item.get("external_server_id"),
+            "region": None,
+        },
+        "match_id": item.get("match_key"),
+        "internal_detail_match_id": item.get("match_key"),
+        "started_at": item.get("started_at"),
+        "ended_at": item.get("ended_at"),
+        "closed_at": item.get("ended_at") or item.get("started_at"),
+        "map": {
+            "name": item.get("map_name"),
+            "pretty_name": item.get("map_pretty_name") or normalize_map_name(item.get("map_name")),
+        },
+        "game_mode": item.get("game_mode"),
+        "result": {
+            "allied_score": item.get("allied_score"),
+            "axis_score": item.get("axis_score"),
+            "winner": item.get("winner"),
+        },
+        "winner": item.get("winner"),
+        "player_count": None,
+        "peak_players": None,
+        "sample_count": None,
+        "duration_seconds": _calculate_match_duration_seconds(item),
+        "capture_basis": "rcon-materialized-admin-log",
+        "confidence": item.get("confidence_mode"),
+        "source_basis": item.get("source_basis"),
+        "result_source": (
+            MATCH_RESULT_SOURCE
+            if item.get("source_basis") == MATCH_RESULT_SOURCE
+            else SESSION_RESULT_SOURCE
+        ),
+        "match_url": resolve_rcon_scoreboard_match_url(
+            server_slug=server_slug,
+            map_name=item.get("map_pretty_name") or item.get("map_name"),
+            started_at=item.get("started_at"),
+            ended_at=item.get("ended_at"),
+            duration_seconds=_calculate_match_duration_seconds(item),
+        ),
+        "capabilities": describe_rcon_historical_read_model()["capabilities"],
+    }
+
+
+def _build_materialized_detail_item(materialized: dict[str, object]) -> dict[str, object]:
+    match = materialized["match"]
+    recent_item = _build_materialized_recent_item(match)
+    players = [_build_player_row(row) for row in materialized["players"]]
+    return {
+        **recent_item,
+        "match_id": match["match_key"],
+        "game_mode": match.get("game_mode"),
+        "winner": match.get("winner"),
+        "confidence": match.get("confidence_mode"),
+        "source_basis": match.get("source_basis"),
+        "players": players,
+        "timeline": {
+            "event_counts": materialized.get("timeline", []),
+        },
+    }
+
+
+def _build_player_row(row: dict[str, object]) -> dict[str, object]:
+    kills = _coerce_optional_int(row.get("kills")) or 0
+    deaths = _coerce_optional_int(row.get("deaths")) or 0
+    return {
+        "player_name": row.get("player_name"),
+        "team": row.get("team"),
+        "kills": kills,
+        "deaths": deaths,
+        "teamkills": _coerce_optional_int(row.get("teamkills")) or 0,
+        "kd_ratio": round(kills / deaths, 2) if deaths else float(kills),
+        "top_weapons": _top_counter(row.get("weapons_json")),
+        "most_killed": _top_counter(row.get("most_killed_json")),
+        "death_by": _top_counter(row.get("death_by_json")),
+    }
+
+
+def _top_counter(raw_value: object, *, limit: int = 5) -> list[dict[str, object]]:
+    if not isinstance(raw_value, str) or not raw_value.strip():
+        return []
+    try:
+        payload = json.loads(raw_value)
+    except (NameError, ValueError, TypeError):
+        return []
+    if not isinstance(payload, dict):
+        return []
+    rows = [
+        {"name": str(name), "count": int(count)}
+        for name, count in payload.items()
+        if _coerce_optional_int(count) is not None
+    ]
+    rows.sort(key=lambda item: (-int(item["count"]), str(item["name"])))
+    return rows[:limit]
+
+
+def _merge_recent_items(
+    primary_items: list[dict[str, object]],
+    fallback_items: list[dict[str, object]],
+    *,
+    limit: int,
+) -> list[dict[str, object]]:
+    merged: list[dict[str, object]] = []
+    seen: set[tuple[object, object]] = set()
+    for item in primary_items + fallback_items:
+        map_payload = item.get("map") if isinstance(item.get("map"), dict) else {}
+        key = (
+            item.get("server", {}).get("slug") if isinstance(item.get("server"), dict) else None,
+            normalize_map_name(map_payload.get("pretty_name") or map_payload.get("name")),
+        )
+        if key in seen:
+            continue
+        seen.add(key)
+        merged.append(item)
+    merged.sort(key=lambda row: str(row.get("closed_at") or row.get("ended_at") or row.get("started_at") or ""), reverse=True)
+    return merged[:limit]
+
+
+def _server_display_name(server_slug: object) -> str:
+    slug = str(server_slug or "").strip()
+    if slug == "comunidad-hispana-01":
+        return "Comunidad Hispana #01"
+    if slug == "comunidad-hispana-02":
+        return "Comunidad Hispana #02"
+    return slug or "RCON"
 
 
 def _build_rcon_result(latest_payload: object) -> dict[str, object]:
@@ -341,3 +502,26 @@ def _calculate_coverage_hours(
         last_point = last_point.replace(tzinfo=timezone.utc)
     delta = last_point.astimezone(timezone.utc) - first_point.astimezone(timezone.utc)
     return round(delta.total_seconds() / 3600, 2)
+
+
+def _calculate_duration_seconds(first_seen_at: object, last_seen_at: object) -> int | None:
+    if not isinstance(first_seen_at, str) or not isinstance(last_seen_at, str):
+        return None
+    first_point = datetime.fromisoformat(first_seen_at.replace("Z", "+00:00"))
+    last_point = datetime.fromisoformat(last_seen_at.replace("Z", "+00:00"))
+    if first_point.tzinfo is None:
+        first_point = first_point.replace(tzinfo=timezone.utc)
+    if last_point.tzinfo is None:
+        last_point = last_point.replace(tzinfo=timezone.utc)
+    return max(0, int((last_point.astimezone(timezone.utc) - first_point.astimezone(timezone.utc)).total_seconds()))
+
+
+def _calculate_match_duration_seconds(item: dict[str, object]) -> int | None:
+    duration = _calculate_duration_seconds(item.get("started_at"), item.get("ended_at"))
+    if duration:
+        return duration
+    started_server_time = _coerce_optional_int(item.get("started_server_time"))
+    ended_server_time = _coerce_optional_int(item.get("ended_server_time"))
+    if started_server_time is None or ended_server_time is None:
+        return duration
+    return max(0, ended_server_time - started_server_time)

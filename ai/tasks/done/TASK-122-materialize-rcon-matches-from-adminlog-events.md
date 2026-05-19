@@ -1,7 +1,7 @@
 ---
 id: TASK-122
 title: Materialize RCON matches from AdminLog events
-status: pending
+status: done
 type: backend
 team: Backend Senior
 supporting_teams:
@@ -81,3 +81,20 @@ Recent matches need consistent RCON-first scores. AdminLog contains `MATCH START
 - Stage only intended files.
 - Commit the completed implementation.
 - Push the branch to origin.
+
+## Outcome
+
+Implemented `backend/app/rcon_admin_log_materialization.py` with idempotent SQLite tables for `rcon_materialized_matches` and the shared materialization command `python -m app.rcon_admin_log_materialization`. Match records are derived from AdminLog `match_start` and `match_end` events, with `MATCH ENDED` results stored as authoritative `admin-log-match-ended` rows. Session windows remain available as partial fallback without deleting the existing competitive-window code.
+
+The command also exposes `python -m app.rcon_admin_log_materialization status` for materialization diagnostics: materialized match count, matches with player stats, first/last server time by target and event counts by type.
+
+No server #03 target was reintroduced, Elo/MMR was not reactivated, and no runtime DB files were committed.
+
+## Validation Result
+
+- Passed: `python -m compileall backend/app`
+- Pytest was not installed in the local Python environment.
+- Passed deterministic fallback: `$env:PYTHONPATH='backend'; python -m unittest backend.tests.test_rcon_materialization_pipeline backend.tests.test_scoreboard_match_links`
+- Passed Docker smoke: `docker compose up -d --build backend rcon-historical-worker`
+- Passed Docker materialization: `docker compose exec backend python -m app.rcon_admin_log_materialization` reported `matches_seen: 24`, `matches_materialized: 24`, `errors: []`.
+- Passed diagnostic command: `docker compose exec backend python -m app.rcon_admin_log_materialization status`.

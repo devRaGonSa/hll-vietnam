@@ -1,7 +1,7 @@
 ---
 id: TASK-125
 title: Prefer materialized RCON recent matches
-status: pending
+status: done
 type: backend
 team: Backend Senior
 supporting_teams:
@@ -80,3 +80,22 @@ End users should see correct scores as consistently as possible. RCON AdminLog `
 - Stage only intended files.
 - Commit the completed implementation.
 - Push the branch to origin.
+
+## Outcome
+
+Updated the RCON historical recent-matches read model to prefer materialized AdminLog matches with authoritative `MATCH ENDED` results before using active/session competitive windows. Public-scoreboard recent matches remain fallback only when RCON read coverage is unavailable or empty.
+
+Recent match rows now include `result_source` values for the implemented paths:
+
+- `admin-log-match-ended`
+- `rcon-session`
+- `public-scoreboard-fallback`
+
+The payload builder no longer selects the public scoreboard merely to fill the requested limit when RCON has usable materialized/session results. Stale local historical targets such as `comunidad-hispana-03` are not re-added to configuration or shown as configured RCON targets by this batch.
+
+## Validation Result
+
+- Passed: `python -m compileall backend/app`
+- Pytest was not installed in the local Python environment.
+- Passed deterministic fallback: `$env:PYTHONPATH='backend'; python -m unittest backend.tests.test_rcon_materialization_pipeline backend.tests.test_scoreboard_match_links`
+- Passed API recent-matches check: `Invoke-WebRequest "http://localhost:8000/api/historical/recent-matches?server=all-servers&limit=10"` returned `selected_source: rcon`, `fallback_used: false`, and materialized rows with `result_source: admin-log-match-ended`.

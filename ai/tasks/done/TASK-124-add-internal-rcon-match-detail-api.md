@@ -1,7 +1,7 @@
 ---
 id: TASK-124
 title: Add internal RCON match detail API
-status: pending
+status: done
 type: backend
 team: Backend Senior
 supporting_teams:
@@ -80,3 +80,19 @@ Expose internal match detail data from materialized RCON matches and player stat
 - Stage only intended files.
 - Commit the completed implementation.
 - Push the branch to origin.
+
+## Outcome
+
+Extended the existing RCON historical read model behind `/api/historical/matches/detail?server=...&match=...` to prefer materialized RCON AdminLog match detail when available, while preserving the existing competitive-window and public-scoreboard fallback behavior.
+
+Materialized detail payloads now include server, match id, map, game mode, start/end, duration, result, winner, confidence/source basis, safe optional `match_url`, player rows and timeline event counts. Player rows expose display names and derived summaries only, not raw player IDs.
+
+Missing materialized detail remains controlled: the endpoint falls back to the existing paths and returns `found: false` instead of raising a 500 when no detail is available.
+
+## Validation Result
+
+- Passed: `python -m compileall backend/app`
+- Pytest was not installed in the local Python environment.
+- Passed deterministic fallback: `$env:PYTHONPATH='backend'; python -m unittest backend.tests.test_rcon_materialization_pipeline backend.tests.test_scoreboard_match_links`
+- Passed API smoke: `Invoke-WebRequest "http://localhost:8000/health"`.
+- Passed API detail check: `Invoke-WebRequest "http://localhost:8000/api/historical/matches/detail?server=comunidad-hispana-02&match=comunidad-hispana-02:1779108337:1779111786:stmariedumontwarfare"` returned `found: true`, `result_source: admin-log-match-ended`, players and timeline counts.
