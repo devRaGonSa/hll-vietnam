@@ -6,6 +6,7 @@ import sqlite3
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Mapping
+from urllib.parse import urlparse
 
 from .config import (
     get_historical_refresh_overlap_hours,
@@ -766,6 +767,8 @@ def list_recent_historical_matches(
                 historical_matches.map_name,
                 historical_matches.allied_score,
                 historical_matches.axis_score,
+                historical_matches.raw_payload_ref,
+                historical_servers.scoreboard_base_url,
                 COUNT(historical_player_match_stats.id) AS player_count
             FROM historical_matches
             INNER JOIN historical_servers
@@ -804,6 +807,10 @@ def list_recent_historical_matches(
                     ),
                 },
                 "player_count": int(row["player_count"] or 0),
+                "match_url": _resolve_safe_match_url(
+                    row["raw_payload_ref"],
+                    row["scoreboard_base_url"],
+                ),
             }
         )
     return items
@@ -3112,6 +3119,25 @@ def _list_all_servers_top_maps(*, db_path: Path, limit: int) -> list[dict[str, o
 
 def _is_all_servers_selector(value: str | None) -> bool:
     return isinstance(value, str) and value.strip() == ALL_SERVERS_SLUG
+
+
+def _resolve_safe_match_url(raw_payload_ref: object, scoreboard_base_url: object) -> str | None:
+    candidate = _stringify(raw_payload_ref)
+    base_url = _stringify(scoreboard_base_url)
+    if not candidate or not base_url:
+        return None
+
+    candidate_parts = urlparse(candidate)
+    base_parts = urlparse(base_url)
+    if candidate_parts.scheme not in {"http", "https"}:
+        return None
+    if candidate_parts.scheme != base_parts.scheme or candidate_parts.netloc != base_parts.netloc:
+        return None
+    if not candidate_parts.path.startswith("/games/"):
+        return None
+    if candidate_parts.username or candidate_parts.password:
+        return None
+    return candidate
 
 
 def _start_of_week(value: datetime) -> datetime:
