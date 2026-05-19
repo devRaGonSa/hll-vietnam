@@ -1,7 +1,7 @@
 ---
 id: TASK-128
 title: Build simplified internal match detail page
-status: pending
+status: done
 type: frontend
 team: Frontend Senior
 supporting_teams:
@@ -77,3 +77,20 @@ When a safe public scoreboard link is unavailable, users should still be able to
 - Stage only intended files.
 - Commit the completed implementation.
 - Push the branch to origin.
+
+## Outcome
+
+Reworked `frontend/historico-partida.html` and `frontend/assets/js/historico-partida.js` into a simplified internal scoreboard-style detail page backed by `/api/historical/matches/detail?server=...&match=...`.
+
+The page correctly URL-encodes materialized RCON match ids containing colons, displays match summary cards, source/confidence, optional external scoreboard action, player stats with K/D, top weapons, most-killed/death-by summaries, and timeline event counts. It handles missing player/timeline data with controlled empty states and does not expose raw player IDs.
+
+## Validation Result
+
+- Passed: `node --check frontend/assets/js/historico-partida.js`
+- Passed: `docker compose up -d --build backend frontend`
+- Browser-verified detail navigation from `http://localhost:8080/historico.html`.
+- Browser-verified known materialized match detail renders at `http://localhost:8080/historico-partida.html?server=comunidad-hispana-02&match=comunidad-hispana-02%3A1779178461%3A1779183861%3Acarentanwarfare`.
+- Confirmed AntonioPruna renders with 1 kill, 0 deaths and `M1 GARAND`.
+- Confirmed the victim row renders 1 death and `death_by` AntonioPruna.
+- Confirmed timeline/event counts render.
+- Confirmed no visible Elo/MVP/Comunidad Hispana #03/snapshot wording appears.

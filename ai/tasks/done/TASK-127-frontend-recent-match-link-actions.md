@@ -1,7 +1,7 @@
 ---
 id: TASK-127
 title: Update recent match link actions
-status: pending
+status: done
 type: frontend
 team: Frontend Senior
 supporting_teams:
@@ -78,3 +78,19 @@ Recent match cards should always offer internal details when supported and only 
 - Stage only intended files.
 - Commit the completed implementation.
 - Push the branch to origin.
+
+## Outcome
+
+Updated recent match cards to consume materialized RCON recent-match fields. Cards now show available scores, a friendly result status/source, an internal `Ver detalles` link built from `internal_detail_match_id` or `match_id`, and an external scoreboard link only when `match_url` is present.
+
+The rendering keeps paused Elo/MVP blocks out of the page, does not reintroduce Comunidad Hispana #03, and avoids visible "snapshot" wording. Missing-score RCON competitive-window rows render as in-progress instead of placeholder dashes.
+
+## Validation Result
+
+- Passed: `node --check frontend/assets/js/historico.js`
+- Passed: `node --check frontend/assets/js/historico-recent-live.js`
+- Passed: `docker compose up -d --build backend frontend`
+- Browser-verified `http://localhost:8080/historico.html`.
+- Confirmed recent cards show internal detail links and materialized RCON score `3 - 2`.
+- Confirmed external scoreboard links are not rendered when `match_url` is absent.
+- Confirmed no visible Elo/MVP/Comunidad Hispana #03/snapshot wording appears.
