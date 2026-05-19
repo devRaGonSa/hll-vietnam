@@ -804,18 +804,8 @@ function renderRecentMatchCard(item) {
   const mapName = item.map?.pretty_name || item.map?.name || "Mapa no disponible";
   const matchUrl = normalizeExternalMatchUrl(item.match_url);
   const detailUrl = buildInternalMatchDetailUrl(item);
-  const matchLink = matchUrl
-    ? `
-        <a
-          class="historical-match-card__link"
-          href="${escapeHtml(matchUrl)}"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          Ver partida
-        </a>
-      `
-    : detailUrl
+  const actionLinks = [
+    detailUrl
       ? `
         <a
           class="historical-match-card__link"
@@ -824,7 +814,20 @@ function renderRecentMatchCard(item) {
           Ver detalles
         </a>
       `
-      : "";
+      : "",
+    matchUrl
+      ? `
+        <a
+          class="historical-match-card__link"
+          href="${escapeHtml(matchUrl)}"
+          target="_blank"
+          rel="noopener noreferrer"
+        >
+          Ver scoreboard
+        </a>
+      `
+      : "",
+  ].join("");
   return `
     <article class="historical-match-card">
       <div class="historical-match-card__top">
@@ -834,7 +837,7 @@ function renderRecentMatchCard(item) {
         </div>
         <div class="historical-match-card__actions">
           <span class="historical-match-card__result">${escapeHtml(formatMatchResult(item.result))}</span>
-          ${matchLink}
+          ${actionLinks}
         </div>
       </div>
       <div class="historical-match-meta">
@@ -853,6 +856,10 @@ function renderRecentMatchCard(item) {
         <article>
           <p class="historical-match-meta__label">Marcador</p>
           <strong>${escapeHtml(formatScore(item.result))}</strong>
+        </article>
+        <article>
+          <p class="historical-match-meta__label">Estado</p>
+          <strong>${escapeHtml(formatRecentMatchStatus(item))}</strong>
         </article>
       </div>
     </article>
@@ -873,7 +880,7 @@ function normalizeExternalMatchUrl(value) {
 
 function buildInternalMatchDetailUrl(item) {
   const serverSlug = item?.server?.slug;
-  const matchId = item?.match_id;
+  const matchId = item?.internal_detail_match_id || item?.match_id;
   if (typeof serverSlug !== "string" || !serverSlug.trim()) {
     return "";
   }
@@ -1552,7 +1559,7 @@ function formatDateOnly(timestamp) {
 
 function formatMatchResult(result) {
   const winner = result?.winner;
-  if (winner === "allies") {
+  if (winner === "allies" || winner === "allied") {
     return "Victoria Aliada";
   }
   if (winner === "axis") {
@@ -1565,13 +1572,52 @@ function formatMatchResult(result) {
 }
 
 function formatScore(result) {
-  const alliedScore = Number.isFinite(result?.allied_score)
-    ? result.allied_score
-    : "-";
-  const axisScore = Number.isFinite(result?.axis_score)
-    ? result.axis_score
-    : "-";
+  if (!hasMatchScore(result)) {
+    return "Resultado no disponible";
+  }
+  const alliedScore = Number(result.allied_score);
+  const axisScore = Number(result.axis_score);
   return `${alliedScore} - ${axisScore}`;
+}
+
+function hasMatchScore(result) {
+  return (
+    Number.isFinite(Number(result?.allied_score)) &&
+    Number.isFinite(Number(result?.axis_score))
+  );
+}
+
+function formatRecentMatchStatus(item) {
+  if (hasMatchScore(item?.result)) {
+    const sourceLabel = formatResultSource(item?.result_source || item?.source_basis);
+    return sourceLabel ? `Resultado confirmado (${sourceLabel})` : "Resultado confirmado";
+  }
+  if (item?.capture_basis === "rcon-competitive-window") {
+    return "En curso";
+  }
+  if (item?.result_source || item?.source_basis || item?.capture_basis) {
+    return formatResultSource(item.result_source || item.source_basis || item.capture_basis);
+  }
+  return "Resultado no disponible";
+}
+
+function formatResultSource(value) {
+  if (value === "admin-log-match-ended") {
+    return "cierre RCON";
+  }
+  if (value === "rcon-session") {
+    return "sesion RCON";
+  }
+  if (value === "rcon-materialized-admin-log") {
+    return "registro RCON";
+  }
+  if (value === "public-scoreboard-match") {
+    return "scoreboard externo";
+  }
+  if (value === "rcon-competitive-window") {
+    return "ventana RCON";
+  }
+  return value ? String(value).replaceAll("-", " ") : "";
 }
 
 function formatNumber(value) {

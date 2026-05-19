@@ -80,18 +80,31 @@
                     <tr>
                       <th>Jugador</th>
                       <th>Equipo</th>
-                      <th>Nivel</th>
                       <th>K</th>
                       <th>D</th>
                       <th>TK</th>
-                      <th>Combate</th>
-                      <th>Apoyo</th>
-                      <th>Tiempo</th>
+                      <th>K/D</th>
+                      <th>Armas</th>
+                      <th>Mas abatido</th>
+                      <th>Muere por</th>
                     </tr>
                   </thead>
                   <tbody id="match-detail-players-body"></tbody>
                 </table>
               </div>
+            </div>
+            <div class="historical-detail-section" id="match-detail-timeline-section" hidden>
+              <div class="historical-detail-section__header">
+                <div>
+                  <p class="eyebrow eyebrow--section">Eventos</p>
+                  <h3>Linea de tiempo</h3>
+                </div>
+                <p class="historical-panel__note" id="match-detail-timeline-note">
+                  Revisando eventos registrados para esta partida.
+                </p>
+              </div>
+              <p class="historical-state" id="match-detail-timeline-state" hidden></p>
+              <div class="historical-summary-grid" id="match-detail-timeline-grid" hidden></div>
             </div>
             <div class="historical-match-card__actions" id="match-detail-actions" hidden></div>
           </div>

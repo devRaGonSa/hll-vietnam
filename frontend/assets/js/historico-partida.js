@@ -4,60 +4,36 @@ document.addEventListener("DOMContentLoaded", () => {
   const params = new URLSearchParams(window.location.search);
   const serverSlug = params.get("server") || "";
   const matchId = params.get("match") || "";
-  const titleNode = document.getElementById("match-detail-title");
-  const summaryNode = document.getElementById("match-detail-summary");
-  const noteNode = document.getElementById("match-detail-note");
-  const stateNode = document.getElementById("match-detail-state");
-  const gridNode = document.getElementById("match-detail-grid");
-  const actionsNode = document.getElementById("match-detail-actions");
-  const playersSectionNode = document.getElementById("match-detail-players-section");
-  const playersNoteNode = document.getElementById("match-detail-players-note");
-  const playersStateNode = document.getElementById("match-detail-players-state");
-  const playersTableShellNode = document.getElementById("match-detail-players-table-shell");
-  const playersBodyNode = document.getElementById("match-detail-players-body");
+  const nodes = {
+    title: document.getElementById("match-detail-title"),
+    summary: document.getElementById("match-detail-summary"),
+    note: document.getElementById("match-detail-note"),
+    state: document.getElementById("match-detail-state"),
+    grid: document.getElementById("match-detail-grid"),
+    actions: document.getElementById("match-detail-actions"),
+    playersSection: document.getElementById("match-detail-players-section"),
+    playersNote: document.getElementById("match-detail-players-note"),
+    playersState: document.getElementById("match-detail-players-state"),
+    playersTableShell: document.getElementById("match-detail-players-table-shell"),
+    playersBody: document.getElementById("match-detail-players-body"),
+    timelineSection: document.getElementById("match-detail-timeline-section"),
+    timelineNote: document.getElementById("match-detail-timeline-note"),
+    timelineState: document.getElementById("match-detail-timeline-state"),
+    timelineGrid: document.getElementById("match-detail-timeline-grid"),
+  };
 
   if (!serverSlug || !matchId) {
-    titleNode.textContent = "Partida no seleccionada";
-    summaryNode.textContent = "Vuelve al historico y abre una partida registrada.";
-    noteNode.textContent = "Faltan parametros internos para cargar este detalle.";
-    setState(stateNode, "No hay una partida seleccionada.", true);
+    nodes.title.textContent = "Partida no seleccionada";
+    nodes.summary.textContent = "Vuelve al historico y abre una partida registrada.";
+    nodes.note.textContent = "Faltan parametros internos para cargar este detalle.";
+    setState(nodes.state, "No hay una partida seleccionada.", true);
     return;
   }
 
-  void loadMatchDetail({
-    backendBaseUrl,
-    serverSlug,
-    matchId,
-    titleNode,
-    summaryNode,
-    noteNode,
-    stateNode,
-    gridNode,
-    actionsNode,
-    playersSectionNode,
-    playersNoteNode,
-    playersStateNode,
-    playersTableShellNode,
-    playersBodyNode,
-  });
+  void loadMatchDetail({ backendBaseUrl, serverSlug, matchId, nodes });
 });
 
-async function loadMatchDetail({
-  backendBaseUrl,
-  serverSlug,
-  matchId,
-  titleNode,
-  summaryNode,
-  noteNode,
-  stateNode,
-  gridNode,
-  actionsNode,
-  playersSectionNode,
-  playersNoteNode,
-  playersStateNode,
-  playersTableShellNode,
-  playersBodyNode,
-}) {
+async function loadMatchDetail({ backendBaseUrl, serverSlug, matchId, nodes }) {
   try {
     const payload = await fetchJson(
       `${backendBaseUrl}/api/historical/matches/detail?server=${encodeURIComponent(
@@ -67,129 +43,120 @@ async function loadMatchDetail({
     const data = payload?.data;
     const item = data?.item;
     if (!data?.found || !item) {
-      titleNode.textContent = "Detalle no disponible";
-      summaryNode.textContent =
+      nodes.title.textContent = "Detalle no disponible";
+      nodes.summary.textContent =
         "La partida existe como enlace interno, pero todavia no hay detalle suficiente para mostrar.";
-      noteNode.textContent =
+      nodes.note.textContent =
         "El historico local puede tener solo una ventana RCON parcial o ningun registro ampliado.";
-      setState(stateNode, "Detalle no disponible para esta partida.");
+      setState(nodes.state, "Detalle no disponible para esta partida.");
       return;
     }
 
-    renderMatchDetail(item, {
-      titleNode,
-      summaryNode,
-      noteNode,
-      stateNode,
-      gridNode,
-      actionsNode,
-      playersSectionNode,
-      playersNoteNode,
-      playersStateNode,
-      playersTableShellNode,
-      playersBodyNode,
-    });
+    renderMatchDetail(item, nodes);
   } catch (error) {
-    titleNode.textContent = "Detalle no disponible";
-    summaryNode.textContent = "No se pudo conectar con el backend local.";
-    noteNode.textContent = "Comprueba que el backend este levantado y vuelve a intentarlo.";
-    setState(stateNode, "Error al cargar el detalle de la partida.", true);
+    nodes.title.textContent = "Detalle no disponible";
+    nodes.summary.textContent = "No se pudo conectar con el backend local.";
+    nodes.note.textContent = "Comprueba que el backend este levantado y vuelve a intentarlo.";
+    setState(nodes.state, "Error al cargar el detalle de la partida.", true);
   }
 }
 
-function renderMatchDetail(
-  item,
-  {
-    titleNode,
-    summaryNode,
-    noteNode,
-    stateNode,
-    gridNode,
-    actionsNode,
-    playersSectionNode,
-    playersNoteNode,
-    playersStateNode,
-    playersTableShellNode,
-    playersBodyNode,
-  },
-) {
+function renderMatchDetail(item, nodes) {
   const mapName = item.map?.pretty_name || item.map?.name || "Mapa no disponible";
-  const serverName = item.server?.name || "Servidor no disponible";
-  titleNode.textContent = mapName;
-  summaryNode.textContent = `${serverName} | Partida ${item.match_id || "sin id"}`;
-  noteNode.textContent = buildDetailNote(item);
-  gridNode.innerHTML = [
+  const serverName = item.server?.name || item.server?.slug || "Servidor no disponible";
+  nodes.title.textContent = mapName;
+  nodes.summary.textContent = `${serverName} | ${item.match_id || "partida sin id"}`;
+  nodes.note.textContent = buildDetailNote(item);
+  nodes.grid.innerHTML = [
     renderDetailCard("Servidor", serverName),
     renderDetailCard("Mapa", mapName),
+    renderDetailCard("Modo", formatGameMode(item.game_mode || item.gamestate?.game_mode)),
+    renderDetailCard("Marcador", formatScore(item.result)),
+    renderDetailCard("Ganador", formatWinner(item.winner || item.result?.winner)),
+    renderDetailCard("Resultado", formatMatchResult(item.result)),
     renderDetailCard("Inicio", formatTimestamp(item.started_at)),
     renderDetailCard("Fin", formatTimestamp(item.closed_at || item.ended_at)),
     renderDetailCard("Duracion", formatDuration(item.duration_seconds)),
-    renderDetailCard("Jugadores media", formatNumber(item.player_count)),
-    renderDetailCard("Pico jugadores", formatOptionalNumber(item.peak_players)),
-    renderDetailCard("Muestras RCON", formatOptionalNumber(item.sample_count)),
-    renderDetailCard("Marcador", formatScore(item.result)),
-    renderDetailCard("Resultado", formatMatchResult(item.result)),
-    renderDetailCard("Base de captura", formatCaptureBasis(item.capture_basis)),
-    renderDetailCard("Capacidades", formatCapabilities(item.capabilities)),
+    renderDetailCard("Confianza", formatConfidence(item.confidence)),
+    renderDetailCard(
+      "Fuente",
+      formatSourceBasis(item.source_basis || item.result_source) || "No disponible",
+    ),
+    renderDetailCard("Base", formatCaptureBasis(item.capture_basis)),
   ].join("");
-  renderPlayerSection(item, {
-    playersSectionNode,
-    playersNoteNode,
-    playersStateNode,
-    playersTableShellNode,
-    playersBodyNode,
-  });
-  renderActions(item, actionsNode);
-  stateNode.hidden = true;
-  gridNode.hidden = false;
+  renderPlayerSection(item, nodes);
+  renderTimelineSection(item, nodes);
+  renderActions(item, nodes.actions);
+  nodes.state.hidden = true;
+  nodes.grid.hidden = false;
 }
 
-function renderPlayerSection(
-  item,
-  {
-    playersSectionNode,
-    playersNoteNode,
-    playersStateNode,
-    playersTableShellNode,
-    playersBodyNode,
-  },
-) {
+function renderPlayerSection(item, nodes) {
   const players = Array.isArray(item.players) ? item.players : [];
-  playersSectionNode.hidden = false;
+  nodes.playersSection.hidden = false;
   if (players.length === 0) {
-    playersNoteNode.textContent =
+    nodes.playersNote.textContent =
       "Esta partida no tiene estadisticas por jugador disponibles en el detalle interno.";
     setState(
-      playersStateNode,
-      item.capture_basis === "rcon-competitive-window"
-        ? "Las ventanas RCON actuales no incluyen desglose por jugador."
-        : "No hay filas de jugador registradas para esta partida.",
+      nodes.playersState,
+      "No hay filas de jugador registradas para esta partida.",
     );
-    playersTableShellNode.hidden = true;
-    playersBodyNode.innerHTML = "";
+    nodes.playersTableShell.hidden = true;
+    nodes.playersBody.innerHTML = "";
     return;
   }
 
-  playersNoteNode.textContent = `${formatNumber(players.length)} jugadores con estadisticas locales.`;
-  playersStateNode.hidden = true;
-  playersBodyNode.innerHTML = players.map((player) => renderPlayerRow(player)).join("");
-  playersTableShellNode.hidden = false;
+  nodes.playersNote.textContent = `${formatNumber(players.length)} jugadores con estadisticas locales.`;
+  nodes.playersState.hidden = true;
+  nodes.playersBody.innerHTML = players.map((player) => renderPlayerRow(player)).join("");
+  nodes.playersTableShell.hidden = false;
 }
 
 function renderPlayerRow(player) {
   return `
     <tr>
-      <td>${escapeHtml(player.name || "Jugador no identificado")}</td>
-      <td>${escapeHtml(formatTeamSide(player.team_side))}</td>
-      <td>${escapeHtml(formatOptionalNumber(player.level))}</td>
+      <td>${escapeHtml(player.player_name || player.name || "Jugador no identificado")}</td>
+      <td>${escapeHtml(formatTeamSide(player.team || player.team_side))}</td>
       <td>${escapeHtml(formatOptionalNumber(player.kills))}</td>
       <td>${escapeHtml(formatOptionalNumber(player.deaths))}</td>
       <td>${escapeHtml(formatOptionalNumber(player.teamkills))}</td>
-      <td>${escapeHtml(formatOptionalNumber(player.combat))}</td>
-      <td>${escapeHtml(formatOptionalNumber(player.support))}</td>
-      <td>${escapeHtml(formatDuration(player.time_seconds))}</td>
+      <td>${escapeHtml(formatKdRatio(player))}</td>
+      <td>${escapeHtml(formatNamedCounts(player.top_weapons))}</td>
+      <td>${escapeHtml(formatNamedCounts(player.most_killed))}</td>
+      <td>${escapeHtml(formatNamedCounts(player.death_by))}</td>
     </tr>
   `;
+}
+
+function renderTimelineSection(item, nodes) {
+  const eventCounts = Array.isArray(item.timeline?.event_counts)
+    ? item.timeline.event_counts
+    : [];
+  nodes.timelineSection.hidden = false;
+  if (eventCounts.length === 0) {
+    nodes.timelineNote.textContent =
+      "No hay resumen de eventos disponible para esta partida.";
+    setState(nodes.timelineState, "Sin eventos agregados para mostrar.");
+    nodes.timelineGrid.hidden = true;
+    nodes.timelineGrid.innerHTML = "";
+    return;
+  }
+
+  nodes.timelineNote.textContent = `${formatNumber(eventCounts.length)} tipos de evento registrados.`;
+  nodes.timelineState.hidden = true;
+  nodes.timelineGrid.innerHTML = eventCounts.map((event) => renderTimelineCard(event)).join("");
+  nodes.timelineGrid.hidden = false;
+}
+
+function renderTimelineCard(event) {
+  const label =
+    event.event_type ||
+    event.type ||
+    event.name ||
+    event.label ||
+    "Evento registrado";
+  const count = event.count ?? event.total ?? event.event_count ?? 0;
+  return renderDetailCard(formatEventType(label), formatNumber(count));
 }
 
 function renderActions(item, actionsNode) {
@@ -206,7 +173,7 @@ function renderActions(item, actionsNode) {
       target="_blank"
       rel="noopener noreferrer"
     >
-      Abrir en scoreboard
+      Ver scoreboard
     </a>
   `;
   actionsNode.hidden = false;
@@ -222,71 +189,69 @@ function renderDetailCard(label, value) {
 }
 
 function buildDetailNote(item) {
-  if (item.capture_basis === "rcon-competitive-window") {
-    return "Detalle interno generado desde ventanas competitivas RCON. Algunos datos pueden estar limitados.";
+  const source = formatSourceBasis(item.source_basis || item.result_source);
+  if (source) {
+    return `Detalle interno servido desde ${source}. Los campos sin cobertura se muestran como no disponibles.`;
   }
   return "Detalle servido desde el historico local disponible para esta partida.";
 }
 
 function formatCaptureBasis(value) {
+  if (value === "rcon-materialized-admin-log") {
+    return "Registro RCON materializado";
+  }
   if (value === "rcon-competitive-window") {
     return "Ventana competitiva RCON";
   }
   if (value === "public-scoreboard-match") {
     return "Scoreboard persistido";
   }
-  return "Historico local";
+  return value ? String(value).replaceAll("-", " ") : "Historico local";
 }
 
-function formatPlayerCount(item) {
-  if (Number.isFinite(Number(item.peak_players))) {
-    return `${formatNumber(item.player_count)} media / ${formatNumber(item.peak_players)} pico`;
+function formatSourceBasis(value) {
+  if (value === "admin-log-match-ended") {
+    return "cierre de partida RCON";
   }
-  return formatNumber(item.player_count);
-}
-
-function formatOptionalNumber(value) {
-  return value === null || value === undefined ? "No disponible" : formatNumber(value);
-}
-
-function formatCapabilities(capabilities) {
-  if (!capabilities || typeof capabilities !== "object") {
-    return "No disponibles";
+  if (value === "rcon-session") {
+    return "sesion RCON";
   }
-  const labels = Object.entries(capabilities)
-    .filter(([, value]) => value !== null && value !== undefined)
-    .map(([key, value]) => `${formatCapabilityKey(key)}: ${formatCapabilityValue(value)}`);
-  return labels.length > 0 ? labels.join(" | ") : "No disponibles";
+  if (value === "public-scoreboard-match") {
+    return "scoreboard externo";
+  }
+  return value ? String(value).replaceAll("-", " ") : "";
 }
 
-function formatCapabilityKey(key) {
-  return String(key).replaceAll("_", " ");
-}
-
-function formatCapabilityValue(value) {
+function formatConfidence(value) {
   if (value === "exact") {
-    return "exacto";
+    return "Exacta";
   }
   if (value === "approximate") {
-    return "aproximado";
+    return "Aproximada";
   }
   if (value === "partial") {
-    return "parcial";
+    return "Parcial";
   }
-  if (value === "unavailable") {
-    return "no disponible";
-  }
-  return String(value);
+  return value ? String(value).replaceAll("-", " ") : "No disponible";
 }
 
 function formatTeamSide(value) {
-  if (value === "allies") {
+  const normalized = String(value || "").toLowerCase();
+  if (normalized === "allies" || normalized === "allied") {
     return "Aliados";
   }
-  if (value === "axis") {
+  if (normalized === "axis") {
     return "Axis";
   }
   return value || "No disponible";
+}
+
+function formatGameMode(value) {
+  if (!value) {
+    return "Modo no disponible";
+  }
+  const normalized = String(value).replaceAll("_", " ").replaceAll("-", " ");
+  return normalized.charAt(0).toUpperCase() + normalized.slice(1);
 }
 
 function formatDuration(value) {
@@ -304,25 +269,76 @@ function formatDuration(value) {
 }
 
 function formatMatchResult(result) {
-  const winner = result?.winner;
-  if (winner === "allies") {
-    return "Victoria Aliada";
+  if (hasMatchScore(result)) {
+    return `${formatWinner(result.winner)} (${formatScore(result)})`;
   }
-  if (winner === "axis") {
-    return "Victoria Axis";
+  return result?.winner ? formatWinner(result.winner) : "Resultado no disponible";
+}
+
+function formatWinner(value) {
+  const normalized = String(value || "").toLowerCase();
+  if (normalized === "allies" || normalized === "allied") {
+    return "Aliados";
   }
-  if (winner === "draw") {
+  if (normalized === "axis") {
+    return "Axis";
+  }
+  if (normalized === "draw") {
     return "Empate";
   }
-  return "Resultado parcial";
+  return "No disponible";
 }
 
 function formatScore(result) {
-  const alliedScore = Number.isFinite(result?.allied_score)
-    ? result.allied_score
-    : "-";
-  const axisScore = Number.isFinite(result?.axis_score) ? result.axis_score : "-";
-  return `${alliedScore} - ${axisScore}`;
+  if (!hasMatchScore(result)) {
+    return "Resultado no disponible";
+  }
+  return `${Number(result.allied_score)} - ${Number(result.axis_score)}`;
+}
+
+function hasMatchScore(result) {
+  return (
+    Number.isFinite(Number(result?.allied_score)) &&
+    Number.isFinite(Number(result?.axis_score))
+  );
+}
+
+function formatOptionalNumber(value) {
+  return value === null || value === undefined ? "No disponible" : formatNumber(value);
+}
+
+function formatKdRatio(player) {
+  if (Number.isFinite(Number(player.kd_ratio))) {
+    return formatDecimal(player.kd_ratio, 2);
+  }
+  const kills = Number(player.kills);
+  const deaths = Number(player.deaths);
+  if (!Number.isFinite(kills) || !Number.isFinite(deaths)) {
+    return "No disponible";
+  }
+  return deaths > 0 ? formatDecimal(kills / deaths, 2) : formatDecimal(kills, 2);
+}
+
+function formatNamedCounts(items) {
+  if (!Array.isArray(items) || items.length === 0) {
+    return "No disponible";
+  }
+  return items
+    .slice(0, 3)
+    .map((item) => {
+      const name = item.name || item.label || "Sin nombre";
+      const count = item.count ?? item.total ?? 0;
+      return `${name} (${formatNumber(count)})`;
+    })
+    .join(" / ");
+}
+
+function formatEventType(value) {
+  const normalized = String(value || "").replaceAll("_", " ").replaceAll("-", " ");
+  if (!normalized) {
+    return "Evento";
+  }
+  return normalized.charAt(0).toUpperCase() + normalized.slice(1);
 }
 
 function formatNumber(value) {
@@ -330,8 +346,18 @@ function formatNumber(value) {
   if (!Number.isFinite(parsedValue)) {
     return "0";
   }
-
   return new Intl.NumberFormat("es-ES").format(parsedValue);
+}
+
+function formatDecimal(value, fractionDigits = 1) {
+  const parsedValue = Number(value);
+  if (!Number.isFinite(parsedValue)) {
+    return "0";
+  }
+  return new Intl.NumberFormat("es-ES", {
+    minimumFractionDigits: fractionDigits,
+    maximumFractionDigits: fractionDigits,
+  }).format(parsedValue);
 }
 
 function formatTimestamp(timestamp) {
@@ -367,7 +393,6 @@ async function fetchJson(url) {
   if (!response.ok) {
     throw new Error(`Request failed with ${response.status}`);
   }
-
   return response.json();
 }
 

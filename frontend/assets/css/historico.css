@@ -490,6 +490,10 @@
   border-bottom: 0;
 }
 
+.historical-table--players {
+  min-width: 920px;
+}
+
 .historical-table__position {
   color: var(--accent-warm);
   font-weight: 700;
