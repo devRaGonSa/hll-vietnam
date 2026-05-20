@@ -78,31 +78,84 @@
   }
 
   function renderDynamicRecentMatchCard(item) {
-    if (typeof window.renderRecentMatchCard === "function") {
-      return window.renderRecentMatchCard(item);
-    }
     const mapName = item?.map?.pretty_name || item?.map?.name || "Mapa no disponible";
     const serverName = item?.server?.name || "Servidor no disponible";
     const closedAt = item?.closed_at || item?.ended_at || item?.started_at;
+    const detailUrl = buildDynamicInternalMatchDetailUrl(item);
+    const externalUrl = normalizeDynamicExternalMatchUrl(item?.match_url);
+
+    const actions = [
+      `<span class="historical-match-card__result">${escapeDynamicHtml(formatDynamicResultLabel(item?.result))}</span>`,
+      detailUrl
+        ? `<a class="historical-match-card__link" href="${escapeDynamicHtml(detailUrl)}">Ver detalles</a>`
+        : "",
+      externalUrl
+        ? `<a class="historical-match-card__link" href="${escapeDynamicHtml(externalUrl)}" target="_blank" rel="noopener noreferrer">Ver partida</a>`
+        : "",
+    ].join("");
+
     return `
-      <article class="historical-match-card">
-        <div class="historical-match-card__top">
-          <div>
-            <p class="historical-match-meta__label">Partida ${escapeDynamicHtml(item?.match_id || "sin id")}</p>
-            <h3 class="historical-match-card__title">${escapeDynamicHtml(mapName)}</h3>
-          </div>
-          <div class="historical-match-card__actions">
-            <span class="historical-match-card__result">${escapeDynamicHtml(formatDynamicScore(item?.result))}</span>
-          </div>
+      <article class="historical-match-card historical-match-card--clean">
+        <div class="historical-match-card__top historical-match-card__top--clean">
+          <h3 class="historical-match-card__title">${escapeDynamicHtml(mapName)}</h3>
         </div>
-        <div class="historical-match-meta">
-          <article><p class="historical-match-meta__label">Servidor</p><strong>${escapeDynamicHtml(serverName)}</strong></article>
-          <article><p class="historical-match-meta__label">Cierre</p><strong>${escapeDynamicHtml(formatDynamicTimestamp(closedAt))}</strong></article>
-          <article><p class="historical-match-meta__label">Jugadores</p><strong>${escapeDynamicHtml(formatDynamicNumber(item?.player_count))}</strong></article>
-          <article><p class="historical-match-meta__label">Marcador</p><strong>${escapeDynamicHtml(formatDynamicScore(item?.result))}</strong></article>
+        <div class="historical-match-meta historical-match-meta--clean">
+          <article>
+            <p class="historical-match-meta__label">Servidor</p>
+            <strong>${escapeDynamicHtml(serverName)}</strong>
+          </article>
+          <article>
+            <p class="historical-match-meta__label">Cierre</p>
+            <strong>${escapeDynamicHtml(formatDynamicTimestamp(closedAt))}</strong>
+          </article>
+          <article>
+            <p class="historical-match-meta__label">Jugadores</p>
+            <strong>${escapeDynamicHtml(formatDynamicNumber(item?.player_count))}</strong>
+          </article>
+          <article>
+            <p class="historical-match-meta__label">Marcador</p>
+            <strong>${escapeDynamicHtml(formatDynamicScore(item?.result))}</strong>
+          </article>
+          <article class="historical-match-card__actions-cell">
+            <div class="historical-match-card__actions">
+              ${actions}
+            </div>
+          </article>
         </div>
       </article>
     `;
+  }
+
+  function formatDynamicResultLabel(result) {
+    const winner = String(result?.winner || "").toLowerCase();
+    if (winner === "allies" || winner === "allied") {
+      return "Victoria aliada";
+    }
+    if (winner === "axis") {
+      return "Victoria axis";
+    }
+    return "Empate";
+  }
+
+  function buildDynamicInternalMatchDetailUrl(item) {
+    const serverSlug = item?.server?.slug;
+    const matchId = item?.internal_detail_match_id || item?.match_id;
+    if (!serverSlug || matchId === undefined || matchId === null) {
+      return "";
+    }
+    return `./historico-partida.html?server=${encodeURIComponent(String(serverSlug))}&match=${encodeURIComponent(String(matchId))}`;
+  }
+
+  function normalizeDynamicExternalMatchUrl(value) {
+    if (typeof value !== "string" || !value.trim()) {
+      return "";
+    }
+    try {
+      const url = new URL(value.trim());
+      return ["http:", "https:"].includes(url.protocol) ? url.href : "";
+    } catch (error) {
+      return "";
+    }
   }
 
   function buildDynamicRecentMeta(data, items) {
