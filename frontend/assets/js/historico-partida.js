@@ -130,20 +130,21 @@ function renderScoreboardDetail(item, { mapName, serverName }) {
 }
 
 function renderScoreboardSide({ sideClass, emblem, sideLabel, factionLabel, isWinner }) {
+  const fallbackLabel = factionLabel || sideLabel;
   return `
     <div class="historical-scoreboard-side ${sideClass} ${isWinner ? "is-winner" : ""}">
       <img
         class="historical-scoreboard-side__emblem"
         src="${escapeHtml(emblem)}"
-        alt="${escapeHtml(factionLabel)}"
-        width="96"
-        height="96"
+        alt="${escapeHtml(fallbackLabel)}"
+        width="128"
+        height="128"
         loading="lazy"
         decoding="async"
+        onerror="this.hidden = true; this.closest('.historical-scoreboard-side').classList.add('is-emblem-missing');"
       />
       <div class="historical-scoreboard-side__text">
         <strong>${escapeHtml(sideLabel)}</strong>
-        <span>${escapeHtml(factionLabel)}</span>
         ${isWinner ? "<em>Ganador</em>" : ""}
       </div>
     </div>
@@ -235,12 +236,12 @@ function resolveMatchFactions(item, mapName) {
   if (/(kursk|stalingrad|kharkov)/.test(normalizedMap)) {
     return {
       allied: {
-        label: "Ejercito sovietico",
-        emblem: "./assets/img/factions/soviets.svg",
+        label: "Sovieticos",
+        emblem: "./assets/img/factions/soviets.webp",
       },
       axis: {
-        label: "Ejercito aleman",
-        emblem: "./assets/img/factions/germany.svg",
+        label: "Eje",
+        emblem: "./assets/img/factions/germany.webp",
       },
     };
   }
@@ -248,26 +249,26 @@ function resolveMatchFactions(item, mapName) {
   if (/(driel|elalamein|el alamein|tobruk)/.test(normalizedMap)) {
     return {
       allied: {
-        label: "Fuerzas britanicas",
-        emblem: "./assets/img/factions/britain.svg",
+        label: "Britanicos",
+        emblem: "./assets/img/factions/britain.webp",
       },
       axis: {
         label: normalizedMap.includes("tobruk") || normalizedMap.includes("elalamein")
           ? "Afrika Korps"
-          : "Ejercito aleman",
-        emblem: "./assets/img/factions/germany.svg",
+          : "Eje",
+        emblem: "./assets/img/factions/germany.webp",
       },
     };
   }
 
   return {
     allied: {
-      label: "Fuerzas estadounidenses",
-      emblem: "./assets/img/factions/us.svg",
+      label: "USA",
+      emblem: "./assets/img/factions/us.webp",
     },
     axis: {
-      label: "Ejercito aleman",
-      emblem: "./assets/img/factions/germany.svg",
+      label: "Eje",
+      emblem: "./assets/img/factions/germany.webp",
     },
   };
 }

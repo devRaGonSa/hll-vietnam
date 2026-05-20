@@ -1,7 +1,7 @@
 ---
 id: TASK-135
 title: Fix RCON match detail faction assets and icon display
-status: pending
+status: done
 type: frontend
 team: Frontend Senior
 supporting_teams:
@@ -133,11 +133,30 @@ Then hard refresh with `Ctrl+F5` and verify:
 
 ## Outcome
 
-To be completed by AI Platform Run / Codex CLI.
+- Updated `frontend/assets/js/historico-partida.js` to use the required local `.webp` faction paths for USA, Germany, Soviets and Britain.
+- Renamed the user-provided faction assets in `frontend/assets/img/factions/` from short names to the required contract names: `germany.webp`, `soviets.webp` and `britain.webp`.
+- Removed visible long faction subtitles from the scoreboard side blocks while preserving the main `Aliados` and `Eje` labels and the subtle winner marker.
+- Increased faction emblem sizing in `frontend/assets/css/historico-scoreboard-detail.css` and added a silent missing-image fallback class so a broken image does not show a visible broken icon.
+- Event timeline, confidence/source/base cards, snapshot wording, Elo/MVP blocks and Comunidad Hispana #03 were not reintroduced.
 
 ## Validation Result
 
-To be completed by AI Platform Run / Codex CLI.
+- PASS: `node --check frontend/assets/js/historico-partida.js`
+- PASS: `node --check frontend/assets/js/historico.js`
+- PASS: `node --check frontend/assets/js/historico-recent-live.js`
+- PASS: `python -m compileall backend/app`
+- PASS: `powershell -ExecutionPolicy Bypass -File scripts/run-integration-tests.ps1`
+- PASS: `powershell -ExecutionPolicy Bypass -File scripts/run-rcon-data-pipeline-tests.ps1`
+  - Note: the script completed successfully but emitted existing `ResourceWarning` messages from backend unittest sqlite connections.
+- PASS: `docker compose up -d --build backend frontend`
+- PASS: `Invoke-WebRequest "http://localhost:8000/health" | Select-Object -ExpandProperty Content`
+- PASS after stopping already-running advanced historical workers: `Invoke-WebRequest "http://localhost:8000/api/historical/recent-matches?server=all-servers&limit=10" | Select-Object -ExpandProperty Content`
+  - The first attempt failed because the backend could not set SQLite journal mode while the historical worker services were active against the mounted DB. `docker compose stop historical-runner rcon-historical-worker` cleared the validation conflict.
+- Manual/rendered verification: Browser plugin was listed, but the required Node runtime tool was not exposed in this session; used local Chrome headless fallback.
+  - Verified DOM contains `3 : 2`, `Ganador: Aliados`, `Carentan`, `1 h 30 min`, `AntonioPruna`, `M1 GARAND`, `us.webp` and `germany.webp`.
+  - Verified long faction descriptions are absent from rendered DOM.
+  - Verified timeline section remains hidden.
+  - Captured desktop and mobile screenshots outside the repository at `C:\Temp\task-135-match-detail.png` and `C:\Temp\task-135-match-detail-mobile.png`.
 
 ## Change Budget
 
