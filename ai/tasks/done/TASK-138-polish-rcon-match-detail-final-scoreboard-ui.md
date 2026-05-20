@@ -1,7 +1,7 @@
 ---
 id: TASK-138
 title: Polish RCON match detail final scoreboard UI
-status: pending
+status: done
 type: frontend
 team: Experto en interfaz
 supporting_teams:
@@ -151,11 +151,28 @@ Then hard refresh with `Ctrl+F5` and verify:
 
 ## Outcome
 
-To be completed by AI Platform Run / Codex CLI.
+- Replaced the hero subtitle with only the server name, removing RCON implementation wording from the visible hero.
+- Renamed the main detail heading from `Datos disponibles` to `Marcador final`.
+- Increased the scoreboard score column and faction emblem sizing while preserving the left/right side layout, central score, map, mode, winner and compact metadata.
+- Removed the unused hidden timeline markup from `frontend/historico-partida.html` so event labels such as `Eventos` and `Linea de tiempo` are no longer present in the match detail DOM.
+- Preserved the player table, map hero, safe scoreboard action behavior and existing HLL Vietnam dark tactical styling.
 
 ## Validation Result
 
-To be completed by AI Platform Run / Codex CLI.
+- PASS: `node --check frontend/assets/js/historico-partida.js`
+- PASS: `node --check frontend/assets/js/historico.js`
+- PASS: `node --check frontend/assets/js/historico-recent-live.js`
+- PASS: `python -m compileall backend/app`
+- PASS: `powershell -ExecutionPolicy Bypass -File scripts/run-integration-tests.ps1`
+- PASS: `powershell -ExecutionPolicy Bypass -File scripts/run-rcon-data-pipeline-tests.ps1`
+  - Note: the script completed successfully but emitted existing `ResourceWarning` messages from backend unittest sqlite connections.
+- PASS: `docker compose up -d --build backend frontend`
+- PASS: `Invoke-WebRequest "http://localhost:8000/health" | Select-Object -ExpandProperty Content`
+- PASS: `Invoke-WebRequest "http://localhost:8000/api/historical/recent-matches?server=all-servers&limit=10" | Select-Object -ExpandProperty Content`
+- Manual/rendered verification: Browser plugin was listed, but the required Node runtime tool was not exposed in this session; used local Chrome headless fallback.
+  - Verified rendered DOM contains `Marcador final`, `3 : 2`, `Ganador: Aliados`, `Carentan`, `1 h 30 min`, `AntonioPruna` and `M1 GARAND`.
+  - Verified rendered DOM does not include `Partida RCON materializada`, `Confianza`, `Fuente`, `Base`, `Eventos`, `Linea de tiempo`, event labels, `snapshot`, Elo/MVP blocks or Comunidad Hispana #03.
+  - Captured screenshots outside the repository at `C:\Temp\task-138-match-detail-final.png`, `C:\Temp\task-138-match-detail-mobile-final.png` and `C:\Temp\task-138-match-detail-mobile-score-final.png`.
 
 ## Change Budget
 

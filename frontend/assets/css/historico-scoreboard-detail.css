@@ -18,10 +18,10 @@
 
 .historical-scoreboard-layout__main {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(220px, 320px) minmax(0, 1fr);
+  grid-template-columns: minmax(0, 1fr) minmax(240px, 340px) minmax(0, 1fr);
   align-items: center;
   gap: 22px;
-  padding: 24px 28px;
+  padding: 28px 30px;
   border: 1px solid rgba(210, 182, 118, 0.2);
   border-radius: 24px;
   background:
@@ -32,14 +32,14 @@
 
 .historical-scoreboard-side {
   display: grid;
-  grid-template-columns: 112px minmax(0, 1fr);
+  grid-template-columns: 124px minmax(0, 1fr);
   align-items: center;
   gap: 18px;
-  min-height: 136px;
+  min-height: 148px;
 }
 
 .historical-scoreboard-side--axis {
-  grid-template-columns: minmax(0, 1fr) 112px;
+  grid-template-columns: minmax(0, 1fr) 124px;
   text-align: right;
 }
 
@@ -57,8 +57,8 @@
 }
 
 .historical-scoreboard-side__emblem {
-  width: 112px;
-  height: 112px;
+  width: 124px;
+  height: 124px;
   border-radius: 999px;
   object-fit: contain;
   padding: 10px;
@@ -110,7 +110,7 @@
 
 .historical-scoreboard-center__score {
   color: var(--text);
-  font-size: clamp(4rem, 8vw, 7rem);
+  font-size: clamp(4.6rem, 8.6vw, 7.6rem);
   line-height: 0.9;
   letter-spacing: 0.02em;
 }

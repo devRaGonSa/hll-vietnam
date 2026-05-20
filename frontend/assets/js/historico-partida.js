@@ -66,7 +66,7 @@ function renderMatchDetail(item, nodes) {
   const mapName = item.map?.pretty_name || item.map?.name || "Mapa no disponible";
   const serverName = item.server?.name || item.server?.slug || "Servidor no disponible";
   nodes.title.textContent = mapName;
-  nodes.summary.textContent = `${serverName} - ${formatDetailSubtitle(item)}`;
+  nodes.summary.textContent = serverName;
   nodes.note.textContent = "";
   renderMapHero(item, mapName, nodes);
   nodes.grid.innerHTML = renderScoreboardDetail(item, { mapName, serverName });
@@ -335,19 +335,6 @@ function normalizeLookupText(value) {
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, " ")
     .trim();
-}
-
-function formatDetailSubtitle(item) {
-  if (item.capture_basis === "rcon-materialized-admin-log") {
-    return "RCON";
-  }
-  if (item.capture_basis === "rcon-competitive-window") {
-    return "RCON";
-  }
-  if (item.result_source === "public-scoreboard-match") {
-    return "Partida del scoreboard";
-  }
-  return "Partida historica";
 }
 
 function formatTeamSide(value) {
