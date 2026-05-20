@@ -781,7 +781,7 @@
     minmax(130px, 0.75fr)
     minmax(110px, 0.65fr)
     minmax(110px, 0.65fr)
-    260px;
+    340px;
   align-items: end;
 }
 
@@ -796,13 +796,27 @@
   display: flex;
   align-items: end;
   justify-content: flex-end;
-  min-width: 260px;
+  min-width: 340px;
 }
 
 .historical-match-card__actions-cell .historical-match-card__actions {
   gap: 10px;
   align-items: center;
   justify-content: flex-end;
+}
+
+#recent-matches-list .historical-match-card__actions {
+  display: flex;
+  flex-direction: row;
+  flex-wrap: nowrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+}
+
+#recent-matches-list .historical-match-card__result,
+#recent-matches-list .historical-match-card__link {
+  flex: 0 0 auto;
 }
 
 @media (max-width: 920px) {
@@ -816,6 +830,11 @@
   }
 
   .historical-match-card__actions-cell .historical-match-card__actions {
+    justify-content: flex-start;
+  }
+
+  #recent-matches-list .historical-match-card__actions {
+    flex-wrap: wrap;
     justify-content: flex-start;
   }
 }
