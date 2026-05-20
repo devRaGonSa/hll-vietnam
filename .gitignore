@@ -17,6 +17,7 @@ ai/reports/*.md
 # Local backend runtime data
 backend/runtime/
 backend/data/*.sqlite3
+backend/data/*.writer.lock
 !backend/data/.gitkeep
 backend/data/snapshots/**
 !backend/data/snapshots/.gitkeep
