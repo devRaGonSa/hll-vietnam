@@ -218,10 +218,15 @@ function renderPlayerSection(item, nodes) {
 }
 
 function renderPlayerRow(player) {
+  const team = getTeamSideDisplay(player.team || player.team_side);
   return `
-    <tr>
+    <tr class="historical-player-row historical-player-row--${team.key}">
       <td>${escapeHtml(player.player_name || player.name || "Jugador no identificado")}</td>
-      <td>${escapeHtml(formatTeamSide(player.team || player.team_side))}</td>
+      <td class="historical-player-team-cell">
+        <span class="historical-player-team-badge historical-player-team-badge--${team.key}">
+          ${escapeHtml(team.label)}
+        </span>
+      </td>
       <td>${escapeHtml(formatOptionalNumber(player.kills))}</td>
       <td>${escapeHtml(formatOptionalNumber(player.deaths))}</td>
       <td>${escapeHtml(formatOptionalNumber(player.teamkills))}</td>
@@ -338,14 +343,20 @@ function normalizeLookupText(value) {
 }
 
 function formatTeamSide(value) {
-  const normalized = String(value || "").toLowerCase();
-  if (normalized === "allies" || normalized === "allied") {
-    return "Aliados";
+  return getTeamSideDisplay(value).label;
+}
+
+function getTeamSideDisplay(value) {
+  const normalized = String(value || "")
+    .trim()
+    .toLowerCase();
+  if (normalized === "allies" || normalized === "allied" || normalized === "aliados") {
+    return { key: "allies", label: "Aliados" };
   }
-  if (normalized === "axis") {
-    return "Eje";
+  if (normalized === "axis" || normalized === "eje") {
+    return { key: "axis", label: "Eje" };
   }
-  return value || "No disponible";
+  return { key: "unknown", label: "No disponible" };
 }
 
 function formatGameMode(value) {

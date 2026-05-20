@@ -149,21 +149,35 @@ def list_materialized_rcon_matches(
     clauses: list[str] = []
     params: list[object] = []
     if target_key:
-        clauses.append("(target_key = ? OR external_server_id = ?)")
+        clauses.append("(m.target_key = ? OR m.external_server_id = ?)")
         params.extend([target_key, target_key])
     if only_ended:
-        clauses.append("source_basis = ?")
+        clauses.append("m.source_basis = ?")
         params.append(MATCH_RESULT_SOURCE)
     where = "WHERE " + " AND ".join(clauses) if clauses else ""
     params.append(limit)
     with closing(connect_sqlite_readonly(resolved_path)) as connection:
         rows = connection.execute(
             f"""
-            SELECT *
-            FROM rcon_materialized_matches
+            SELECT
+                m.*,
+                (
+                    SELECT COUNT(*)
+                    FROM rcon_match_player_stats AS stats
+                    WHERE stats.target_key = m.target_key
+                      AND stats.match_key = m.match_key
+                ) AS materialized_player_count,
+                (
+                    SELECT COUNT(DISTINCT TRIM(stats.player_name))
+                    FROM rcon_match_player_stats AS stats
+                    WHERE stats.target_key = m.target_key
+                      AND stats.match_key = m.match_key
+                      AND TRIM(COALESCE(stats.player_name, '')) != ''
+                ) AS materialized_distinct_player_count
+            FROM rcon_materialized_matches AS m
             {where}
-            ORDER BY COALESCE(ended_at, started_at) DESC,
-                     COALESCE(ended_server_time, started_server_time) DESC
+            ORDER BY COALESCE(m.ended_at, m.started_at) DESC,
+                     COALESCE(m.ended_server_time, m.started_server_time) DESC
             LIMIT ?
             """,
             params,
