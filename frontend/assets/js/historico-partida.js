@@ -20,6 +20,8 @@ document.addEventListener("DOMContentLoaded", () => {
     timelineNote: document.getElementById("match-detail-timeline-note"),
     timelineState: document.getElementById("match-detail-timeline-state"),
     timelineGrid: document.getElementById("match-detail-timeline-grid"),
+    mapHero: document.getElementById("match-detail-map-hero"),
+    mapImage: document.getElementById("match-detail-map-image"),
   };
 
   if (!serverSlug || !matchId) {
@@ -64,14 +66,37 @@ function renderMatchDetail(item, nodes) {
   const mapName = item.map?.pretty_name || item.map?.name || "Mapa no disponible";
   const serverName = item.server?.name || item.server?.slug || "Servidor no disponible";
   nodes.title.textContent = mapName;
-  nodes.summary.textContent = `${serverName} - ${formatDetailSubtitle(item)}`;
+  nodes.summary.textContent = serverName;
   nodes.note.textContent = "";
+  renderMapHero(item, mapName, nodes);
   nodes.grid.innerHTML = renderScoreboardDetail(item, { mapName, serverName });
   renderPlayerSection(item, nodes);
   hideTimelineSection(nodes);
   renderActions(item, nodes.actions);
   nodes.state.hidden = true;
   nodes.grid.hidden = false;
+}
+
+function renderMapHero(item, mapName, nodes) {
+  if (!nodes.mapHero || !nodes.mapImage) {
+    return;
+  }
+
+  const mapImagePath = resolveMapImagePath(item, mapName);
+  if (!mapImagePath) {
+    nodes.mapImage.removeAttribute("src");
+    nodes.mapImage.alt = "";
+    nodes.mapHero.hidden = true;
+    return;
+  }
+
+  nodes.mapImage.src = mapImagePath;
+  nodes.mapImage.alt = mapName;
+  nodes.mapImage.onerror = () => {
+    nodes.mapImage.removeAttribute("src");
+    nodes.mapHero.hidden = true;
+  };
+  nodes.mapHero.hidden = false;
 }
 
 function renderScoreboardDetail(item, { mapName, serverName }) {
@@ -130,20 +155,21 @@ function renderScoreboardDetail(item, { mapName, serverName }) {
 }
 
 function renderScoreboardSide({ sideClass, emblem, sideLabel, factionLabel, isWinner }) {
+  const fallbackLabel = factionLabel || sideLabel;
   return `
     <div class="historical-scoreboard-side ${sideClass} ${isWinner ? "is-winner" : ""}">
       <img
         class="historical-scoreboard-side__emblem"
         src="${escapeHtml(emblem)}"
-        alt="${escapeHtml(factionLabel)}"
-        width="96"
-        height="96"
+        alt="${escapeHtml(fallbackLabel)}"
+        width="128"
+        height="128"
         loading="lazy"
         decoding="async"
+        onerror="this.hidden = true; this.closest('.historical-scoreboard-side').classList.add('is-emblem-missing');"
       />
       <div class="historical-scoreboard-side__text">
         <strong>${escapeHtml(sideLabel)}</strong>
-        <span>${escapeHtml(factionLabel)}</span>
         ${isWinner ? "<em>Ganador</em>" : ""}
       </div>
     </div>
@@ -208,7 +234,7 @@ function renderPlayerRow(player) {
 }
 
 function renderActions(item, actionsNode) {
-  const matchUrl = normalizeExternalMatchUrl(item.match_url);
+  const matchUrl = normalizeSafePublicScoreboardMatchUrl(item.match_url);
   if (!matchUrl) {
     actionsNode.innerHTML = "";
     actionsNode.hidden = true;
@@ -221,7 +247,7 @@ function renderActions(item, actionsNode) {
       target="_blank"
       rel="noopener noreferrer"
     >
-      Abrir en scoreboard
+      Ver en Scoreboard
     </a>
   `;
   actionsNode.hidden = false;
@@ -235,12 +261,12 @@ function resolveMatchFactions(item, mapName) {
   if (/(kursk|stalingrad|kharkov)/.test(normalizedMap)) {
     return {
       allied: {
-        label: "Ejercito sovietico",
-        emblem: "./assets/img/factions/soviets.svg",
+        label: "Sovieticos",
+        emblem: "./assets/img/factions/soviets.webp",
       },
       axis: {
-        label: "Ejercito aleman",
-        emblem: "./assets/img/factions/germany.svg",
+        label: "Eje",
+        emblem: "./assets/img/factions/germany.webp",
       },
     };
   }
@@ -248,28 +274,58 @@ function resolveMatchFactions(item, mapName) {
   if (/(driel|elalamein|el alamein|tobruk)/.test(normalizedMap)) {
     return {
       allied: {
-        label: "Fuerzas britanicas",
-        emblem: "./assets/img/factions/britain.svg",
+        label: "Britanicos",
+        emblem: "./assets/img/factions/britain.webp",
       },
       axis: {
         label: normalizedMap.includes("tobruk") || normalizedMap.includes("elalamein")
           ? "Afrika Korps"
-          : "Ejercito aleman",
-        emblem: "./assets/img/factions/germany.svg",
+          : "Eje",
+        emblem: "./assets/img/factions/germany.webp",
       },
     };
   }
 
   return {
     allied: {
-      label: "Fuerzas estadounidenses",
-      emblem: "./assets/img/factions/us.svg",
+      label: "USA",
+      emblem: "./assets/img/factions/us.webp",
     },
     axis: {
-      label: "Ejercito aleman",
-      emblem: "./assets/img/factions/germany.svg",
+      label: "Eje",
+      emblem: "./assets/img/factions/germany.webp",
     },
   };
+}
+
+function resolveMapImagePath(item, mapName) {
+  const normalizedMap = normalizeLookupText(
+    `${item.map?.name || ""} ${item.map?.pretty_name || ""} ${mapName || ""}`,
+  ).replaceAll(" ", "");
+  const mapAssetByKey = {
+    carentan: "carentan-day.webp",
+    driel: "driel-day.webp",
+    elalamein: "elalamein-day.webp",
+    elsenbornridge: "elsenbornridge-day.webp",
+    foy: "foy-day.webp",
+    hill400: "hill400-day.webp",
+    hurtgenforest: "hurtgenforest-day.webp",
+    kharkov: "kharkov-day.webp",
+    kursk: "kursk-day.webp",
+    mortain: "mortain-day.webp",
+    omahabeach: "omahabeach-day.webp",
+    purpleheartlane: "purpleheartlane-rain.webp",
+    smolensk: "smolensk-day.webp",
+    stmariedumont: "stmariedumont-day.webp",
+    stmereeglise: "stmereeglise-day.webp",
+    tobrukdawn: "tobruk-dawn.webp",
+    tobruk: "tobruk-day.webp",
+    utahbeach: "utahbeach-day.webp",
+  };
+  const matchedKey = Object.keys(mapAssetByKey).find((key) =>
+    normalizedMap.includes(key),
+  );
+  return matchedKey ? `./assets/img/maps/${mapAssetByKey[matchedKey]}` : "";
 }
 
 function normalizeLookupText(value) {
@@ -279,19 +335,6 @@ function normalizeLookupText(value) {
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, " ")
     .trim();
-}
-
-function formatDetailSubtitle(item) {
-  if (item.capture_basis === "rcon-materialized-admin-log") {
-    return "Partida RCON materializada";
-  }
-  if (item.capture_basis === "rcon-competitive-window") {
-    return "Partida RCON registrada";
-  }
-  if (item.result_source === "public-scoreboard-match") {
-    return "Partida del scoreboard";
-  }
-  return "Partida historica";
 }
 
 function formatTeamSide(value) {
@@ -414,13 +457,18 @@ function formatMatchTimestamp(item, kind) {
   return "No disponible";
 }
 
-function normalizeExternalMatchUrl(value) {
+function normalizeSafePublicScoreboardMatchUrl(value) {
   if (typeof value !== "string" || !value.trim()) {
     return "";
   }
   try {
     const url = new URL(value.trim());
-    return ["http:", "https:"].includes(url.protocol) ? url.href : "";
+    const allowedOrigins = new Set([
+      "https://scoreboard.comunidadhll.es",
+      "https://scoreboard.comunidadhll.es:5443",
+    ]);
+    const isAllowedPath = url.pathname === "/games" || url.pathname.startsWith("/games/");
+    return allowedOrigins.has(url.origin) && isAllowedPath ? url.href : "";
   } catch (error) {
     return "";
   }

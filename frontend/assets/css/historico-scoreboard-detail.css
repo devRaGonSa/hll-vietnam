@@ -18,10 +18,10 @@
 
 .historical-scoreboard-layout__main {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(220px, 320px) minmax(0, 1fr);
+  grid-template-columns: minmax(0, 1fr) minmax(240px, 340px) minmax(0, 1fr);
   align-items: center;
   gap: 22px;
-  padding: 24px 28px;
+  padding: 28px 30px;
   border: 1px solid rgba(210, 182, 118, 0.2);
   border-radius: 24px;
   background:
@@ -32,14 +32,14 @@
 
 .historical-scoreboard-side {
   display: grid;
-  grid-template-columns: 76px minmax(0, 1fr);
+  grid-template-columns: 124px minmax(0, 1fr);
   align-items: center;
   gap: 18px;
-  min-height: 116px;
+  min-height: 148px;
 }
 
 .historical-scoreboard-side--axis {
-  grid-template-columns: minmax(0, 1fr) 76px;
+  grid-template-columns: minmax(0, 1fr) 124px;
   text-align: right;
 }
 
@@ -51,12 +51,17 @@
   order: 1;
 }
 
+.historical-scoreboard-side.is-emblem-missing,
+.historical-scoreboard-side--axis.is-emblem-missing {
+  grid-template-columns: minmax(0, 1fr);
+}
+
 .historical-scoreboard-side__emblem {
-  width: 76px;
-  height: 76px;
+  width: 124px;
+  height: 124px;
   border-radius: 999px;
   object-fit: contain;
-  padding: 8px;
+  padding: 10px;
   border: 1px solid rgba(210, 182, 118, 0.26);
   background:
     radial-gradient(circle at center, rgba(210, 182, 118, 0.15), transparent 60%),
@@ -73,12 +78,6 @@
   font-size: clamp(1.8rem, 4vw, 3.1rem);
   line-height: 0.95;
   text-transform: uppercase;
-}
-
-.historical-scoreboard-side__text span {
-  color: var(--text-soft);
-  font-size: 0.86rem;
-  letter-spacing: 0.04em;
 }
 
 .historical-scoreboard-side__text em {
@@ -111,7 +110,7 @@
 
 .historical-scoreboard-center__score {
   color: var(--text);
-  font-size: clamp(4rem, 8vw, 7rem);
+  font-size: clamp(4.6rem, 8.6vw, 7.6rem);
   line-height: 0.9;
   letter-spacing: 0.02em;
 }
@@ -176,12 +175,17 @@
 
   .historical-scoreboard-side,
   .historical-scoreboard-side--axis {
-    grid-template-columns: 70px minmax(0, 1fr);
+    grid-template-columns: 96px minmax(0, 1fr);
     text-align: left;
   }
 
   .historical-scoreboard-side--axis .historical-scoreboard-side__emblem,
   .historical-scoreboard-side--axis .historical-scoreboard-side__text {
     order: initial;
+  }
+
+  .historical-scoreboard-side__emblem {
+    width: 96px;
+    height: 96px;
   }
 }
