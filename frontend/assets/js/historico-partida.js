@@ -85,6 +85,7 @@ function renderScoreboardDetail(item, { mapName, serverName }) {
   const winner = String(item.winner || result.winner || "").toLowerCase();
   const isAlliedWinner = winner === "allies" || winner === "allied";
   const isAxisWinner = winner === "axis";
+  const factions = resolveMatchFactions(item, mapName);
   const metadata = [
     ["Servidor", serverName],
     ["Mapa", mapName],
@@ -97,26 +98,55 @@ function renderScoreboardDetail(item, { mapName, serverName }) {
   }
 
   return `
-    <section class="historical-scoreboard-detail" aria-label="Marcador de la partida">
-      <div class="historical-scoreboard-detail__side ${isAlliedWinner ? "is-winner" : ""}">
-        <span>Bando aliado</span>
-        <strong>Aliados</strong>
-        <em>${isAlliedWinner ? "Ganador" : ""}</em>
+    <section class="historical-scoreboard-layout" aria-label="Resumen de marcador de la partida">
+      <div class="historical-scoreboard-layout__main">
+        ${renderScoreboardSide({
+          sideClass: "historical-scoreboard-side--allied",
+          emblem: factions.allied.emblem,
+          sideLabel: "Aliados",
+          factionLabel: factions.allied.label,
+          isWinner: isAlliedWinner,
+        })}
+        <div class="historical-scoreboard-center">
+          <span class="historical-scoreboard-center__timer">${escapeHtml(formatDuration(item.duration_seconds))}</span>
+          <strong class="historical-scoreboard-center__score">${escapeHtml(alliedScore)} : ${escapeHtml(axisScore)}</strong>
+          <span class="historical-scoreboard-center__map">${escapeHtml(mapName)}</span>
+          <span class="historical-scoreboard-center__mode">${escapeHtml(formatGameMode(item.game_mode || item.gamestate?.game_mode))}</span>
+          <span class="historical-scoreboard-center__winner">${escapeHtml(formatWinner(winner))}</span>
+        </div>
+        ${renderScoreboardSide({
+          sideClass: "historical-scoreboard-side--axis",
+          emblem: factions.axis.emblem,
+          sideLabel: "Eje",
+          factionLabel: factions.axis.label,
+          isWinner: isAxisWinner,
+        })}
       </div>
-      <div class="historical-scoreboard-detail__score">
-        <span>Marcador</span>
-        <strong>${escapeHtml(alliedScore)} - ${escapeHtml(axisScore)}</strong>
-        <em>${escapeHtml(formatWinner(winner))}</em>
-      </div>
-      <div class="historical-scoreboard-detail__side historical-scoreboard-detail__side--axis ${isAxisWinner ? "is-winner" : ""}">
-        <span>Bando eje</span>
-        <strong>Eje</strong>
-        <em>${isAxisWinner ? "Ganador" : ""}</em>
+      <div class="historical-scoreboard-layout__meta">
+        ${metadata.map(([label, value]) => renderCompactMeta(label, value)).join("")}
       </div>
     </section>
-    <section class="historical-match-compact-meta" aria-label="Datos principales de la partida">
-      ${metadata.map(([label, value]) => renderCompactMeta(label, value)).join("")}
-    </section>
+  `;
+}
+
+function renderScoreboardSide({ sideClass, emblem, sideLabel, factionLabel, isWinner }) {
+  return `
+    <div class="historical-scoreboard-side ${sideClass} ${isWinner ? "is-winner" : ""}">
+      <img
+        class="historical-scoreboard-side__emblem"
+        src="${escapeHtml(emblem)}"
+        alt="${escapeHtml(factionLabel)}"
+        width="96"
+        height="96"
+        loading="lazy"
+        decoding="async"
+      />
+      <div class="historical-scoreboard-side__text">
+        <strong>${escapeHtml(sideLabel)}</strong>
+        <span>${escapeHtml(factionLabel)}</span>
+        ${isWinner ? "<em>Ganador</em>" : ""}
+      </div>
+    </div>
   `;
 }
 
@@ -195,6 +225,60 @@ function renderActions(item, actionsNode) {
     </a>
   `;
   actionsNode.hidden = false;
+}
+
+function resolveMatchFactions(item, mapName) {
+  const normalizedMap = normalizeLookupText(
+    `${item.map?.name || ""} ${item.map?.pretty_name || ""} ${mapName || ""}`,
+  );
+
+  if (/(kursk|stalingrad|kharkov)/.test(normalizedMap)) {
+    return {
+      allied: {
+        label: "Ejercito sovietico",
+        emblem: "./assets/img/factions/soviets.svg",
+      },
+      axis: {
+        label: "Ejercito aleman",
+        emblem: "./assets/img/factions/germany.svg",
+      },
+    };
+  }
+
+  if (/(driel|elalamein|el alamein|tobruk)/.test(normalizedMap)) {
+    return {
+      allied: {
+        label: "Fuerzas britanicas",
+        emblem: "./assets/img/factions/britain.svg",
+      },
+      axis: {
+        label: normalizedMap.includes("tobruk") || normalizedMap.includes("elalamein")
+          ? "Afrika Korps"
+          : "Ejercito aleman",
+        emblem: "./assets/img/factions/germany.svg",
+      },
+    };
+  }
+
+  return {
+    allied: {
+      label: "Fuerzas estadounidenses",
+      emblem: "./assets/img/factions/us.svg",
+    },
+    axis: {
+      label: "Ejercito aleman",
+      emblem: "./assets/img/factions/germany.svg",
+    },
+  };
+}
+
+function normalizeLookupText(value) {
+  return String(value || "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim();
 }
 
 function formatDetailSubtitle(item) {
