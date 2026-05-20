@@ -213,15 +213,39 @@ function renderPlayerSection(item, nodes) {
 
   nodes.playersNote.textContent = `${formatNumber(players.length)} jugadores con estadisticas locales.`;
   nodes.playersState.hidden = true;
-  nodes.playersBody.innerHTML = players.map((player) => renderPlayerRow(player)).join("");
+  nodes.playersBody.innerHTML = players
+    .map((player, index) => renderPlayerRows(player, item, index))
+    .join("");
+  bindPlayerDetailRows(nodes.playersBody);
   nodes.playersTableShell.hidden = false;
 }
 
-function renderPlayerRow(player) {
+function renderPlayerRows(player, item, index) {
   const team = getTeamSideDisplay(player.team || player.team_side);
+  const rowId = `match-player-row-${index}`;
+  const panelId = `match-player-panel-${index}`;
+  const playerName = player.player_name || player.name || "Jugador no identificado";
+  const kpm = formatKpm(player.kills, item.duration_seconds);
   return `
-    <tr class="historical-player-row historical-player-row--${team.key}">
-      <td>${escapeHtml(player.player_name || player.name || "Jugador no identificado")}</td>
+    <tr
+      class="historical-player-row historical-player-row--${team.key}"
+      id="${escapeHtml(rowId)}"
+      tabindex="0"
+      aria-controls="${escapeHtml(panelId)}"
+      aria-expanded="false"
+    >
+      <td>
+        <button
+          class="historical-player-row__details-button"
+          type="button"
+          aria-controls="${escapeHtml(panelId)}"
+          aria-expanded="false"
+          aria-label="Ver estadisticas ampliadas de ${escapeHtml(playerName)}"
+        >
+          <span>${escapeHtml(playerName)}</span>
+          <span aria-hidden="true">i</span>
+        </button>
+      </td>
       <td class="historical-player-team-cell">
         <span class="historical-player-team-badge historical-player-team-badge--${team.key}">
           ${escapeHtml(team.label)}
@@ -231,11 +255,192 @@ function renderPlayerRow(player) {
       <td>${escapeHtml(formatOptionalNumber(player.deaths))}</td>
       <td>${escapeHtml(formatOptionalNumber(player.teamkills))}</td>
       <td>${escapeHtml(formatKdRatio(player))}</td>
-      <td>${escapeHtml(formatNamedCounts(player.top_weapons))}</td>
-      <td>${escapeHtml(formatNamedCounts(player.most_killed))}</td>
-      <td>${escapeHtml(formatNamedCounts(player.death_by))}</td>
+      <td>${escapeHtml(kpm)}</td>
+    </tr>
+    <tr
+      class="historical-player-detail-row"
+      id="${escapeHtml(panelId)}"
+      aria-labelledby="${escapeHtml(rowId)}"
+    >
+      <td colspan="7">
+        ${renderPlayerStatsPanel(player, item, { team, playerName, kpm })}
+      </td>
     </tr>
   `;
+}
+
+function bindPlayerDetailRows(playersBody) {
+  playersBody.querySelectorAll(".historical-player-row").forEach((row) => {
+    const button = row.querySelector(".historical-player-row__details-button");
+    const detailRow = row.nextElementSibling;
+    if (!button || !detailRow?.classList.contains("historical-player-detail-row")) {
+      return;
+    }
+    const setExpanded = (expanded) => {
+      row.classList.toggle("is-expanded", expanded);
+      detailRow.classList.toggle("is-open", expanded);
+      row.setAttribute("aria-expanded", String(expanded));
+      button.setAttribute("aria-expanded", String(expanded));
+    };
+    const toggleExpanded = () => setExpanded(!detailRow.classList.contains("is-open"));
+
+    row.addEventListener("click", (event) => {
+      if (event.target.closest("a")) {
+        return;
+      }
+      toggleExpanded();
+    });
+    row.addEventListener("keydown", (event) => {
+      if (event.key !== "Enter" && event.key !== " ") {
+        return;
+      }
+      event.preventDefault();
+      toggleExpanded();
+    });
+  });
+}
+
+function renderPlayerStatsPanel(player, item, context) {
+  const matchups = buildPlayerDirectMatchups(player);
+  const hasExpandedStats =
+    hasNamedCounts(player.top_weapons) ||
+    hasNamedCounts(player.most_killed) ||
+    hasNamedCounts(player.death_by) ||
+    matchups.length > 0;
+
+  return `
+    <section class="historical-player-stats-panel" aria-label="Estadisticas ampliadas de ${escapeHtml(context.playerName)}">
+      <div class="historical-player-stats-panel__header">
+        <div>
+          <p>${escapeHtml(context.team.label)}</p>
+          <h4>${escapeHtml(context.playerName)}</h4>
+        </div>
+        <div class="historical-player-stats-panel__summary">
+          ${renderPlayerStatChip("K", formatOptionalNumber(player.kills))}
+          ${renderPlayerStatChip("D", formatOptionalNumber(player.deaths))}
+          ${renderPlayerStatChip("TK", formatOptionalNumber(player.teamkills))}
+          ${renderPlayerStatChip("K/D", formatKdRatio(player))}
+          ${renderPlayerStatChip("KPM", context.kpm)}
+        </div>
+      </div>
+      ${
+        hasExpandedStats
+          ? `
+            <div class="historical-player-stats-panel__grid">
+              ${renderNamedCountSection("Armas", player.top_weapons)}
+              ${renderNamedCountSection("Mas abatido", player.most_killed)}
+              ${renderNamedCountSection("Muere por", player.death_by)}
+              ${renderDirectMatchupsSection(matchups)}
+            </div>
+          `
+          : `<p class="historical-player-stats-panel__empty">Sin estadisticas ampliadas disponibles.</p>`
+      }
+    </section>
+  `;
+}
+
+function renderPlayerStatChip(label, value) {
+  return `
+    <article>
+      <span>${escapeHtml(label)}</span>
+      <strong>${escapeHtml(value)}</strong>
+    </article>
+  `;
+}
+
+function renderNamedCountSection(title, items) {
+  if (!hasNamedCounts(items)) {
+    return `
+      <article class="historical-player-stats-panel__section">
+        <h5>${escapeHtml(title)}</h5>
+        <p>No disponible</p>
+      </article>
+    `;
+  }
+  return `
+    <article class="historical-player-stats-panel__section">
+      <h5>${escapeHtml(title)}</h5>
+      <ol>
+        ${items
+          .map((stat) => {
+            const name = stat.name || stat.label || "Sin nombre";
+            const count = stat.count ?? stat.total ?? 0;
+            return `<li><span>${escapeHtml(name)}</span><strong>${escapeHtml(formatNumber(count))}</strong></li>`;
+          })
+          .join("")}
+      </ol>
+    </article>
+  `;
+}
+
+function renderDirectMatchupsSection(matchups) {
+  if (!matchups.length) {
+    return `
+      <article class="historical-player-stats-panel__section historical-player-stats-panel__section--wide">
+        <h5>Duelo directo</h5>
+        <p>No disponible</p>
+      </article>
+    `;
+  }
+  return `
+    <article class="historical-player-stats-panel__section historical-player-stats-panel__section--wide">
+      <h5>Duelo directo</h5>
+      <div class="historical-player-matchups" role="table" aria-label="Duelos directos">
+        <div role="row">
+          <span role="columnheader">Rival</span>
+          <span role="columnheader">Abatidos</span>
+          <span role="columnheader">Muertes</span>
+          <span role="columnheader">Balance</span>
+        </div>
+        ${matchups
+          .map(
+            (matchup) => `
+              <div role="row">
+                <span role="cell">${escapeHtml(matchup.name)}</span>
+                <strong role="cell">${escapeHtml(formatNumber(matchup.kills))}</strong>
+                <strong role="cell">${escapeHtml(formatNumber(matchup.deaths))}</strong>
+                <strong role="cell">${escapeHtml(formatSignedNumber(matchup.balance))}</strong>
+              </div>
+            `,
+          )
+          .join("")}
+      </div>
+    </article>
+  `;
+}
+
+function buildPlayerDirectMatchups(player) {
+  const byName = new Map();
+  const addStats = (items, key) => {
+    if (!Array.isArray(items)) {
+      return;
+    }
+    items.forEach((item) => {
+      const name = item.name || item.label;
+      if (!name) {
+        return;
+      }
+      const normalizedName = String(name);
+      const current = byName.get(normalizedName) || {
+        name: normalizedName,
+        kills: 0,
+        deaths: 0,
+      };
+      current[key] += Number(item.count ?? item.total ?? 0) || 0;
+      byName.set(normalizedName, current);
+    });
+  };
+
+  addStats(player.most_killed, "kills");
+  addStats(player.death_by, "deaths");
+  return [...byName.values()]
+    .map((matchup) => ({
+      ...matchup,
+      balance: matchup.kills - matchup.deaths,
+      involvement: matchup.kills + matchup.deaths,
+    }))
+    .sort((a, b) => b.involvement - a.involvement || a.name.localeCompare(b.name, "es"))
+    .slice(0, 8);
 }
 
 function renderActions(item, actionsNode) {
@@ -411,6 +616,19 @@ function formatKdRatio(player) {
   return deaths > 0 ? formatDecimal(kills / deaths, 2) : formatDecimal(kills, 2);
 }
 
+function formatKpm(kills, durationSeconds) {
+  const parsedKills = Number(kills);
+  const parsedDurationSeconds = Number(durationSeconds);
+  if (
+    !Number.isFinite(parsedKills) ||
+    !Number.isFinite(parsedDurationSeconds) ||
+    parsedDurationSeconds <= 0
+  ) {
+    return formatDecimal(0, 2);
+  }
+  return formatDecimal(parsedKills / (parsedDurationSeconds / 60), 2);
+}
+
 function formatNamedCounts(items) {
   if (!Array.isArray(items) || items.length === 0) {
     return "No disponible";
@@ -425,12 +643,24 @@ function formatNamedCounts(items) {
     .join(" / ");
 }
 
+function hasNamedCounts(items) {
+  return Array.isArray(items) && items.length > 0;
+}
+
 function formatNumber(value) {
   const parsedValue = Number(value);
   if (!Number.isFinite(parsedValue)) {
     return "0";
   }
   return new Intl.NumberFormat("es-ES").format(parsedValue);
+}
+
+function formatSignedNumber(value) {
+  const parsedValue = Number(value);
+  if (!Number.isFinite(parsedValue) || parsedValue === 0) {
+    return "0";
+  }
+  return `${parsedValue > 0 ? "+" : ""}${formatNumber(parsedValue)}`;
 }
 
 function formatDecimal(value, fractionDigits = 1) {
