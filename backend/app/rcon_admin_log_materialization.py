@@ -126,6 +126,7 @@ def materialize_rcon_admin_log(*, db_path: Path | None = None) -> dict[str, obje
             except sqlite3.Error as error:
                 errors.append(str(error))
 
+    freshness = summarize_rcon_materialization_status(db_path=resolved_path)
     return {
         "matches_seen": matches_seen,
         "matches_materialized": matches_materialized,
@@ -134,6 +135,8 @@ def materialize_rcon_admin_log(*, db_path: Path | None = None) -> dict[str, obje
         "player_stats_materialized": player_stats_materialized,
         "player_stats_updated": player_stats_updated,
         "errors": errors,
+        "latest_materialized_matches": freshness["latest_materialized_matches"],
+        "latest_admin_log_match_end_events": freshness["latest_admin_log_match_end_events"],
     }
 
 
@@ -275,11 +278,56 @@ def summarize_rcon_materialization_status(*, db_path: Path | None = None) -> dic
             ORDER BY target_key ASC, event_count DESC
             """
         ).fetchall()
+        latest_matches = connection.execute(
+            """
+            SELECT
+                target_key,
+                external_server_id,
+                match_key,
+                map_pretty_name,
+                COALESCE(ended_at, started_at) AS closed_at,
+                ended_at,
+                ended_server_time,
+                source_basis,
+                updated_at
+            FROM (
+                SELECT
+                    *,
+                    ROW_NUMBER() OVER (
+                        PARTITION BY target_key
+                        ORDER BY COALESCE(ended_at, started_at) DESC,
+                                 COALESCE(ended_server_time, started_server_time) DESC,
+                                 updated_at DESC
+                    ) AS row_number
+                FROM rcon_materialized_matches
+                WHERE source_basis = ?
+            )
+            WHERE row_number = 1
+            ORDER BY target_key ASC
+            """,
+            (MATCH_RESULT_SOURCE,),
+        ).fetchall()
+        latest_match_end_events = connection.execute(
+            """
+            SELECT
+                target_key,
+                external_server_id,
+                MAX(event_timestamp) AS latest_event_timestamp,
+                MAX(server_time) AS latest_server_time,
+                COUNT(*) AS match_end_events
+            FROM rcon_admin_log_events
+            WHERE event_type = 'match_end'
+            GROUP BY target_key, external_server_id
+            ORDER BY target_key ASC
+            """
+        ).fetchall()
     return {
         "materialized_matches": int(match_count or 0),
         "matches_with_player_stats": int(stats_match_count or 0),
         "server_time_ranges": [dict(row) for row in ranges],
         "event_counts": [dict(row) for row in event_counts],
+        "latest_materialized_matches": [dict(row) for row in latest_matches],
+        "latest_admin_log_match_end_events": [dict(row) for row in latest_match_end_events],
     }
 
 

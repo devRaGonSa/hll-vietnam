@@ -16,6 +16,7 @@ from .config import (
     get_rcon_request_timeout_seconds,
 )
 from .rcon_admin_log_ingestion import ingest_rcon_admin_logs
+from .rcon_admin_log_materialization import materialize_rcon_admin_log
 from .rcon_client import (
     RconQueryError,
     build_rcon_target_key,
@@ -44,6 +45,8 @@ class RconHistoricalCaptureStats:
     admin_log_events_inserted: int = 0
     admin_log_duplicate_events: int = 0
     admin_log_failed_targets: int = 0
+    materialized_matches_inserted: int = 0
+    materialized_matches_updated: int = 0
 
 
 def run_rcon_historical_capture(
@@ -66,6 +69,7 @@ def run_rcon_historical_capture_unlocked(
     """Capture one prospective RCON sample assuming the shared writer lock is already held."""
     initialize_rcon_historical_storage()
     selected_targets = _select_targets(target_key)
+    selected_target_keys = {build_rcon_target_key(target) for target in selected_targets}
     admin_log_lookback_minutes = get_rcon_admin_log_lookback_minutes()
     captured_at = utc_now().isoformat().replace("+00:00", "Z")
     target_scope = target_key or "all-configured-rcon-targets"
@@ -127,6 +131,14 @@ def run_rcon_historical_capture_unlocked(
                 result=admin_log_result,
             )
 
+        materialization_result = materialize_rcon_admin_log()
+        stats.materialized_matches_inserted = int(
+            materialization_result.get("matches_materialized") or 0
+        )
+        stats.materialized_matches_updated = int(
+            materialization_result.get("matches_updated") or 0
+        )
+
         status = "success" if not errors else ("partial" if items else "failed")
         finalize_rcon_historical_capture_run(
             run_id,
@@ -158,7 +170,12 @@ def run_rcon_historical_capture_unlocked(
         "targets": items,
         "errors": errors,
         "admin_log_errors": admin_log_errors,
-        "storage_status": list_rcon_historical_target_statuses(),
+        "materialization_result": materialization_result,
+        "storage_status": [
+            status
+            for status in list_rcon_historical_target_statuses()
+            if status.get("target_key") in selected_target_keys
+        ],
         "totals": {
             "targets_seen": stats.targets_seen,
             "samples_inserted": stats.samples_inserted,
@@ -168,6 +185,8 @@ def run_rcon_historical_capture_unlocked(
             "admin_log_events_inserted": stats.admin_log_events_inserted,
             "admin_log_duplicate_events": stats.admin_log_duplicate_events,
             "admin_log_failed_targets": stats.admin_log_failed_targets,
+            "materialized_matches_inserted": stats.materialized_matches_inserted,
+            "materialized_matches_updated": stats.materialized_matches_updated,
         },
     }
 
@@ -204,7 +223,7 @@ def run_periodic_rcon_historical_capture(
                 retry_delay_seconds=retry_delay_seconds,
                 target_key=target_key,
             )
-            print(json.dumps({"run": completed_runs, **payload}, indent=2))
+            print(json.dumps({"run": completed_runs, **payload}, indent=2), flush=True)
             if max_runs is not None and completed_runs >= max_runs:
                 break
             time.sleep(interval_seconds)

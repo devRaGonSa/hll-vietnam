@@ -266,16 +266,19 @@ function renderServerStatsCard(server) {
     server.status === "online" ? "server-state--online" : "server-state--offline";
   const isRealSnapshot = isRealLiveSnapshot(server);
   const currentMap = server.current_map || "Sin mapa disponible";
-  const region = server.region || "Region pendiente";
+  const region = normalizeServerRegion(server.region);
   const players = Number.isFinite(server.players) ? server.players : 0;
   const maxPlayers = Number.isFinite(server.max_players) ? server.max_players : 0;
   const actionMarkup = renderServerAction(server);
   const cardVariantClass = isRealSnapshot ? "server-card--real" : "server-card--reference";
   const eyebrowLabel = isRealSnapshot ? "Servidor de comunidad" : "Referencia actual";
-  const quickFacts = renderQuickFacts([
+  const quickFactItems = [
     { label: "Mapa", value: currentMap, valueClassName: "server-card__quickfact-value--map" },
-    { label: "Region", value: region },
-  ]);
+  ];
+  if (region) {
+    quickFactItems.push({ label: "Region", value: region });
+  }
+  const quickFacts = renderQuickFacts(quickFactItems);
 
   return `
     <article class="server-card server-card--stats ${cardVariantClass}">
@@ -297,6 +300,29 @@ function renderServerStatsCard(server) {
 
 function renderServerSections(latestItems) {
   return latestItems.map((server) => renderServerStatsCard(server)).join("");
+}
+
+function normalizeServerRegion(value) {
+  if (typeof value !== "string") {
+    return "";
+  }
+  const trimmedValue = value.trim();
+  if (!trimmedValue) {
+    return "";
+  }
+  const normalizedValue = trimmedValue
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase();
+  const placeholderValues = new Set([
+    "region pendiente",
+    "pending",
+    "unknown",
+    "desconocida",
+    "no disponible",
+    "n/a",
+  ]);
+  return placeholderValues.has(normalizedValue) ? "" : trimmedValue;
 }
 
 function renderServerAction(server) {
