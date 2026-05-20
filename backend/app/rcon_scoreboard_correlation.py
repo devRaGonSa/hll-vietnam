@@ -25,6 +25,8 @@ def resolve_rcon_scoreboard_match_url(
     duration_seconds: object = None,
     player_count: object = None,
     peak_players: object = None,
+    allied_score: object = None,
+    axis_score: object = None,
     db_path: Path | None = None,
 ) -> str | None:
     """Return a trusted scoreboard URL for an RCON window only on strong evidence."""
@@ -52,6 +54,8 @@ def resolve_rcon_scoreboard_match_url(
             duration_seconds=_coerce_int(duration_seconds),
             player_count=_coerce_int(player_count),
             peak_players=_coerce_int(peak_players),
+            allied_score=_coerce_int(allied_score),
+            axis_score=_coerce_int(axis_score),
         ))
         is not None
     ]
@@ -82,6 +86,8 @@ def _list_persisted_scoreboard_candidates(
                     historical_matches.ended_at,
                     historical_matches.map_name,
                     historical_matches.map_pretty_name,
+                    historical_matches.allied_score,
+                    historical_matches.axis_score,
                     historical_matches.raw_payload_ref,
                     historical_servers.slug AS server_slug,
                     COUNT(historical_player_match_stats.id) AS player_count
@@ -116,6 +122,8 @@ def _list_persisted_scoreboard_candidates(
                 "ended_at": row["ended_at"],
                 "map_name": row["map_name"],
                 "map_pretty_name": row["map_pretty_name"],
+                "allied_score": row["allied_score"],
+                "axis_score": row["axis_score"],
                 "player_count": row["player_count"],
                 "match_url": match_url,
             }
@@ -132,6 +140,8 @@ def _score_candidate(
     duration_seconds: int | None,
     player_count: int | None,
     peak_players: int | None,
+    allied_score: int | None,
+    axis_score: int | None,
 ) -> dict[str, object] | None:
     candidate_map = normalize_map_name(
         candidate.get("map_pretty_name") or candidate.get("map_name")
@@ -170,6 +180,19 @@ def _score_candidate(
         if abs(candidate_duration - duration_seconds) <= 1800:
             score += 1
         elif overlap_seconds > 0 and duration_seconds <= candidate_duration:
+            score += 1
+
+    candidate_allied_score = _coerce_int(candidate.get("allied_score"))
+    candidate_axis_score = _coerce_int(candidate.get("axis_score"))
+    if (
+        allied_score is not None
+        and axis_score is not None
+        and candidate_allied_score is not None
+        and candidate_axis_score is not None
+    ):
+        if candidate_allied_score == allied_score and candidate_axis_score == axis_score:
+            score += 2
+        elif sorted((candidate_allied_score, candidate_axis_score)) == sorted((allied_score, axis_score)):
             score += 1
 
     candidate_players = _coerce_int(candidate.get("player_count"))
