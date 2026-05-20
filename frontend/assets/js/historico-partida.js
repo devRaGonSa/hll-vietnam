@@ -234,7 +234,7 @@ function renderPlayerRow(player) {
 }
 
 function renderActions(item, actionsNode) {
-  const matchUrl = normalizeExternalMatchUrl(item.match_url);
+  const matchUrl = normalizeSafePublicScoreboardMatchUrl(item.match_url);
   if (!matchUrl) {
     actionsNode.innerHTML = "";
     actionsNode.hidden = true;
@@ -247,7 +247,7 @@ function renderActions(item, actionsNode) {
       target="_blank"
       rel="noopener noreferrer"
     >
-      Abrir en scoreboard
+      Ver en Scoreboard
     </a>
   `;
   actionsNode.hidden = false;
@@ -470,13 +470,18 @@ function formatMatchTimestamp(item, kind) {
   return "No disponible";
 }
 
-function normalizeExternalMatchUrl(value) {
+function normalizeSafePublicScoreboardMatchUrl(value) {
   if (typeof value !== "string" || !value.trim()) {
     return "";
   }
   try {
     const url = new URL(value.trim());
-    return ["http:", "https:"].includes(url.protocol) ? url.href : "";
+    const allowedOrigins = new Set([
+      "https://scoreboard.comunidadhll.es",
+      "https://scoreboard.comunidadhll.es:5443",
+    ]);
+    const isAllowedPath = url.pathname === "/games" || url.pathname.startsWith("/games/");
+    return allowedOrigins.has(url.origin) && isAllowedPath ? url.href : "";
   } catch (error) {
     return "";
   }

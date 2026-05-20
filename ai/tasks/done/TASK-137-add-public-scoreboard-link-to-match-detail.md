@@ -1,7 +1,7 @@
 ---
 id: TASK-137
 title: Add public scoreboard link to match detail
-status: pending
+status: done
 type: frontend
 team: Frontend Senior
 supporting_teams:
@@ -132,11 +132,31 @@ Then hard refresh with `Ctrl+F5` and verify:
 
 ## Outcome
 
-To be completed by AI Platform Run / Codex CLI.
+- Updated the historical match detail action label to `Ver en Scoreboard`.
+- Tightened the detail-page external action safety check to only show links from trusted public scoreboard origins:
+  - `https://scoreboard.comunidadhll.es`
+  - `https://scoreboard.comunidadhll.es:5443`
+- Restricted accepted scoreboard paths to `/games` and `/games/...`.
+- Left recent match card behavior unchanged.
+- Updated the historical UI regression script to expect the new detail-page action label.
+- No backend changes were needed because the existing RCON read model already exposes `match_url` when safe correlation exists.
 
 ## Validation Result
 
-To be completed by AI Platform Run / Codex CLI.
+- PASS: `node --check frontend/assets/js/historico-partida.js`
+- PASS: `node --check frontend/assets/js/historico.js`
+- PASS: `node --check frontend/assets/js/historico-recent-live.js`
+- PASS: `python -m compileall backend/app`
+- PASS after updating the expected label: `powershell -ExecutionPolicy Bypass -File scripts/run-integration-tests.ps1`
+- PASS: `powershell -ExecutionPolicy Bypass -File scripts/run-rcon-data-pipeline-tests.ps1`
+  - Note: the script completed successfully but emitted existing `ResourceWarning` messages from backend unittest sqlite connections.
+- PASS: `docker compose up -d --build backend frontend`
+- PASS: `Invoke-WebRequest "http://localhost:8000/health" | Select-Object -ExpandProperty Content`
+- PASS: `Invoke-WebRequest "http://localhost:8000/api/historical/recent-matches?server=all-servers&limit=10" | Select-Object -ExpandProperty Content`
+- Additional endpoint check: the known Carentan match detail returns `match_url: null`, so no external action should render for that match.
+- Manual/rendered verification: Browser plugin was listed, but the required Node runtime tool was not exposed in this session; used local Chrome headless fallback.
+  - Verified rendered DOM for the known Carentan match does not include `Ver en Scoreboard` or `historical-match-card__link` when `match_url` is absent.
+  - Verified rendered DOM still contains `3 : 2`, `Ganador: Aliados`, `Carentan`, `1 h 30 min`, `AntonioPruna` and `M1 GARAND`.
 
 ## Change Budget
 

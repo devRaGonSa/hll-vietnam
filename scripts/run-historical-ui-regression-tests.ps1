@@ -59,7 +59,7 @@ Assert-Contains $historicoJs "Ver detalles" `
     "Recent match cards no longer include the internal detail fallback label."
 Assert-NotContains $historicoJs "item.match_url || item.source_url" `
     "Recent match cards must not trust legacy source_url fallback."
-Assert-Contains $historicoPartidaJs "Abrir en scoreboard" `
+Assert-Contains $historicoPartidaJs "Ver en Scoreboard" `
     "Match detail page no longer includes the external scoreboard action label."
 Assert-Contains $historicoPartidaJs 'rel="noopener noreferrer"' `
     "External scoreboard links must keep rel noopener noreferrer."
