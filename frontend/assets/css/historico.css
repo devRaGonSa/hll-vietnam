@@ -776,58 +776,31 @@
 }
 
 .historical-match-meta--clean {
-  grid-template-columns: minmax(180px, 1.3fr) minmax(120px, 0.8fr) minmax(110px, 0.7fr) minmax(110px, 0.7fr) auto;
+  grid-template-columns:
+    minmax(220px, 1.4fr)
+    minmax(130px, 0.75fr)
+    minmax(110px, 0.65fr)
+    minmax(110px, 0.65fr)
+    260px;
   align-items: end;
+}
+
+.historical-match-meta--clean > article {
+  align-self: stretch;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
 }
 
 .historical-match-card__actions-cell {
   display: flex;
   align-items: end;
   justify-content: flex-end;
-  min-width: 250px;
+  min-width: 260px;
 }
 
 .historical-match-card__actions-cell .historical-match-card__actions {
-  align-items: center;
-  justify-content: flex-end;
-}
-
-@media (max-width: 920px) {
-  .historical-match-meta--clean {
-    grid-template-columns: repeat(auto-fit, minmax(min(100%, 180px), 1fr));
-  }
-
-  .historical-match-card__actions-cell {
-    justify-content: flex-start;
-    min-width: 0;
-  }
-
-  .historical-match-card__actions-cell .historical-match-card__actions {
-    justify-content: flex-start;
-  }
-}
-
-.historical-match-card--clean {
-  gap: 12px;
-}
-
-.historical-match-card__top--clean {
-  display: block;
-}
-
-.historical-match-meta--clean {
-  grid-template-columns: minmax(180px, 1.3fr) minmax(120px, 0.8fr) minmax(110px, 0.7fr) minmax(110px, 0.7fr) auto;
-  align-items: end;
-}
-
-.historical-match-card__actions-cell {
-  display: flex;
-  align-items: end;
-  justify-content: flex-end;
-  min-width: 250px;
-}
-
-.historical-match-card__actions-cell .historical-match-card__actions {
+  gap: 10px;
   align-items: center;
   justify-content: flex-end;
 }
@@ -849,6 +822,6 @@
 
 /* Hide public scoreboard action only in the recent matches list.
    The internal detail page can still show its own scoreboard button. */
-#recent-matches-list .historical-match-card__link[href^="https://scoreboard.comunidadhll.es"] {
+#recent-matches-list .historical-match-card__link--scoreboard {
   display: none;
 }
