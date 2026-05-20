@@ -117,6 +117,60 @@ class RconMaterializationPipelineTests(unittest.TestCase):
             self.assertEqual(detail["duration_seconds"], 5400)
             gc.collect()
 
+    def test_equal_timestamp_materialized_detail_uses_closed_at_window_for_scoreboard_link(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = Path(tmpdir) / "historical.sqlite3"
+            previous_storage_path = os.environ.get("HLL_BACKEND_STORAGE_PATH")
+            os.environ["HLL_BACKEND_STORAGE_PATH"] = str(db_path)
+            try:
+                upsert_historical_match(
+                    server_slug="comunidad-hispana-02",
+                    match_payload={
+                        "id": "1779183861",
+                        "creation_time": "2026-05-01T10:30:00Z",
+                        "start": "2026-05-01T10:30:00Z",
+                        "end": "2026-05-01T12:00:00Z",
+                        "map": {"name": "ST MARIE DU MONT Warfare"},
+                        "result": {"allied": 5, "axis": 0},
+                        "player_stats": [],
+                    },
+                    db_path=db_path,
+                )
+                persist_rcon_admin_log_entries(
+                    target={
+                        "target_key": "comunidad-hispana-02",
+                        "external_server_id": "comunidad-hispana-02",
+                    },
+                    entries=[
+                        {
+                            "timestamp": "2026-05-01T12:00:00Z",
+                            "message": "[1 min (100)] MATCH START ST MARIE DU MONT Warfare",
+                        },
+                        {
+                            "timestamp": "2026-05-01T12:00:00Z",
+                            "message": "[91 min (5500)] MATCH ENDED `ST MARIE DU MONT Warfare` ALLIED (5 - 0) AXIS",
+                        },
+                    ],
+                    db_path=db_path,
+                )
+                materialize_rcon_admin_log(db_path=db_path)
+                detail = get_rcon_historical_match_detail(
+                    server_key="comunidad-hispana-02",
+                    match_id="comunidad-hispana-02:100:5500:stmariedumontwarfare",
+                )
+            finally:
+                _restore_env("HLL_BACKEND_STORAGE_PATH", previous_storage_path)
+
+            self.assertIsNotNone(detail)
+            self.assertIsNone(detail["started_at"])
+            self.assertIsNone(detail["ended_at"])
+            self.assertEqual(detail["duration_seconds"], 5400)
+            self.assertEqual(
+                detail["match_url"],
+                "https://scoreboard.comunidadhll.es:5443/games/1779183861",
+            )
+            gc.collect()
+
     def test_match_detail_adds_safe_profile_summary_when_snapshot_exists(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             db_path = Path(tmpdir) / "historical.sqlite3"

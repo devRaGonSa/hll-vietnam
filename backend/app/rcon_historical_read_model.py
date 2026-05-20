@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from .historical_storage import ALL_SERVERS_SLUG
 from .normalizers import normalize_map_name
@@ -207,6 +207,7 @@ def get_rcon_historical_match_detail(
 def _build_materialized_recent_item(item: dict[str, object]) -> dict[str, object]:
     server_slug = item.get("external_server_id") or item.get("target_key")
     timestamps = _build_materialized_timestamp_payload(item)
+    correlation_window = _build_materialized_scoreboard_correlation_window(item, timestamps)
     return {
         "server": {
             "slug": item.get("target_key"),
@@ -246,9 +247,11 @@ def _build_materialized_recent_item(item: dict[str, object]) -> dict[str, object
         "match_url": resolve_rcon_scoreboard_match_url(
             server_slug=server_slug,
             map_name=item.get("map_pretty_name") or item.get("map_name"),
-            started_at=timestamps["started_at"],
-            ended_at=timestamps["ended_at"],
+            started_at=correlation_window["started_at"],
+            ended_at=correlation_window["ended_at"],
             duration_seconds=_calculate_match_duration_seconds(item),
+            allied_score=item.get("allied_score"),
+            axis_score=item.get("axis_score"),
         ),
         "capabilities": describe_rcon_historical_read_model()["capabilities"],
     }
@@ -342,6 +345,28 @@ def _build_materialized_timestamp_payload(item: dict[str, object]) -> dict[str, 
         "ended_at": ended_at,
         "closed_at": ended_at or started_at,
         "timestamp_confidence": "absolute" if started_at or ended_at else "server-time-only",
+    }
+
+
+def _build_materialized_scoreboard_correlation_window(
+    item: dict[str, object],
+    timestamps: dict[str, object],
+) -> dict[str, object]:
+    started_at = timestamps.get("started_at")
+    ended_at = timestamps.get("ended_at")
+    if started_at and ended_at:
+        return {"started_at": started_at, "ended_at": ended_at}
+
+    closed_at = timestamps.get("closed_at") or item.get("ended_at") or item.get("started_at")
+    duration_seconds = _calculate_match_duration_seconds(item)
+    closed_point = _parse_datetime(closed_at)
+    if closed_point is None or not duration_seconds:
+        return {"started_at": started_at, "ended_at": ended_at}
+
+    started_point = closed_point - timedelta(seconds=int(duration_seconds))
+    return {
+        "started_at": started_point.isoformat().replace("+00:00", "Z"),
+        "ended_at": closed_point.isoformat().replace("+00:00", "Z"),
     }
 
 
@@ -522,11 +547,23 @@ def _build_all_servers_summary(items: list[dict[str, object]]) -> dict[str, obje
 def _minutes_since_timestamp(timestamp: str | None) -> int | None:
     if not timestamp:
         return None
-    captured_at = datetime.fromisoformat(timestamp.replace("Z", "+00:00"))
-    if captured_at.tzinfo is None:
-        captured_at = captured_at.replace(tzinfo=timezone.utc)
+    captured_at = _parse_datetime(timestamp)
+    if captured_at is None:
+        return None
     delta = datetime.now(timezone.utc) - captured_at.astimezone(timezone.utc)
     return max(0, int(delta.total_seconds() // 60))
+
+
+def _parse_datetime(value: object) -> datetime | None:
+    if not isinstance(value, str) or not value.strip():
+        return None
+    try:
+        parsed = datetime.fromisoformat(value.strip().replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
 
 
 def _calculate_coverage_hours(
