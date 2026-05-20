@@ -1,7 +1,7 @@
 ---
 id: TASK-136
 title: Add RCON match detail map hero image
-status: pending
+status: done
 type: frontend
 team: Frontend Senior
 supporting_teams:
@@ -138,11 +138,28 @@ Then hard refresh with `Ctrl+F5` and verify:
 
 ## Outcome
 
-To be completed by AI Platform Run / Codex CLI.
+- Added a hidden map-media slot to `frontend/historico-partida.html` and reveal it only when the current match resolves to a known local map asset.
+- Added `resolveMapImagePath` in `frontend/assets/js/historico-partida.js`, mapping the available local map names including the known Carentan match to `./assets/img/maps/carentan-day.webp`.
+- Added the map assets under `frontend/assets/img/maps/` because the task explicitly depends on local map image files.
+- Updated the historical hero CSS so the logo, match copy and map image form a responsive desktop header and collapse cleanly on mobile.
+- Shortened the RCON hero subtitle to keep the narrow mobile header from clipping while preserving the player table, hidden timeline, hidden confidence/source/base details and existing scoreboard data.
 
 ## Validation Result
 
-To be completed by AI Platform Run / Codex CLI.
+- PASS: `node --check frontend/assets/js/historico-partida.js`
+- PASS: `node --check frontend/assets/js/historico.js`
+- PASS: `node --check frontend/assets/js/historico-recent-live.js`
+- PASS: `python -m compileall backend/app`
+- PASS: `powershell -ExecutionPolicy Bypass -File scripts/run-integration-tests.ps1`
+- PASS: `powershell -ExecutionPolicy Bypass -File scripts/run-rcon-data-pipeline-tests.ps1`
+  - Note: the script completed successfully but emitted existing `ResourceWarning` messages from backend unittest sqlite connections.
+- PASS: `docker compose up -d --build backend frontend`
+- PASS: `Invoke-WebRequest "http://localhost:8000/health" | Select-Object -ExpandProperty Content`
+- PASS: `Invoke-WebRequest "http://localhost:8000/api/historical/recent-matches?server=all-servers&limit=10" | Select-Object -ExpandProperty Content`
+- Manual/rendered verification: Browser plugin was listed, but the required Node runtime tool was not exposed in this session; used local Chrome headless fallback.
+  - Verified rendered DOM contains `./assets/img/maps/carentan-day.webp`, `3 : 2`, `Ganador: Aliados`, `Carentan`, `1 h 30 min`, `AntonioPruna` and `M1 GARAND`.
+  - Verified timeline section remains hidden and no `snapshot`, Elo/MVP block or Comunidad Hispana #03 appeared in the rendered checks.
+  - Captured screenshots outside the repository at `C:\Temp\task-136-match-detail-final.png` and `C:\Temp\task-136-match-detail-mobile-final-3.png`.
 
 ## Change Budget
 

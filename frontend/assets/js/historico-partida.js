@@ -20,6 +20,8 @@ document.addEventListener("DOMContentLoaded", () => {
     timelineNote: document.getElementById("match-detail-timeline-note"),
     timelineState: document.getElementById("match-detail-timeline-state"),
     timelineGrid: document.getElementById("match-detail-timeline-grid"),
+    mapHero: document.getElementById("match-detail-map-hero"),
+    mapImage: document.getElementById("match-detail-map-image"),
   };
 
   if (!serverSlug || !matchId) {
@@ -66,12 +68,35 @@ function renderMatchDetail(item, nodes) {
   nodes.title.textContent = mapName;
   nodes.summary.textContent = `${serverName} - ${formatDetailSubtitle(item)}`;
   nodes.note.textContent = "";
+  renderMapHero(item, mapName, nodes);
   nodes.grid.innerHTML = renderScoreboardDetail(item, { mapName, serverName });
   renderPlayerSection(item, nodes);
   hideTimelineSection(nodes);
   renderActions(item, nodes.actions);
   nodes.state.hidden = true;
   nodes.grid.hidden = false;
+}
+
+function renderMapHero(item, mapName, nodes) {
+  if (!nodes.mapHero || !nodes.mapImage) {
+    return;
+  }
+
+  const mapImagePath = resolveMapImagePath(item, mapName);
+  if (!mapImagePath) {
+    nodes.mapImage.removeAttribute("src");
+    nodes.mapImage.alt = "";
+    nodes.mapHero.hidden = true;
+    return;
+  }
+
+  nodes.mapImage.src = mapImagePath;
+  nodes.mapImage.alt = mapName;
+  nodes.mapImage.onerror = () => {
+    nodes.mapImage.removeAttribute("src");
+    nodes.mapHero.hidden = true;
+  };
+  nodes.mapHero.hidden = false;
 }
 
 function renderScoreboardDetail(item, { mapName, serverName }) {
@@ -273,6 +298,36 @@ function resolveMatchFactions(item, mapName) {
   };
 }
 
+function resolveMapImagePath(item, mapName) {
+  const normalizedMap = normalizeLookupText(
+    `${item.map?.name || ""} ${item.map?.pretty_name || ""} ${mapName || ""}`,
+  ).replaceAll(" ", "");
+  const mapAssetByKey = {
+    carentan: "carentan-day.webp",
+    driel: "driel-day.webp",
+    elalamein: "elalamein-day.webp",
+    elsenbornridge: "elsenbornridge-day.webp",
+    foy: "foy-day.webp",
+    hill400: "hill400-day.webp",
+    hurtgenforest: "hurtgenforest-day.webp",
+    kharkov: "kharkov-day.webp",
+    kursk: "kursk-day.webp",
+    mortain: "mortain-day.webp",
+    omahabeach: "omahabeach-day.webp",
+    purpleheartlane: "purpleheartlane-rain.webp",
+    smolensk: "smolensk-day.webp",
+    stmariedumont: "stmariedumont-day.webp",
+    stmereeglise: "stmereeglise-day.webp",
+    tobrukdawn: "tobruk-dawn.webp",
+    tobruk: "tobruk-day.webp",
+    utahbeach: "utahbeach-day.webp",
+  };
+  const matchedKey = Object.keys(mapAssetByKey).find((key) =>
+    normalizedMap.includes(key),
+  );
+  return matchedKey ? `./assets/img/maps/${mapAssetByKey[matchedKey]}` : "";
+}
+
 function normalizeLookupText(value) {
   return String(value || "")
     .normalize("NFD")
@@ -284,10 +339,10 @@ function normalizeLookupText(value) {
 
 function formatDetailSubtitle(item) {
   if (item.capture_basis === "rcon-materialized-admin-log") {
-    return "Partida RCON materializada";
+    return "RCON";
   }
   if (item.capture_basis === "rcon-competitive-window") {
-    return "Partida RCON registrada";
+    return "RCON";
   }
   if (item.result_source === "public-scoreboard-match") {
     return "Partida del scoreboard";
