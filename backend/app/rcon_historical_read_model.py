@@ -208,6 +208,7 @@ def _build_materialized_recent_item(item: dict[str, object]) -> dict[str, object
     server_slug = item.get("external_server_id") or item.get("target_key")
     timestamps = _build_materialized_timestamp_payload(item)
     correlation_window = _build_materialized_scoreboard_correlation_window(item, timestamps)
+    player_count = _resolve_materialized_player_count(item)
     return {
         "server": {
             "slug": item.get("target_key"),
@@ -232,7 +233,7 @@ def _build_materialized_recent_item(item: dict[str, object]) -> dict[str, object
             "winner": item.get("winner"),
         },
         "winner": item.get("winner"),
-        "player_count": None,
+        "player_count": player_count,
         "peak_players": None,
         "sample_count": None,
         "duration_seconds": _calculate_match_duration_seconds(item),
@@ -273,6 +274,7 @@ def _build_materialized_detail_item(materialized: dict[str, object]) -> dict[str
         )
         for row in materialized["players"]
     ]
+    player_count = len(players) if players else recent_item.get("player_count")
     return {
         **recent_item,
         "match_id": match["match_key"],
@@ -280,11 +282,24 @@ def _build_materialized_detail_item(materialized: dict[str, object]) -> dict[str
         "winner": match.get("winner"),
         "confidence": match.get("confidence_mode"),
         "source_basis": match.get("source_basis"),
+        "player_count": player_count,
         "players": players,
         "timeline": {
             "event_counts": materialized.get("timeline", []),
         },
     }
+
+
+def _resolve_materialized_player_count(item: dict[str, object]) -> int | None:
+    for key in (
+        "player_count",
+        "materialized_player_count",
+        "materialized_distinct_player_count",
+    ):
+        value = _coerce_optional_int(item.get(key))
+        if value is not None and value > 0:
+            return value
+    return None
 
 
 def _build_player_row(

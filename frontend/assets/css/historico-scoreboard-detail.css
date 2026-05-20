@@ -10,6 +10,67 @@
   display: none !important;
 }
 
+.historical-table--players tbody tr.historical-player-row--allies td:first-child {
+  box-shadow: inset 4px 0 0 rgba(104, 162, 214, 0.82);
+}
+
+.historical-table--players tbody tr.historical-player-row--axis td:first-child {
+  box-shadow: inset 4px 0 0 rgba(190, 82, 64, 0.82);
+}
+
+.historical-table--players tbody tr.historical-player-row--unknown td:first-child {
+  box-shadow: inset 4px 0 0 rgba(159, 168, 141, 0.5);
+}
+
+.historical-table--players tbody tr.historical-player-row--allies {
+  background: linear-gradient(90deg, rgba(74, 126, 178, 0.14), transparent 42%);
+}
+
+.historical-table--players tbody tr.historical-player-row--axis {
+  background: linear-gradient(90deg, rgba(156, 66, 49, 0.16), transparent 42%);
+}
+
+.historical-table--players tbody tr.historical-player-row--unknown {
+  background: linear-gradient(90deg, rgba(159, 168, 141, 0.08), transparent 42%);
+}
+
+.historical-player-team-cell {
+  white-space: nowrap;
+}
+
+.historical-player-team-badge {
+  display: inline-flex;
+  align-items: center;
+  min-width: 96px;
+  justify-content: center;
+  padding: 5px 10px;
+  border: 1px solid rgba(159, 168, 141, 0.24);
+  border-radius: 999px;
+  font-size: 0.72rem;
+  font-weight: 900;
+  letter-spacing: 0.08em;
+  line-height: 1;
+  text-transform: uppercase;
+}
+
+.historical-player-team-badge--allies {
+  border-color: rgba(118, 175, 229, 0.46);
+  background: rgba(61, 109, 163, 0.2);
+  color: #c8e1ff;
+}
+
+.historical-player-team-badge--axis {
+  border-color: rgba(213, 105, 83, 0.48);
+  background: rgba(129, 45, 35, 0.22);
+  color: #f2beb2;
+}
+
+.historical-player-team-badge--unknown {
+  border-color: rgba(159, 168, 141, 0.28);
+  background: rgba(159, 168, 141, 0.1);
+  color: var(--muted);
+}
+
 .historical-scoreboard-layout {
   display: grid;
   gap: 18px;
