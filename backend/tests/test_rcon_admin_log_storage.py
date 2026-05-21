@@ -1,6 +1,7 @@
 import gc
 import json
 import sqlite3
+from datetime import datetime, timezone
 
 from app.rcon_admin_log_storage import (
     initialize_rcon_admin_log_storage,
@@ -308,4 +309,62 @@ def test_current_match_kill_feed_prefers_open_match_window_and_normalizes_rows(t
         "weapon": "GRENADE",
         "is_teamkill": True,
     }
+    gc.collect()
+
+
+def test_current_match_kill_feed_filters_stale_recent_fallback_rows(tmp_path):
+    db_path = tmp_path / "admin_log.sqlite3"
+    persist_rcon_admin_log_entries(
+        target=TARGET,
+        entries=[
+            {
+                "timestamp": "2026-05-21T09:30:00Z",
+                "message": (
+                    "[1:00 min (1779355800)] KILL: Old Killer(Allies/steam-old) -> "
+                    "Old Victim(Axis/steam-victim-old) with M1 GARAND"
+                ),
+            }
+        ],
+        db_path=db_path,
+    )
+
+    feed = list_current_match_kill_feed(
+        server_key="test-rcon-target",
+        db_path=db_path,
+        now=datetime(2026, 5, 21, 10, 0, tzinfo=timezone.utc),
+    )
+
+    assert feed["scope"] == "no-current-match-events"
+    assert feed["confidence"] == "stale-filtered"
+    assert feed["stale_events_filtered"] == 1
+    assert feed["items"] == []
+    gc.collect()
+
+
+def test_current_match_kill_feed_marks_fresh_recent_fallback_rows_partial(tmp_path):
+    db_path = tmp_path / "admin_log.sqlite3"
+    persist_rcon_admin_log_entries(
+        target=TARGET,
+        entries=[
+            {
+                "timestamp": "2026-05-21T09:50:00Z",
+                "message": (
+                    "[1:00 min (1779357000)] KILL: Fresh Killer(Allies/steam-fresh) -> "
+                    "Fresh Victim(Axis/steam-victim-fresh) with M1 GARAND"
+                ),
+            }
+        ],
+        db_path=db_path,
+    )
+
+    feed = list_current_match_kill_feed(
+        server_key="test-rcon-target",
+        db_path=db_path,
+        now=datetime(2026, 5, 21, 10, 0, tzinfo=timezone.utc),
+    )
+
+    assert feed["scope"] == "recent-admin-log-window"
+    assert feed["confidence"] == "partial"
+    assert feed["stale_events_filtered"] == 0
+    assert [item["killer_name"] for item in feed["items"]] == ["Fresh Killer"]
     gc.collect()

@@ -88,6 +88,47 @@
   object-fit: cover;
 }
 
+.current-match-map-hero {
+  display: grid;
+  isolation: isolate;
+}
+
+.current-match-map-hero > * {
+  grid-area: 1 / 1;
+}
+
+.current-match-map-placeholder {
+  z-index: 0;
+  display: grid;
+  align-content: end;
+  gap: 6px;
+  min-height: 220px;
+  padding: 24px;
+  color: var(--text);
+  background:
+    linear-gradient(135deg, rgba(183, 201, 125, 0.12), transparent 44%),
+    repeating-linear-gradient(
+      -28deg,
+      rgba(210, 182, 118, 0.06) 0 1px,
+      transparent 1px 20px
+    );
+}
+
+.current-match-map-placeholder strong {
+  font-size: 1.16rem;
+  text-transform: uppercase;
+}
+
+.current-match-map-placeholder span {
+  color: var(--text-soft);
+}
+
+.current-match-scoreboard-message {
+  max-width: 12ch;
+  font-size: clamp(2rem, 4vw, 3.3rem);
+  line-height: 1;
+}
+
 .historical-content {
   gap: 22px;
 }

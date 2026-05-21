@@ -10,6 +10,7 @@
     <title>Partida actual - HLL Vietnam</title>
     <link rel="stylesheet" href="./assets/css/styles.css" />
     <link rel="stylesheet" href="./assets/css/historico.css" />
+    <link rel="stylesheet" href="./assets/css/historico-scoreboard-detail.css" />
   </head>
   <body data-backend-base-url="http://127.0.0.1:8000">
     <div class="page-shell historical-shell">
@@ -58,6 +59,23 @@
                 </a>
               </div>
             </div>
+            <figure class="historical-map-hero current-match-map-hero" id="current-match-map-hero">
+              <img
+                class="historical-map-hero__image"
+                id="current-match-map-image"
+                src=""
+                alt=""
+                width="960"
+                height="540"
+                loading="eager"
+                decoding="async"
+                hidden
+              />
+              <div class="current-match-map-placeholder" id="current-match-map-placeholder">
+                <strong>Mapa en vivo</strong>
+                <span>Esperando imagen disponible.</span>
+              </div>
+            </figure>
           </div>
         </div>
       </header>
@@ -88,7 +106,7 @@
                 <p class="eyebrow eyebrow--section">Combate</p>
                 <h2 id="current-match-feed-title">Feed de combate</h2>
                 <p class="historical-panel__note">
-                  Los eventos de bajas en vivo apareceran aqui cuando se habiliten.
+                  Leyendo eventos recientes con cobertura segura para esta partida.
                 </p>
               </div>
             </div>

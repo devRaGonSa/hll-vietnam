@@ -7,6 +7,7 @@ import re
 import sqlite3
 from collections.abc import Mapping
 from contextlib import closing
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from .config import get_storage_path, use_postgres_rcon_storage
@@ -14,6 +15,8 @@ from .rcon_admin_log_parser import parse_rcon_admin_log_entry
 from .rcon_admin_log_parser import parse_rcon_player_profile_snapshot
 from .rcon_historical_storage import initialize_rcon_historical_storage
 from .sqlite_utils import connect_sqlite_writer
+
+CURRENT_MATCH_FALLBACK_FRESHNESS = timedelta(minutes=15)
 
 
 def initialize_rcon_admin_log_storage(*, db_path: Path | None = None) -> Path:
@@ -334,6 +337,7 @@ def list_current_match_kill_feed(
     server_key: str,
     limit: int = 30,
     db_path: Path | None = None,
+    now: datetime | None = None,
 ) -> dict[str, object]:
     """Return safe recent kill rows for one AdminLog server window."""
     resolved_path = initialize_rcon_admin_log_storage(db_path=db_path)
@@ -396,9 +400,24 @@ def list_current_match_kill_feed(
             scope = "open-admin-log-match-window"
             confidence = "admin-log-boundary"
 
+    stale_events_filtered = 0
+    if scope == "recent-admin-log-window":
+        freshness_anchor = _as_utc_datetime(now) or datetime.now(timezone.utc)
+        fresh_rows = [
+            row
+            for row in rows
+            if _row_is_current_match_fallback_fresh(row, freshness_anchor)
+        ]
+        stale_events_filtered = len(rows) - len(fresh_rows)
+        rows = fresh_rows
+        if not rows:
+            scope = "no-current-match-events"
+            confidence = "stale-filtered" if stale_events_filtered else "none"
+
     return {
         "scope": scope,
         "confidence": confidence,
+        "stale_events_filtered": stale_events_filtered,
         "items": [_serialize_kill_feed_row(row) for row in rows],
     }
 
@@ -522,6 +541,32 @@ def _serialize_kill_feed_row(row: Mapping[str, object]) -> dict[str, object]:
 def _safe_event_field(value: object) -> str | None:
     normalized = str(value or "").strip()
     return normalized or None
+
+
+def _row_is_current_match_fallback_fresh(
+    row: Mapping[str, object],
+    freshness_anchor: datetime,
+) -> bool:
+    event_time = _as_utc_datetime(row["event_timestamp"])
+    if event_time is None:
+        return False
+    age = freshness_anchor - event_time
+    return timedelta(0) <= age <= CURRENT_MATCH_FALLBACK_FRESHNESS
+
+
+def _as_utc_datetime(value: object) -> datetime | None:
+    if isinstance(value, datetime):
+        parsed = value
+    elif isinstance(value, str) and value.strip():
+        try:
+            parsed = datetime.fromisoformat(value.strip().replace("Z", "+00:00"))
+        except ValueError:
+            return None
+    else:
+        return None
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
 
 
 def _persist_rcon_admin_log_entries_postgres(

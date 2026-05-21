@@ -3,6 +3,10 @@ const CURRENT_MATCH_SERVERS = Object.freeze({
   "comunidad-hispana-01": "Comunidad Hispana #01",
   "comunidad-hispana-02": "Comunidad Hispana #02",
 });
+const CURRENT_MATCH_SCOREBOARDS = Object.freeze({
+  "comunidad-hispana-01": "https://scoreboard.comunidadhll.es",
+  "comunidad-hispana-02": "https://scoreboard.comunidadhll.es:5443",
+});
 
 document.addEventListener("DOMContentLoaded", () => {
   const params = new URLSearchParams(window.location.search);
@@ -16,6 +20,9 @@ document.addEventListener("DOMContentLoaded", () => {
     state: document.getElementById("current-match-state"),
     grid: document.getElementById("current-match-grid"),
     feedTitle: document.getElementById("current-match-feed-title"),
+    mapHero: document.getElementById("current-match-map-hero"),
+    mapImage: document.getElementById("current-match-map-image"),
+    mapPlaceholder: document.getElementById("current-match-map-placeholder"),
   };
   const backendBaseUrl =
     document.body.dataset.backendBaseUrl || "http://127.0.0.1:8000";
@@ -74,24 +81,17 @@ async function loadKillFeed({ backendBaseUrl, serverSlug, nodes, killFeedState }
 
 function renderCurrentMatch(data, nodes) {
   const serverName = data.server_name || data.server_slug || "Servidor no disponible";
-  const mapName = data.map || "Mapa no disponible";
-  nodes.title.textContent = serverName;
-  nodes.summary.textContent = mapName;
+  const mapName = data.map_pretty_name || data.map || "Mapa no disponible";
+  const scoreboardUrl = resolveTrustedScoreboardUrl(data);
+  nodes.title.textContent = mapName;
+  nodes.summary.textContent = serverName;
   nodes.note.textContent = data.found
-    ? "Snapshot en vivo recibido. La pagina se actualiza cada 30 segundos."
+    ? "Lectura en vivo recibida. La pagina se actualiza cada 30 segundos."
     : "Todavia no hay snapshot live disponible para este servidor.";
-  nodes.scoreboard.href = data.public_scoreboard_url;
-  nodes.scoreboard.hidden = !data.public_scoreboard_url;
-  nodes.grid.innerHTML = [
-    renderStat("Estado", formatStatus(data.status)),
-    renderStat("Mapa", mapName),
-    renderStat("Modo", data.game_mode || "No disponible"),
-    renderStat("Inicio", formatTimestamp(data.started_at)),
-    renderStat("Jugadores", formatPlayers(data.players, data.max_players)),
-    renderStat("Marcador aliado", formatScore(data.allied_score)),
-    renderStat("Marcador eje", formatScore(data.axis_score)),
-    renderStat("Actualizado", formatTimestamp(data.captured_at || data.updated_at)),
-  ].join("");
+  nodes.scoreboard.href = scoreboardUrl || "./index.html";
+  nodes.scoreboard.hidden = !scoreboardUrl;
+  renderMapHero(data, mapName, nodes);
+  nodes.grid.innerHTML = renderLiveScoreboard(data, { mapName, serverName });
   nodes.state.hidden = true;
   nodes.grid.hidden = false;
 }
@@ -103,6 +103,7 @@ function renderUnsupportedServer(nodes) {
   nodes.note.textContent = "";
   nodes.scoreboard.hidden = true;
   nodes.grid.hidden = true;
+  renderMapHero({}, "Mapa no disponible", nodes);
   setState(nodes.state, "No se puede consultar la partida solicitada.", true);
 }
 
@@ -128,6 +129,9 @@ function initializeKillFeed(nodes) {
 
 function renderKillFeed(data, nodes, state) {
   const incoming = Array.isArray(data.items) ? data.items : [];
+  if (data.scope === "no-current-match-events") {
+    state.byId.clear();
+  }
   incoming.forEach((event) => {
     if (event?.event_id) {
       state.byId.set(event.event_id, event);
@@ -140,10 +144,7 @@ function renderKillFeed(data, nodes, state) {
     return;
   }
   nodes.feedList.innerHTML = events.map(renderKillFeedRow).join("");
-  nodes.feedState.textContent =
-    data.scope === "open-admin-log-match-window"
-      ? "Bajas del tramo abierto detectado por AdminLog."
-      : "Bajas recientes de AdminLog con cobertura parcial.";
+  nodes.feedState.textContent = formatKillFeedCoverage(data.scope);
   nodes.feedState.classList.remove("historical-state--error");
 }
 
@@ -188,10 +189,10 @@ function formatEventTime(event) {
     : "Tiempo no disponible";
 }
 
-function renderStat(label, value) {
+function renderCompactMeta(label, value) {
   return `
-    <article class="historical-stat-card">
-      <p>${escapeHtml(label)}</p>
+    <article>
+      <span>${escapeHtml(label)}</span>
       <strong>${escapeHtml(value)}</strong>
     </article>
   `;
@@ -208,14 +209,10 @@ function formatStatus(value) {
 }
 
 function formatPlayers(players, maxPlayers) {
-  if (!Number.isFinite(Number(players)) || !Number.isFinite(Number(maxPlayers))) {
+  if (!isNumericValue(players) || !isNumericValue(maxPlayers)) {
     return "No disponible";
   }
   return `${Number(players)} / ${Number(maxPlayers)}`;
-}
-
-function formatScore(value) {
-  return Number.isFinite(Number(value)) ? String(Number(value)) : "No disponible";
 }
 
 function formatTimestamp(value) {
@@ -230,6 +227,183 @@ function formatTimestamp(value) {
     dateStyle: "short",
     timeStyle: "short",
   }).format(timestamp);
+}
+
+function renderLiveScoreboard(data, { mapName, serverName }) {
+  const scoreKnown = hasKnownScore(data);
+  const scoreMarkup = scoreKnown
+    ? `${Number(data.allied_score)} : ${Number(data.axis_score)}`
+    : "Marcador no disponible";
+  const scoreClass = scoreKnown ? "" : " current-match-scoreboard-message";
+  const metadata = [
+    ["Servidor", serverName],
+    ["Mapa", mapName],
+    ["Modo", formatGameMode(data.game_mode)],
+  ];
+  if (data.started_at) {
+    metadata.push(["Inicio", formatTimestamp(data.started_at)]);
+  }
+  const remainingTime = Number(data.remaining_match_time_seconds);
+  if (Number.isFinite(remainingTime) && remainingTime > 0) {
+    metadata.push(["Tiempo restante", formatDuration(remainingTime)]);
+  }
+  const matchTime = Number(data.match_time_seconds);
+  if (Number.isFinite(matchTime) && matchTime > 0) {
+    metadata.push(["Tiempo de partida", formatDuration(matchTime)]);
+  }
+  metadata.push(["Jugadores", formatPlayerCount(data)]);
+  metadata.push(["Actualizado", formatTimestamp(data.captured_at || data.updated_at)]);
+
+  return `
+    <section class="historical-scoreboard-layout" aria-label="Marcador en vivo">
+      <div class="historical-scoreboard-layout__main">
+        ${renderLiveSide("historical-scoreboard-side--allied", "Aliados", "./assets/img/factions/us.webp")}
+        <div class="historical-scoreboard-center">
+          <span class="historical-scoreboard-center__timer">${escapeHtml(formatStatus(data.status))}</span>
+          <strong class="historical-scoreboard-center__score${scoreClass}">${escapeHtml(scoreMarkup)}</strong>
+          <span class="historical-scoreboard-center__map">${escapeHtml(mapName)}</span>
+          <span class="historical-scoreboard-center__mode">${escapeHtml(formatGameMode(data.game_mode))}</span>
+        </div>
+        ${renderLiveSide("historical-scoreboard-side--axis", "Eje", "./assets/img/factions/germany.webp")}
+      </div>
+      <div class="historical-scoreboard-layout__meta">
+        ${metadata.map(([label, value]) => renderCompactMeta(label, value)).join("")}
+      </div>
+    </section>
+  `;
+}
+
+function renderLiveSide(sideClass, label, emblem) {
+  return `
+    <div class="historical-scoreboard-side ${sideClass}">
+      <img
+        class="historical-scoreboard-side__emblem"
+        src="${escapeHtml(emblem)}"
+        alt="${escapeHtml(label)}"
+        width="128"
+        height="128"
+        loading="lazy"
+        decoding="async"
+        onerror="this.hidden = true; this.closest('.historical-scoreboard-side').classList.add('is-emblem-missing');"
+      />
+      <div class="historical-scoreboard-side__text">
+        <strong>${escapeHtml(label)}</strong>
+      </div>
+    </div>
+  `;
+}
+
+function renderMapHero(data, mapName, nodes) {
+  if (!nodes.mapImage || !nodes.mapPlaceholder) {
+    return;
+  }
+  const mapImagePath = resolveMapImagePath(data, mapName);
+  nodes.mapPlaceholder.hidden = Boolean(mapImagePath);
+  nodes.mapImage.hidden = !mapImagePath;
+  if (!mapImagePath) {
+    nodes.mapImage.removeAttribute("src");
+    nodes.mapImage.alt = "";
+    return;
+  }
+  nodes.mapImage.src = mapImagePath;
+  nodes.mapImage.alt = mapName;
+  nodes.mapImage.onerror = () => {
+    nodes.mapImage.removeAttribute("src");
+    nodes.mapImage.hidden = true;
+    nodes.mapPlaceholder.hidden = false;
+  };
+}
+
+function resolveMapImagePath(data, mapName) {
+  const normalizedMap = normalizeLookupText(
+    `${data.map_id || ""} ${data.map || ""} ${data.map_pretty_name || ""} ${mapName || ""}`,
+  ).replaceAll(" ", "");
+  const mapAssetByKey = {
+    carentan: "carentan-day.webp",
+    driel: "driel-day.webp",
+    elalamein: "elalamein-day.webp",
+    elsenbornridge: "elsenbornridge-day.webp",
+    foy: "foy-day.webp",
+    hill400: "hill400-day.webp",
+    hurtgenforest: "hurtgenforest-day.webp",
+    kharkov: "kharkov-day.webp",
+    kursk: "kursk-day.webp",
+    mortain: "mortain-day.webp",
+    omahabeach: "omahabeach-day.webp",
+    purpleheartlane: "purpleheartlane-rain.webp",
+    smolensk: "smolensk-day.webp",
+    stmariedumont: "stmariedumont-day.webp",
+    stmereeglise: "stmereeglise-day.webp",
+    tobrukdawn: "tobruk-dawn.webp",
+    tobruk: "tobruk-day.webp",
+    utahbeach: "utahbeach-day.webp",
+  };
+  const matchedKey = Object.keys(mapAssetByKey).find((key) =>
+    normalizedMap.includes(key),
+  );
+  return matchedKey ? `./assets/img/maps/${mapAssetByKey[matchedKey]}` : "";
+}
+
+function resolveTrustedScoreboardUrl(data) {
+  const trustedUrl = CURRENT_MATCH_SCOREBOARDS[data.server_slug];
+  return data.public_scoreboard_url === trustedUrl ? trustedUrl : "";
+}
+
+function hasKnownScore(data) {
+  return isNumericValue(data.allied_score) && isNumericValue(data.axis_score);
+}
+
+function formatPlayerCount(data) {
+  if (!isReliablePlayerCount(data.player_count_quality)) {
+    return "No verificado";
+  }
+  return formatPlayers(data.players, data.max_players);
+}
+
+function isReliablePlayerCount(quality) {
+  return quality === "reliable" || quality === "a2s-query";
+}
+
+function isNumericValue(value) {
+  return value !== null && value !== undefined && value !== "" && Number.isFinite(Number(value));
+}
+
+function formatGameMode(value) {
+  if (!value) {
+    return "No disponible";
+  }
+  const normalized = String(value).replaceAll("_", " ").replaceAll("-", " ");
+  return normalized.charAt(0).toUpperCase() + normalized.slice(1);
+}
+
+function formatDuration(value) {
+  const seconds = Number(value);
+  if (!Number.isFinite(seconds) || seconds <= 0) {
+    return "No disponible";
+  }
+  const minutes = Math.floor(seconds / 60);
+  const hours = Math.floor(minutes / 60);
+  const remainingMinutes = minutes % 60;
+  return hours > 0 ? `${hours} h ${remainingMinutes} min` : `${minutes} min`;
+}
+
+function formatKillFeedCoverage(scope) {
+  if (scope === "open-admin-log-match-window") {
+    return "Bajas detectadas en la partida actual.";
+  }
+  if (scope === "recent-admin-log-window") {
+    return "Cobertura parcial desde AdminLog reciente.";
+  }
+  return "Todavia no se han detectado bajas en esta partida.";
+}
+
+function normalizeLookupText(value) {
+  return String(value || "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim();
 }
 
 function setState(node, message, isError = false) {
