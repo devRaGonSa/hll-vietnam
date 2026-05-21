@@ -590,3 +590,163 @@
     height: 96px;
   }
 }
+
+
+.historical-player-control--team-toggle {
+  border: 0;
+  margin: 0;
+  padding: 0;
+}
+
+.historical-player-control--team-toggle legend {
+  color: var(--muted);
+  display: block;
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  margin-bottom: 0.45rem;
+  text-transform: uppercase;
+}
+
+.historical-player-team-toggle {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+}
+
+.historical-player-team-toggle label {
+  cursor: pointer;
+}
+
+.historical-player-team-toggle input {
+  position: absolute;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.historical-player-team-toggle span {
+  border: 1px solid rgba(210, 196, 130, 0.34);
+  border-radius: 999px;
+  color: var(--muted);
+  display: inline-flex;
+  font-size: 0.75rem;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  padding: 0.55rem 0.8rem;
+  text-transform: uppercase;
+}
+
+.historical-player-team-toggle input:checked + span {
+  background: rgba(210, 196, 130, 0.12);
+  border-color: rgba(210, 196, 130, 0.72);
+  color: var(--text);
+}
+
+.historical-player-team-toggle input:focus-visible + span {
+  outline: 2px solid rgba(210, 196, 130, 0.9);
+  outline-offset: 2px;
+}
+
+.historical-player-stats-panel__profiles code {
+  color: var(--text);
+  font-family: ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace;
+  font-size: 0.82rem;
+  word-break: break-all;
+}
+
+
+/* Player controls refinement: team selector above search/sort. */
+.historical-player-control--team-toggle {
+  border: 0;
+  grid-column: 1 / -1;
+  margin: 0;
+  order: -1;
+  padding: 0;
+}
+
+.historical-player-control--team-toggle legend {
+  color: var(--muted);
+  display: block;
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  margin-bottom: 0.45rem;
+  text-transform: uppercase;
+}
+
+.historical-player-team-toggle {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.55rem;
+}
+
+.historical-player-team-toggle label {
+  cursor: pointer;
+}
+
+.historical-player-team-toggle input {
+  position: absolute;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.historical-player-team-toggle span {
+  border: 1px solid rgba(210, 196, 130, 0.34);
+  border-radius: 999px;
+  color: var(--muted);
+  display: inline-flex;
+  font-size: 0.75rem;
+  font-weight: 900;
+  letter-spacing: 0.08em;
+  padding: 0.58rem 0.9rem;
+  text-transform: uppercase;
+  transition:
+    background 160ms ease,
+    border-color 160ms ease,
+    color 160ms ease,
+    box-shadow 160ms ease;
+}
+
+.historical-player-team-toggle__item--all input:checked + span {
+  background: rgba(210, 196, 130, 0.13);
+  border-color: rgba(210, 196, 130, 0.78);
+  color: var(--text);
+  box-shadow: 0 0 0 1px rgba(210, 196, 130, 0.18);
+}
+
+.historical-player-team-toggle__item--allies span {
+  border-color: rgba(109, 171, 255, 0.42);
+  color: #b8d7ff;
+}
+
+.historical-player-team-toggle__item--allies input:checked + span {
+  background: rgba(72, 135, 220, 0.24);
+  border-color: rgba(133, 190, 255, 0.9);
+  color: #e4f1ff;
+  box-shadow: 0 0 0 1px rgba(109, 171, 255, 0.22);
+}
+
+.historical-player-team-toggle__item--axis span {
+  border-color: rgba(225, 113, 86, 0.48);
+  color: #ffb6a6;
+}
+
+.historical-player-team-toggle__item--axis input:checked + span {
+  background: rgba(170, 72, 54, 0.28);
+  border-color: rgba(255, 143, 113, 0.92);
+  color: #ffe1d9;
+  box-shadow: 0 0 0 1px rgba(225, 113, 86, 0.24);
+}
+
+.historical-player-team-toggle input:focus-visible + span {
+  outline: 2px solid rgba(210, 196, 130, 0.9);
+  outline-offset: 2px;
+}
+
+.historical-player-stats-panel__profiles code {
+  color: var(--text);
+  font-family: ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace;
+  font-size: 0.82rem;
+  word-break: break-all;
+}

@@ -16,7 +16,7 @@ document.addEventListener("DOMContentLoaded", () => {
     playersState: document.getElementById("match-detail-players-state"),
     playerControls: document.getElementById("match-detail-player-controls"),
     playerSearch: document.getElementById("match-detail-player-search"),
-    playerTeamFilter: document.getElementById("match-detail-player-team-filter"),
+    playerTeamFilters: [...document.querySelectorAll('input[name="match-detail-player-team-filter"]')],
     playerSort: document.getElementById("match-detail-player-sort"),
     playerSortDirection: document.getElementById("match-detail-player-sort-direction"),
     playersTableShell: document.getElementById("match-detail-players-table-shell"),
@@ -227,7 +227,9 @@ function renderPlayerSection(item, nodes) {
   const renderRows = () => renderPlayerTable(item, players, state, nodes);
 
   nodes.playerSearch.value = "";
-  nodes.playerTeamFilter.value = state.team;
+  nodes.playerTeamFilters.forEach((control) => {
+    control.checked = control.value === state.team;
+  });
   nodes.playerSort.value = state.sort;
   nodes.playerSortDirection.value = state.direction;
   bindPlayerTableControls(nodes, state, renderRows);
@@ -245,11 +247,13 @@ function bindPlayerTableControls(nodes, state, renderRows) {
     state.search = nodes.playerSearch.value;
     renderRows();
   };
-  nodes.playerTeamFilter.onchange = () => {
-    closePlayerDetailRows(nodes.playersBody);
-    state.team = nodes.playerTeamFilter.value;
-    renderRows();
-  };
+  nodes.playerTeamFilters.forEach((control) => {
+    control.onchange = () => {
+      closePlayerDetailRows(nodes.playersBody);
+      state.team = control.value;
+      renderRows();
+    };
+  });
   nodes.playerSort.onchange = () => {
     state.sort = nodes.playerSort.value;
     state.isDefaultSort = false;
@@ -483,10 +487,10 @@ function renderPlayerStatsPanel(player, item, context) {
           <h4>${escapeHtml(context.playerName)}</h4>
         </div>
         <div class="historical-player-stats-panel__summary">
-          ${renderPlayerStatChip("K", formatOptionalNumber(player.kills))}
-          ${renderPlayerStatChip("D", formatOptionalNumber(player.deaths))}
+          ${renderPlayerStatChip("Kills", formatOptionalNumber(player.kills))}
+          ${renderPlayerStatChip("Muertes", formatOptionalNumber(player.deaths))}
           ${renderPlayerStatChip("TK", formatOptionalNumber(player.teamkills))}
-          ${renderPlayerStatChip("K/D", formatKdRatio(player))}
+          ${renderPlayerStatChip("KD", formatKdRatio(player))}
           ${renderPlayerStatChip("KPM", context.kpm)}
         </div>
       </div>
@@ -512,6 +516,7 @@ function renderExternalProfilesSection(player) {
     ["steam", "Steam"],
     ["hellor", "Hellor"],
     ["hll_records", "HLL Records"],
+    ["helo", "Helo"],
   ]
     .map(([key, label]) => [label, player.external_profile_links?.[key]])
     .filter(([, href]) => typeof href === "string" && href.trim());
@@ -534,10 +539,24 @@ function renderExternalProfilesSection(player) {
                 .join("")}
             </div>
           `
-          : "<p>Perfiles externos no disponibles.</p>"
+          : renderExternalProfilesUnavailable(player)
       }
     </article>
   `;
+}
+
+
+function renderExternalProfilesUnavailable(player) {
+  const platform = String(player.platform || "").toLowerCase();
+  const epicId = typeof player.epic_id === "string" ? player.epic_id.trim() : "";
+
+  if (platform === "epic") {
+    return epicId
+      ? `<p>Jugador detectado como Epic. ID capturado: <code>${escapeHtml(epicId)}</code>. Sin enlaces externos compatibles confirmados para este proveedor.</p>`
+      : "<p>Jugador detectado como Epic. Sin enlaces externos compatibles confirmados para este proveedor.</p>";
+  }
+
+  return "<p>Perfiles externos no disponibles.</p>";
 }
 
 function renderPlayerStatChip(label, value) {
