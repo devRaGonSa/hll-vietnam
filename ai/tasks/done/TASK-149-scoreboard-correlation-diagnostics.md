@@ -1,7 +1,7 @@
 ---
 id: TASK-149
 title: Add scoreboard correlation diagnostics
-status: pending
+status: done
 type: backend
 team: Backend Senior
 supporting_teams:
@@ -138,6 +138,42 @@ task.
 Document diagnostic fields, known Foy output behavior, documentation added,
 validation performed, and any follow-up task instead of expanding normal UI
 payloads.
+
+- Added `python -m app.scoreboard_correlation_diagnostics` for one
+  materialized RCON match. JSON output includes match key, server, map,
+  timestamps, duration, score, candidate search window, safe top candidates,
+  selected candidate and `final_reason`.
+- Candidate summaries expose trusted public `match_url` values only. Untrusted
+  URLs are omitted and receive `unsafe-url`; non-scoring candidates report
+  `map-or-window-mismatch` where applicable.
+- Kept diagnostics out of normal detail and frontend payloads. The command
+  reuses the materialized correlation window and safe candidate scoring that
+  relink/detail use.
+- Added `docs/scoreboard-correlation-debugging.md` with the missing-button
+  sequence: candidate backfill, relink scan, diagnostics command and detail
+  endpoint check.
+- Extended focused Foy coverage so diagnostics select external match id
+  `1562115` with the expected Foy candidate summary.
+- Validation:
+  - `python -m compileall backend/app`
+  - `python -m unittest discover -s tests -p "*scoreboard*"` from `backend/`
+    passed with existing SQLite `ResourceWarning` output in the scoreboard
+    regression file.
+  - `python -m app.scoreboard_correlation_diagnostics --server
+    comunidad-hispana-02 --match
+    comunidad-hispana-02:1779310451:1779315851:foywarfare` from `backend/`
+    returned `final_reason: linked` and selected candidate `1562115`.
+  - `python -m app.storage_diagnostics`
+  - `node --check frontend/assets/js/historico-partida.js`
+  - `node --check frontend/assets/js/historico.js`
+  - `node --check frontend/assets/js/historico-recent-live.js`
+  - `powershell -ExecutionPolicy Bypass -File scripts/run-integration-tests.ps1`
+    exited successfully after reporting its platform checks. Its later local
+    route probe printed a SQLite `database disk image is malformed` traceback
+    from `historical_storage`; this task did not alter or repair runtime DB
+    files.
+- Scope review used `git diff --name-only`; diagnostics changes stay in the
+  correlation command/test/doc path and this task file.
 
 ## Change Budget
 

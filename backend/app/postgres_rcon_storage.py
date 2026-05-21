@@ -668,6 +668,61 @@ def upsert_scoreboard_candidates(
     return inserted_or_updated
 
 
+def upsert_scoreboard_candidate(
+    *,
+    server_slug: str,
+    candidate: Mapping[str, object],
+) -> str:
+    """Persist one trusted scoreboard correlation candidate and report the upsert path."""
+    external_match_id = str(candidate.get("external_match_id") or "").strip()
+    match_url = str(candidate.get("match_url") or "").strip()
+    if not external_match_id or not match_url:
+        return "skipped"
+
+    initialize_postgres_rcon_storage()
+    with connect_postgres() as connection:
+        existing = connection.execute(
+            """
+            SELECT id
+            FROM rcon_scoreboard_match_candidates
+            WHERE server_slug = %s AND external_match_id = %s
+            LIMIT 1
+            """,
+            (server_slug, external_match_id),
+        ).fetchone()
+        connection.execute(
+            """
+            INSERT INTO rcon_scoreboard_match_candidates (
+                server_slug, external_match_id, started_at, ended_at, map_name,
+                map_pretty_name, allied_score, axis_score, player_count, match_url
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            ON CONFLICT(server_slug, external_match_id) DO UPDATE SET
+                started_at = EXCLUDED.started_at,
+                ended_at = EXCLUDED.ended_at,
+                map_name = EXCLUDED.map_name,
+                map_pretty_name = EXCLUDED.map_pretty_name,
+                allied_score = EXCLUDED.allied_score,
+                axis_score = EXCLUDED.axis_score,
+                player_count = EXCLUDED.player_count,
+                match_url = EXCLUDED.match_url,
+                updated_at = CURRENT_TIMESTAMP
+            """,
+            (
+                server_slug,
+                external_match_id,
+                candidate.get("started_at"),
+                candidate.get("ended_at"),
+                candidate.get("map_name"),
+                candidate.get("map_pretty_name"),
+                candidate.get("allied_score"),
+                candidate.get("axis_score"),
+                candidate.get("player_count"),
+                match_url,
+            ),
+        )
+    return "updated" if existing else "inserted"
+
+
 def count_migrated_tables() -> dict[str, int]:
     table_names = (
         "rcon_admin_log_events",

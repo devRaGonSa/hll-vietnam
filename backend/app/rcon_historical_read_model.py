@@ -206,10 +206,9 @@ def get_rcon_historical_match_detail(
 
 
 def _build_materialized_recent_item(item: dict[str, object]) -> dict[str, object]:
-    server_slug = item.get("external_server_id") or item.get("target_key")
     timestamps = _build_materialized_timestamp_payload(item)
-    correlation_window = _build_materialized_scoreboard_correlation_window(item, timestamps)
     player_count = _resolve_materialized_player_count(item)
+    scoreboard_correlation = build_materialized_scoreboard_correlation_input(item)
     return {
         "server": {
             "slug": item.get("target_key"),
@@ -247,13 +246,7 @@ def _build_materialized_recent_item(item: dict[str, object]) -> dict[str, object
             else SESSION_RESULT_SOURCE
         ),
         "match_url": resolve_rcon_scoreboard_match_url(
-            server_slug=server_slug,
-            map_name=item.get("map_pretty_name") or item.get("map_name"),
-            started_at=correlation_window["started_at"],
-            ended_at=correlation_window["ended_at"],
-            duration_seconds=_calculate_match_duration_seconds(item),
-            allied_score=item.get("allied_score"),
-            axis_score=item.get("axis_score"),
+            **scoreboard_correlation,
         ),
         "capabilities": describe_rcon_historical_read_model()["capabilities"],
     }
@@ -384,6 +377,23 @@ def _build_materialized_scoreboard_correlation_window(
     return {
         "started_at": started_point.isoformat().replace("+00:00", "Z"),
         "ended_at": closed_point.isoformat().replace("+00:00", "Z"),
+    }
+
+
+def build_materialized_scoreboard_correlation_input(
+    item: dict[str, object],
+) -> dict[str, object]:
+    """Build safe candidate correlation inputs for one materialized RCON match."""
+    timestamps = _build_materialized_timestamp_payload(item)
+    correlation_window = _build_materialized_scoreboard_correlation_window(item, timestamps)
+    return {
+        "server_slug": item.get("external_server_id") or item.get("target_key"),
+        "map_name": item.get("map_pretty_name") or item.get("map_name"),
+        "started_at": correlation_window["started_at"],
+        "ended_at": correlation_window["ended_at"],
+        "duration_seconds": _calculate_match_duration_seconds(item),
+        "allied_score": item.get("allied_score"),
+        "axis_score": item.get("axis_score"),
     }
 
 

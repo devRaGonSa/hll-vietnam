@@ -1,7 +1,7 @@
 ---
 id: TASK-147
 title: Persist public scoreboard list matches as RCON candidates
-status: pending
+status: done
 type: backend
 team: Backend Senior
 supporting_teams:
@@ -156,6 +156,42 @@ outcome.
 
 Document validation, candidate upsert decisions, counters added to the JSON
 report, and any follow-up task instead of widening this task.
+
+- Persisted list payload candidates before detail fetch through a focused
+  PostgreSQL upsert for `rcon_scoreboard_match_candidates`.
+- Built list candidate URLs only from the trusted scoreboard origin catalog and
+  numeric public match IDs. List rows are accepted only when the selected
+  historical server slug/base URL/server number and payload `server_number`
+  agree with the trusted origin.
+- Kept detail fetching for the existing `historical_*` match/player enrichment
+  path. The backfill report now exposes `list_candidates_inserted`,
+  `list_candidates_updated` and `list_candidates_skipped` independently from
+  the detail match counters.
+- Added focused regression coverage for the Foy list row `1562115`; detail
+  fetch failure still leaves the list candidate present, and a second run
+  updates the same candidate key instead of creating a duplicate.
+- Validation:
+  - `python -m compileall backend/app`
+  - `python -m unittest discover -s tests -p "*scoreboard*"` from `backend/`
+    passed with pre-existing SQLite `ResourceWarning` output in the scoreboard
+    regression file.
+  - `python -m app.storage_diagnostics` from `backend/`
+  - `powershell -ExecutionPolicy Bypass -File scripts/run-integration-tests.ps1`
+    passed; the script reports no product integration tests configured for its
+    platform-only scope.
+  - `docker compose --profile advanced up -d --build backend frontend postgres`
+  - `docker compose exec backend python -m app.scoreboard_candidate_backfill
+    --server comunidad-hispana-02 --from 2026-05-20T00:00:00Z --to
+    2026-05-21T23:59:59Z --max-pages 5 --page-size 100`
+    reported list candidate inserts/updates with no errors.
+  - Queried PostgreSQL and verified external match id `1562115` exists for
+    `comunidad-hispana-02` with URL
+    `https://scoreboard.comunidadhll.es:5443/games/1562115`.
+  - Invoked `/api/historical/matches/detail` for
+    `comunidad-hispana-02:1779310451:1779315851:foywarfare`; payload `found`
+    was true and `match_url` used the expected trusted URL.
+- Scope review used `git diff --name-only`; changed implementation files stay
+  within this task plus this workflow task file.
 
 ## Change Budget
 

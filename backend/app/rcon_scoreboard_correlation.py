@@ -30,12 +30,42 @@ def resolve_rcon_scoreboard_match_url(
     db_path: Path | None = None,
 ) -> str | None:
     """Return a trusted scoreboard URL for an RCON window only on strong evidence."""
+    resolution = resolve_rcon_scoreboard_correlation(
+        server_slug=server_slug,
+        map_name=map_name,
+        started_at=started_at,
+        ended_at=ended_at,
+        duration_seconds=duration_seconds,
+        player_count=player_count,
+        peak_players=peak_players,
+        allied_score=allied_score,
+        axis_score=axis_score,
+        db_path=db_path,
+    )
+    match_url = resolution.get("match_url")
+    return str(match_url) if match_url else None
+
+
+def resolve_rcon_scoreboard_correlation(
+    *,
+    server_slug: object,
+    map_name: object,
+    started_at: object,
+    ended_at: object,
+    duration_seconds: object = None,
+    player_count: object = None,
+    peak_players: object = None,
+    allied_score: object = None,
+    axis_score: object = None,
+    db_path: Path | None = None,
+) -> dict[str, object]:
+    """Return a safe candidate selection summary for one RCON match window."""
     normalized_server_slug = str(server_slug or "").strip()
     normalized_map = normalize_map_name(map_name)
     rcon_start = _parse_timestamp(started_at)
     rcon_end = _parse_timestamp(ended_at)
     if not normalized_server_slug or not normalized_map or not rcon_start or not rcon_end:
-        return None
+        return {"match_url": None, "candidate_count": 0, "reason": "invalid-rcon-window"}
     if rcon_end < rcon_start:
         rcon_start, rcon_end = rcon_end, rcon_start
 
@@ -60,15 +90,127 @@ def resolve_rcon_scoreboard_match_url(
         is not None
     ]
     if not scored_candidates:
-        return None
+        return {
+            "match_url": None,
+            "candidate_count": len(candidates),
+            "reason": "no-safe-candidate",
+        }
 
     scored_candidates.sort(key=lambda item: item["score"], reverse=True)
     best = scored_candidates[0]
     if int(best["score"]) < MIN_CONFIDENCE_SCORE:
-        return None
+        return {
+            "match_url": None,
+            "candidate_count": len(candidates),
+            "reason": "low-confidence",
+        }
     if len(scored_candidates) > 1 and int(scored_candidates[1]["score"]) >= int(best["score"]):
-        return None
-    return str(best["match_url"])
+        return {
+            "match_url": None,
+            "candidate_count": len(candidates),
+            "reason": "ambiguous-candidate",
+        }
+    return {
+        "match_url": str(best["match_url"]),
+        "candidate_count": len(candidates),
+        "reason": "linked",
+        "selected_candidate": {
+            "external_match_id": best.get("external_match_id"),
+            "correlation_score": int(best["score"]),
+        },
+    }
+
+
+def diagnose_rcon_scoreboard_correlation(
+    *,
+    server_slug: object,
+    map_name: object,
+    started_at: object,
+    ended_at: object,
+    duration_seconds: object = None,
+    player_count: object = None,
+    peak_players: object = None,
+    allied_score: object = None,
+    axis_score: object = None,
+    db_path: Path | None = None,
+) -> dict[str, object]:
+    """Describe safe candidate scoring for a single RCON correlation window."""
+    normalized_server_slug = str(server_slug or "").strip()
+    normalized_map = normalize_map_name(map_name)
+    rcon_start = _parse_timestamp(started_at)
+    rcon_end = _parse_timestamp(ended_at)
+    if not normalized_server_slug or not normalized_map or not rcon_start or not rcon_end:
+        return {
+            "candidate_search_window": {
+                "started_at": started_at,
+                "ended_at": ended_at,
+                "candidate_limit": MAX_CANDIDATES,
+            },
+            "candidate_count": 0,
+            "top_candidates": [],
+            "selected_candidate": None,
+            "final_reason": "invalid-rcon-window",
+        }
+    if rcon_end < rcon_start:
+        rcon_start, rcon_end = rcon_end, rcon_start
+
+    candidates = _list_persisted_scoreboard_candidates(
+        server_slug=normalized_server_slug,
+        db_path=db_path or get_storage_path(),
+    )
+    resolution = resolve_rcon_scoreboard_correlation(
+        server_slug=server_slug,
+        map_name=map_name,
+        started_at=started_at,
+        ended_at=ended_at,
+        duration_seconds=duration_seconds,
+        player_count=player_count,
+        peak_players=peak_players,
+        allied_score=allied_score,
+        axis_score=axis_score,
+        db_path=db_path,
+    )
+    summaries = [
+        _diagnostic_candidate_summary(
+            candidate,
+            server_slug=normalized_server_slug,
+            normalized_map=normalized_map,
+            rcon_start=rcon_start,
+            rcon_end=rcon_end,
+            duration_seconds=_coerce_int(duration_seconds),
+            player_count=_coerce_int(player_count),
+            peak_players=_coerce_int(peak_players),
+            allied_score=_coerce_int(allied_score),
+            axis_score=_coerce_int(axis_score),
+        )
+        for candidate in candidates
+    ]
+    summaries.sort(
+        key=lambda item: (
+            -int(item["correlation_score"] or -1),
+            str(item.get("external_match_id") or ""),
+        )
+    )
+    selected_id = (
+        resolution.get("selected_candidate", {}).get("external_match_id")
+        if isinstance(resolution.get("selected_candidate"), dict)
+        else None
+    )
+    selected_candidate = next(
+        (item for item in summaries if item.get("external_match_id") == selected_id),
+        None,
+    )
+    return {
+        "candidate_search_window": {
+            "started_at": rcon_start.isoformat().replace("+00:00", "Z"),
+            "ended_at": rcon_end.isoformat().replace("+00:00", "Z"),
+            "candidate_limit": MAX_CANDIDATES,
+        },
+        "candidate_count": len(candidates),
+        "top_candidates": summaries[:5],
+        "selected_candidate": selected_candidate,
+        "final_reason": resolution["reason"],
+    }
 
 
 def _list_persisted_scoreboard_candidates(
@@ -221,8 +363,59 @@ def _score_candidate(
         return None
     return {
         "score": score,
+        "external_match_id": candidate.get("external_match_id"),
         "match_url": candidate["match_url"],
     }
+
+
+def _diagnostic_candidate_summary(
+    candidate: dict[str, object],
+    *,
+    server_slug: str,
+    normalized_map: str,
+    rcon_start: datetime,
+    rcon_end: datetime,
+    duration_seconds: int | None,
+    player_count: int | None,
+    peak_players: int | None,
+    allied_score: int | None,
+    axis_score: int | None,
+) -> dict[str, object]:
+    match_url = resolve_trusted_scoreboard_match_url(candidate.get("match_url"), server_slug)
+    safe_candidate = {**candidate, "match_url": match_url} if match_url else None
+    scored = (
+        _score_candidate(
+            safe_candidate,
+            normalized_map=normalized_map,
+            rcon_start=rcon_start,
+            rcon_end=rcon_end,
+            duration_seconds=duration_seconds,
+            player_count=player_count,
+            peak_players=peak_players,
+            allied_score=allied_score,
+            axis_score=axis_score,
+        )
+        if safe_candidate
+        else None
+    )
+    map_label = candidate.get("map_pretty_name") or candidate.get("map_name")
+    summary = {
+        "external_match_id": candidate.get("external_match_id"),
+        "started_at": candidate.get("started_at"),
+        "ended_at": candidate.get("ended_at"),
+        "map": map_label,
+        "score": {
+            "allied_score": _coerce_int(candidate.get("allied_score")),
+            "axis_score": _coerce_int(candidate.get("axis_score")),
+        },
+        "match_url": match_url,
+        "correlation_score": int(scored["score"]) if scored else None,
+    }
+    if not match_url:
+        summary["rejection_reason"] = "unsafe-url"
+    elif scored is None:
+        summary["rejection_reason"] = "map-or-window-mismatch"
+    return summary
 
 
 def _overlap_seconds(

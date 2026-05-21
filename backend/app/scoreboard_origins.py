@@ -79,3 +79,19 @@ def resolve_trusted_scoreboard_match_url(
     if candidate_parts.params or candidate_parts.query or candidate_parts.fragment:
         return None
     return candidate
+
+
+def build_trusted_scoreboard_match_url(
+    *,
+    server_slug: object,
+    external_match_id: object,
+) -> str | None:
+    """Build a trusted scoreboard match URL from one numeric public match id."""
+    origin = get_trusted_public_scoreboard_origin(server_slug)
+    match_id = str(external_match_id or "").strip()
+    if origin is None or not match_id.isdigit():
+        return None
+    return resolve_trusted_scoreboard_match_url(
+        f"{origin.base_url}/games/{match_id}",
+        origin.slug,
+    )

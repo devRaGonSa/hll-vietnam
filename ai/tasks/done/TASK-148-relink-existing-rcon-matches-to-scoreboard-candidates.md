@@ -1,7 +1,7 @@
 ---
 id: TASK-148
 title: Relink existing RCON matches to scoreboard candidates
-status: pending
+status: done
 type: backend
 team: Backend Senior
 supporting_teams:
@@ -154,6 +154,47 @@ required here. Use TASK-149 for detailed diagnostic output and docs.
 Document correlation scoring choices, time-window derivation, ambiguity
 handling, relink command output, validation, and any follow-up task instead of
 expanding scope.
+
+- Added `python -m app.rcon_scoreboard_relink` to scan already-materialized
+  ended RCON matches against the same trusted candidate resolution used by the
+  detail read model. The command reports `matches_scanned`,
+  `candidates_scanned`, `matches_linked`, `matches_skipped_no_candidate`,
+  `matches_skipped_ambiguous` and `errors` as JSON.
+- Kept URL availability dynamic in the read model instead of adding a second
+  persisted URL column to RCON matches. The new correlation resolution summary
+  preserves the existing deterministic map/time/duration/score scoring path,
+  returns explicit low-confidence/no-candidate/ambiguous reasons, and exposes
+  the selected external candidate only to command callers.
+- Reused the existing materialized window derivation for closed-at plus
+  server-time duration cases so relink and detail payloads evaluate the same
+  effective correlation window.
+- Added a Foy regression for materialized match key
+  `comunidad-hispana-02:1779310451:1779315851:foywarfare`: relink reports a
+  safe link and detail returns
+  `https://scoreboard.comunidadhll.es:5443/games/1562115`.
+- Validation:
+  - `python -m compileall backend/app`
+  - `python -m unittest discover -s tests -p "*scoreboard*"` from `backend/`
+    passed with existing SQLite `ResourceWarning` output in the scoreboard
+    regression file.
+  - `powershell -ExecutionPolicy Bypass -File scripts/run-integration-tests.ps1`
+    passed; the script reports no product integration tests configured for its
+    platform-only scope.
+  - `docker compose --profile advanced up -d --build backend frontend postgres`
+  - Re-ran `app.scoreboard_candidate_backfill` for the requested May 20-21
+    window. Candidate refresh succeeded (`list_candidates_updated: 11`), while
+    detail enrichment returned a partial status because SQLite reported
+    `database is locked` for detail match `1562104`.
+  - `docker compose exec backend python -m app.rcon_scoreboard_relink --server
+    comunidad-hispana-02` reported 19 scanned matches, 13 linked matches, 6
+    no-candidate skips, 0 ambiguous skips and no errors.
+  - HTTP detail verification returned `found: true` and the expected Foy URL.
+    Existing Carentan detail key
+    `comunidad-hispana-02:1779178461:1779183861:carentanwarfare` also kept a
+    trusted `match_url`.
+- Scope review used `git diff --name-only`; relink changes stay within the
+  correlation/read-model command path, focused scoreboard tests and this task
+  file.
 
 ## Change Budget
 
