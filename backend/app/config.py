@@ -41,8 +41,10 @@ DEFAULT_WRITER_LOCK_TIMEOUT_SECONDS = 120.0
 DEFAULT_WRITER_LOCK_POLL_INTERVAL_SECONDS = 1.0
 DEFAULT_ALLOWED_ORIGINS = (
     "null",
+    "http://127.0.0.1",
     "http://127.0.0.1:5500",
     "http://127.0.0.1:8080",
+    "http://localhost",
     "http://localhost:5500",
     "http://localhost:8080",
 )

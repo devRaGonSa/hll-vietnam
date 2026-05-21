@@ -8,6 +8,7 @@ from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 from .config import get_allowed_origins, get_bind_address
+from .payloads import build_error_payload
 from .routes import resolve_get_payload
 
 
@@ -24,7 +25,15 @@ class HealthHandler(BaseHTTPRequestHandler):
         self.end_headers()
 
     def do_GET(self) -> None:  # noqa: N802 - BaseHTTPRequestHandler interface
-        status, payload = resolve_get_payload(self.path)
+        try:
+            status, payload = resolve_get_payload(self.path)
+        except Exception:  # noqa: BLE001 - preserve HTTP/CORS response on route failures
+            self._write_json(
+                HTTPStatus.INTERNAL_SERVER_ERROR,
+                build_error_payload("Unexpected backend error"),
+            )
+            return
+
         if status is None:
             self._write_json(
                 HTTPStatus.NOT_FOUND,
