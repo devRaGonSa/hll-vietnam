@@ -74,8 +74,18 @@ class RconMaterializationPipelineTests(unittest.TestCase):
             self.assertEqual(detail["result_source"], "admin-log-match-ended")
             self.assertEqual(detail["result"]["allied_score"], 5)
             self.assertEqual(detail["timestamp_confidence"], "absolute")
-            self.assertNotIn("player_id", detail["players"][0])
-            self.assertIn("kd_ratio", detail["players"][0])
+            players = {row["player_name"]: row for row in detail["players"]}
+            self.assertNotIn("player_id", players["Alpha"])
+            self.assertIn("kd_ratio", players["Alpha"])
+            self.assertEqual(players["Alpha"]["steam_id_64"], "76561198000000001")
+            self.assertEqual(players["Alpha"]["platform"], "steam")
+            self.assertEqual(
+                players["Alpha"]["external_profile_links"]["hellor"],
+                "https://hellor.pro/player/76561198000000001",
+            )
+            self.assertEqual(players["Charlie"]["platform"], "unknown")
+            self.assertNotIn("steam_id_64", players["Charlie"])
+            self.assertNotIn("external_profile_links", players["Charlie"])
             gc.collect()
 
     def test_match_detail_marks_equal_materialized_timestamps_as_server_time_only(self) -> None:

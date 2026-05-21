@@ -70,6 +70,40 @@ class PersistedScoreboardMatchLinkTests(unittest.TestCase):
             self.assertIsNone(detail["match_url"])
             gc.collect()
 
+    def test_detail_player_links_use_trusted_scoreboard_steam_id(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = Path(tmpdir) / "historical.sqlite3"
+            _persist_match(
+                db_path,
+                server_slug="comunidad-hispana-02",
+                match_id="steam-player-match",
+                player_stats=[
+                    {
+                        "player": "Steam Player",
+                        "steaminfo": {"profile": {"steamid": "76561198000000009"}},
+                        "team": {"side": "allies"},
+                        "kills": 4,
+                        "deaths": 2,
+                    }
+                ],
+            )
+
+            detail = get_historical_match_detail(
+                server_slug="comunidad-hispana-02",
+                match_id="steam-player-match",
+                db_path=db_path,
+            )
+
+            self.assertIsNotNone(detail)
+            player = detail["players"][0]
+            self.assertEqual(player["steam_id_64"], "76561198000000009")
+            self.assertEqual(player["platform"], "steam")
+            self.assertEqual(
+                player["external_profile_links"]["hll_records"],
+                "https://hllrecords.com/profiles/76561198000000009",
+            )
+            gc.collect()
+
     def test_rcon_match_detail_does_not_fabricate_external_scoreboard_url(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             db_path = Path(tmpdir) / "historical.sqlite3"
@@ -176,6 +210,7 @@ def _persist_match(
     map_name: str = "carentan",
     started_at: str = "2026-05-01T10:00:00Z",
     ended_at: str = "2026-05-01T11:20:00Z",
+    player_stats: list[dict[str, object]] | None = None,
 ) -> None:
     upsert_historical_match(
         server_slug=server_slug,
@@ -186,7 +221,7 @@ def _persist_match(
             "end": ended_at,
             "map": {"name": map_name},
             "result": {"allied": 3, "axis": 2},
-            "player_stats": [],
+            "player_stats": player_stats or [],
         },
         db_path=db_path,
     )
