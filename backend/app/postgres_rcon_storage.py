@@ -669,7 +669,6 @@ def upsert_scoreboard_candidates(
 
 
 def count_migrated_tables() -> dict[str, int]:
-    initialize_postgres_rcon_storage()
     table_names = (
         "rcon_admin_log_events",
         "rcon_player_profile_snapshots",
@@ -693,13 +692,11 @@ def count_migrated_tables() -> dict[str, int]:
 
 
 def _fetchall(sql: str, params: Iterable[object] = ()) -> list[dict[str, object]]:
-    initialize_postgres_rcon_storage()
     with connect_postgres() as connection:
         return [dict(row) for row in connection.execute(sql, tuple(params)).fetchall()]
 
 
 def _fetchone(sql: str, params: Iterable[object] = ()) -> dict[str, object] | None:
-    initialize_postgres_rcon_storage()
     with connect_postgres() as connection:
         row = connection.execute(sql, tuple(params)).fetchone()
     return dict(row) if row else None

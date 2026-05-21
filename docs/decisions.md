@@ -205,3 +205,38 @@ La correlacion de URL publica en detalle usa primero candidatos PostgreSQL
 confiables cuando existan y puede seguir leyendo filas `historical_*`
 persistidas en SQLite durante la transicion. El diagnostico operativo se expone
 con `python -m app.storage_diagnostics`.
+
+## Decision 018: PostgreSQL phase 2 for displayed historical data
+
+PostgreSQL pasa a ser la fuente de lectura para los datos historicos visibles:
+
+- fallback publico `historical_*` de partidas, detalle y rankings
+- snapshots historicos precalculados que consume `historico.html`
+- cache live de servidores que consume `/api/servers`
+- ledger player-event usado para reconstruir snapshots visibles
+- tablas RCON de AdminLog, perfiles, ventanas, partidas materializadas,
+  estadisticas y candidatos seguros ya migradas en phase 1
+
+La migracion se ejecuta de forma idempotente con:
+
+```powershell
+cd backend
+python -m app.sqlite_to_postgres_migration
+python -m app.storage_diagnostics
+```
+
+El comando conserva IDs y `external_match_id` del scoreboard publico, claves
+`match_key` materializadas y URLs seguras existentes. Copia SQLite y los JSON
+historicos de `backend/data/snapshots` como fuentes legacy; no los vuelve a
+usar como read model visible cuando `HLL_BACKEND_DATABASE_URL` esta definido.
+Las filas legacy de `comunidad-hispana-03` se omiten en el read model visible
+de esta migracion para no reactivar ese target.
+
+Permanecen fuera de phase 2:
+
+- checkpoints y runs operativos del import publico que no aparecen en frontend
+- Elo/MMR pausado y oculto en la UI actual
+
+`app.storage_diagnostics` muestra conteos PostgreSQL, ultimas partidas
+materializadas, ultimos `match_end`, dominios restantes y un resumen de paridad
+para verificar la migracion antes de retirar fuentes legacy.

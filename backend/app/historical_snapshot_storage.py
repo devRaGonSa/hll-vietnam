@@ -6,7 +6,7 @@ import json
 from datetime import datetime, timezone
 from pathlib import Path
 
-from .config import get_storage_path
+from .config import get_storage_path, use_postgres_rcon_storage
 from .historical_models import HistoricalSnapshotRecord
 from .historical_snapshots import validate_snapshot_identity
 
@@ -46,6 +46,22 @@ def persist_historical_snapshot(
         raise ValueError("server_key is required for historical snapshots.")
 
     validate_snapshot_identity(snapshot_type=snapshot_type, metric=metric)
+    if use_postgres_rcon_storage(explicit_sqlite_path=db_path):
+        from .postgres_display_storage import persist_snapshot_record
+
+        return persist_snapshot_record(
+            {
+                "server_key": normalized_server_key,
+                "snapshot_type": snapshot_type,
+                "metric": metric,
+                "window": window,
+                "generated_at": generated_at or datetime.now(timezone.utc),
+                "source_range_start": source_range_start,
+                "source_range_end": source_range_end,
+                "is_stale": is_stale,
+                "payload": payload,
+            }
+        )
     snapshots_root = initialize_historical_snapshot_storage(db_path=db_path)
     generated_at_value = _as_utc(generated_at or datetime.now(timezone.utc))
     payload_json = json.dumps(payload, ensure_ascii=True)
@@ -148,6 +164,15 @@ def get_historical_snapshot(
 ) -> dict[str, object] | None:
     """Return one persisted snapshot and decoded payload, if present."""
     validate_snapshot_identity(snapshot_type=snapshot_type, metric=metric)
+    if use_postgres_rcon_storage(explicit_sqlite_path=db_path):
+        from .postgres_display_storage import get_snapshot
+
+        return get_snapshot(
+            server_key=server_key,
+            snapshot_type=snapshot_type,
+            metric=metric,
+            window=window,
+        )
     snapshots_root = resolve_historical_snapshot_storage_path(db_path=db_path)
     snapshot_path = _build_snapshot_path(
         snapshots_root=snapshots_root,
