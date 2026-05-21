@@ -1,7 +1,7 @@
 ---
 id: TASK-150
 title: Server card history and current match entrypoints
-status: pending
+status: done
 type: frontend
 team: Frontend Senior
 supporting_teams: []
@@ -164,9 +164,24 @@ historical page can open directly filtered by server.
 
 ## Outcome
 
-Document the validation performed, URL trust boundary decisions, historical
-filter initialization behavior, and any follow-up task instead of expanding
-scope.
+- Replaced the home server-card history URL path with a trusted frontend action
+  catalog for active servers `comunidad-hispana-01` and
+  `comunidad-hispana-02` only. Payload-provided `community_history_url`
+  values and the previous server #03 fallback are no longer used for those
+  card actions.
+- Added the three per-server entrypoints from trusted constants: public
+  scoreboard base URL, internal historical filter URL and internal current
+  match URL.
+- Confirmed `frontend/assets/js/historico.js` already normalizes the supported
+  `?server=` values into the active selector and falls back to `all-servers`
+  for unknown or missing values, so no historical page code change was needed.
+- Added a minimal `partida-actual.html` placeholder with a trusted server label
+  map and safe internal links for TASK-151 to upgrade.
+- Validation: `node --check frontend/assets/js/main.js`.
+- Scope review: `git diff --name-only` and `git status --short` were reviewed
+  for the task move plus frontend files. Browser click verification was not
+  completed because the in-app browser JavaScript control tool was not
+  available after tool discovery in this session.
 
 ## Change Budget
 

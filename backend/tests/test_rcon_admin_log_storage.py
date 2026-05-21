@@ -4,6 +4,7 @@ import sqlite3
 
 from app.rcon_admin_log_storage import (
     initialize_rcon_admin_log_storage,
+    list_current_match_kill_feed,
     list_rcon_admin_log_event_counts,
     persist_rcon_admin_log_entries,
 )
@@ -257,5 +258,54 @@ def test_list_rcon_admin_log_event_counts_groups_by_target_and_event_type(tmp_pa
             "first_server_time": 120,
             "last_server_time": 120,
         },
+    }
+    gc.collect()
+
+
+def test_current_match_kill_feed_prefers_open_match_window_and_normalizes_rows(tmp_path):
+    db_path = tmp_path / "admin_log.sqlite3"
+    persist_rcon_admin_log_entries(
+        target=TARGET,
+        entries=[
+            {
+                "timestamp": "2026-05-19T09:59:00Z",
+                "message": (
+                    "[0:59 min (90)] KILL: Old Killer(Allies/steam-old) -> "
+                    "Old Victim(Axis/steam-victim-old) with M1 GARAND"
+                ),
+            },
+            {
+                "timestamp": "2026-05-19T10:00:00Z",
+                "message": "[1:00 min (100)] MATCH START Mortain Warfare",
+            },
+            {
+                "timestamp": "2026-05-19T10:01:00Z",
+                "message": (
+                    "[2:00 min (120)] KILL: Alpha(Allies/steam-alpha) -> "
+                    "Bravo(Allies/steam-bravo) with GRENADE"
+                ),
+            },
+        ],
+        db_path=db_path,
+    )
+
+    feed = list_current_match_kill_feed(
+        server_key="test-rcon-target",
+        db_path=db_path,
+    )
+
+    assert feed["scope"] == "open-admin-log-match-window"
+    assert feed["confidence"] == "admin-log-boundary"
+    assert len(feed["items"]) == 1
+    assert feed["items"][0] == {
+        "event_id": "rcon-admin-log:test-rcon-target:3",
+        "event_timestamp": "2026-05-19T10:01:00Z",
+        "server_time": 120,
+        "killer_name": "Alpha",
+        "killer_team": "Allies",
+        "victim_name": "Bravo",
+        "victim_team": "Allies",
+        "weapon": "GRENADE",
+        "is_teamkill": True,
     }
     gc.collect()

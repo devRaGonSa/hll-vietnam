@@ -671,6 +671,8 @@ h2 {
   margin: 0;
   width: 100%;
   display: flex;
+  flex-direction: column;
+  gap: 8px;
   justify-content: flex-end;
 }
 

@@ -1,7 +1,7 @@
 ---
 id: TASK-152
 title: Current match live kill feed
-status: pending
+status: done
 type: backend
 team: Backend Senior
 supporting_teams:
@@ -139,8 +139,33 @@ feed based on RCON/AdminLog data.
 
 ## Outcome
 
-Document the feed scope and confidence behavior, event normalization choices,
-polling validation, and any follow-up task instead of expanding scope.
+- Added read-only `GET /api/current-match/kills?server=&limit=` for the active
+  trusted Comunidad Hispana servers. Unsupported servers fail before any
+  AdminLog query is built.
+- Added a safe AdminLog kill feed read that emits normalized fields only:
+  generated `event_id`, event time/server time, killer/victim names and teams,
+  weapon, and computed `is_teamkill`. It does not return raw AdminLog text,
+  player ids or admin-only payload fields.
+- Feed scope prefers `open-admin-log-match-window` with
+  `confidence: "admin-log-boundary"` when the latest AdminLog boundary for the
+  server is an unmatched `match_start`. Otherwise it returns
+  `recent-admin-log-window` with `confidence: "partial"` as the explicit
+  fallback.
+- Extended `partida-actual.js` to poll the feed with the existing 30-second
+  in-flight-protected current-match refresh cycle, dedupe rows by `event_id`,
+  keep newest events ordered by server/event time, render a TK badge for
+  teamkills, and show empty/error states without fake rows.
+- Added a focused AdminLog storage test for open-window filtering and teamkill
+  normalization. The environment does not have `pytest` installed (`pytest`
+  and `python -m pytest` both failed), so the same storage normalization path
+  was verified with a narrow inline Python scenario.
+- Validation: `python -m compileall backend/app`;
+  `node --check frontend/assets/js/partida-actual.js`;
+  `powershell -ExecutionPolicy Bypass -File scripts/run-integration-tests.ps1`;
+  narrow inline route guard check for missing, unknown and invalid-limit feed
+  requests; inline storage normalization check excluding pre-window kills and
+  confirming no raw message field leaks.
+- Scope review: `git diff --name-only` and `git status --short` were reviewed.
 
 ## Change Budget
 

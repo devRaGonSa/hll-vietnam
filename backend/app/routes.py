@@ -7,6 +7,8 @@ from urllib.parse import parse_qs, urlparse
 
 from .payloads import (
     build_community_payload,
+    build_current_match_kill_feed_payload,
+    build_current_match_payload,
     build_discord_payload,
     build_elo_mmr_leaderboard_payload,
     build_elo_mmr_player_payload,
@@ -37,6 +39,7 @@ from .payloads import (
     build_weekly_leaderboard_payload,
     build_weekly_top_kills_payload,
 )
+from .scoreboard_origins import get_trusted_public_scoreboard_origin
 
 
 GET_ROUTES = {
@@ -59,6 +62,28 @@ def resolve_get_payload(path: str) -> tuple[HTTPStatus | None, dict[str, object]
         if limit is None:
             return HTTPStatus.BAD_REQUEST, build_error_payload("Invalid limit parameter")
         return HTTPStatus.OK, build_server_history_payload(limit=limit)
+
+    if parsed.path == "/api/current-match":
+        server_slug = parse_qs(parsed.query).get("server", [None])[0]
+        if not server_slug:
+            return HTTPStatus.BAD_REQUEST, build_error_payload("Server parameter is required")
+        if get_trusted_public_scoreboard_origin(server_slug) is None:
+            return HTTPStatus.NOT_FOUND, build_error_payload("Current match server is not supported")
+        return HTTPStatus.OK, build_current_match_payload(server_slug=server_slug)
+
+    if parsed.path == "/api/current-match/kills":
+        limit = _parse_limit(parsed.query)
+        if limit is None:
+            return HTTPStatus.BAD_REQUEST, build_error_payload("Invalid limit parameter")
+        server_slug = parse_qs(parsed.query).get("server", [None])[0]
+        if not server_slug:
+            return HTTPStatus.BAD_REQUEST, build_error_payload("Server parameter is required")
+        if get_trusted_public_scoreboard_origin(server_slug) is None:
+            return HTTPStatus.NOT_FOUND, build_error_payload("Current match server is not supported")
+        return HTTPStatus.OK, build_current_match_kill_feed_payload(
+            server_slug=server_slug,
+            limit=limit,
+        )
 
     if parsed.path == "/api/historical/weekly-top-kills":
         limit = _parse_limit(parsed.query)

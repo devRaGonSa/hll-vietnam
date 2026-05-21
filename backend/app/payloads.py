@@ -49,6 +49,7 @@ from .historical_storage import (
 )
 from .rcon_historical_read_model import get_rcon_historical_match_detail
 from .normalizers import normalize_map_name
+from .rcon_admin_log_storage import list_current_match_kill_feed
 from .scoreboard_origins import get_trusted_public_scoreboard_origin
 from .storage import list_latest_snapshots, list_server_history, list_snapshot_history
 
@@ -233,6 +234,63 @@ def build_server_detail_history_payload(
             "server_id": server_id,
             "limit": limit,
             "items": items,
+        },
+    }
+
+
+def build_current_match_payload(*, server_slug: str) -> dict[str, object]:
+    """Return the live page projection for one trusted active server."""
+    origin = get_trusted_public_scoreboard_origin(server_slug)
+    if origin is None:
+        raise ValueError("Unsupported current match server.")
+
+    server_payload = build_servers_payload()
+    server_data = server_payload["data"]
+    item = next(
+        (
+            candidate
+            for candidate in server_data.get("items", [])
+            if candidate.get("external_server_id") == origin.slug
+        ),
+        None,
+    )
+    return {
+        "status": "ok",
+        "data": {
+            "found": item is not None,
+            "server_slug": origin.slug,
+            "server_name": item.get("server_name") if item else origin.display_name,
+            "status": item.get("status") if item else "unavailable",
+            "map": item.get("current_map") if item else None,
+            "game_mode": item.get("game_mode") if item else None,
+            "started_at": item.get("started_at") if item else None,
+            "allied_score": item.get("allied_score") if item else None,
+            "axis_score": item.get("axis_score") if item else None,
+            "players": item.get("players") if item else None,
+            "max_players": item.get("max_players") if item else None,
+            "captured_at": item.get("captured_at") if item else None,
+            "updated_at": server_data.get("last_snapshot_at"),
+            "public_scoreboard_url": origin.base_url,
+        },
+    }
+
+
+def build_current_match_kill_feed_payload(
+    *,
+    server_slug: str,
+    limit: int = 30,
+) -> dict[str, object]:
+    """Return normalized AdminLog kill rows for one trusted current-match page."""
+    origin = get_trusted_public_scoreboard_origin(server_slug)
+    if origin is None:
+        raise ValueError("Unsupported current match server.")
+    feed = list_current_match_kill_feed(server_key=origin.slug, limit=limit)
+    return {
+        "status": "ok",
+        "data": {
+            "server_slug": origin.slug,
+            "server_name": origin.display_name,
+            **feed,
         },
     }
 

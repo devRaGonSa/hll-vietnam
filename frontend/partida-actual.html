@@ -1,0 +1,115 @@
+<!DOCTYPE html>
+<html lang="es">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta
+      name="description"
+      content="Vista interna de la partida actual de Comunidad Hispana en HLL Vietnam."
+    />
+    <title>Partida actual - HLL Vietnam</title>
+    <link rel="stylesheet" href="./assets/css/styles.css" />
+    <link rel="stylesheet" href="./assets/css/historico.css" />
+  </head>
+  <body data-backend-base-url="http://127.0.0.1:8000">
+    <div class="page-shell historical-shell">
+      <header class="hero historical-hero">
+        <div class="hero__overlay"></div>
+        <div class="hero__content historical-hero__content">
+          <div class="historical-hero__topline">
+            <a class="secondary-button secondary-button--ghost" href="./index.html">
+              VOLVER INICIO
+            </a>
+            <p class="eyebrow">Partida en vivo</p>
+          </div>
+          <div class="historical-hero__layout">
+            <div class="logo-frame historical-logo-frame">
+              <img
+                src="./assets/img/logo.png"
+                alt="Logo oficial de la comunidad HLL Vietnam"
+                class="logo-frame__image"
+                width="1024"
+                height="1044"
+                decoding="async"
+              />
+            </div>
+            <div class="historical-hero__copy">
+              <div>
+                <h1 class="historical-hero__title" id="current-match-title">
+                  Partida actual
+                </h1>
+                <p class="hero__text historical-hero__text" id="current-match-summary">
+                  Cargando estado del servidor.
+                </p>
+              </div>
+              <div class="hero__actions">
+                <a class="secondary-button" id="current-match-history" href="./historico.html">
+                  Abrir historico
+                </a>
+                <a
+                  class="secondary-button"
+                  id="current-match-scoreboard"
+                  href="./index.html"
+                  target="_blank"
+                  rel="noreferrer"
+                  hidden
+                >
+                  Ver scoreboard publico
+                </a>
+              </div>
+            </div>
+          </div>
+        </div>
+      </header>
+
+      <main class="content historical-content">
+        <section class="panel historical-panel" aria-labelledby="current-match-panel-title">
+          <div class="panel__shell">
+            <div class="panel__header historical-panel__header">
+              <div>
+                <p class="eyebrow eyebrow--section">Estado en vivo</p>
+                <h2 id="current-match-panel-title">Marcador en curso</h2>
+                <p class="historical-panel__note" id="current-match-note">
+                  Leyendo el ultimo snapshot disponible.
+                </p>
+              </div>
+            </div>
+            <p class="historical-state" id="current-match-state" aria-live="polite">
+              Cargando partida actual...
+            </p>
+            <div class="historical-summary-grid" id="current-match-grid" hidden></div>
+          </div>
+        </section>
+
+        <section class="panel historical-panel" aria-labelledby="current-match-feed-title">
+          <div class="panel__shell">
+            <div class="panel__header historical-panel__header">
+              <div>
+                <p class="eyebrow eyebrow--section">Combate</p>
+                <h2 id="current-match-feed-title">Feed de combate</h2>
+                <p class="historical-panel__note">
+                  Los eventos de bajas en vivo apareceran aqui cuando se habiliten.
+                </p>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section class="panel historical-panel" aria-labelledby="current-match-players-title">
+          <div class="panel__shell">
+            <div class="panel__header historical-panel__header">
+              <div>
+                <p class="eyebrow eyebrow--section">Jugadores</p>
+                <h2 id="current-match-players-title">Estadisticas en vivo</h2>
+                <p class="historical-panel__note">
+                  Las estadisticas en vivo apareceran cuando haya datos suficientes.
+                </p>
+              </div>
+            </div>
+          </div>
+        </section>
+      </main>
+    </div>
+    <script src="./assets/js/partida-actual.js"></script>
+  </body>
+</html>

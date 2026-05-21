@@ -6,6 +6,7 @@ import json
 import re
 import sqlite3
 from collections.abc import Mapping
+from contextlib import closing
 from pathlib import Path
 
 from .config import get_storage_path, use_postgres_rcon_storage
@@ -328,6 +329,80 @@ def list_rcon_admin_log_event_counts(*, db_path: Path | None = None) -> list[dic
     return [dict(row) for row in rows]
 
 
+def list_current_match_kill_feed(
+    *,
+    server_key: str,
+    limit: int = 30,
+    db_path: Path | None = None,
+) -> dict[str, object]:
+    """Return safe recent kill rows for one AdminLog server window."""
+    resolved_path = initialize_rcon_admin_log_storage(db_path=db_path)
+    if use_postgres_rcon_storage(explicit_sqlite_path=db_path):
+        from .postgres_rcon_storage import connect_postgres_compat
+
+        connection_scope = connect_postgres_compat()
+    else:
+        connection_scope = closing(sqlite3.connect(resolved_path))
+
+    with connection_scope as connection:
+        if isinstance(connection, sqlite3.Connection):
+            connection.row_factory = sqlite3.Row
+        boundary = connection.execute(
+            """
+            SELECT event_type, server_time
+            FROM rcon_admin_log_events
+            WHERE (target_key = ? OR external_server_id = ?)
+              AND event_type IN ('match_start', 'match_end')
+              AND server_time IS NOT NULL
+            ORDER BY server_time DESC, id DESC
+            LIMIT 1
+            """,
+            (server_key, server_key),
+        ).fetchone()
+        open_start_time = (
+            boundary["server_time"]
+            if boundary is not None and boundary["event_type"] == "match_start"
+            else None
+        )
+        if open_start_time is None:
+            rows = connection.execute(
+                """
+                SELECT id, target_key, external_server_id, event_timestamp, server_time,
+                       parsed_payload_json
+                FROM rcon_admin_log_events
+                WHERE (target_key = ? OR external_server_id = ?)
+                  AND event_type = 'kill'
+                ORDER BY server_time DESC, id DESC
+                LIMIT ?
+                """,
+                (server_key, server_key, limit),
+            ).fetchall()
+            scope = "recent-admin-log-window"
+            confidence = "partial"
+        else:
+            rows = connection.execute(
+                """
+                SELECT id, target_key, external_server_id, event_timestamp, server_time,
+                       parsed_payload_json
+                FROM rcon_admin_log_events
+                WHERE (target_key = ? OR external_server_id = ?)
+                  AND event_type = 'kill'
+                  AND server_time >= ?
+                ORDER BY server_time DESC, id DESC
+                LIMIT ?
+                """,
+                (server_key, server_key, open_start_time, limit),
+            ).fetchall()
+            scope = "open-admin-log-match-window"
+            confidence = "admin-log-boundary"
+
+    return {
+        "scope": scope,
+        "confidence": confidence,
+        "items": [_serialize_kill_feed_row(row) for row in rows],
+    }
+
+
 def get_latest_rcon_player_profile_summaries(
     *,
     target_key: str,
@@ -420,6 +495,33 @@ def _json_mapping(raw_value: object) -> dict[str, object]:
     except json.JSONDecodeError:
         return {}
     return parsed if isinstance(parsed, dict) else {}
+
+
+def _serialize_kill_feed_row(row: Mapping[str, object]) -> dict[str, object]:
+    payload = _json_mapping(row["parsed_payload_json"])
+    target_key = str(row["external_server_id"] or row["target_key"] or "unknown")
+    killer_team = _safe_event_field(payload.get("killer_team"))
+    victim_team = _safe_event_field(payload.get("victim_team"))
+    return {
+        "event_id": f"rcon-admin-log:{target_key}:{row['id']}",
+        "event_timestamp": row["event_timestamp"],
+        "server_time": row["server_time"],
+        "killer_name": _safe_event_field(payload.get("killer_name")),
+        "killer_team": killer_team,
+        "victim_name": _safe_event_field(payload.get("victim_name")),
+        "victim_team": victim_team,
+        "weapon": _safe_event_field(payload.get("weapon")),
+        "is_teamkill": bool(
+            killer_team
+            and killer_team != "None"
+            and killer_team == victim_team
+        ),
+    }
+
+
+def _safe_event_field(value: object) -> str | None:
+    normalized = str(value or "").strip()
+    return normalized or None
 
 
 def _persist_rcon_admin_log_entries_postgres(

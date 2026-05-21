@@ -1,9 +1,16 @@
 // Progressive enhancement for local frontend-backend checks.
 const DEFAULT_SERVER_POLL_INTERVAL_MS = 300 * 1000;
-const SERVER_HISTORY_URLS_FALLBACK = Object.freeze({
-  "comunidad-hispana-01": "https://scoreboard.comunidadhll.es/games",
-  "comunidad-hispana-02": "https://scoreboard.comunidadhll.es:5443/games",
-  "comunidad-hispana-03": "https://scoreboard.comunidadhll.es:3443/games",
+const TRUSTED_SERVER_ACTIONS = Object.freeze({
+  "comunidad-hispana-01": Object.freeze({
+    publicScoreboardUrl: "https://scoreboard.comunidadhll.es",
+    historicalUrl: "./historico.html?server=comunidad-hispana-01",
+    currentMatchUrl: "./partida-actual.html?server=comunidad-hispana-01",
+  }),
+  "comunidad-hispana-02": Object.freeze({
+    publicScoreboardUrl: "https://scoreboard.comunidadhll.es:5443",
+    historicalUrl: "./historico.html?server=comunidad-hispana-02",
+    currentMatchUrl: "./partida-actual.html?server=comunidad-hispana-02",
+  }),
 });
 const COMMUNITY_CLANS = Object.freeze([
   {
@@ -328,22 +335,8 @@ function normalizeServerRegion(value) {
 }
 
 function renderServerAction(server) {
-  const historyState = getServerHistoryState(server);
-  if (!historyState.available) {
-    return `
-      <div class="server-card__actions">
-        <span
-          class="server-action-link server-action-link--disabled"
-          aria-disabled="true"
-        >
-          Historico no disponible
-        </span>
-      </div>
-    `;
-  }
-
-  const historyUrl = historyState.url;
-  if (!historyUrl) {
+  const actions = getTrustedServerActions(server);
+  if (!actions) {
     return "";
   }
 
@@ -351,11 +344,17 @@ function renderServerAction(server) {
     <div class="server-card__actions">
       <a
         class="server-action-link"
-        href="${escapeHtml(historyUrl)}"
+        href="${escapeHtml(actions.publicScoreboardUrl)}"
         target="_blank"
         rel="noreferrer"
       >
-        Historico
+        Scoreboard publico
+      </a>
+      <a class="server-action-link" href="${escapeHtml(actions.historicalUrl)}">
+        Nuestro historico
+      </a>
+      <a class="server-action-link" href="${escapeHtml(actions.currentMatchUrl)}">
+        Partida actual
       </a>
     </div>
   `;
@@ -458,28 +457,12 @@ function renderQuickFacts(items) {
   `;
 }
 
-function getServerHistoryUrl(server) {
-  if (typeof server?.community_history_url === "string" && server.community_history_url.trim()) {
-    return server.community_history_url.trim();
-  }
-
+function getTrustedServerActions(server) {
   const externalServerId =
     typeof server?.external_server_id === "string"
       ? server.external_server_id.trim()
       : "";
-  if (!externalServerId) {
-    return "";
-  }
-
-  return SERVER_HISTORY_URLS_FALLBACK[externalServerId] || "";
-}
-
-function getServerHistoryState(server) {
-  const historyUrl = getServerHistoryUrl(server);
-  return {
-    available: Boolean(historyUrl),
-    url: historyUrl,
-  };
+  return TRUSTED_SERVER_ACTIONS[externalServerId] || null;
 }
 
 function selectPrimaryServerItems(items) {

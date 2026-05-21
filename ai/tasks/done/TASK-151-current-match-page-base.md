@@ -1,7 +1,7 @@
 ---
 id: TASK-151
 title: Current match page base
-status: pending
+status: done
 type: frontend
 team: Frontend Senior
 supporting_teams:
@@ -159,8 +159,29 @@ live server/match state without pretending the match is closed.
 
 ## Outcome
 
-Document the live-state source, polling behavior, validation performed, and any
-follow-up task instead of expanding scope.
+- Upgraded `partida-actual.html` into the first internal live match page and
+  kept it aligned with the existing historical shell/styles.
+- Added frontend polling every 30 seconds with an in-flight guard. The page
+  rejects unknown `?server=` values before building any external link, and the
+  public scoreboard button is populated only from the trusted backend
+  projection.
+- Added read-only `GET /api/current-match?server=`. It supports only active
+  trusted scoreboard origins and projects the existing live server snapshot
+  fields into the current-match shape. The current live snapshot persistence
+  exposes status, map, population and capture time; score, game mode and match
+  start fields remain `null`/unavailable when the snapshot source does not
+  provide them.
+- Kept the combat feed and live player statistics as honest empty placeholders
+  for the follow-up tasks rather than fabricating closed-match or kill data.
+- Validation: `python -m compileall backend/app`;
+  `node --check frontend/assets/js/partida-actual.js`;
+  `powershell -ExecutionPolicy Bypass -File scripts/run-integration-tests.ps1`;
+  narrow inline route guard check for missing/unknown current-match server
+  values; narrow inline payload projection check using a controlled live
+  snapshot document.
+- Scope review: `git diff --name-only` and `git status --short` were reviewed.
+  No focused product route test file exists in `backend/tests` for this API
+  bootstrap layer yet.
 
 ## Change Budget
 
