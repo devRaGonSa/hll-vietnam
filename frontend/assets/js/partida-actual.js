@@ -80,7 +80,8 @@ async function loadKillFeed({ backendBaseUrl, serverSlug, nodes, killFeedState }
 }
 
 function renderCurrentMatch(data, nodes) {
-  const serverName = data.server_name || data.server_slug || "Servidor no disponible";
+  const rawServerName = data.server_name || data.server_slug || "Servidor no disponible";
+  const serverName = formatServerDisplayName(data, rawServerName);
   const mapName = data.map_pretty_name || data.map || "Mapa no disponible";
   const scoreboardUrl = resolveTrustedScoreboardUrl(data);
   nodes.title.textContent = mapName;
@@ -347,6 +348,21 @@ function resolveMapImagePath(data, mapName) {
 function resolveTrustedScoreboardUrl(data) {
   const trustedUrl = CURRENT_MATCH_SCOREBOARDS[data.server_slug];
   return data.public_scoreboard_url === trustedUrl ? trustedUrl : "";
+}
+
+function formatServerDisplayName(data, fallbackName) {
+  const trustedName = CURRENT_MATCH_SERVERS[data.server_slug];
+  if (trustedName) {
+    return trustedName;
+  }
+
+  const normalized = String(fallbackName || "").trim();
+  const serverNumber = normalized.match(/^#0?([1-9])\b/);
+  if (serverNumber) {
+    return `Comunidad Hispana #${serverNumber[1].padStart(2, "0")}`;
+  }
+
+  return normalized || "Servidor no disponible";
 }
 
 function hasKnownScore(data) {
