@@ -50,7 +50,7 @@ from .historical_storage import (
 from .rcon_historical_read_model import get_rcon_historical_match_detail
 from .normalizers import normalize_map_name
 from .rcon_client import load_rcon_targets, query_live_server_sample
-from .rcon_admin_log_storage import list_current_match_kill_feed
+from .rcon_admin_log_storage import list_current_match_kill_feed, list_current_match_player_stats
 from .scoreboard_origins import get_trusted_public_scoreboard_origin
 from .storage import list_latest_snapshots, list_server_history, list_snapshot_history
 
@@ -366,6 +366,22 @@ def build_current_match_kill_feed_payload(
             "server_slug": origin.slug,
             "server_name": origin.display_name,
             **feed,
+        },
+    }
+
+
+def build_current_match_player_stats_payload(*, server_slug: str) -> dict[str, object]:
+    """Return current player stats only when safe AdminLog evidence exists."""
+    origin = get_trusted_public_scoreboard_origin(server_slug)
+    if origin is None:
+        raise ValueError("Unsupported current match server.")
+    stats = list_current_match_player_stats(server_key=origin.slug)
+    return {
+        "status": "ok",
+        "data": {
+            "server_slug": origin.slug,
+            "server_name": origin.display_name,
+            **stats,
         },
     }
 

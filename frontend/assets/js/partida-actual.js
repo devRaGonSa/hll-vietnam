@@ -7,6 +7,13 @@ const CURRENT_MATCH_SCOREBOARDS = Object.freeze({
   "comunidad-hispana-01": "https://scoreboard.comunidadhll.es",
   "comunidad-hispana-02": "https://scoreboard.comunidadhll.es:5443",
 });
+const CURRENT_MATCH_KILL_FEED_LIMIT = 15;
+const CURRENT_MATCH_WEAPONS = Object.freeze({
+  "m1 garand": { label: "M1 Garand", glyph: "M1" },
+  mp40: { label: "MP40", glyph: "MP" },
+  "m1a1 thompson": { label: "M1A1 Thompson", glyph: "TH" },
+  unknown: { label: "Arma desconocida", glyph: "?" },
+});
 
 document.addEventListener("DOMContentLoaded", () => {
   const params = new URLSearchParams(window.location.search);
@@ -20,6 +27,7 @@ document.addEventListener("DOMContentLoaded", () => {
     state: document.getElementById("current-match-state"),
     grid: document.getElementById("current-match-grid"),
     feedTitle: document.getElementById("current-match-feed-title"),
+    playersTitle: document.getElementById("current-match-players-title"),
     mapHero: document.getElementById("current-match-map-hero"),
     mapImage: document.getElementById("current-match-map-image"),
     mapPlaceholder: document.getElementById("current-match-map-placeholder"),
@@ -34,6 +42,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
   nodes.history.href = `./historico.html?server=${encodeURIComponent(serverSlug)}`;
   const killFeedState = initializeKillFeed(nodes);
+  const playerStatsState = initializePlayerStats(nodes);
   let refreshInFlight = false;
   const refresh = async () => {
     if (refreshInFlight) {
@@ -44,6 +53,7 @@ document.addEventListener("DOMContentLoaded", () => {
       await Promise.allSettled([
         loadCurrentMatch({ backendBaseUrl, serverSlug, nodes }),
         loadKillFeed({ backendBaseUrl, serverSlug, nodes, killFeedState }),
+        loadPlayerStats({ backendBaseUrl, serverSlug, nodes, playerStatsState }),
       ]);
     } finally {
       refreshInFlight = false;
@@ -71,11 +81,22 @@ async function loadCurrentMatch({ backendBaseUrl, serverSlug, nodes }) {
 async function loadKillFeed({ backendBaseUrl, serverSlug, nodes, killFeedState }) {
   try {
     const payload = await fetchJson(
-      `${backendBaseUrl}/api/current-match/kills?server=${encodeURIComponent(serverSlug)}&limit=30`,
+      `${backendBaseUrl}/api/current-match/kills?server=${encodeURIComponent(serverSlug)}&limit=${CURRENT_MATCH_KILL_FEED_LIMIT}`,
     );
     renderKillFeed(payload?.data || {}, nodes, killFeedState);
   } catch (error) {
     setState(nodes.feedState, "No se pudo actualizar el feed de combate.", true);
+  }
+}
+
+async function loadPlayerStats({ backendBaseUrl, serverSlug, nodes, playerStatsState }) {
+  try {
+    const payload = await fetchJson(
+      `${backendBaseUrl}/api/current-match/players?server=${encodeURIComponent(serverSlug)}`,
+    );
+    renderPlayerStats(payload?.data || {}, nodes, playerStatsState);
+  } catch (error) {
+    setState(nodes.playerStatsState, "No se pudieron actualizar las estadisticas en vivo.", true);
   }
 }
 
@@ -117,7 +138,11 @@ function initializeKillFeed(nodes) {
         <p class="historical-state" id="current-match-feed-state" aria-live="polite">
           Cargando feed de combate...
         </p>
-        <div class="historical-match-list" id="current-match-feed-list"></div>
+        <section
+          class="current-match-killfeed"
+          id="current-match-feed-list"
+          aria-label="Bajas recientes en la partida actual"
+        ></section>
       `,
     );
   }
@@ -125,6 +150,27 @@ function initializeKillFeed(nodes) {
   nodes.feedList = document.getElementById("current-match-feed-list");
   return {
     byId: new Map(),
+    visibleSignature: "",
+  };
+}
+
+function initializePlayerStats(nodes) {
+  const shell = nodes.playersTitle?.closest(".panel__shell");
+  if (shell) {
+    shell.insertAdjacentHTML(
+      "beforeend",
+      `
+        <p class="historical-state" id="current-match-player-stats-state" aria-live="polite">
+          Cargando estadisticas en vivo...
+        </p>
+        <div class="historical-table-shell" id="current-match-player-stats-shell" hidden></div>
+      `,
+    );
+  }
+  nodes.playerStatsState = document.getElementById("current-match-player-stats-state");
+  nodes.playerStatsShell = document.getElementById("current-match-player-stats-shell");
+  return {
+    visibleSignature: "",
   };
 }
 
@@ -138,13 +184,21 @@ function renderKillFeed(data, nodes, state) {
       state.byId.set(event.event_id, event);
     }
   });
-  const events = [...state.byId.values()].sort(compareKillFeedEvents).slice(0, 30);
+  const events = [...state.byId.values()]
+    .sort(compareKillFeedEvents)
+    .slice(0, CURRENT_MATCH_KILL_FEED_LIMIT);
   if (events.length === 0) {
     nodes.feedList.innerHTML = "";
-    setState(nodes.feedState, "Todavia no se han detectado bajas en esta partida.");
+    state.visibleSignature = "";
+    setState(nodes.feedState, formatKillFeedCoverage(data.scope));
     return;
   }
-  nodes.feedList.innerHTML = events.map(renderKillFeedRow).join("");
+  const visualEvents = [...events].reverse();
+  const visibleSignature = visualEvents.map((event) => event.event_id).join("|");
+  if (visibleSignature !== state.visibleSignature) {
+    nodes.feedList.innerHTML = visualEvents.map(renderKillFeedRow).join("");
+    state.visibleSignature = visibleSignature;
+  }
   nodes.feedState.textContent = formatKillFeedCoverage(data.scope);
   nodes.feedState.classList.remove("historical-state--error");
 }
@@ -159,35 +213,124 @@ function compareKillFeedEvents(left, right) {
 }
 
 function renderKillFeedRow(event) {
+  const weapon = resolveKillFeedWeapon(event.weapon);
   const teamkillBadge = event.is_teamkill
-    ? '<span class="status-chip status-chip--fallback">TK</span>'
+    ? '<span class="current-match-killfeed__teamkill">TK</span>'
     : "";
-  const eventTime = formatEventTime(event);
   return `
-    <article class="historical-match-card">
-      <div class="historical-match-card__top">
-        <div class="historical-match-card__title">
-          <p>${escapeHtml(eventTime)}</p>
-          <strong>${escapeHtml(event.killer_name || "Jugador no disponible")}</strong>
-        </div>
-        ${teamkillBadge}
-      </div>
-      <p>
-        ${escapeHtml(event.weapon || "Arma no disponible")}
-        -> ${escapeHtml(event.victim_name || "Objetivo no disponible")}
-      </p>
+    <article class="current-match-killfeed__row${event.is_teamkill ? " is-teamkill" : ""}">
+      <strong class="current-match-killfeed__player current-match-killfeed__player--killer">
+        ${escapeHtml(event.killer_name || "Jugador no disponible")}
+      </strong>
+      <span
+        class="current-match-killfeed__weapon"
+        title="${escapeHtml(weapon.label)}"
+        aria-label="${escapeHtml(weapon.label)}"
+      >
+        <span aria-hidden="true">${escapeHtml(weapon.glyph)}</span>
+        <em>${escapeHtml(weapon.label)}</em>
+      </span>
+      <span class="current-match-killfeed__player current-match-killfeed__player--victim">
+        ${escapeHtml(event.victim_name || "Objetivo no disponible")}
+      </span>
+      ${teamkillBadge}
     </article>
   `;
 }
 
-function formatEventTime(event) {
-  const timestamp = formatTimestamp(event.event_timestamp);
-  if (timestamp !== "No disponible") {
-    return timestamp;
+function resolveKillFeedWeapon(value) {
+  const key = normalizeLookupText(value);
+  return CURRENT_MATCH_WEAPONS[key] || {
+    label: String(value || CURRENT_MATCH_WEAPONS.unknown.label),
+    glyph: CURRENT_MATCH_WEAPONS.unknown.glyph,
+  };
+}
+
+function renderPlayerStats(data, nodes, state) {
+  const items = Array.isArray(data.items) ? sortPlayerStats(data.items) : [];
+  if (items.length === 0) {
+    state.visibleSignature = "";
+    nodes.playerStatsShell.innerHTML = "";
+    nodes.playerStatsShell.hidden = true;
+    setState(
+      nodes.playerStatsState,
+      "Todavia no hay estadisticas fiables de jugadores para esta partida.",
+    );
+    return;
   }
-  return Number.isFinite(Number(event.server_time))
-    ? `Tiempo servidor ${Number(event.server_time)}`
-    : "Tiempo no disponible";
+  const signature = items
+    .map((item) =>
+      [
+        item.player_name,
+        item.kills,
+        item.deaths,
+        item.teamkills,
+        item.deaths_by_teamkill,
+        item.favorite_weapon,
+        item.last_seen_at,
+      ].join(":"),
+    )
+    .join("|");
+  if (signature !== state.visibleSignature) {
+    nodes.playerStatsShell.innerHTML = renderPlayerStatsTable(items);
+    state.visibleSignature = signature;
+  }
+  nodes.playerStatsShell.hidden = false;
+  setState(nodes.playerStatsState, "Estadisticas parciales derivadas de eventos recientes.");
+}
+
+function sortPlayerStats(items) {
+  return [...items].sort(
+    (left, right) =>
+      toStatNumber(right.kills) - toStatNumber(left.kills) ||
+      toStatNumber(left.deaths) - toStatNumber(right.deaths) ||
+      String(left.player_name || "").localeCompare(String(right.player_name || ""), "es", {
+        sensitivity: "base",
+      }),
+  );
+}
+
+function renderPlayerStatsTable(items) {
+  return `
+    <table class="historical-table historical-table--players">
+      <thead>
+        <tr>
+          <th>Jugador</th>
+          <th>Equipo</th>
+          <th>Bajas</th>
+          <th>Muertes</th>
+          <th>TK</th>
+          <th>Muertes TK</th>
+          <th>Arma frecuente</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${items.map(renderPlayerStatsRow).join("")}
+      </tbody>
+    </table>
+  `;
+}
+
+function renderPlayerStatsRow(item) {
+  return `
+    <tr>
+      <td>${escapeHtml(item.player_name || "Jugador no disponible")}</td>
+      <td>${escapeHtml(item.team || "No disponible")}</td>
+      <td>${escapeHtml(formatStatNumber(item.kills))}</td>
+      <td>${escapeHtml(formatStatNumber(item.deaths))}</td>
+      <td>${escapeHtml(formatStatNumber(item.teamkills))}</td>
+      <td>${escapeHtml(formatStatNumber(item.deaths_by_teamkill))}</td>
+      <td>${escapeHtml(item.favorite_weapon || "No disponible")}</td>
+    </tr>
+  `;
+}
+
+function toStatNumber(value) {
+  return Number.isFinite(Number(value)) ? Number(value) : 0;
+}
+
+function formatStatNumber(value) {
+  return Number.isFinite(Number(value)) ? String(Number(value)) : "0";
 }
 
 function renderCompactMeta(label, value) {
@@ -409,6 +552,9 @@ function formatKillFeedCoverage(scope) {
   }
   if (scope === "recent-admin-log-window") {
     return "Cobertura parcial desde AdminLog reciente.";
+  }
+  if (scope === "no-current-match-events") {
+    return "Sin bajas recientes asociadas a la partida actual.";
   }
   return "Todavia no se han detectado bajas en esta partida.";
 }

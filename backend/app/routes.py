@@ -8,6 +8,7 @@ from urllib.parse import parse_qs, urlparse
 from .payloads import (
     build_community_payload,
     build_current_match_kill_feed_payload,
+    build_current_match_player_stats_payload,
     build_current_match_payload,
     build_discord_payload,
     build_elo_mmr_leaderboard_payload,
@@ -84,6 +85,14 @@ def resolve_get_payload(path: str) -> tuple[HTTPStatus | None, dict[str, object]
             server_slug=server_slug,
             limit=limit,
         )
+
+    if parsed.path == "/api/current-match/players":
+        server_slug = parse_qs(parsed.query).get("server", [None])[0]
+        if not server_slug:
+            return HTTPStatus.BAD_REQUEST, build_error_payload("Server parameter is required")
+        if get_trusted_public_scoreboard_origin(server_slug) is None:
+            return HTTPStatus.NOT_FOUND, build_error_payload("Current match server is not supported")
+        return HTTPStatus.OK, build_current_match_player_stats_payload(server_slug=server_slug)
 
     if parsed.path == "/api/historical/weekly-top-kills":
         limit = _parse_limit(parsed.query)

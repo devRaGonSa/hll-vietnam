@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import re
 import sqlite3
+from collections import Counter
 from collections.abc import Mapping
 from contextlib import closing
 from datetime import datetime, timedelta, timezone
@@ -422,6 +423,80 @@ def list_current_match_kill_feed(
     }
 
 
+def list_current_match_player_stats(
+    *,
+    server_key: str,
+    db_path: Path | None = None,
+    now: datetime | None = None,
+) -> dict[str, object]:
+    """Return partial current player stats derived from safe AdminLog kill rows."""
+    feed = list_current_match_kill_feed(
+        server_key=server_key,
+        limit=100,
+        db_path=db_path,
+        now=now,
+    )
+    players: dict[str, dict[str, object]] = {}
+    weapon_counts: dict[str, Counter[str]] = {}
+    for item in feed["items"]:
+        if not isinstance(item, Mapping):
+            continue
+        killer = _ensure_current_match_player(
+            players,
+            item.get("killer_name"),
+            team=item.get("killer_team"),
+            event_timestamp=item.get("event_timestamp"),
+        )
+        victim = _ensure_current_match_player(
+            players,
+            item.get("victim_name"),
+            team=item.get("victim_team"),
+            event_timestamp=item.get("event_timestamp"),
+        )
+        if killer is not None:
+            weapon = _safe_event_field(item.get("weapon")) or "UNKNOWN"
+            weapon_counts.setdefault(str(killer["player_name"]), Counter())[weapon] += 1
+            if item.get("is_teamkill"):
+                killer["teamkills"] = int(killer["teamkills"]) + 1
+            else:
+                killer["kills"] = int(killer["kills"]) + 1
+        if victim is not None:
+            victim["deaths"] = int(victim["deaths"]) + 1
+            if item.get("is_teamkill"):
+                victim["deaths_by_teamkill"] = int(victim["deaths_by_teamkill"]) + 1
+
+    items = []
+    for player in players.values():
+        items.append(
+            {
+                **player,
+                "favorite_weapon": _favorite_weapon_for_player(
+                    weapon_counts.get(str(player["player_name"]))
+                ),
+                "source": "rcon-admin-log-kill-events",
+                "confidence": "event-derived-partial",
+            }
+        )
+    items.sort(
+        key=lambda player: (
+            -int(player["kills"]),
+            int(player["deaths"]),
+            str(player["player_name"]).casefold(),
+        )
+    )
+    return {
+        "scope": feed["scope"],
+        "confidence": "event-derived-partial" if items else feed["confidence"],
+        "source": "rcon-admin-log-kill-events",
+        "updated_at": max(
+            (str(item["last_seen_at"]) for item in items if item.get("last_seen_at")),
+            default=None,
+        ),
+        "stale_events_filtered": feed["stale_events_filtered"],
+        "items": items,
+    }
+
+
 def get_latest_rcon_player_profile_summaries(
     *,
     target_key: str,
@@ -541,6 +616,45 @@ def _serialize_kill_feed_row(row: Mapping[str, object]) -> dict[str, object]:
 def _safe_event_field(value: object) -> str | None:
     normalized = str(value or "").strip()
     return normalized or None
+
+
+def _ensure_current_match_player(
+    players: dict[str, dict[str, object]],
+    player_name: object,
+    *,
+    team: object,
+    event_timestamp: object,
+) -> dict[str, object] | None:
+    safe_name = _safe_event_field(player_name)
+    if safe_name is None:
+        return None
+    player = players.setdefault(
+        safe_name,
+        {
+            "player_name": safe_name,
+            "team": None,
+            "kills": 0,
+            "deaths": 0,
+            "teamkills": 0,
+            "deaths_by_teamkill": 0,
+            "last_seen_at": None,
+        },
+    )
+    safe_team = _safe_event_field(team)
+    if safe_team:
+        player["team"] = safe_team
+    safe_timestamp = _safe_event_field(event_timestamp)
+    if safe_timestamp and (
+        player["last_seen_at"] is None or safe_timestamp > str(player["last_seen_at"])
+    ):
+        player["last_seen_at"] = safe_timestamp
+    return player
+
+
+def _favorite_weapon_for_player(weapons: Counter[str] | None) -> str | None:
+    if not weapons:
+        return None
+    return min(weapons.items(), key=lambda item: (-item[1], item[0]))[0]
 
 
 def _row_is_current_match_fallback_fresh(
