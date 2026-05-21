@@ -297,10 +297,12 @@ function renderServerStatsCard(server) {
         <div class="server-card__status-column">
           <span class="server-state ${stateClass}">${escapeHtml(statusLabel)}</span>
           <p class="server-card__population">${escapeHtml(`${players} / ${maxPlayers}`)}</p>
-          ${actionMarkup}
         </div>
       </div>
-      ${quickFacts}
+      <div class="server-card__bottom">
+        ${quickFacts}
+        ${actionMarkup}
+      </div>
     </article>
   `;
 }
@@ -342,16 +344,8 @@ function renderServerAction(server) {
 
   return `
     <div class="server-card__actions">
-      <a
-        class="server-action-link"
-        href="${escapeHtml(actions.publicScoreboardUrl)}"
-        target="_blank"
-        rel="noreferrer"
-      >
-        Scoreboard publico
-      </a>
       <a class="server-action-link" href="${escapeHtml(actions.historicalUrl)}">
-        Nuestro historico
+        Historico
       </a>
       <a class="server-action-link" href="${escapeHtml(actions.currentMatchUrl)}">
         Partida actual

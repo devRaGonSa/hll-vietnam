@@ -1,7 +1,7 @@
 ---
 id: TASK-160
 title: Home server card bottom actions
-status: pending
+status: done
 type: frontend
 team: Frontend Senior
 supporting_teams: [Experto en interfaz]
@@ -143,7 +143,19 @@ The home server cards have a clean structural layout with only Historico and Par
 
 ## Outcome
 
-Document the structural rendering cleanup, validation performed, and any follow-up task that should be created instead of expanding this task.
+Structural cleanup:
+
+- Home server card actions now live in a dedicated bottom row beside the map quickfact rather than inside the status column.
+- The rendered card action markup keeps only `Historico` and `Partida actual`; trusted URL mappings stay intact for those actions.
+- Removed the inline server-card layout workaround from `frontend/index.html` and moved the bottom-row layout rules into `frontend/assets/css/styles.css`, with a stacked narrow layout.
+
+Validation performed:
+
+- `node --check frontend/assets/js/main.js`
+- `git diff --check`
+- `docker compose build frontend`
+- Checked the existing local frontend and backend endpoints were serving on `127.0.0.1:8080` and `127.0.0.1:8000`.
+- Rendered Browser verification was attempted through the required Browser workflow but blocked because the Browser JavaScript execution tool was not exposed in this session after tool discovery.
 
 ## Change Budget
 

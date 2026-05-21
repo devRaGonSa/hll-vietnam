@@ -1,6 +1,6 @@
 # TASK-156 - Current match realtime killfeed and home buttons layout
 
-Status: pending
+Status: done
 
 ## Goal
 
@@ -178,7 +178,23 @@ The current-match kill feed behaves like a compact real-time combat overlay, and
 
 ## Outcome
 
-Document the validation performed, notable decisions, and any follow-up task that should be created instead of expanding this task.
+- Kept the existing `event_id`-based killfeed refresh path and changed only its
+  rendering surface: the capped 15-event panel now reads as a bounded combat
+  screen with three desktop columns, while smaller breakpoints remain bounded.
+- Removed the home server-card public-scoreboard action from the hydrated markup
+  and left the remaining `Historico` / `Partida actual` actions aligned by the
+  existing status-column layout.
+- Validated with:
+  - `node --check frontend/assets/js/partida-actual.js`
+  - `node --check frontend/assets/js/main.js`
+  - `git diff --check`
+  - `docker compose up -d --build frontend`
+  - live endpoint checks for `/api/current-match/kills` on Comunidad Hispana
+    `#01` and `#02`
+  - rendered Chrome headless screenshots of the home page, current-match `#01`
+    desktop view and current-match `#02` mobile empty-state view
+- The in-app Browser automation runtime was not callable after tool discovery,
+  so rendered validation used local headless Chrome against the task URLs.
 
 ## Change Budget
 

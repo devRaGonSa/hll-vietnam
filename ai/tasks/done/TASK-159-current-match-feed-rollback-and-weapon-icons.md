@@ -1,7 +1,7 @@
 ---
 id: TASK-159
 title: Current match feed rollback and weapon icons
-status: pending
+status: done
 type: frontend
 team: Frontend Senior
 supporting_teams: [Disenador grafico, Experto en interfaz]
@@ -162,7 +162,24 @@ The current-match feed returns to the previous preferred live-feed visual direct
 
 ## Outcome
 
-Document the visual RCA, icon discovery/mapping decision, validation performed, and any follow-up task that should be created instead of expanding this task.
+Visual RCA:
+
+- Git history before the compact feed change showed a vertical `historical-match-card` list with one readable event per row/card. The rejected version introduced a fixed multi-column killfeed surface that reads like a grid/table.
+- The feed was refactored back to a vertical card-like list while keeping the current live buffer, deduplication and no-flicker signature guard.
+
+Weapon icon decision:
+
+- Reused local assets already present under `frontend/assets/img/weapons/`.
+- `partida-actual.js` maps normalized AdminLog weapon names for `M1 GARAND`, `MP40`, `M1A1 THOMPSON`, `GEWEHR 43`, `MG42` and aliases to local PNGs.
+- Unknown/unmapped weapons keep their label for tooltip/accessibility and render a compact local fallback marker instead of hotlinking assets.
+
+Validation performed:
+
+- `node --check frontend/assets/js/partida-actual.js`
+- `git diff --check`
+- `docker compose build frontend`
+- Reviewed the history diff for the prior accepted feed direction and inspected local weapon asset filenames.
+- Rendered Browser verification was attempted through the required Browser workflow but blocked because the Browser JavaScript execution tool was not exposed in this session after tool discovery.
 
 ## Change Budget
 

@@ -354,12 +354,17 @@ def build_current_match_kill_feed_payload(
     *,
     server_slug: str,
     limit: int = 30,
+    since_event_id: str | None = None,
 ) -> dict[str, object]:
     """Return normalized AdminLog kill rows for one trusted current-match page."""
     origin = get_trusted_public_scoreboard_origin(server_slug)
     if origin is None:
         raise ValueError("Unsupported current match server.")
-    feed = list_current_match_kill_feed(server_key=origin.slug, limit=limit)
+    feed = list_current_match_kill_feed(
+        server_key=origin.slug,
+        limit=limit,
+        since_event_id=since_event_id,
+    )
     return {
         "status": "ok",
         "data": {

@@ -1,7 +1,7 @@
 ---
 id: TASK-158
 title: Current match realtime transport
-status: pending
+status: done
 type: backend
 team: Backend Senior
 supporting_teams: [Frontend Senior]
@@ -160,7 +160,31 @@ The current-match kill feed updates in near-real-time, without depending on the 
 
 ## Outcome
 
-Document the RCA, transport decision, validation performed, load/freshness limitations, and any follow-up task that should be created instead of expanding this task.
+RCA:
+
+- The current page used one `30s` interval in `frontend/assets/js/partida-actual.js` for current-match metadata, player stats and the kill feed together.
+- The kill feed read path is already safe for higher-frequency reads because it queries normalized persisted `rcon_admin_log_events` rows through `/api/current-match/kills`; it does not query RCON from the browser or expose raw AdminLog lines.
+- Current match metadata can still call live RCON through the existing payload path, and player stats aggregate the kill feed read model, so those surfaces remain on the slower refresh path.
+
+Transport decision:
+
+- Implemented incremental short polling for the kill feed instead of SSE. The backend is still the standard-library JSON route stack, while the existing persisted read model can cheaply support a cursor.
+- `/api/current-match/kills` now accepts `since_event_id` plus the existing `server` and `limit` inputs. Trusted server validation remains in `routes.py`.
+- The frontend polls kill-feed rows every `1500ms`, sends the latest event id cursor after the first load, deduplicates by `event_id`, caps the in-memory visible buffer and avoids overlapping kill-feed requests. Metadata and player stats keep the existing `30s` refresh cadence.
+
+Validation performed:
+
+- `python -m compileall backend/app`
+- `node --check frontend/assets/js/partida-actual.js`
+- `git diff --check`
+- Ran a direct Python smoke check for `list_current_match_kill_feed(..., since_event_id=...)` with temporary AdminLog rows after the focused pytest command could not run.
+- Attempted focused backend tests with `python -m pytest backend/tests/test_current_match_payload.py backend/tests/test_rcon_admin_log_storage.py`; this environment failed with `No module named pytest`.
+- Reviewed `git diff --name-only`; task-owned code changes are limited to the allowed current-match backend/frontend files plus the focused storage test and this task transition. The worktree already contained frontend and prior task changes from `TASK-156`/`TASK-157`.
+
+Load and freshness limit:
+
+- Browser polling now reads persisted AdminLog rows rather than issuing per-browser RCON calls.
+- New kill visibility is still bounded by how quickly `app.rcon_historical_worker` or manual AdminLog ingestion persists fresh AdminLog rows. The current documented worker example is a `120s` loop, so operations may need a follow-up cadence decision if that persisted source is not fresh enough for the desired live screen.
 
 ## Change Budget
 

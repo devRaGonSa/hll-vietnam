@@ -368,3 +368,40 @@ def test_current_match_kill_feed_marks_fresh_recent_fallback_rows_partial(tmp_pa
     assert feed["stale_events_filtered"] == 0
     assert [item["killer_name"] for item in feed["items"]] == ["Fresh Killer"]
     gc.collect()
+
+
+def test_current_match_kill_feed_filters_rows_before_incremental_cursor(tmp_path):
+    db_path = tmp_path / "admin_log.sqlite3"
+    persist_rcon_admin_log_entries(
+        target=TARGET,
+        entries=[
+            {
+                "timestamp": "2026-05-21T10:00:00Z",
+                "message": "[1:00 min (100)] MATCH START Mortain Warfare",
+            },
+            {
+                "timestamp": "2026-05-21T10:01:00Z",
+                "message": (
+                    "[2:00 min (120)] KILL: First Killer(Allies/steam-first) -> "
+                    "First Victim(Axis/steam-first-victim) with M1 GARAND"
+                ),
+            },
+            {
+                "timestamp": "2026-05-21T10:02:00Z",
+                "message": (
+                    "[3:00 min (140)] KILL: Next Killer(Axis/steam-next) -> "
+                    "Next Victim(Allies/steam-next-victim) with MP40"
+                ),
+            },
+        ],
+        db_path=db_path,
+    )
+
+    feed = list_current_match_kill_feed(
+        server_key="test-rcon-target",
+        db_path=db_path,
+        since_event_id="rcon-admin-log:test-rcon-target:2",
+    )
+
+    assert [item["killer_name"] for item in feed["items"]] == ["Next Killer"]
+    gc.collect()

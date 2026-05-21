@@ -1,4 +1,5 @@
 const CURRENT_MATCH_POLL_INTERVAL_MS = 30 * 1000;
+const CURRENT_MATCH_KILL_FEED_POLL_INTERVAL_MS = 1500;
 const CURRENT_MATCH_SERVERS = Object.freeze({
   "comunidad-hispana-01": "Comunidad Hispana #01",
   "comunidad-hispana-02": "Comunidad Hispana #02",
@@ -9,10 +10,14 @@ const CURRENT_MATCH_SCOREBOARDS = Object.freeze({
 });
 const CURRENT_MATCH_KILL_FEED_LIMIT = 15;
 const CURRENT_MATCH_WEAPONS = Object.freeze({
-  "m1 garand": { label: "M1 Garand", glyph: "M1" },
-  mp40: { label: "MP40", glyph: "MP" },
-  "m1a1 thompson": { label: "M1A1 Thompson", glyph: "TH" },
-  unknown: { label: "Arma desconocida", glyph: "?" },
+  "m1 garand": { label: "M1 Garand", icon: "m1_garand.PNG" },
+  mp40: { label: "MP40", icon: "mp40.PNG" },
+  "m1a1 thompson": { label: "M1A1 Thompson", icon: "thompson.PNG" },
+  thompson: { label: "M1A1 Thompson", icon: "thompson.PNG" },
+  "gewehr 43": { label: "Gewehr 43", icon: "gewehr.PNG" },
+  g43: { label: "Gewehr 43", icon: "gewehr.PNG" },
+  mg42: { label: "MG42", icon: "mg42.PNG" },
+  unknown: { label: "Arma desconocida", icon: "" },
 });
 
 document.addEventListener("DOMContentLoaded", () => {
@@ -43,27 +48,43 @@ document.addEventListener("DOMContentLoaded", () => {
   nodes.history.href = `./historico.html?server=${encodeURIComponent(serverSlug)}`;
   const killFeedState = initializeKillFeed(nodes);
   const playerStatsState = initializePlayerStats(nodes);
-  let refreshInFlight = false;
-  const refresh = async () => {
-    if (refreshInFlight) {
+  let matchRefreshInFlight = false;
+  const refreshMatchPanels = async () => {
+    if (matchRefreshInFlight) {
       return;
     }
-    refreshInFlight = true;
+    matchRefreshInFlight = true;
     try {
       await Promise.allSettled([
         loadCurrentMatch({ backendBaseUrl, serverSlug, nodes }),
-        loadKillFeed({ backendBaseUrl, serverSlug, nodes, killFeedState }),
         loadPlayerStats({ backendBaseUrl, serverSlug, nodes, playerStatsState }),
       ]);
     } finally {
-      refreshInFlight = false;
+      matchRefreshInFlight = false;
     }
   };
 
-  void refresh();
+  let killFeedRefreshInFlight = false;
+  const refreshKillFeed = async () => {
+    if (killFeedRefreshInFlight) {
+      return;
+    }
+    killFeedRefreshInFlight = true;
+    try {
+      await loadKillFeed({ backendBaseUrl, serverSlug, nodes, killFeedState });
+    } finally {
+      killFeedRefreshInFlight = false;
+    }
+  };
+
+  void refreshMatchPanels();
+  void refreshKillFeed();
   window.setInterval(() => {
-    void refresh();
+    void refreshMatchPanels();
   }, CURRENT_MATCH_POLL_INTERVAL_MS);
+  window.setInterval(() => {
+    void refreshKillFeed();
+  }, CURRENT_MATCH_KILL_FEED_POLL_INTERVAL_MS);
 });
 
 async function loadCurrentMatch({ backendBaseUrl, serverSlug, nodes }) {
@@ -80,8 +101,11 @@ async function loadCurrentMatch({ backendBaseUrl, serverSlug, nodes }) {
 
 async function loadKillFeed({ backendBaseUrl, serverSlug, nodes, killFeedState }) {
   try {
+    const cursor = killFeedState.latestEventId
+      ? `&since_event_id=${encodeURIComponent(killFeedState.latestEventId)}`
+      : "";
     const payload = await fetchJson(
-      `${backendBaseUrl}/api/current-match/kills?server=${encodeURIComponent(serverSlug)}&limit=${CURRENT_MATCH_KILL_FEED_LIMIT}`,
+      `${backendBaseUrl}/api/current-match/kills?server=${encodeURIComponent(serverSlug)}&limit=${CURRENT_MATCH_KILL_FEED_LIMIT}${cursor}`,
     );
     renderKillFeed(payload?.data || {}, nodes, killFeedState);
   } catch (error) {
@@ -108,7 +132,7 @@ function renderCurrentMatch(data, nodes) {
   nodes.title.textContent = mapName;
   nodes.summary.textContent = serverName;
   nodes.note.textContent = data.found
-    ? "Lectura en vivo recibida. La pagina se actualiza cada 30 segundos."
+    ? "Lectura en vivo recibida. El feed de bajas se actualiza en tiempo casi real."
     : "Todavia no hay snapshot live disponible para este servidor.";
   nodes.scoreboard.href = scoreboardUrl || "./index.html";
   nodes.scoreboard.hidden = !scoreboardUrl;
@@ -150,6 +174,7 @@ function initializeKillFeed(nodes) {
   nodes.feedList = document.getElementById("current-match-feed-list");
   return {
     byId: new Map(),
+    latestEventId: "",
     visibleSignature: "",
   };
 }
@@ -178,6 +203,7 @@ function renderKillFeed(data, nodes, state) {
   const incoming = Array.isArray(data.items) ? data.items : [];
   if (data.scope === "no-current-match-events") {
     state.byId.clear();
+    state.latestEventId = "";
   }
   incoming.forEach((event) => {
     if (event?.event_id) {
@@ -187,6 +213,8 @@ function renderKillFeed(data, nodes, state) {
   const events = [...state.byId.values()]
     .sort(compareKillFeedEvents)
     .slice(0, CURRENT_MATCH_KILL_FEED_LIMIT);
+  state.byId = new Map(events.map((event) => [event.event_id, event]));
+  state.latestEventId = events[0]?.event_id || state.latestEventId;
   if (events.length === 0) {
     nodes.feedList.innerHTML = "";
     state.visibleSignature = "";
@@ -227,7 +255,7 @@ function renderKillFeedRow(event) {
         title="${escapeHtml(weapon.label)}"
         aria-label="${escapeHtml(weapon.label)}"
       >
-        <span aria-hidden="true">${escapeHtml(weapon.glyph)}</span>
+        ${renderKillFeedWeaponIcon(weapon)}
         <em>${escapeHtml(weapon.label)}</em>
       </span>
       <span class="current-match-killfeed__player current-match-killfeed__player--victim">
@@ -242,8 +270,27 @@ function resolveKillFeedWeapon(value) {
   const key = normalizeLookupText(value);
   return CURRENT_MATCH_WEAPONS[key] || {
     label: String(value || CURRENT_MATCH_WEAPONS.unknown.label),
-    glyph: CURRENT_MATCH_WEAPONS.unknown.glyph,
+    icon: CURRENT_MATCH_WEAPONS.unknown.icon,
   };
+}
+
+function renderKillFeedWeaponIcon(weapon) {
+  if (!weapon.icon) {
+    return '<span class="current-match-killfeed__weapon-fallback" aria-hidden="true">?</span>';
+  }
+  return `
+    <img
+      class="current-match-killfeed__weapon-icon"
+      src="./assets/img/weapons/${escapeHtml(weapon.icon)}"
+      alt=""
+      width="88"
+      height="32"
+      loading="lazy"
+      decoding="async"
+      onerror="this.hidden = true; this.nextElementSibling.hidden = false;"
+    />
+    <span class="current-match-killfeed__weapon-fallback" aria-hidden="true" hidden>?</span>
+  `;
 }
 
 function renderPlayerStats(data, nodes, state) {
@@ -262,6 +309,7 @@ function renderPlayerStats(data, nodes, state) {
     .map((item) =>
       [
         item.player_name,
+        item.team,
         item.kills,
         item.deaths,
         item.teamkills,
@@ -312,10 +360,15 @@ function renderPlayerStatsTable(items) {
 }
 
 function renderPlayerStatsRow(item) {
+  const team = getPlayerTeamDisplay(item.team);
   return `
-    <tr>
+    <tr class="historical-player-row historical-player-row--${team.key}">
       <td>${escapeHtml(item.player_name || "Jugador no disponible")}</td>
-      <td>${escapeHtml(item.team || "No disponible")}</td>
+      <td class="historical-player-team-cell">
+        <span class="historical-player-team-badge historical-player-team-badge--${team.key}">
+          ${escapeHtml(team.label)}
+        </span>
+      </td>
       <td>${escapeHtml(formatStatNumber(item.kills))}</td>
       <td>${escapeHtml(formatStatNumber(item.deaths))}</td>
       <td>${escapeHtml(formatStatNumber(item.teamkills))}</td>
@@ -323,6 +376,17 @@ function renderPlayerStatsRow(item) {
       <td>${escapeHtml(item.favorite_weapon || "No disponible")}</td>
     </tr>
   `;
+}
+
+function getPlayerTeamDisplay(value) {
+  const normalized = String(value || "").trim().toLowerCase();
+  if (normalized === "allies" || normalized === "allied" || normalized === "aliados") {
+    return { key: "allies", label: "Aliados" };
+  }
+  if (normalized === "axis" || normalized === "eje") {
+    return { key: "axis", label: "Eje" };
+  }
+  return { key: "unknown", label: "No disponible" };
 }
 
 function toStatNumber(value) {

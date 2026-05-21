@@ -76,7 +76,8 @@ def resolve_get_payload(path: str) -> tuple[HTTPStatus | None, dict[str, object]
         limit = _parse_limit(parsed.query)
         if limit is None:
             return HTTPStatus.BAD_REQUEST, build_error_payload("Invalid limit parameter")
-        server_slug = parse_qs(parsed.query).get("server", [None])[0]
+        params = parse_qs(parsed.query)
+        server_slug = params.get("server", [None])[0]
         if not server_slug:
             return HTTPStatus.BAD_REQUEST, build_error_payload("Server parameter is required")
         if get_trusted_public_scoreboard_origin(server_slug) is None:
@@ -84,6 +85,7 @@ def resolve_get_payload(path: str) -> tuple[HTTPStatus | None, dict[str, object]
         return HTTPStatus.OK, build_current_match_kill_feed_payload(
             server_slug=server_slug,
             limit=limit,
+            since_event_id=params.get("since_event_id", [None])[0],
         )
 
     if parsed.path == "/api/current-match/players":

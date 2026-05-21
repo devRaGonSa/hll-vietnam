@@ -337,11 +337,13 @@ def list_current_match_kill_feed(
     *,
     server_key: str,
     limit: int = 30,
+    since_event_id: str | None = None,
     db_path: Path | None = None,
     now: datetime | None = None,
 ) -> dict[str, object]:
     """Return safe recent kill rows for one AdminLog server window."""
     resolved_path = initialize_rcon_admin_log_storage(db_path=db_path)
+    since_row_id = _parse_current_match_event_row_id(since_event_id)
     if use_postgres_rcon_storage(explicit_sqlite_path=db_path):
         from .postgres_rcon_storage import connect_postgres_compat
 
@@ -377,10 +379,11 @@ def list_current_match_kill_feed(
                 FROM rcon_admin_log_events
                 WHERE (target_key = ? OR external_server_id = ?)
                   AND event_type = 'kill'
+                  AND (? IS NULL OR id > ?)
                 ORDER BY server_time DESC, id DESC
                 LIMIT ?
                 """,
-                (server_key, server_key, limit),
+                (server_key, server_key, since_row_id, since_row_id, limit),
             ).fetchall()
             scope = "recent-admin-log-window"
             confidence = "partial"
@@ -393,10 +396,11 @@ def list_current_match_kill_feed(
                 WHERE (target_key = ? OR external_server_id = ?)
                   AND event_type = 'kill'
                   AND server_time >= ?
+                  AND (? IS NULL OR id > ?)
                 ORDER BY server_time DESC, id DESC
                 LIMIT ?
                 """,
-                (server_key, server_key, open_start_time, limit),
+                (server_key, server_key, open_start_time, since_row_id, since_row_id, limit),
             ).fetchall()
             scope = "open-admin-log-match-window"
             confidence = "admin-log-boundary"
@@ -611,6 +615,17 @@ def _serialize_kill_feed_row(row: Mapping[str, object]) -> dict[str, object]:
             and killer_team == victim_team
         ),
     }
+
+
+def _parse_current_match_event_row_id(value: object) -> int | None:
+    prefix, separator, row_id = str(value or "").rpartition(":")
+    if separator != ":" or not prefix.startswith("rcon-admin-log:"):
+        return None
+    try:
+        parsed = int(row_id)
+    except ValueError:
+        return None
+    return parsed if parsed > 0 else None
 
 
 def _safe_event_field(value: object) -> str | None:

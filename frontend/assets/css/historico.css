@@ -591,50 +591,41 @@
 
 .current-match-killfeed {
   display: grid;
-  grid-auto-flow: column;
-  grid-template-rows: repeat(5, minmax(0, 1fr));
-  grid-auto-columns: minmax(0, 1fr);
-  gap: 10px 12px;
-  min-height: 250px;
-  max-height: 320px;
-  padding: 16px;
+  gap: 10px;
+  max-height: 760px;
+  padding: 4px 0 0;
   overflow: hidden;
-  border: 1px solid rgba(210, 182, 118, 0.26);
-  border-radius: 8px;
-  background:
-    linear-gradient(90deg, rgba(210, 182, 118, 0.08) 1px, transparent 1px),
-    linear-gradient(180deg, rgba(183, 201, 125, 0.06) 1px, transparent 1px),
-    linear-gradient(180deg, rgba(12, 18, 11, 0.96), rgba(7, 10, 7, 0.98));
-  background-size: 33.333% 100%, 100% 62px, auto;
-  box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.04),
-    0 18px 38px rgba(0, 0, 0, 0.22);
 }
 
 .current-match-killfeed__row {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr) auto;
+  grid-template-columns: minmax(0, 1fr) minmax(102px, 150px) minmax(0, 1fr) auto;
   align-items: center;
-  gap: 8px;
-  min-height: 38px;
-  padding: 7px 9px;
+  gap: 12px;
+  min-height: 56px;
+  padding: 12px 14px;
   overflow: hidden;
-  border: 1px solid rgba(159, 168, 141, 0.16);
+  border: 1px solid rgba(159, 168, 141, 0.18);
+  border-left: 3px solid rgba(183, 201, 125, 0.34);
   border-radius: 6px;
   color: var(--text);
-  background: rgba(24, 31, 21, 0.86);
+  background:
+    linear-gradient(135deg, rgba(183, 201, 125, 0.08), transparent 44%),
+    rgba(14, 19, 12, 0.84);
   animation: current-match-killfeed-enter 180ms ease-out;
 }
 
 .current-match-killfeed__row.is-teamkill {
-  border-color: rgba(210, 182, 118, 0.42);
-  background: rgba(73, 49, 27, 0.72);
+  border-left-color: rgba(210, 182, 118, 0.64);
+  background:
+    linear-gradient(135deg, rgba(210, 182, 118, 0.12), transparent 48%),
+    rgba(73, 49, 27, 0.42);
 }
 
 .current-match-killfeed__player {
   min-width: 0;
   overflow: hidden;
-  font-size: 0.84rem;
+  font-size: 0.94rem;
   line-height: 1.2;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -649,20 +640,41 @@
 }
 
 .current-match-killfeed__weapon {
-  display: inline-flex;
+  display: grid;
+  grid-template-rows: 34px;
   align-items: center;
   justify-content: center;
-  gap: 5px;
-  min-width: 34px;
-  min-height: 24px;
-  padding: 0 6px;
+  min-width: 102px;
+  min-height: 40px;
+  padding: 2px 8px;
   border: 1px solid rgba(183, 201, 125, 0.24);
   border-radius: 4px;
   color: var(--text);
   background: rgba(7, 10, 7, 0.8);
-  font-size: 0.68rem;
+}
+
+.current-match-killfeed__weapon-icon {
+  display: block;
+  width: min(100%, 116px);
+  height: 32px;
+  object-fit: contain;
+  filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.72));
+}
+
+.current-match-killfeed__weapon-fallback {
+  display: grid;
+  width: 32px;
+  height: 32px;
+  place-items: center;
+  border: 1px solid rgba(210, 182, 118, 0.3);
+  border-radius: 4px;
+  color: var(--accent-warm);
+  font-size: 1rem;
   font-weight: 800;
-  line-height: 1;
+}
+
+.current-match-killfeed__weapon-fallback[hidden] {
+  display: none;
 }
 
 .current-match-killfeed__weapon em {
@@ -920,14 +932,11 @@
   }
 
   .current-match-killfeed {
-    grid-template-rows: repeat(8, minmax(0, 1fr));
-    min-height: 312px;
-    max-height: 380px;
-    background-size: 50% 100%, 100% 48px, auto;
+    max-height: none;
   }
 
   .current-match-killfeed__row {
-    grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+    grid-template-columns: minmax(0, 1fr) minmax(96px, 128px) minmax(0, 1fr);
   }
 
   .current-match-killfeed__teamkill {
@@ -937,12 +946,13 @@
 }
 
 @media (max-width: 480px) {
-  .current-match-killfeed {
-    grid-auto-flow: row;
-    grid-template-rows: none;
-    min-height: 0;
-    max-height: none;
-    background-size: 100% 48px, 100% 48px, auto;
+  .current-match-killfeed__row {
+    grid-template-columns: 1fr;
+    gap: 8px;
+  }
+
+  .current-match-killfeed__weapon {
+    justify-self: start;
   }
 }
 

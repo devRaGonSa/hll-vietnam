@@ -1,6 +1,6 @@
 # TASK-157 - Current match player team colors
 
-Status: pending
+Status: done
 
 ## Goal
 
@@ -160,7 +160,35 @@ The current-match player/stat section uses team-aware colors consistent with the
 
 ## Outcome
 
-Document the validation performed, notable decisions, and any follow-up task that should be created instead of expanding this task.
+- RCA found no backend contract gap: a live
+  `/api/current-match/players?server=comunidad-hispana-01` response observed
+  before the validation rebuild already exposed AdminLog-derived `team` values
+  such as `Allies` and `Axis`; unknown values remain handled by the existing
+  frontend neutral path.
+- Reused the historical detail player row and team badge CSS modifiers from
+  `historico-scoreboard-detail.css` in the current-match player table instead
+  of adding a parallel style system.
+- Included `team` in the visible player-table signature so a future team update
+  can rerender an already-visible row without changing its stats.
+- Validated with:
+  - `node --check frontend/assets/js/partida-actual.js`
+  - `git diff --check`
+  - `docker compose up -d --build frontend`
+  - live `/api/current-match/players` checks on Comunidad Hispana `#01` and
+    `#02`
+  - rendered Chrome headless current-match validation for the available player
+    empty state after the backend restart
+  - served-script check confirming the historical row and badge modifiers are
+    present in `frontend/assets/js/partida-actual.js`
+- The final rendered validation window had no current player rows after the
+  backend rebuild, so known-team colors were validated from the observed live
+  payload contract plus the reused historical class mapping rather than from a
+  live colored-row screenshot.
+- Repository-level follow-up validation ran
+  `powershell -ExecutionPolicy Bypass -File scripts/run-integration-tests.ps1`.
+  It returned exit code `0`, but its output also printed a historical SQLite
+  `database disk image is malformed` traceback after the pass banner; that
+  historical storage issue is outside this frontend task scope.
 
 ## Change Budget
 
