@@ -10,12 +10,37 @@
     <title>Comunidad Hispana - HLL Vietnam</title>
     <link rel="stylesheet" href="./assets/css/styles.css" />
     <style>
+      .server-card--stats {
+        min-height: 385px;
+      }
+
+      .server-card__top--stats {
+        min-height: 255px;
+      }
+
       .server-card__status-column {
         min-width: min(190px, 44%);
+        align-self: stretch;
+        align-content: start;
+        grid-template-rows: auto auto 1fr;
       }
 
       .server-card__actions {
-        margin-top: clamp(32px, 5vw, 64px);
+        align-self: end;
+        margin-top: 0;
+      }
+
+      .server-card__actions .server-action-link:first-child {
+        display: none;
+      }
+
+      .server-card__actions .server-action-link:nth-child(2) {
+        font-size: 0;
+      }
+
+      .server-card__actions .server-action-link:nth-child(2)::before {
+        content: "Historico";
+        font-size: 0.76rem;
       }
 
       .server-card__quickfacts {
@@ -23,8 +48,15 @@
       }
 
       @media (max-width: 680px) {
+        .server-card--stats,
+        .server-card__top--stats {
+          min-height: 0;
+        }
+
         .server-card__status-column {
           min-width: 150px;
+          align-self: start;
+          grid-template-rows: none;
         }
 
         .server-card__actions {
