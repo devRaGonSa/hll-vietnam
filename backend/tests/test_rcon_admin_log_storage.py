@@ -2,6 +2,7 @@ import gc
 import json
 import sqlite3
 from datetime import datetime, timezone
+from unittest.mock import patch
 
 from app.rcon_admin_log_storage import (
     initialize_rcon_admin_log_storage,
@@ -404,4 +405,93 @@ def test_current_match_kill_feed_filters_rows_before_incremental_cursor(tmp_path
     )
 
     assert [item["killer_name"] for item in feed["items"]] == ["Next Killer"]
+    gc.collect()
+
+
+def test_current_match_kill_feed_without_cursor_omits_nullable_id_predicate(tmp_path):
+    db_path = tmp_path / "admin_log.sqlite3"
+    persist_rcon_admin_log_entries(
+        target=TARGET,
+        entries=[
+            {
+                "timestamp": "2026-05-21T10:00:00Z",
+                "message": "[1:00 min (100)] MATCH START Mortain Warfare",
+            },
+            {
+                "timestamp": "2026-05-21T10:01:00Z",
+                "message": (
+                    "[2:00 min (120)] KILL: Cursor Killer(Allies/steam-cursor) -> "
+                    "Cursor Victim(Axis/steam-cursor-victim) with M1 GARAND"
+                ),
+            },
+        ],
+        db_path=db_path,
+    )
+    traced_sql = []
+    connect = sqlite3.connect
+
+    def connect_with_trace(*args, **kwargs):
+        connection = connect(*args, **kwargs)
+        connection.set_trace_callback(traced_sql.append)
+        return connection
+
+    with patch(
+        "app.rcon_admin_log_storage.sqlite3.connect",
+        side_effect=connect_with_trace,
+    ):
+        feed = list_current_match_kill_feed(
+            server_key="test-rcon-target",
+            db_path=db_path,
+        )
+
+    kill_queries = [
+        sql
+        for sql in traced_sql
+        if "FROM rcon_admin_log_events" in sql and "event_type = 'kill'" in sql
+    ]
+    assert [item["killer_name"] for item in feed["items"]] == ["Cursor Killer"]
+    assert kill_queries
+    assert all("IS NULL OR id >" not in sql for sql in kill_queries)
+    assert all("AND id >" not in sql for sql in kill_queries)
+    gc.collect()
+
+
+def test_current_match_kill_feed_invalid_cursor_behaves_like_no_cursor(tmp_path):
+    db_path = tmp_path / "admin_log.sqlite3"
+    persist_rcon_admin_log_entries(
+        target=TARGET,
+        entries=[
+            {
+                "timestamp": "2026-05-21T10:00:00Z",
+                "message": "[1:00 min (100)] MATCH START Mortain Warfare",
+            },
+            {
+                "timestamp": "2026-05-21T10:01:00Z",
+                "message": (
+                    "[2:00 min (120)] KILL: First Killer(Allies/steam-first) -> "
+                    "First Victim(Axis/steam-first-victim) with M1 GARAND"
+                ),
+            },
+            {
+                "timestamp": "2026-05-21T10:02:00Z",
+                "message": (
+                    "[3:00 min (140)] KILL: Next Killer(Axis/steam-next) -> "
+                    "Next Victim(Allies/steam-next-victim) with MP40"
+                ),
+            },
+        ],
+        db_path=db_path,
+    )
+
+    without_cursor = list_current_match_kill_feed(
+        server_key="test-rcon-target",
+        db_path=db_path,
+    )
+    with_invalid_cursor = list_current_match_kill_feed(
+        server_key="test-rcon-target",
+        db_path=db_path,
+        since_event_id="not-an-admin-log-event",
+    )
+
+    assert with_invalid_cursor == without_cursor
     gc.collect()

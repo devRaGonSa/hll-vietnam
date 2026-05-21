@@ -372,36 +372,65 @@ def list_current_match_kill_feed(
             else None
         )
         if open_start_time is None:
-            rows = connection.execute(
-                """
-                SELECT id, target_key, external_server_id, event_timestamp, server_time,
-                       parsed_payload_json
-                FROM rcon_admin_log_events
-                WHERE (target_key = ? OR external_server_id = ?)
-                  AND event_type = 'kill'
-                  AND (? IS NULL OR id > ?)
-                ORDER BY server_time DESC, id DESC
-                LIMIT ?
-                """,
-                (server_key, server_key, since_row_id, since_row_id, limit),
-            ).fetchall()
+            if since_row_id is None:
+                rows = connection.execute(
+                    """
+                    SELECT id, target_key, external_server_id, event_timestamp, server_time,
+                           parsed_payload_json
+                    FROM rcon_admin_log_events
+                    WHERE (target_key = ? OR external_server_id = ?)
+                      AND event_type = 'kill'
+                    ORDER BY server_time DESC, id DESC
+                    LIMIT ?
+                    """,
+                    (server_key, server_key, limit),
+                ).fetchall()
+            else:
+                rows = connection.execute(
+                    """
+                    SELECT id, target_key, external_server_id, event_timestamp, server_time,
+                           parsed_payload_json
+                    FROM rcon_admin_log_events
+                    WHERE (target_key = ? OR external_server_id = ?)
+                      AND event_type = 'kill'
+                      AND id > ?
+                    ORDER BY server_time DESC, id DESC
+                    LIMIT ?
+                    """,
+                    (server_key, server_key, since_row_id, limit),
+                ).fetchall()
             scope = "recent-admin-log-window"
             confidence = "partial"
         else:
-            rows = connection.execute(
-                """
-                SELECT id, target_key, external_server_id, event_timestamp, server_time,
-                       parsed_payload_json
-                FROM rcon_admin_log_events
-                WHERE (target_key = ? OR external_server_id = ?)
-                  AND event_type = 'kill'
-                  AND server_time >= ?
-                  AND (? IS NULL OR id > ?)
-                ORDER BY server_time DESC, id DESC
-                LIMIT ?
-                """,
-                (server_key, server_key, open_start_time, since_row_id, since_row_id, limit),
-            ).fetchall()
+            if since_row_id is None:
+                rows = connection.execute(
+                    """
+                    SELECT id, target_key, external_server_id, event_timestamp, server_time,
+                           parsed_payload_json
+                    FROM rcon_admin_log_events
+                    WHERE (target_key = ? OR external_server_id = ?)
+                      AND event_type = 'kill'
+                      AND server_time >= ?
+                    ORDER BY server_time DESC, id DESC
+                    LIMIT ?
+                    """,
+                    (server_key, server_key, open_start_time, limit),
+                ).fetchall()
+            else:
+                rows = connection.execute(
+                    """
+                    SELECT id, target_key, external_server_id, event_timestamp, server_time,
+                           parsed_payload_json
+                    FROM rcon_admin_log_events
+                    WHERE (target_key = ? OR external_server_id = ?)
+                      AND event_type = 'kill'
+                      AND server_time >= ?
+                      AND id > ?
+                    ORDER BY server_time DESC, id DESC
+                    LIMIT ?
+                    """,
+                    (server_key, server_key, open_start_time, since_row_id, limit),
+                ).fetchall()
             scope = "open-admin-log-match-window"
             confidence = "admin-log-boundary"
 
