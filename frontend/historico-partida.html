@@ -87,6 +87,50 @@
                 </p>
               </div>
               <p class="historical-state" id="match-detail-players-state" hidden></p>
+              <form
+                class="historical-player-controls"
+                id="match-detail-player-controls"
+                aria-label="Controles de jugadores"
+                hidden
+              >
+                <label class="historical-player-control historical-player-control--search">
+                  <span>Buscar jugador</span>
+                  <input
+                    id="match-detail-player-search"
+                    type="search"
+                    placeholder="Nombre del jugador"
+                    autocomplete="off"
+                  />
+                </label>
+                <label class="historical-player-control">
+                  <span>Equipo</span>
+                  <select id="match-detail-player-team-filter">
+                    <option value="all">Todos</option>
+                    <option value="allies">Aliados</option>
+                    <option value="axis">Eje</option>
+                    <option value="unknown">Sin equipo / No disponible</option>
+                  </select>
+                </label>
+                <label class="historical-player-control">
+                  <span>Ordenar por</span>
+                  <select id="match-detail-player-sort">
+                    <option value="name">Jugador</option>
+                    <option value="team">Equipo</option>
+                    <option value="kills" selected>K</option>
+                    <option value="deaths">D</option>
+                    <option value="teamkills">TK</option>
+                    <option value="kd">K/D</option>
+                    <option value="kpm">KPM</option>
+                  </select>
+                </label>
+                <label class="historical-player-control">
+                  <span>Direccion</span>
+                  <select id="match-detail-player-sort-direction">
+                    <option value="desc" selected>Descendente</option>
+                    <option value="asc">Ascendente</option>
+                  </select>
+                </label>
+              </form>
               <div class="historical-table-shell" id="match-detail-players-table-shell" hidden>
                 <table class="historical-table historical-table--players">
                   <thead>

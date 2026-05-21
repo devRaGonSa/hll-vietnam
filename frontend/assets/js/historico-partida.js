@@ -14,6 +14,11 @@ document.addEventListener("DOMContentLoaded", () => {
     playersSection: document.getElementById("match-detail-players-section"),
     playersNote: document.getElementById("match-detail-players-note"),
     playersState: document.getElementById("match-detail-players-state"),
+    playerControls: document.getElementById("match-detail-player-controls"),
+    playerSearch: document.getElementById("match-detail-player-search"),
+    playerTeamFilter: document.getElementById("match-detail-player-team-filter"),
+    playerSort: document.getElementById("match-detail-player-sort"),
+    playerSortDirection: document.getElementById("match-detail-player-sort-direction"),
     playersTableShell: document.getElementById("match-detail-players-table-shell"),
     playersBody: document.getElementById("match-detail-players-body"),
     timelineSection: document.getElementById("match-detail-timeline-section"),
@@ -206,29 +211,159 @@ function renderPlayerSection(item, nodes) {
       nodes.playersState,
       "No hay filas de jugador registradas para esta partida.",
     );
+    nodes.playerControls.hidden = true;
     nodes.playersTableShell.hidden = true;
     nodes.playersBody.innerHTML = "";
     return;
   }
 
-  nodes.playersNote.textContent = `${formatNumber(players.length)} jugadores con estadisticas locales.`;
-  nodes.playersState.hidden = true;
-  nodes.playersBody.innerHTML = players
-    .map((player, index) => renderPlayerRows(player, item, index))
-    .join("");
-  bindPlayerDetailRows(nodes.playersBody);
+  const state = {
+    search: "",
+    team: "all",
+    sort: "kills",
+    direction: "desc",
+    isDefaultSort: true,
+  };
+  const renderRows = () => renderPlayerTable(item, players, state, nodes);
+
+  nodes.playerSearch.value = "";
+  nodes.playerTeamFilter.value = state.team;
+  nodes.playerSort.value = state.sort;
+  nodes.playerSortDirection.value = state.direction;
+  bindPlayerTableControls(nodes, state, renderRows);
+  renderRows();
+  nodes.playerControls.hidden = false;
   nodes.playersTableShell.hidden = false;
 }
 
-function renderPlayerRows(player, item, index) {
+function bindPlayerTableControls(nodes, state, renderRows) {
+  nodes.playerControls.onsubmit = (event) => {
+    event.preventDefault();
+  };
+  nodes.playerSearch.oninput = () => {
+    closePlayerDetailRows(nodes.playersBody);
+    state.search = nodes.playerSearch.value;
+    renderRows();
+  };
+  nodes.playerTeamFilter.onchange = () => {
+    closePlayerDetailRows(nodes.playersBody);
+    state.team = nodes.playerTeamFilter.value;
+    renderRows();
+  };
+  nodes.playerSort.onchange = () => {
+    state.sort = nodes.playerSort.value;
+    state.isDefaultSort = false;
+    renderRows();
+  };
+  nodes.playerSortDirection.onchange = () => {
+    state.direction = nodes.playerSortDirection.value;
+    state.isDefaultSort = false;
+    renderRows();
+  };
+}
+
+function renderPlayerTable(item, players, state, nodes) {
+  const visiblePlayers = getVisiblePlayers(players, item, state);
+  nodes.playersNote.textContent =
+    visiblePlayers.length === players.length
+      ? `${formatNumber(players.length)} jugadores con estadisticas locales.`
+      : `${formatNumber(visiblePlayers.length)} de ${formatNumber(players.length)} jugadores visibles.`;
+  nodes.playersState.hidden = visiblePlayers.length > 0;
+  if (!visiblePlayers.length) {
+    nodes.playersState.textContent = "No hay jugadores que coincidan con los controles activos.";
+  }
+  nodes.playersBody.innerHTML = visiblePlayers
+    .map((entry, index) => renderPlayerRows(entry.player, item, index, entry.inactive))
+    .join("");
+  bindPlayerDetailRows(nodes.playersBody);
+}
+
+function getVisiblePlayers(players, item, state) {
+  const normalizedSearch = normalizeLookupText(state.search);
+  return players
+    .map((player) => ({
+      player,
+      inactive: isInactiveMatchPlayer(player),
+      team: getTeamSideDisplay(player.team || player.team_side),
+    }))
+    .filter((entry) => {
+      const matchesTeam = state.team === "all" || entry.team.key === state.team;
+      const matchesName =
+        !normalizedSearch ||
+        normalizeLookupText(entry.player.player_name).includes(normalizedSearch);
+      return matchesTeam && matchesName;
+    })
+    .sort((a, b) => comparePlayerEntries(a, b, item, state));
+}
+
+function comparePlayerEntries(a, b, item, state) {
+  if (state.isDefaultSort) {
+    return (
+      compareInactivePriority(a, b) ||
+      compareNumericStat(b.player.kills, a.player.kills) ||
+      compareNumericStat(a.player.deaths, b.player.deaths) ||
+      comparePlayerNames(a.player, b.player)
+    );
+  }
+
+  if (!["name", "team"].includes(state.sort)) {
+    const inactivePriority = compareInactivePriority(a, b);
+    if (inactivePriority) {
+      return inactivePriority;
+    }
+  }
+
+  const direction = state.direction === "asc" ? 1 : -1;
+  const compared = comparePlayerSortValue(a, b, item, state.sort);
+  return compared * direction || comparePlayerNames(a.player, b.player);
+}
+
+function comparePlayerSortValue(a, b, item, sort) {
+  if (sort === "name") {
+    return comparePlayerNames(a.player, b.player);
+  }
+  if (sort === "team") {
+    return compareText(a.team.label, b.team.label);
+  }
+  if (sort === "deaths" || sort === "teamkills" || sort === "kills") {
+    return compareNumericStat(a.player[sort], b.player[sort]);
+  }
+  if (sort === "kd") {
+    return compareNumericStat(getKdRatioValue(a.player), getKdRatioValue(b.player));
+  }
+  return compareNumericStat(
+    getKpmValue(a.player.kills, item.duration_seconds),
+    getKpmValue(b.player.kills, item.duration_seconds),
+  );
+}
+
+function compareInactivePriority(a, b) {
+  return Number(a.inactive) - Number(b.inactive);
+}
+
+function comparePlayerNames(a, b) {
+  return compareText(getPlayerName(a), getPlayerName(b));
+}
+
+function compareText(a, b) {
+  return String(a || "").localeCompare(String(b || ""), "es", {
+    sensitivity: "base",
+  });
+}
+
+function compareNumericStat(a, b) {
+  return toSortableNumber(a) - toSortableNumber(b);
+}
+
+function renderPlayerRows(player, item, index, inactive = false) {
   const team = getTeamSideDisplay(player.team || player.team_side);
   const rowId = `match-player-row-${index}`;
   const panelId = `match-player-panel-${index}`;
-  const playerName = player.player_name || player.name || "Jugador no identificado";
+  const playerName = getPlayerName(player);
   const kpm = formatKpm(player.kills, item.duration_seconds);
   return `
     <tr
-      class="historical-player-row historical-player-row--${team.key}"
+      class="historical-player-row historical-player-row--${team.key} ${inactive ? "is-inactive" : ""}"
       id="${escapeHtml(rowId)}"
     >
       <td>
@@ -299,6 +434,37 @@ function bindPlayerDetailRows(playersBody) {
       toggleExpanded();
     });
   });
+}
+
+function closePlayerDetailRows(playersBody) {
+  [...playersBody.querySelectorAll(".historical-player-row")].forEach((row) => {
+    const button = row.querySelector(".historical-player-row__details-button");
+    const detailRow = row.nextElementSibling;
+    if (!button || !detailRow?.classList.contains("historical-player-detail-row")) {
+      return;
+    }
+    row.classList.remove("is-expanded");
+    detailRow.classList.remove("is-open");
+    button.setAttribute("aria-expanded", "false");
+  });
+}
+
+function getPlayerName(player) {
+  return player.player_name || player.name || "Jugador no identificado";
+}
+
+function isInactiveMatchPlayer(player) {
+  const team = getTeamSideDisplay(player.team || player.team_side);
+  return (
+    team.key === "unknown" &&
+    toSortableNumber(player.kills) === 0 &&
+    toSortableNumber(player.deaths) === 0 &&
+    toSortableNumber(player.teamkills) === 0 &&
+    getKdRatioValue(player) === 0 &&
+    !hasNamedCounts(player.top_weapons) &&
+    !hasNamedCounts(player.most_killed) &&
+    !hasNamedCounts(player.death_by)
+  );
 }
 
 function renderPlayerStatsPanel(player, item, context) {
@@ -606,18 +772,32 @@ function formatOptionalNumber(value) {
 }
 
 function formatKdRatio(player) {
+  if (
+    !Number.isFinite(Number(player.kd_ratio)) &&
+    (!Number.isFinite(Number(player.kills)) || !Number.isFinite(Number(player.deaths)))
+  ) {
+    return "No disponible";
+  }
+  return formatDecimal(getKdRatioValue(player), 2);
+}
+
+function getKdRatioValue(player) {
   if (Number.isFinite(Number(player.kd_ratio))) {
-    return formatDecimal(player.kd_ratio, 2);
+    return Number(player.kd_ratio);
   }
   const kills = Number(player.kills);
   const deaths = Number(player.deaths);
   if (!Number.isFinite(kills) || !Number.isFinite(deaths)) {
-    return "No disponible";
+    return 0;
   }
-  return deaths > 0 ? formatDecimal(kills / deaths, 2) : formatDecimal(kills, 2);
+  return deaths > 0 ? kills / deaths : kills;
 }
 
 function formatKpm(kills, durationSeconds) {
+  return formatDecimal(getKpmValue(kills, durationSeconds), 2);
+}
+
+function getKpmValue(kills, durationSeconds) {
   const parsedKills = Number(kills);
   const parsedDurationSeconds = Number(durationSeconds);
   if (
@@ -625,9 +805,9 @@ function formatKpm(kills, durationSeconds) {
     !Number.isFinite(parsedDurationSeconds) ||
     parsedDurationSeconds <= 0
   ) {
-    return formatDecimal(0, 2);
+    return 0;
   }
-  return formatDecimal(parsedKills / (parsedDurationSeconds / 60), 2);
+  return parsedKills / (parsedDurationSeconds / 60);
 }
 
 function formatNamedCounts(items) {
@@ -654,6 +834,11 @@ function formatNumber(value) {
     return "0";
   }
   return new Intl.NumberFormat("es-ES").format(parsedValue);
+}
+
+function toSortableNumber(value) {
+  const parsedValue = Number(value);
+  return Number.isFinite(parsedValue) ? parsedValue : 0;
 }
 
 function formatSignedNumber(value) {
