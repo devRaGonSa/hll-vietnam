@@ -9,6 +9,33 @@
     />
     <title>Comunidad Hispana - HLL Vietnam</title>
     <link rel="stylesheet" href="./assets/css/styles.css" />
+    <style>
+      .server-card__status-column {
+        min-width: min(190px, 44%);
+      }
+
+      .server-card__actions {
+        margin-top: clamp(32px, 5vw, 64px);
+      }
+
+      .server-card__quickfacts {
+        max-width: min(280px, 48%);
+      }
+
+      @media (max-width: 680px) {
+        .server-card__status-column {
+          min-width: 150px;
+        }
+
+        .server-card__actions {
+          margin-top: 18px;
+        }
+
+        .server-card__quickfacts {
+          max-width: none;
+        }
+      }
+    </style>
   </head>
   <body
     data-backend-base-url="http://127.0.0.1:8000"
