@@ -1579,6 +1579,41 @@ Estado real a fecha de esta fase:
   RCON-backed primario y usar `public-scoreboard` solo como suplemento/fallback
   para estadisticas por jugador sin paridad RCON
 
+## PostgreSQL Phase 2 Displayed Data Migration
+
+Cuando `HLL_BACKEND_DATABASE_URL` esta configurado, los endpoints visibles de
+historico y el cache mostrado por `/api/servers` leen PostgreSQL. SQLite y los
+JSON legacy quedan como fuente de migracion o fixture explicito con `db_path`.
+
+Migracion idempotente:
+
+```powershell
+cd backend
+python -m app.sqlite_to_postgres_migration
+python -m app.storage_diagnostics
+```
+
+La salida JSON de `sqlite_to_postgres_migration` lista rutas fuente, dominios y
+tablas migradas, filas leidas, insertadas, actualizadas, omitidas y errores.
+La migracion conserva `external_match_id`, IDs legacy y `match_key` RCON para
+que URLs de detalle existentes sigan resolviendo. Tambien copia candidatos y
+URLs seguras de scoreboard; no vuelve a activar filas visibles de
+`comunidad-hispana-03`.
+
+Paridad minima a revisar en `storage_diagnostics`:
+
+- `admin_log_events`, `materialized_matches`, `player_stats`
+- `public_scoreboard_historical_matches`
+- fuentes de rankings semanales y mensuales
+- `server_summary_cache`, `server_snapshots`, `player_event_ledger`
+- `scoreboard_candidates`
+- ultimas partidas materializadas y ultimos eventos AdminLog `match_end`
+
+Fuera de phase 2 quedan checkpoints/runs de ingesta publica que no se muestran
+en frontend y Elo/MMR pausado. Si un endpoint de mantenimiento recibe un
+`db_path` explicito, sigue trabajando contra SQLite para migracion, tests o
+compatibilidad operativa controlada.
+
 ## Elo/MMR Monthly Ranking
 
 Se añade una primera base operativa inspirada en el documento

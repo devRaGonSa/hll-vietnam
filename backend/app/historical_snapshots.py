@@ -6,7 +6,7 @@ import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
 
-from .config import get_historical_data_source_kind
+from .config import get_database_url, get_historical_data_source_kind
 from .data_sources import SOURCE_KIND_RCON, get_rcon_historical_read_model
 from .historical_storage import (
     ALL_SERVERS_SLUG,
@@ -726,6 +726,10 @@ def _build_player_event_scope_where(*, server_key: str) -> tuple[str, list[objec
 
 
 def _connect(db_path: Path) -> sqlite3.Connection:
+    if get_database_url():
+        from .postgres_display_storage import connect_postgres_compat
+
+        return connect_postgres_compat()
     connection = sqlite3.connect(db_path)
     connection.row_factory = sqlite3.Row
     return connection

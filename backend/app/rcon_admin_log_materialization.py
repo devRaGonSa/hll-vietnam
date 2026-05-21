@@ -262,6 +262,16 @@ def get_materialized_rcon_match_detail(
             """,
             (match_key, server_key, server_key),
         ).fetchone()
+        if match is None and match_key.startswith(f"{server_key}:"):
+            match = connection.execute(
+                """
+                SELECT *
+                FROM rcon_materialized_matches
+                WHERE match_key = ?
+                LIMIT 1
+                """,
+                (match_key,),
+            ).fetchone()
         if match is None:
             return None
         stat_rows = connection.execute(

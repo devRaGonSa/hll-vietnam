@@ -12,6 +12,7 @@ from .config import (
     get_historical_weekly_fallback_max_weekday,
     get_historical_weekly_fallback_min_matches,
     get_storage_path,
+    use_postgres_rcon_storage,
 )
 from .historical_models import HistoricalServerDefinition
 from .monthly_mvp import build_monthly_mvp_rankings
@@ -739,6 +740,10 @@ def list_recent_historical_matches(
     db_path: Path | None = None,
 ) -> list[dict[str, object]]:
     """Return recent persisted matches grouped for the historical API layer."""
+    if use_postgres_rcon_storage(explicit_sqlite_path=db_path):
+        from .postgres_display_storage import list_recent_scoreboard_matches
+
+        return list_recent_scoreboard_matches(server_slug=server_slug, limit=limit)
     resolved_path = initialize_historical_storage(db_path=db_path)
     where_clause = ""
     params: list[object] = []
@@ -821,6 +826,13 @@ def get_historical_match_detail(
     normalized_match_id = _stringify(match_id)
     if not normalized_server_slug or not normalized_match_id:
         return None
+    if use_postgres_rcon_storage(explicit_sqlite_path=db_path):
+        from .postgres_display_storage import get_scoreboard_match_detail
+
+        return get_scoreboard_match_detail(
+            server_slug=normalized_server_slug,
+            match_id=normalized_match_id,
+        )
     resolved_path = initialize_historical_storage(db_path=db_path)
     with _connect(resolved_path) as connection:
         row = connection.execute(
@@ -939,6 +951,10 @@ def list_historical_server_summaries(
     db_path: Path | None = None,
 ) -> list[dict[str, object]]:
     """Return aggregate historical metrics per server."""
+    if use_postgres_rcon_storage(explicit_sqlite_path=db_path):
+        from .postgres_display_storage import list_scoreboard_server_summaries
+
+        return list_scoreboard_server_summaries(server_slug=server_slug)
     resolved_path = initialize_historical_storage(db_path=db_path)
     if _is_all_servers_selector(server_slug):
         return [_build_all_servers_summary(db_path=resolved_path)]
@@ -1247,6 +1263,15 @@ def list_weekly_leaderboard(
     db_path: Path | None = None,
 ) -> dict[str, object]:
     """Return ranked weekly leaderboard totals from persisted historical match stats."""
+    if use_postgres_rcon_storage(explicit_sqlite_path=db_path):
+        from .postgres_display_storage import list_scoreboard_leaderboard
+
+        return list_scoreboard_leaderboard(
+            timeframe="weekly",
+            metric=metric,
+            server_id=server_id,
+            limit=limit,
+        )
     resolved_path = initialize_historical_storage(db_path=db_path)
     aggregate_all_servers = _is_all_servers_selector(server_id)
     current_time = datetime.now(timezone.utc)
@@ -1432,6 +1457,15 @@ def list_monthly_leaderboard(
     db_path: Path | None = None,
 ) -> dict[str, object]:
     """Return ranked monthly leaderboard totals from persisted historical match stats."""
+    if use_postgres_rcon_storage(explicit_sqlite_path=db_path):
+        from .postgres_display_storage import list_scoreboard_leaderboard
+
+        return list_scoreboard_leaderboard(
+            timeframe="monthly",
+            metric=metric,
+            server_id=server_id,
+            limit=limit,
+        )
     resolved_path = initialize_historical_storage(db_path=db_path)
     aggregate_all_servers = _is_all_servers_selector(server_id)
     current_time = datetime.now(timezone.utc)

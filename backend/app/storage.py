@@ -7,7 +7,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Iterable, Mapping
 
-from .config import get_storage_path
+from .config import get_storage_path, use_postgres_rcon_storage
 from .sqlite_utils import connect_sqlite_readonly, connect_sqlite_writer
 
 
@@ -90,10 +90,19 @@ def persist_snapshot_batch(
     db_path: Path | None = None,
 ) -> dict[str, object]:
     """Persist a batch of normalized snapshots into local SQLite storage."""
-    resolved_path = initialize_storage(db_path=db_path)
     source_definition = dict(DEFAULT_GAME_SOURCE)
     if game_source is not None:
         source_definition.update(game_source)
+    if use_postgres_rcon_storage(explicit_sqlite_path=db_path):
+        from .postgres_display_storage import persist_server_snapshots
+
+        return persist_server_snapshots(
+            snapshots,
+            source_name=source_name,
+            captured_at=captured_at,
+            game_source=source_definition,
+        )
+    resolved_path = initialize_storage(db_path=db_path)
 
     persisted = 0
     with _connect(resolved_path) as connection:
@@ -145,6 +154,10 @@ def persist_snapshot_batch(
 
 def list_latest_snapshots(*, db_path: Path | None = None) -> list[dict[str, object]]:
     """Return the latest persisted snapshot for each known server."""
+    if use_postgres_rcon_storage(explicit_sqlite_path=db_path):
+        from .postgres_display_storage import list_latest_server_snapshots
+
+        return list_latest_server_snapshots()
     resolved_path = resolve_storage_path(db_path=db_path)
     if not resolved_path.exists():
         return []
@@ -190,6 +203,10 @@ def list_snapshot_history(
     limit: int = 20,
 ) -> list[dict[str, object]]:
     """Return recent persisted snapshots across all servers."""
+    if use_postgres_rcon_storage(explicit_sqlite_path=db_path):
+        from .postgres_display_storage import list_server_snapshot_history
+
+        return list_server_snapshot_history(limit=limit)
     resolved_path = resolve_storage_path(db_path=db_path)
     if not resolved_path.exists():
         return []
@@ -230,6 +247,10 @@ def list_server_history(
     limit: int = 20,
 ) -> list[dict[str, object]]:
     """Return recent history for one server by numeric id or external id."""
+    if use_postgres_rcon_storage(explicit_sqlite_path=db_path):
+        from .postgres_display_storage import list_server_snapshot_history
+
+        return list_server_snapshot_history(server_id=server_id, limit=limit)
     resolved_path = resolve_storage_path(db_path=db_path)
     if not resolved_path.exists():
         return []
