@@ -10,6 +10,7 @@ from typing import Any, Iterable, Mapping
 
 from .config import get_database_url, get_historical_weekly_fallback_max_weekday
 from .historical_models import HistoricalSnapshotRecord
+from .player_external_profiles import build_external_player_profile_fields
 from .scoreboard_origins import resolve_trusted_scoreboard_match_url
 
 
@@ -518,7 +519,7 @@ def get_scoreboard_match_detail(*, server_slug: str, match_id: str) -> dict[str,
             return None
         players = connection.execute(
             """
-            SELECT hp.display_name, hp.stable_player_key, stats.team_side, stats.level,
+            SELECT hp.display_name, hp.stable_player_key, hp.steam_id, stats.team_side, stats.level,
                    stats.kills, stats.deaths, stats.teamkills, stats.combat, stats.offense,
                    stats.defense, stats.support, stats.time_seconds
             FROM historical_player_match_stats AS stats
@@ -546,6 +547,7 @@ def get_scoreboard_match_detail(*, server_slug: str, match_id: str) -> dict[str,
                 "name": player["display_name"],
                 "stable_player_key": player["stable_player_key"],
                 "team_side": player["team_side"],
+                **build_external_player_profile_fields(steam_id=player["steam_id"]),
                 **{
                     key: _int(player[key])
                     for key in (

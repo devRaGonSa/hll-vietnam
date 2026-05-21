@@ -99,6 +99,12 @@ def build_storage_diagnostics() -> dict[str, object]:
             "paused Elo/MMR tables",
         ],
         "scoreboard_correlation": "PostgreSQL safe candidates and migrated trusted historical match URLs are used.",
+        "external_player_ids": _postgres_external_player_id_diagnostics()
+        if backend == "postgresql"
+        else {
+            "available_in_postgresql": False,
+            "reason": "PostgreSQL storage is not active.",
+        },
         "migration_parity_summary": {
             "available": backend == "postgresql",
             "source_command": "python -m app.sqlite_to_postgres_migration",
@@ -123,6 +129,31 @@ def _count_sqlite_tables() -> dict[str, int]:
             else:
                 counts[table_name] = int(row["count"] or 0)
     return counts
+
+
+def _postgres_external_player_id_diagnostics() -> dict[str, object]:
+    from .postgres_rcon_storage import connect_postgres
+
+    with connect_postgres() as connection:
+        row = connection.execute(
+            """
+            SELECT
+              (SELECT COUNT(*) FROM rcon_match_player_stats
+                WHERE player_id ~ '^[0-9]{17}$') AS rcon_match_steam_id64_rows,
+              (SELECT COUNT(*) FROM rcon_player_profile_snapshots
+                WHERE player_id ~ '^[0-9]{17}$') AS rcon_profile_steam_id64_rows,
+              (SELECT COUNT(*) FROM historical_players
+                WHERE steam_id ~ '^[0-9]{17}$') AS scoreboard_player_steam_id64_rows
+            """
+        ).fetchone()
+    return {
+        "available_in_postgresql": True,
+        "rcon_match_steam_id64_rows": int(row["rcon_match_steam_id64_rows"] or 0),
+        "rcon_profile_steam_id64_rows": int(row["rcon_profile_steam_id64_rows"] or 0),
+        "scoreboard_player_steam_id64_rows": int(
+            row["scoreboard_player_steam_id64_rows"] or 0
+        ),
+    }
 
 
 def main() -> None:

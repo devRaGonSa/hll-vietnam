@@ -17,6 +17,7 @@ from .config import (
 from .historical_models import HistoricalServerDefinition
 from .monthly_mvp import build_monthly_mvp_rankings
 from .monthly_mvp_v2 import build_monthly_mvp_v2_rankings
+from .player_external_profiles import build_external_player_profile_fields
 from .scoreboard_origins import (
     list_trusted_public_scoreboard_origins,
     resolve_trusted_scoreboard_match_url,
@@ -872,6 +873,7 @@ def get_historical_match_detail(
                 SELECT
                     historical_players.display_name,
                     historical_players.stable_player_key,
+                    historical_players.steam_id,
                     historical_player_match_stats.team_side,
                     historical_player_match_stats.level,
                     historical_player_match_stats.kills,
@@ -925,6 +927,7 @@ def get_historical_match_detail(
                 "name": player_row["display_name"],
                 "stable_player_key": player_row["stable_player_key"],
                 "team_side": player_row["team_side"],
+                **build_external_player_profile_fields(steam_id=player_row["steam_id"]),
                 "level": _coerce_int(player_row["level"]),
                 "kills": _coerce_int(player_row["kills"]),
                 "deaths": _coerce_int(player_row["deaths"]),

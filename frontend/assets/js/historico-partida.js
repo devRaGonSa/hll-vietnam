@@ -490,6 +490,7 @@ function renderPlayerStatsPanel(player, item, context) {
           ${renderPlayerStatChip("KPM", context.kpm)}
         </div>
       </div>
+      ${renderExternalProfilesSection(player)}
       ${
         hasExpandedStats
           ? `
@@ -503,6 +504,39 @@ function renderPlayerStatsPanel(player, item, context) {
           : `<p class="historical-player-stats-panel__empty">Sin estadisticas ampliadas disponibles.</p>`
       }
     </section>
+  `;
+}
+
+function renderExternalProfilesSection(player) {
+  const links = [
+    ["steam", "Steam"],
+    ["hellor", "Hellor"],
+    ["hll_records", "HLL Records"],
+  ]
+    .map(([key, label]) => [label, player.external_profile_links?.[key]])
+    .filter(([, href]) => typeof href === "string" && href.trim());
+
+  return `
+    <article class="historical-player-stats-panel__section historical-player-stats-panel__profiles">
+      <h5>Perfiles externos</h5>
+      ${
+        links.length
+          ? `
+            <div class="historical-player-profile-links">
+              ${links
+                .map(
+                  ([label, href]) => `
+                    <a href="${escapeHtml(href)}" target="_blank" rel="noopener noreferrer">
+                      ${escapeHtml(label)}
+                    </a>
+                  `,
+                )
+                .join("")}
+            </div>
+          `
+          : "<p>Perfiles externos no disponibles.</p>"
+      }
+    </article>
   `;
 }
 
@@ -620,6 +654,7 @@ function renderActions(item, actionsNode) {
   actionsNode.innerHTML = `
     <a
       class="historical-match-card__link"
+      data-match-detail-scoreboard-link
       href="${escapeHtml(matchUrl)}"
       target="_blank"
       rel="noopener noreferrer"

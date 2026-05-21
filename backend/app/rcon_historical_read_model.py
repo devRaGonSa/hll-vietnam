@@ -7,6 +7,7 @@ from datetime import datetime, timedelta, timezone
 
 from .historical_storage import ALL_SERVERS_SLUG
 from .normalizers import normalize_map_name
+from .player_external_profiles import build_external_player_profile_fields
 from .rcon_scoreboard_correlation import resolve_rcon_scoreboard_match_url
 from .rcon_historical_storage import (
     find_rcon_historical_competitive_window,
@@ -319,6 +320,7 @@ def _build_player_row(
         "top_weapons": _top_counter(row.get("weapons_json")),
         "most_killed": _top_counter(row.get("most_killed_json")),
         "death_by": _top_counter(row.get("death_by_json")),
+        **build_external_player_profile_fields(player_id=row.get("player_id")),
     }
     if profile_summary:
         player["profile_summary"] = profile_summary
