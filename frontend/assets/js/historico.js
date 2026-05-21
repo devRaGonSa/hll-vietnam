@@ -802,7 +802,6 @@ function hydrateMvpComparison(
 
 function renderRecentMatchCard(item) {
   const mapName = item.map?.pretty_name || item.map?.name || "Mapa no disponible";
-  const matchUrl = normalizeExternalMatchUrl(item.match_url);
   const detailUrl = buildInternalMatchDetailUrl(item);
   const actionLinks = [
     `<span class="historical-match-card__result">${escapeHtml(formatMatchResult(item.result))}</span>`,
@@ -813,18 +812,6 @@ function renderRecentMatchCard(item) {
           href="${escapeHtml(detailUrl)}"
         >
           Ver detalles
-        </a>
-      `
-      : "",
-    matchUrl
-      ? `
-        <a
-          class="historical-match-card__link historical-match-card__link--scoreboard"
-          href="${escapeHtml(matchUrl)}"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          Ver partida
         </a>
       `
       : "",

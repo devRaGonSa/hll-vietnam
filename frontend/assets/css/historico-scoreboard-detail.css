@@ -39,18 +39,15 @@
 }
 
 .historical-player-row {
-  cursor: pointer;
   outline: 0;
 }
 
 .historical-player-row:hover td,
-.historical-player-row:focus td,
 .historical-player-row:focus-within td,
 .historical-player-row.is-expanded td {
   background: rgba(210, 182, 118, 0.06);
 }
 
-.historical-player-row:focus-visible td,
 .historical-player-row__details-button:focus-visible {
   outline: 2px solid rgba(210, 182, 118, 0.78);
   outline-offset: -2px;
@@ -99,11 +96,6 @@
   display: none;
 }
 
-.historical-player-row:hover + .historical-player-detail-row,
-.historical-player-row:focus + .historical-player-detail-row,
-.historical-player-row:focus-within + .historical-player-detail-row,
-.historical-player-detail-row:hover,
-.historical-player-detail-row:focus-within,
 .historical-player-detail-row.is-open {
   display: table-row;
 }

@@ -85,6 +85,20 @@ def get_storage_path() -> Path:
     return Path(configured_path) if configured_path else default_path
 
 
+def get_database_url() -> str | None:
+    """Return the optional PostgreSQL URL for migrated backend storage domains."""
+    configured_url = os.getenv("HLL_BACKEND_DATABASE_URL")
+    if configured_url is None:
+        return None
+    normalized_url = configured_url.strip()
+    return normalized_url or None
+
+
+def use_postgres_rcon_storage(*, explicit_sqlite_path: Path | None = None) -> bool:
+    """Return whether phase-1 RCON storage should use PostgreSQL."""
+    return explicit_sqlite_path is None and get_database_url() is not None
+
+
 def get_sqlite_writer_timeout_seconds() -> float:
     """Return the SQLite connection timeout shared by writer-capable storage layers."""
     configured_value = os.getenv(

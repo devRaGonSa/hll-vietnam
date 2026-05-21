@@ -73,7 +73,7 @@ def run_periodic_historical_refresh(
                 page_size=page_size,
                 run_number=completed_runs,
             )
-            print(json.dumps({"run": completed_runs, **payload}, indent=2))
+            print(json.dumps({"run": completed_runs, **payload}, indent=2), flush=True)
 
             if max_runs is not None and completed_runs >= max_runs:
                 break
@@ -275,6 +275,10 @@ def _rcon_capture_has_new_useful_data(rcon_capture_result: dict[str, Any]) -> bo
         return False
     totals = rcon_capture_result.get("totals")
     if isinstance(totals, dict) and int(totals.get("samples_inserted") or 0) > 0:
+        return True
+    if isinstance(totals, dict) and int(totals.get("admin_log_events_inserted") or 0) > 0:
+        return True
+    if isinstance(totals, dict) and int(totals.get("materialized_matches_inserted") or 0) > 0:
         return True
     targets = rcon_capture_result.get("targets")
     if not isinstance(targets, list):
