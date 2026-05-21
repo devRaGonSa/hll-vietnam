@@ -74,15 +74,10 @@
     const serverName = item?.server?.name || "Servidor no disponible";
     const closedAt = item?.closed_at || item?.ended_at || item?.started_at;
     const detailUrl = buildDynamicInternalMatchDetailUrl(item);
-    const externalUrl = normalizeDynamicExternalMatchUrl(item?.match_url);
-
     const actionLinks = [
       `<span class="historical-match-card__result">${escapeDynamicHtml(formatDynamicResultLabel(item?.result))}</span>`,
       detailUrl
         ? `<a class="historical-match-card__link" href="${escapeDynamicHtml(detailUrl)}">Ver detalles</a>`
-        : "",
-      externalUrl
-        ? `<a class="historical-match-card__link historical-match-card__link--scoreboard" href="${escapeDynamicHtml(externalUrl)}" target="_blank" rel="noopener noreferrer">Ver partida</a>`
         : "",
     ].join("");
 

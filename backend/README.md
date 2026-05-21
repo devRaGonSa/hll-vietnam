@@ -97,6 +97,7 @@ Variables especialmente relevantes para Docker y Compose:
 
 - `HLL_BACKEND_HOST`
 - `HLL_BACKEND_PORT`
+- `HLL_BACKEND_DATABASE_URL`
 - `HLL_BACKEND_STORAGE_PATH`
 - `HLL_BACKEND_ALLOWED_ORIGINS`
 - `HLL_BACKEND_LIVE_DATA_SOURCE`
@@ -131,6 +132,21 @@ Dentro del contenedor arranca por defecto con:
 - `HLL_BACKEND_HOST=0.0.0.0`
 - `HLL_BACKEND_PORT=8000`
 - `HLL_BACKEND_STORAGE_PATH=/app/data/hll_vietnam_dev.sqlite3`
+
+Compose configura ademas `HLL_BACKEND_DATABASE_URL` para que PostgreSQL sea el
+almacenamiento autoritativo de la fase 1 RCON: muestras/ventanas de captura,
+AdminLog, snapshots de perfil y partidas/estadisticas materializadas. Sin esa
+variable, la ejecucion local mantiene fallback SQLite para esos dominios.
+
+Diagnostico rapido del backend activo:
+
+```powershell
+python -m app.storage_diagnostics
+```
+
+La salida lista el backend RCON activo, counts de las tablas migradas, la ultima
+partida materializada por servidor y que superficies siguen temporalmente en
+SQLite en esta fase.
 
 Build local:
 

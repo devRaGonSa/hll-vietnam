@@ -316,10 +316,12 @@ function normalizeServerRegion(value) {
     .toLowerCase();
   const placeholderValues = new Set([
     "region pendiente",
+    "region pending",
     "pending",
     "unknown",
     "desconocida",
     "no disponible",
+    "por confirmar",
     "n/a",
   ]);
   return placeholderValues.has(normalizedValue) ? "" : trimmedValue;

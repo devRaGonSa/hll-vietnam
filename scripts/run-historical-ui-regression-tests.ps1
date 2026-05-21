@@ -53,8 +53,8 @@ Assert-NotContains $historicoHtml "Elo/MMR" `
 Assert-NotContains $visibleHistoricalText "snapshot" `
     "Public snapshot wording was reintroduced in visible historical text."
 
-Assert-Contains $historicoJs "Ver partida" `
-    "Recent match cards no longer include the external match action label."
+Assert-NotContains $historicoJs "Ver partida" `
+    "Recent match cards must not expose the external scoreboard action label."
 Assert-Contains $historicoJs "Ver detalles" `
     "Recent match cards no longer include the internal detail fallback label."
 Assert-NotContains $historicoJs "item.match_url || item.source_url" `

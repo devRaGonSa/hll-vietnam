@@ -10,7 +10,7 @@ from collections.abc import Iterable
 from contextlib import closing
 from pathlib import Path
 
-from .config import get_storage_path
+from .config import get_storage_path, use_postgres_rcon_storage
 from .normalizers import normalize_map_name
 from .rcon_admin_log_storage import initialize_rcon_admin_log_storage
 from .rcon_historical_storage import list_rcon_historical_competitive_windows
@@ -23,6 +23,12 @@ SESSION_RESULT_SOURCE = "rcon-session"
 
 def initialize_rcon_materialized_storage(*, db_path: Path | None = None) -> Path:
     """Create SQLite structures used by the materialized RCON match pipeline."""
+    if use_postgres_rcon_storage(explicit_sqlite_path=db_path):
+        from .postgres_rcon_storage import initialize_postgres_rcon_storage
+
+        initialize_postgres_rcon_storage()
+        return get_storage_path()
+
     resolved_path = initialize_rcon_admin_log_storage(db_path=db_path)
     with closing(connect_sqlite_writer(resolved_path)) as connection:
         with connection:
@@ -85,6 +91,46 @@ def initialize_rcon_materialized_storage(*, db_path: Path | None = None) -> Path
 def materialize_rcon_admin_log(*, db_path: Path | None = None) -> dict[str, object]:
     """Materialize matches and player stats from stored AdminLog events."""
     resolved_path = initialize_rcon_materialized_storage(db_path=db_path)
+    if use_postgres_rcon_storage(explicit_sqlite_path=db_path):
+        from .postgres_rcon_storage import connect_postgres_compat
+
+        with connect_postgres_compat() as connection:
+            payload = _materialize_rcon_admin_log_with_connection(
+                connection,
+                session_window_db_path=None,
+                caught_errors=(Exception,),
+            )
+        freshness = summarize_rcon_materialization_status()
+        return {
+            **payload,
+            "latest_materialized_matches": freshness["latest_materialized_matches"],
+            "latest_admin_log_match_end_events": freshness["latest_admin_log_match_end_events"],
+            "match_end_status": freshness["match_end_status"],
+        }
+
+    with closing(connect_sqlite_writer(resolved_path)) as connection:
+        with connection:
+            payload = _materialize_rcon_admin_log_with_connection(
+                connection,
+                session_window_db_path=resolved_path,
+                caught_errors=(sqlite3.Error,),
+            )
+
+    freshness = summarize_rcon_materialization_status(db_path=resolved_path)
+    return {
+        **payload,
+        "latest_materialized_matches": freshness["latest_materialized_matches"],
+        "latest_admin_log_match_end_events": freshness["latest_admin_log_match_end_events"],
+        "match_end_status": freshness["match_end_status"],
+    }
+
+
+def _materialize_rcon_admin_log_with_connection(
+    connection: object,
+    *,
+    session_window_db_path: Path | None,
+    caught_errors: tuple[type[BaseException], ...],
+) -> dict[str, object]:
     errors: list[str] = []
     matches_seen = 0
     matches_materialized = 0
@@ -93,40 +139,39 @@ def materialize_rcon_admin_log(*, db_path: Path | None = None) -> dict[str, obje
     player_stats_materialized = 0
     player_stats_updated = 0
 
-    with closing(connect_sqlite_writer(resolved_path)) as connection:
-        with connection:
-            try:
-                match_rows = _derive_admin_log_matches(connection)
-                matches_seen = len(match_rows)
-                for row in match_rows:
-                    outcome = _upsert_match(connection, row)
-                    matches_materialized += int(outcome == "inserted")
-                    matches_updated += int(outcome == "updated")
-                session_rows = _derive_session_fallback_matches(connection, db_path=resolved_path)
-                matches_seen += len(session_rows)
-                for row in session_rows:
-                    outcome = _upsert_match(connection, row)
-                    matches_materialized += int(outcome == "inserted")
-                    matches_updated += int(outcome == "updated")
+    try:
+        match_rows = _derive_admin_log_matches(connection)
+        matches_seen = len(match_rows)
+        for row in match_rows:
+            outcome = _upsert_match(connection, row)
+            matches_materialized += int(outcome == "inserted")
+            matches_updated += int(outcome == "updated")
+        session_rows = _derive_session_fallback_matches(
+            connection,
+            db_path=session_window_db_path,
+        )
+        matches_seen += len(session_rows)
+        for row in session_rows:
+            outcome = _upsert_match(connection, row)
+            matches_materialized += int(outcome == "inserted")
+            matches_updated += int(outcome == "updated")
 
-                persisted_matches = _list_materialized_matches(connection)
-                for match in persisted_matches:
-                    stats = _derive_player_stats_for_match(connection, match)
-                    player_stats_seen += len(stats)
-                    connection.execute(
-                        """
-                        DELETE FROM rcon_match_player_stats
-                        WHERE target_key = ? AND match_key = ?
-                        """,
-                        (match["target_key"], match["match_key"]),
-                    )
-                    for stat in stats:
-                        _insert_player_stat(connection, stat)
-                        player_stats_materialized += 1
-            except sqlite3.Error as error:
-                errors.append(str(error))
-
-    freshness = summarize_rcon_materialization_status(db_path=resolved_path)
+        persisted_matches = _list_materialized_matches(connection)
+        for match in persisted_matches:
+            stats = _derive_player_stats_for_match(connection, match)
+            player_stats_seen += len(stats)
+            connection.execute(
+                """
+                DELETE FROM rcon_match_player_stats
+                WHERE target_key = ? AND match_key = ?
+                """,
+                (match["target_key"], match["match_key"]),
+            )
+            for stat in stats:
+                _insert_player_stat(connection, stat)
+                player_stats_materialized += 1
+    except caught_errors as error:
+        errors.append(str(error))
     return {
         "matches_seen": matches_seen,
         "matches_materialized": matches_materialized,
@@ -135,8 +180,6 @@ def materialize_rcon_admin_log(*, db_path: Path | None = None) -> dict[str, obje
         "player_stats_materialized": player_stats_materialized,
         "player_stats_updated": player_stats_updated,
         "errors": errors,
-        "latest_materialized_matches": freshness["latest_materialized_matches"],
-        "latest_admin_log_match_end_events": freshness["latest_admin_log_match_end_events"],
     }
 
 
@@ -159,7 +202,13 @@ def list_materialized_rcon_matches(
         params.append(MATCH_RESULT_SOURCE)
     where = "WHERE " + " AND ".join(clauses) if clauses else ""
     params.append(limit)
-    with closing(connect_sqlite_readonly(resolved_path)) as connection:
+    if use_postgres_rcon_storage(explicit_sqlite_path=db_path):
+        from .postgres_rcon_storage import connect_postgres_compat
+
+        connection_scope = connect_postgres_compat()
+    else:
+        connection_scope = closing(connect_sqlite_readonly(resolved_path))
+    with connection_scope as connection:
         rows = connection.execute(
             f"""
             SELECT
@@ -196,7 +245,13 @@ def get_materialized_rcon_match_detail(
 ) -> dict[str, object] | None:
     """Return one materialized match with player stats."""
     resolved_path = initialize_rcon_materialized_storage(db_path=db_path)
-    with closing(connect_sqlite_readonly(resolved_path)) as connection:
+    if use_postgres_rcon_storage(explicit_sqlite_path=db_path):
+        from .postgres_rcon_storage import connect_postgres_compat
+
+        connection_scope = connect_postgres_compat()
+    else:
+        connection_scope = closing(connect_sqlite_readonly(resolved_path))
+    with connection_scope as connection:
         match = connection.execute(
             """
             SELECT *
@@ -248,7 +303,13 @@ def get_materialized_rcon_match_detail(
 def summarize_rcon_materialization_status(*, db_path: Path | None = None) -> dict[str, object]:
     """Return a small diagnostic summary for stored RCON materialization state."""
     resolved_path = initialize_rcon_materialized_storage(db_path=db_path)
-    with closing(connect_sqlite_readonly(resolved_path)) as connection:
+    if use_postgres_rcon_storage(explicit_sqlite_path=db_path):
+        from .postgres_rcon_storage import connect_postgres_compat
+
+        connection_scope = connect_postgres_compat()
+    else:
+        connection_scope = closing(connect_sqlite_readonly(resolved_path))
+    with connection_scope as connection:
         match_count = connection.execute(
             "SELECT COUNT(*) AS count FROM rcon_materialized_matches"
         ).fetchone()["count"]
@@ -259,7 +320,7 @@ def summarize_rcon_materialization_status(*, db_path: Path | None = None) -> dic
                 SELECT 1
                 FROM rcon_match_player_stats
                 GROUP BY target_key, match_key
-            )
+            ) AS stats_matches
             """
         ).fetchone()["count"]
         ranges = connection.execute(
@@ -301,7 +362,7 @@ def summarize_rcon_materialization_status(*, db_path: Path | None = None) -> dic
                     ) AS row_number
                 FROM rcon_materialized_matches
                 WHERE source_basis = ?
-            )
+            ) AS ranked_matches
             WHERE row_number = 1
             ORDER BY target_key ASC
             """,
@@ -328,6 +389,11 @@ def summarize_rcon_materialization_status(*, db_path: Path | None = None) -> dic
         "event_counts": [dict(row) for row in event_counts],
         "latest_materialized_matches": [dict(row) for row in latest_matches],
         "latest_admin_log_match_end_events": [dict(row) for row in latest_match_end_events],
+        "match_end_status": (
+            "admin-log-match-end-events-available"
+            if latest_match_end_events
+            else "no-admin-log-match-end-events-stored"
+        ),
     }
 
 
@@ -360,7 +426,7 @@ def _derive_admin_log_matches(connection: sqlite3.Connection) -> list[dict[str, 
 def _derive_session_fallback_matches(
     connection: sqlite3.Connection,
     *,
-    db_path: Path,
+    db_path: Path | None,
 ) -> list[dict[str, object]]:
     rows: list[dict[str, object]] = []
     existing = {

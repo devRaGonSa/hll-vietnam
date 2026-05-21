@@ -177,3 +177,31 @@ son confiables `comunidad-hispana-01`, con origen
 defecto nuevos. Los datos historicos ya persistidos no se eliminan, pero las
 URLs publicas de partidas solo se aceptan si el `raw_payload_ref` usa HTTP(S),
 apunta al origen confiable del servidor activo y mantiene una ruta `/games/`.
+
+## Decision 017: PostgreSQL phase 1 for RCON historical persistence
+
+La primera migracion de persistencia a PostgreSQL cubre el camino que sufria
+contencion SQLite entre `backend`, `historical-runner` y
+`rcon-historical-worker`:
+
+- captura prospectiva RCON, muestras y ventanas competitivas
+- eventos AdminLog deduplicados y snapshots de perfil derivados
+- partidas RCON materializadas y estadisticas por jugador
+- candidatos confiables de URL de scoreboard que puedan poblarse para
+  correlacion de detalle
+
+Docker Compose configura `HLL_BACKEND_DATABASE_URL` y usa PostgreSQL como
+backend autoritativo para esas tablas. La ejecucion local sin esa variable sigue
+usando SQLite como fallback temporal para preservar comandos y tests locales.
+
+Quedan SQLite-backed en esta fase porque no forman parte del lock-prone writer
+path migrado y siguen cubriendo fallback publico o caches locales:
+
+- snapshots live y cache de `/api/servers`
+- tablas `historical_*` de scoreboard publico, rankings y correlacion legacy
+- snapshots historicos precalculados, ledger player-event y Elo/MMR pausado
+
+La correlacion de URL publica en detalle usa primero candidatos PostgreSQL
+confiables cuando existan y puede seguir leyendo filas `historical_*`
+persistidas en SQLite durante la transicion. El diagnostico operativo se expone
+con `python -m app.storage_diagnostics`.

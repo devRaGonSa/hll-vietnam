@@ -6,7 +6,7 @@ import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
 
-from .config import get_storage_path
+from .config import get_storage_path, use_postgres_rcon_storage
 from .normalizers import normalize_map_name
 from .scoreboard_origins import resolve_trusted_scoreboard_match_url
 from .sqlite_utils import connect_sqlite_readonly
@@ -76,6 +76,16 @@ def _list_persisted_scoreboard_candidates(
     server_slug: str,
     db_path: Path,
 ) -> list[dict[str, object]]:
+    if use_postgres_rcon_storage():
+        from .postgres_rcon_storage import list_scoreboard_candidates
+
+        postgres_candidates = list_scoreboard_candidates(
+            server_slug=server_slug,
+            limit=MAX_CANDIDATES,
+        )
+        if postgres_candidates:
+            return postgres_candidates
+
     try:
         with connect_sqlite_readonly(db_path) as connection:
             rows = connection.execute(
@@ -128,6 +138,10 @@ def _list_persisted_scoreboard_candidates(
                 "match_url": match_url,
             }
         )
+    if items and use_postgres_rcon_storage():
+        from .postgres_rcon_storage import upsert_scoreboard_candidates
+
+        upsert_scoreboard_candidates(server_slug=server_slug, candidates=items)
     return items
 
 

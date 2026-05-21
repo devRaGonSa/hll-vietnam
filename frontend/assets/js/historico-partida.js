@@ -230,9 +230,6 @@ function renderPlayerRows(player, item, index) {
     <tr
       class="historical-player-row historical-player-row--${team.key}"
       id="${escapeHtml(rowId)}"
-      tabindex="0"
-      aria-controls="${escapeHtml(panelId)}"
-      aria-expanded="false"
     >
       <td>
         <button
@@ -270,31 +267,35 @@ function renderPlayerRows(player, item, index) {
 }
 
 function bindPlayerDetailRows(playersBody) {
-  playersBody.querySelectorAll(".historical-player-row").forEach((row) => {
+  const playerRows = [...playersBody.querySelectorAll(".historical-player-row")];
+  const collapseRow = (row) => {
+    const button = row.querySelector(".historical-player-row__details-button");
+    const detailRow = row.nextElementSibling;
+    if (!button || !detailRow?.classList.contains("historical-player-detail-row")) {
+      return;
+    }
+    row.classList.remove("is-expanded");
+    detailRow.classList.remove("is-open");
+    button.setAttribute("aria-expanded", "false");
+  };
+
+  playerRows.forEach((row) => {
     const button = row.querySelector(".historical-player-row__details-button");
     const detailRow = row.nextElementSibling;
     if (!button || !detailRow?.classList.contains("historical-player-detail-row")) {
       return;
     }
     const setExpanded = (expanded) => {
+      if (expanded) {
+        playerRows.filter((candidate) => candidate !== row).forEach(collapseRow);
+      }
       row.classList.toggle("is-expanded", expanded);
       detailRow.classList.toggle("is-open", expanded);
-      row.setAttribute("aria-expanded", String(expanded));
       button.setAttribute("aria-expanded", String(expanded));
     };
     const toggleExpanded = () => setExpanded(!detailRow.classList.contains("is-open"));
 
-    row.addEventListener("click", (event) => {
-      if (event.target.closest("a")) {
-        return;
-      }
-      toggleExpanded();
-    });
-    row.addEventListener("keydown", (event) => {
-      if (event.key !== "Enter" && event.key !== " ") {
-        return;
-      }
-      event.preventDefault();
+    button.addEventListener("click", () => {
       toggleExpanded();
     });
   });

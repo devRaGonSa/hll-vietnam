@@ -8,7 +8,7 @@ import sqlite3
 from collections.abc import Mapping
 from pathlib import Path
 
-from .config import get_storage_path
+from .config import get_storage_path, use_postgres_rcon_storage
 from .rcon_admin_log_parser import parse_rcon_admin_log_entry
 from .rcon_admin_log_parser import parse_rcon_player_profile_snapshot
 from .rcon_historical_storage import initialize_rcon_historical_storage
@@ -17,6 +17,12 @@ from .sqlite_utils import connect_sqlite_writer
 
 def initialize_rcon_admin_log_storage(*, db_path: Path | None = None) -> Path:
     """Create SQLite structures for parsed RCON AdminLog events."""
+    if use_postgres_rcon_storage(explicit_sqlite_path=db_path):
+        from .postgres_rcon_storage import initialize_postgres_rcon_storage
+
+        initialize_postgres_rcon_storage()
+        return get_storage_path()
+
     resolved_path = initialize_rcon_historical_storage(db_path=db_path)
 
     with connect_sqlite_writer(resolved_path) as connection:
@@ -90,6 +96,9 @@ def persist_rcon_admin_log_entries(
     db_path: Path | None = None,
 ) -> dict[str, int]:
     """Persist raw and parsed AdminLog entries idempotently."""
+    if use_postgres_rcon_storage(explicit_sqlite_path=db_path):
+        return _persist_rcon_admin_log_entries_postgres(target=target, entries=entries)
+
     resolved_path = initialize_rcon_admin_log_storage(db_path=db_path)
     target_key = str(target.get("target_key") or target.get("external_server_id") or "")
     if not target_key:
@@ -278,6 +287,25 @@ def _ensure_canonical_message_column(connection: sqlite3.Connection) -> None:
 
 def list_rcon_admin_log_event_counts(*, db_path: Path | None = None) -> list[dict[str, object]]:
     """Return event counts grouped by target and event type."""
+    if use_postgres_rcon_storage(explicit_sqlite_path=db_path):
+        from .postgres_rcon_storage import connect_postgres_compat
+
+        with connect_postgres_compat() as connection:
+            rows = connection.execute(
+                """
+                SELECT
+                    target_key,
+                    event_type,
+                    COUNT(*) AS event_count,
+                    MIN(server_time) AS first_server_time,
+                    MAX(server_time) AS last_server_time
+                FROM rcon_admin_log_events
+                GROUP BY target_key, event_type
+                ORDER BY target_key ASC, event_count DESC
+                """
+            ).fetchall()
+        return [dict(row) for row in rows]
+
     resolved_path = db_path or get_storage_path()
     initialize_rcon_admin_log_storage(db_path=resolved_path)
 
@@ -310,6 +338,29 @@ def get_latest_rcon_player_profile_summaries(
     requested_ids = [str(player_id).strip() for player_id in player_ids if str(player_id).strip()]
     if not target_key or not requested_ids:
         return {}
+    if use_postgres_rcon_storage(explicit_sqlite_path=db_path):
+        from .postgres_rcon_storage import connect_postgres_compat
+
+        placeholders = ",".join("?" for _ in requested_ids)
+        with connect_postgres_compat() as connection:
+            rows = connection.execute(
+                f"""
+                SELECT snapshots.*
+                FROM rcon_player_profile_snapshots AS snapshots
+                INNER JOIN (
+                    SELECT player_id, MAX(source_server_time) AS latest_source_server_time
+                    FROM rcon_player_profile_snapshots
+                    WHERE target_key = ?
+                      AND player_id IN ({placeholders})
+                    GROUP BY player_id
+                ) AS latest
+                  ON latest.player_id = snapshots.player_id
+                 AND latest.latest_source_server_time = snapshots.source_server_time
+                WHERE snapshots.target_key = ?
+                """,
+                [target_key, *requested_ids, target_key],
+            ).fetchall()
+        return {str(row["player_id"]): _build_safe_profile_summary(row) for row in rows}
 
     resolved_path = db_path or get_storage_path()
     initialize_rcon_admin_log_storage(db_path=resolved_path)
@@ -369,3 +420,68 @@ def _json_mapping(raw_value: object) -> dict[str, object]:
     except json.JSONDecodeError:
         return {}
     return parsed if isinstance(parsed, dict) else {}
+
+
+def _persist_rcon_admin_log_entries_postgres(
+    *,
+    target: Mapping[str, object],
+    entries: list[dict[str, object]],
+) -> dict[str, int]:
+    from .postgres_rcon_storage import connect_postgres_compat
+
+    target_key = str(target.get("target_key") or target.get("external_server_id") or "")
+    if not target_key:
+        raise ValueError("target must include target_key or external_server_id")
+
+    external_server_id = target.get("external_server_id")
+    inserted = 0
+    duplicates = 0
+    with connect_postgres_compat() as connection:
+        for entry in entries:
+            parsed = parse_rcon_admin_log_entry(entry)
+            raw_message = str(parsed.get("raw_message") or "")
+            canonical_message = _canonicalize_admin_log_message(raw_message)
+            cursor = connection.execute(
+                """
+                INSERT INTO rcon_admin_log_events (
+                    target_key,
+                    external_server_id,
+                    event_timestamp,
+                    server_time,
+                    relative_time,
+                    event_type,
+                    raw_message,
+                    canonical_message,
+                    parsed_payload_json,
+                    raw_entry_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT DO NOTHING
+                """,
+                (
+                    target_key,
+                    external_server_id,
+                    parsed.get("timestamp"),
+                    parsed.get("server_time"),
+                    parsed.get("relative_time"),
+                    parsed.get("event_type") or "unknown",
+                    raw_message,
+                    canonical_message,
+                    json.dumps(parsed, ensure_ascii=False, separators=(",", ":")),
+                    json.dumps(entry, ensure_ascii=False, separators=(",", ":")),
+                ),
+            )
+            if int(cursor.rowcount or 0):
+                inserted += 1
+            else:
+                duplicates += 1
+            _persist_profile_snapshot_if_present(
+                connection,
+                target_key=target_key,
+                external_server_id=external_server_id,
+                parsed=parsed,
+            )
+    return {
+        "events_seen": len(entries),
+        "events_inserted": inserted,
+        "duplicate_events": duplicates,
+    }
