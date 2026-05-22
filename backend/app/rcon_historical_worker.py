@@ -528,7 +528,7 @@ def main(argv: Iterable[str] | None = None) -> int:
 
     if args.mode == "capture":
         result = run_rcon_historical_capture(target_key=args.target_key)
-        print(json.dumps(result, indent=2))
+        print(json.dumps(result, indent=2, default=_json_default))
         return 0
 
     if args.interval <= 0:
