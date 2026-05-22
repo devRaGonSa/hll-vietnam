@@ -19,6 +19,89 @@ LeaderboardTimeframe = Literal["weekly", "monthly"]
 LeaderboardMetric = Literal["kills", "deaths", "matches_over_100_kills", "support"]
 
 
+def build_rcon_materialized_leaderboard_snapshot_payload(
+    *,
+    server_id: str | None = None,
+    timeframe: str = "weekly",
+    metric: str = "kills",
+    limit: int = 10,
+) -> dict[str, object]:
+    """Return an API payload for RCON-backed leaderboard snapshots.
+
+    This is a runtime fast read over the materialized AdminLog tables. It intentionally
+    avoids the old public-scoreboard fallback because the UI is running in RCON mode.
+    """
+
+    normalized_timeframe = _normalize_timeframe(timeframe)
+    normalized_metric = _normalize_metric(metric)
+    result = list_rcon_materialized_leaderboard(
+        server_key=server_id,
+        timeframe=normalized_timeframe,
+        metric=normalized_metric,
+        limit=limit,
+    )
+    items = list(result.get("items") or [])[:limit]
+    return {
+        "status": "ok",
+        "data": {
+            "title": _build_title(
+                metric=normalized_metric,
+                timeframe=normalized_timeframe,
+                server_id=server_id,
+            ),
+            "context": f"historical-{normalized_timeframe}-leaderboard-snapshot",
+            "source": "rcon-materialized-admin-log-leaderboard",
+            "server_slug": server_id,
+            "timeframe": normalized_timeframe,
+            "metric": normalized_metric,
+            "found": True,
+            "snapshot_status": "ready",
+            "missing_reason": None,
+            "request_path_policy": "runtime-rcon-materialized-fast-path",
+            "generation_policy": "runtime-materialized-read",
+            "generated_at": _to_iso(datetime.now(timezone.utc)),
+            "source_range_start": result.get("source_range_start"),
+            "source_range_end": result.get("source_range_end"),
+            "is_stale": False,
+            "freshness": "runtime",
+            "window_days": result.get("window_days"),
+            "window_start": result.get("window_start"),
+            "window_end": result.get("window_end"),
+            "window_kind": result.get("window_kind"),
+            "window_label": result.get("window_label"),
+            "uses_fallback": False,
+            "selection_reason": result.get("selection_reason"),
+            "current_week_start": result.get("current_week_start"),
+            "current_week_closed_matches": result.get("current_week_closed_matches"),
+            "previous_week_closed_matches": result.get("previous_week_closed_matches"),
+            "current_month_start": result.get("current_month_start"),
+            "current_month_closed_matches": result.get("current_month_closed_matches"),
+            "previous_month_closed_matches": result.get("previous_month_closed_matches"),
+            "sufficient_sample": result.get("sufficient_sample"),
+            "snapshot_limit": result.get("limit"),
+            "limit": limit,
+            "runtime_enrichment": {
+                "applied": False,
+                "reason": None,
+            },
+            "primary_source": "rcon",
+            "selected_source": "rcon",
+            "fallback_used": False,
+            "fallback_reason": None,
+            "source_attempts": [
+                {
+                    "source": "rcon",
+                    "role": "primary",
+                    "status": "success",
+                    "reason": "leaderboard-served-by-rcon-materialized-admin-log",
+                    "message": None,
+                }
+            ],
+            "items": items,
+        },
+    }
+
+
 def list_rcon_materialized_leaderboard(
     *,
     server_key: str | None = None,
@@ -372,6 +455,18 @@ def _normalize_metric(value: str) -> LeaderboardMetric:
     if normalized in {"kills", "deaths", "matches_over_100_kills", "support"}:
         return normalized  # type: ignore[return-value]
     return "kills"
+
+
+def _build_title(*, metric: str, timeframe: str, server_id: str | None) -> str:
+    timeframe_label = "mensual" if timeframe == "monthly" else "semanal"
+    scope = "totales" if server_id == ALL_SERVERS_SLUG else "por servidor"
+    metric_label = {
+        "kills": "Top kills",
+        "deaths": "Top muertes",
+        "matches_over_100_kills": "Partidas 100+ kills",
+        "support": "Top soporte",
+    }.get(metric, "Top kills")
+    return f"Snapshot {metric_label} {timeframe_label} {scope}"
 
 
 def _coerce_int(value: object) -> int:
