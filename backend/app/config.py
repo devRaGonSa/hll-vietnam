@@ -233,20 +233,40 @@ def get_historical_crcon_retry_delay_seconds() -> float:
 
 def get_historical_refresh_interval_seconds() -> int:
     """Return the default interval used by the historical refresh loop."""
-    configured_value = os.getenv(
+    return _read_int_env(
         "HLL_HISTORICAL_SNAPSHOT_REFRESH_INTERVAL_SECONDS",
         os.getenv(
             "HLL_HISTORICAL_REFRESH_INTERVAL_SECONDS",
             str(DEFAULT_HISTORICAL_SNAPSHOT_REFRESH_INTERVAL_SECONDS),
         ),
+        minimum=1,
     )
-    interval_seconds = int(configured_value)
-    if interval_seconds <= 0:
-        raise ValueError(
-            "HLL_HISTORICAL_SNAPSHOT_REFRESH_INTERVAL_SECONDS must be positive."
-        )
 
-    return interval_seconds
+
+def _read_int_env(name: str, default_value: str, *, minimum: int) -> int:
+    """Read one integer env var and keep validation errors actionable."""
+    configured_value = os.getenv(name, default_value)
+    try:
+        value = int(configured_value)
+    except (TypeError, ValueError) as error:
+        raise ValueError(f"{name} must be an integer.") from error
+    if value < minimum:
+        qualifier = "positive" if minimum == 1 else f"at least {minimum}"
+        raise ValueError(f"{name} must be {qualifier}.")
+    return value
+
+
+def _read_float_env(name: str, default_value: str, *, minimum: float) -> float:
+    """Read one float env var and keep validation errors actionable."""
+    configured_value = os.getenv(name, default_value)
+    try:
+        value = float(configured_value)
+    except (TypeError, ValueError) as error:
+        raise ValueError(f"{name} must be a number.") from error
+    if value < minimum:
+        qualifier = "zero or positive" if minimum == 0 else f"at least {minimum}"
+        raise ValueError(f"{name} must be {qualifier}.")
+    return value
 
 
 def get_historical_refresh_overlap_hours() -> int:
@@ -297,30 +317,20 @@ def get_rcon_request_timeout_seconds() -> float:
 
 def get_historical_refresh_max_retries() -> int:
     """Return the retry count used by the historical refresh loop."""
-    configured_value = os.getenv(
+    return _read_int_env(
         "HLL_HISTORICAL_REFRESH_MAX_RETRIES",
         str(DEFAULT_HISTORICAL_REFRESH_MAX_RETRIES),
+        minimum=0,
     )
-    max_retries = int(configured_value)
-    if max_retries < 0:
-        raise ValueError("HLL_HISTORICAL_REFRESH_MAX_RETRIES must be zero or positive.")
-
-    return max_retries
 
 
-def get_historical_refresh_retry_delay_seconds() -> int:
+def get_historical_refresh_retry_delay_seconds() -> float:
     """Return the wait time between historical refresh retries."""
-    configured_value = os.getenv(
+    return _read_float_env(
         "HLL_HISTORICAL_REFRESH_RETRY_DELAY_SECONDS",
         str(DEFAULT_HISTORICAL_REFRESH_RETRY_DELAY_SECONDS),
+        minimum=0,
     )
-    retry_delay_seconds = int(configured_value)
-    if retry_delay_seconds < 0:
-        raise ValueError(
-            "HLL_HISTORICAL_REFRESH_RETRY_DELAY_SECONDS must be zero or positive."
-        )
-
-    return retry_delay_seconds
 
 
 def get_historical_full_snapshot_every_runs() -> int:

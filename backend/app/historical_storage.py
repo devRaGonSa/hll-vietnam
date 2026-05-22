@@ -1842,7 +1842,7 @@ def list_monthly_mvp_v2_ranking(
                 FROM player_event_raw_ledger
                 WHERE event_type = 'player_kill_summary'
                   AND occurred_at IS NOT NULL
-                  AND substr(occurred_at, 1, 7) = ?
+                  AND substr(CAST(occurred_at AS TEXT), 1, 7) = ?
                   AND {event_scope_sql}
                   AND killer_player_key IS NOT NULL
                   AND victim_player_key IS NOT NULL
@@ -1863,7 +1863,7 @@ def list_monthly_mvp_v2_ranking(
                 FROM player_event_raw_ledger
                 WHERE event_type = 'player_death_summary'
                   AND occurred_at IS NOT NULL
-                  AND substr(occurred_at, 1, 7) = ?
+                  AND substr(CAST(occurred_at AS TEXT), 1, 7) = ?
                   AND {event_scope_sql}
                   AND killer_player_key IS NOT NULL
                   AND victim_player_key IS NOT NULL
@@ -1901,7 +1901,7 @@ def list_monthly_mvp_v2_ranking(
                 FROM player_event_raw_ledger
                 WHERE event_type = 'player_kill_summary'
                   AND occurred_at IS NOT NULL
-                  AND substr(occurred_at, 1, 7) = ?
+                  AND substr(CAST(occurred_at AS TEXT), 1, 7) = ?
                   AND {event_scope_sql}
                   AND killer_player_key IS NOT NULL
                   AND victim_player_key IS NOT NULL
@@ -2020,7 +2020,7 @@ def _get_monthly_player_event_coverage(
     with _connect(db_path) as connection:
         latest_row = connection.execute(
             f"""
-            SELECT MAX(substr(occurred_at, 1, 7)) AS latest_month_key
+            SELECT MAX(substr(CAST(occurred_at AS TEXT), 1, 7)) AS latest_month_key
             FROM player_event_raw_ledger
             WHERE occurred_at IS NOT NULL
               AND {scope_sql}
@@ -2035,7 +2035,7 @@ def _get_monthly_player_event_coverage(
                 MAX(occurred_at) AS source_range_end
             FROM player_event_raw_ledger
             WHERE occurred_at IS NOT NULL
-              AND substr(occurred_at, 1, 7) = ?
+              AND substr(CAST(occurred_at AS TEXT), 1, 7) = ?
               AND {scope_sql}
             """,
             [month_key, *scope_params],

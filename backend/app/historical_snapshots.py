@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
@@ -135,9 +136,16 @@ def build_historical_server_snapshots(
 ) -> list[dict[str, object]]:
     """Build all precomputed historical snapshots required for one server."""
     generated_at_value = _as_utc(generated_at or datetime.now(timezone.utc))
+    leaderboard_limit = _normalize_snapshot_limit("leaderboard_limit", leaderboard_limit)
+    recent_matches_limit = _normalize_snapshot_limit(
+        "recent_matches_limit",
+        recent_matches_limit,
+    )
+    _log_snapshot_build_started(server_key, SNAPSHOT_TYPE_SERVER_SUMMARY)
     snapshots = [_build_server_summary_snapshot(server_key, generated_at_value, db_path=db_path)]
 
     for metric in SNAPSHOT_LEADERBOARD_METRICS:
+        _log_snapshot_build_started(server_key, SNAPSHOT_TYPE_WEEKLY_LEADERBOARD, metric=metric)
         snapshots.append(
             _build_weekly_leaderboard_snapshot(
                 server_key,
@@ -147,6 +155,7 @@ def build_historical_server_snapshots(
                 db_path=db_path,
             )
         )
+        _log_snapshot_build_started(server_key, SNAPSHOT_TYPE_MONTHLY_LEADERBOARD, metric=metric)
         snapshots.append(
             _build_monthly_leaderboard_snapshot(
                 server_key,
@@ -157,6 +166,7 @@ def build_historical_server_snapshots(
             )
     )
 
+    _log_snapshot_build_started(server_key, SNAPSHOT_TYPE_MONTHLY_MVP)
     snapshots.append(
         _build_monthly_mvp_snapshot(
             server_key,
@@ -165,6 +175,7 @@ def build_historical_server_snapshots(
             db_path=db_path,
         )
     )
+    _log_snapshot_build_started(server_key, SNAPSHOT_TYPE_MONTHLY_MVP_V2)
     snapshots.append(
         _build_monthly_mvp_v2_snapshot(
             server_key,
@@ -174,6 +185,7 @@ def build_historical_server_snapshots(
         )
     )
     for snapshot_type in PLAYER_EVENT_SNAPSHOT_TYPES:
+        _log_snapshot_build_started(server_key, snapshot_type)
         snapshots.append(
             _build_player_event_snapshot(
                 server_key,
@@ -184,6 +196,7 @@ def build_historical_server_snapshots(
             )
         )
 
+    _log_snapshot_build_started(server_key, SNAPSHOT_TYPE_RECENT_MATCHES)
     snapshots.append(
         _build_recent_matches_snapshot(
             server_key,
@@ -205,12 +218,23 @@ def build_priority_historical_snapshots(
 ) -> list[dict[str, object]]:
     """Build the minimum warm snapshot set required by the historical UI."""
     generated_at_value = _as_utc(generated_at or datetime.now(timezone.utc))
+    leaderboard_limit = _normalize_snapshot_limit("leaderboard_limit", leaderboard_limit)
+    recent_matches_limit = _normalize_snapshot_limit(
+        "recent_matches_limit",
+        recent_matches_limit,
+    )
     snapshots: list[dict[str, object]] = []
     for server_key in server_keys:
+        _log_snapshot_build_started(server_key, SNAPSHOT_TYPE_SERVER_SUMMARY)
         snapshots.append(
             _build_server_summary_snapshot(server_key, generated_at_value, db_path=db_path)
         )
         for metric in PREWARM_LEADERBOARD_METRICS:
+            _log_snapshot_build_started(
+                server_key,
+                SNAPSHOT_TYPE_WEEKLY_LEADERBOARD,
+                metric=metric,
+            )
             snapshots.append(
                 _build_weekly_leaderboard_snapshot(
                     server_key,
@@ -219,6 +243,11 @@ def build_priority_historical_snapshots(
                     limit=leaderboard_limit,
                     db_path=db_path,
                 )
+            )
+            _log_snapshot_build_started(
+                server_key,
+                SNAPSHOT_TYPE_MONTHLY_LEADERBOARD,
+                metric=metric,
             )
             snapshots.append(
                 _build_monthly_leaderboard_snapshot(
@@ -229,6 +258,7 @@ def build_priority_historical_snapshots(
                     db_path=db_path,
                 )
             )
+        _log_snapshot_build_started(server_key, SNAPSHOT_TYPE_MONTHLY_MVP)
         snapshots.append(
             _build_monthly_mvp_snapshot(
                 server_key,
@@ -237,6 +267,7 @@ def build_priority_historical_snapshots(
                 db_path=db_path,
             )
         )
+        _log_snapshot_build_started(server_key, SNAPSHOT_TYPE_MONTHLY_MVP_V2)
         snapshots.append(
             _build_monthly_mvp_v2_snapshot(
                 server_key,
@@ -246,6 +277,7 @@ def build_priority_historical_snapshots(
             )
         )
         for snapshot_type in PLAYER_EVENT_SNAPSHOT_TYPES:
+            _log_snapshot_build_started(server_key, snapshot_type)
             snapshots.append(
                 _build_player_event_snapshot(
                     server_key,
@@ -255,6 +287,7 @@ def build_priority_historical_snapshots(
                     db_path=db_path,
                 )
             )
+        _log_snapshot_build_started(server_key, SNAPSHOT_TYPE_RECENT_MATCHES)
         snapshots.append(
             _build_recent_matches_snapshot(
                 server_key,
@@ -678,7 +711,7 @@ def _get_latest_player_event_month_key(
     with _connect(resolved_path) as connection:
         row = connection.execute(
             f"""
-            SELECT MAX(substr(occurred_at, 1, 7)) AS latest_month
+            SELECT MAX(substr(CAST(occurred_at AS TEXT), 1, 7)) AS latest_month
             FROM player_event_raw_ledger
             WHERE occurred_at IS NOT NULL
               AND {where_sql}
@@ -706,7 +739,7 @@ def _get_player_event_source_range(
                 MAX(occurred_at) AS source_range_end
             FROM player_event_raw_ledger
             WHERE occurred_at IS NOT NULL
-              AND substr(occurred_at, 1, 7) = ?
+              AND substr(CAST(occurred_at AS TEXT), 1, 7) = ?
               AND {where_sql}
             """,
             [month_key, *params],
@@ -753,3 +786,34 @@ def _as_utc(value: datetime) -> datetime:
 
 def _to_iso(value: datetime) -> str:
     return _as_utc(value).isoformat().replace("+00:00", "Z")
+
+
+def _normalize_snapshot_limit(name: str, value: object) -> int:
+    try:
+        limit = int(value)
+    except (TypeError, ValueError) as error:
+        raise ValueError(f"{name} must be a positive integer.") from error
+    if limit <= 0:
+        raise ValueError(f"{name} must be a positive integer.")
+    return limit
+
+
+def _log_snapshot_build_started(
+    server_key: str,
+    snapshot_type: str,
+    *,
+    metric: str | None = None,
+) -> None:
+    print(
+        json.dumps(
+            {
+                "event": "historical-snapshot-build-started",
+                "server_key": server_key,
+                "snapshot_type": snapshot_type,
+                "metric": metric,
+            },
+            ensure_ascii=True,
+            default=str,
+        ),
+        flush=True,
+    )

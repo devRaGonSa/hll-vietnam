@@ -218,7 +218,12 @@ def persist_snapshot_record(snapshot: Mapping[str, object]) -> HistoricalSnapsho
     metric = str(snapshot.get("metric") or "")
     window = str(snapshot.get("window") or "")
     payload = snapshot.get("payload")
-    payload_json = json.dumps(payload, ensure_ascii=True, separators=(",", ":"))
+    payload_json = json.dumps(
+        payload,
+        ensure_ascii=True,
+        separators=(",", ":"),
+        default=_json_payload_default,
+    )
     with connect_postgres() as connection:
         connection.execute(
             """
@@ -902,6 +907,12 @@ def _iso(value: object) -> str | None:
         return point.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
     text = str(value or "").strip()
     return text or None
+
+
+def _json_payload_default(value: object) -> str:
+    if isinstance(value, datetime):
+        return _iso(value) or ""
+    raise TypeError(f"Object of type {type(value).__name__} is not JSON serializable")
 
 
 def _parse_datetime(value: str | None) -> datetime | None:

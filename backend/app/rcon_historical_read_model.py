@@ -582,11 +582,14 @@ def _minutes_since_timestamp(timestamp: str | None) -> int | None:
 
 
 def _parse_datetime(value: object) -> datetime | None:
-    if not isinstance(value, str) or not value.strip():
-        return None
-    try:
-        parsed = datetime.fromisoformat(value.strip().replace("Z", "+00:00"))
-    except ValueError:
+    if isinstance(value, datetime):
+        parsed = value
+    elif isinstance(value, str) and value.strip():
+        try:
+            parsed = datetime.fromisoformat(value.strip().replace("Z", "+00:00"))
+        except ValueError:
+            return None
+    else:
         return None
     if parsed.tzinfo is None:
         parsed = parsed.replace(tzinfo=timezone.utc)
@@ -594,31 +597,23 @@ def _parse_datetime(value: object) -> datetime | None:
 
 
 def _calculate_coverage_hours(
-    first_sample_at: str | None,
-    last_sample_at: str | None,
+    first_sample_at: object,
+    last_sample_at: object,
 ) -> float | None:
-    if not first_sample_at or not last_sample_at:
+    first_point = _parse_datetime(first_sample_at)
+    last_point = _parse_datetime(last_sample_at)
+    if first_point is None or last_point is None:
         return None
-    first_point = datetime.fromisoformat(first_sample_at.replace("Z", "+00:00"))
-    last_point = datetime.fromisoformat(last_sample_at.replace("Z", "+00:00"))
-    if first_point.tzinfo is None:
-        first_point = first_point.replace(tzinfo=timezone.utc)
-    if last_point.tzinfo is None:
-        last_point = last_point.replace(tzinfo=timezone.utc)
-    delta = last_point.astimezone(timezone.utc) - first_point.astimezone(timezone.utc)
+    delta = last_point - first_point
     return round(delta.total_seconds() / 3600, 2)
 
 
 def _calculate_duration_seconds(first_seen_at: object, last_seen_at: object) -> int | None:
-    if not isinstance(first_seen_at, str) or not isinstance(last_seen_at, str):
+    first_point = _parse_datetime(first_seen_at)
+    last_point = _parse_datetime(last_seen_at)
+    if first_point is None or last_point is None:
         return None
-    first_point = datetime.fromisoformat(first_seen_at.replace("Z", "+00:00"))
-    last_point = datetime.fromisoformat(last_seen_at.replace("Z", "+00:00"))
-    if first_point.tzinfo is None:
-        first_point = first_point.replace(tzinfo=timezone.utc)
-    if last_point.tzinfo is None:
-        last_point = last_point.replace(tzinfo=timezone.utc)
-    return max(0, int((last_point.astimezone(timezone.utc) - first_point.astimezone(timezone.utc)).total_seconds()))
+    return max(0, int((last_point - first_point).total_seconds()))
 
 
 def _calculate_match_duration_seconds(item: dict[str, object]) -> int | None:
