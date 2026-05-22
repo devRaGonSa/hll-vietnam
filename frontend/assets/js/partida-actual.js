@@ -9,7 +9,7 @@ const CURRENT_MATCH_SCOREBOARDS = Object.freeze({
   "comunidad-hispana-01": "https://scoreboard.comunidadhll.es",
   "comunidad-hispana-02": "https://scoreboard.comunidadhll.es:5443",
 });
-const CURRENT_MATCH_KILL_FEED_LIMIT = 15;
+const CURRENT_MATCH_KILL_FEED_LIMIT = 18;
 const CURRENT_MATCH_WEAPONS = Object.freeze({
   "m1 garand": { label: "M1 Garand", icon: "m1_garand.PNG" },
   mp40: { label: "MP40", icon: "mp40.PNG" },
@@ -225,11 +225,15 @@ function initializePlayerStats(nodes) {
         <p class="historical-state" id="current-match-player-stats-state" aria-live="polite">
           Cargando estadisticas en vivo...
         </p>
+        <p class="current-match-player-count" id="current-match-player-count">
+          Jugadores detectados: 0
+        </p>
         <div class="historical-table-shell" id="current-match-player-stats-shell" hidden></div>
       `,
     );
   }
   nodes.playerStatsState = document.getElementById("current-match-player-stats-state");
+  nodes.playerCount = document.getElementById("current-match-player-count");
   nodes.playerStatsShell = document.getElementById("current-match-player-stats-shell");
   return {
     visibleSignature: "",
@@ -249,9 +253,9 @@ function renderKillFeed(data, nodes, state) {
   });
   const events = [...state.byId.values()]
     .sort(compareKillFeedEvents)
-    .slice(0, CURRENT_MATCH_KILL_FEED_LIMIT);
+    .slice(-CURRENT_MATCH_KILL_FEED_LIMIT);
   state.byId = new Map(events.map((event) => [event.event_id, event]));
-  state.latestEventId = events[0]?.event_id || state.latestEventId;
+  state.latestEventId = events[events.length - 1]?.event_id || state.latestEventId;
   if (events.length === 0) {
     nodes.feedList.innerHTML = "";
     state.visibleSignature = "";
@@ -261,7 +265,7 @@ function renderKillFeed(data, nodes, state) {
   const visualEvents = events;
   const visibleSignature = visualEvents.map((event) => event.event_id).join("|");
   if (visibleSignature !== state.visibleSignature) {
-    nodes.feedList.innerHTML = visualEvents.map(renderKillFeedRow).join("");
+    nodes.feedList.innerHTML = renderKillFeedColumns(visualEvents);
     state.visibleSignature = visibleSignature;
   }
   nodes.feedState.textContent = formatKillFeedCoverage(data.scope);
@@ -269,16 +273,34 @@ function renderKillFeed(data, nodes, state) {
 }
 
 function compareKillFeedEvents(left, right) {
-  const rightTime = Number(right.server_time);
   const leftTime = Number(left.server_time);
-  if (Number.isFinite(rightTime) && Number.isFinite(leftTime) && rightTime !== leftTime) {
-    return rightTime - leftTime;
+  const rightTime = Number(right.server_time);
+  if (Number.isFinite(leftTime) && Number.isFinite(rightTime) && leftTime !== rightTime) {
+    return leftTime - rightTime;
   }
-  return String(right.event_timestamp || "").localeCompare(String(left.event_timestamp || ""));
+  return (
+    String(left.event_timestamp || "").localeCompare(String(right.event_timestamp || "")) ||
+    String(left.event_id || "").localeCompare(String(right.event_id || ""))
+  );
+}
+
+function renderKillFeedColumns(events) {
+  const splitIndex = Math.ceil(events.length / 2);
+  return [events.slice(0, splitIndex), events.slice(splitIndex)]
+    .map(
+      (columnEvents) => `
+        <div class="current-match-killfeed__column">
+          ${columnEvents.map(renderKillFeedRow).join("")}
+        </div>
+      `,
+    )
+    .join("");
 }
 
 function renderKillFeedRow(event) {
   const weapon = resolveKillFeedWeapon(event.weapon);
+  const killerTeam = getKillFeedTeamDisplay(event.killer_team);
+  const victimTeam = getKillFeedTeamDisplay(event.victim_team);
   const teamkillBadge = event.is_teamkill
     ? '<span class="current-match-killfeed__teamkill">TK</span>'
     : "";
@@ -287,10 +309,15 @@ function renderKillFeedRow(event) {
       class="current-match-killfeed__row${event.is_teamkill ? " is-teamkill" : ""}"
       data-event-id="${escapeHtml(event.event_id || "")}"
     >
-      <strong class="current-match-killfeed__player current-match-killfeed__player--killer" title="${escapeHtml(event.killer_name || "Jugador no disponible")}">
-        ${escapeHtml(event.killer_name || "Jugador no disponible")}
-        ${teamkillBadge}
-      </strong>
+      <span class="current-match-killfeed__player current-match-killfeed__player--killer">
+        <strong class="current-match-killfeed__player-name" title="${escapeHtml(event.killer_name || "Jugador no disponible")}">
+          ${escapeHtml(event.killer_name || "Jugador no disponible")}
+        </strong>
+        <span class="current-match-killfeed__player-meta">
+          ${renderKillFeedTeamBadge(killerTeam)}
+          ${teamkillBadge}
+        </span>
+      </span>
       <span
         class="current-match-killfeed__weapon"
         title="${escapeHtml(weapon.label)}"
@@ -300,9 +327,25 @@ function renderKillFeedRow(event) {
         <em>${escapeHtml(weapon.label)}</em>
       </span>
       <span class="current-match-killfeed__player current-match-killfeed__player--victim">
-        ${escapeHtml(event.victim_name || "Objetivo no disponible")}
+        <span class="current-match-killfeed__player-name" title="${escapeHtml(event.victim_name || "Objetivo no disponible")}">
+          ${escapeHtml(event.victim_name || "Objetivo no disponible")}
+        </span>
+        ${renderKillFeedTeamBadge(victimTeam)}
       </span>
     </article>
+  `;
+}
+
+function getKillFeedTeamDisplay(value) {
+  const team = getPlayerTeamDisplay(value);
+  return team.key === "unknown" ? { key: "unknown", label: "N/D" } : team;
+}
+
+function renderKillFeedTeamBadge(team) {
+  return `
+    <span class="current-match-killfeed__team-badge current-match-killfeed__team-badge--${team.key}">
+      ${escapeHtml(team.label)}
+    </span>
   `;
 }
 
@@ -335,6 +378,7 @@ function renderKillFeedWeaponIcon(weapon) {
 
 function renderPlayerStats(data, nodes, state) {
   const items = Array.isArray(data.items) ? sortPlayerStats(data.items) : [];
+  renderDetectedPlayerCount(items.length, nodes);
   if (items.length === 0) {
     state.visibleSignature = "";
     nodes.playerStatsShell.innerHTML = "";
@@ -365,6 +409,12 @@ function renderPlayerStats(data, nodes, state) {
   }
   nodes.playerStatsShell.hidden = false;
   setState(nodes.playerStatsState, "Estadisticas parciales derivadas de eventos recientes.");
+}
+
+function renderDetectedPlayerCount(count, nodes) {
+  if (nodes.playerCount) {
+    nodes.playerCount.textContent = `Jugadores detectados: ${count}`;
+  }
 }
 
 function sortPlayerStats(items) {
