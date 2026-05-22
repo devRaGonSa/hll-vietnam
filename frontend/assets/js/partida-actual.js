@@ -225,9 +225,6 @@ function initializePlayerStats(nodes) {
         <p class="historical-state" id="current-match-player-stats-state" aria-live="polite">
           Cargando estadisticas en vivo...
         </p>
-        <p class="current-match-player-count" id="current-match-player-count">
-          Jugadores detectados: 0
-        </p>
         <div class="historical-table-shell" id="current-match-player-stats-shell" hidden></div>
       `,
     );
