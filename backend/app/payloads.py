@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+import re
 
 from .config import (
     get_historical_data_source_kind,
@@ -302,14 +303,7 @@ def build_current_match_payload(*, server_slug: str) -> dict[str, object]:
     # drops richer RCON session fields such as game mode and current scores.
     server_payload = build_servers_payload()
     server_data = server_payload["data"]
-    item = next(
-        (
-            candidate
-            for candidate in server_data.get("items", [])
-            if candidate.get("external_server_id") == origin.slug
-        ),
-        None,
-    )
+    item = _find_current_match_snapshot_item(server_data.get("items", []), origin)
     return {
         "status": "ok",
         "data": {
@@ -348,6 +342,59 @@ def build_current_match_payload(*, server_slug: str) -> dict[str, object]:
             "public_scoreboard_url": origin.base_url,
         },
     }
+
+
+def _find_current_match_snapshot_item(
+    items: list[dict[str, object]],
+    origin: object,
+) -> dict[str, object] | None:
+    """Resolve one trusted live snapshot for the current-match fallback."""
+    origin_slug = str(getattr(origin, "slug", "") or "").strip()
+    source_markers = {
+        "comunidad-hispana-01": ("152.114.195.174", ":7779"),
+        "comunidad-hispana-02": ("152.114.195.150", ":7879"),
+    }.get(origin_slug)
+    server_number = getattr(origin, "server_number", None)
+
+    for item in items:
+        if any(
+            str(item.get(field) or "").strip() == origin_slug
+            for field in (
+                "external_server_id",
+                "server_slug",
+                "target_key",
+                "slug",
+                "community_slug",
+            )
+        ):
+            return item
+
+        server_label = str(item.get("server_name") or item.get("name") or "")
+        if _current_match_server_name_matches(server_label, server_number):
+            return item
+
+        source_identity = " ".join(
+            str(item.get(field) or "") for field in ("external_server_id", "source_ref")
+        )
+        if source_markers and any(marker in source_identity for marker in source_markers):
+            return item
+
+    return None
+
+
+def _current_match_server_name_matches(server_label: str, server_number: object) -> bool:
+    if not isinstance(server_number, int):
+        return False
+
+    normalized_label = server_label.strip().casefold()
+    if not normalized_label:
+        return False
+
+    numbered_marker = re.compile(rf"(?<!\d)#0*{server_number}(?!\d)")
+    if numbered_marker.search(normalized_label):
+        return True
+
+    return f"comunidad hispana #{server_number:02d}" in normalized_label
 
 
 def build_current_match_kill_feed_payload(

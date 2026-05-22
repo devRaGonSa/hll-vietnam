@@ -104,6 +104,90 @@ def test_current_match_payload_keeps_explicit_zero_score():
     assert data["score_source"] == "rcon-session"
 
 
+def test_current_match_payload_fallback_resolves_legacy_rcon_external_id_for_01():
+    data = _build_with_snapshot_fallback(
+        "comunidad-hispana-01",
+        {
+            "external_server_id": "rcon:152.114.195.174:7779",
+            "server_name": "#01 [ESP] Comunidad Hispana",
+            "status": "online",
+            "current_map": "St. Marie Du Mont",
+            "players": 0,
+            "max_players": 100,
+            "captured_at": "2026-03-24T14:08:41.008487Z",
+        },
+    )
+
+    assert data["found"] is True
+    assert data["map"] == "St. Marie Du Mont"
+    assert data["map_pretty_name"] == "St. Marie Du Mont"
+    assert data["status"] == "online"
+    assert data["players"] == 0
+    assert data["max_players"] == 100
+    assert data["captured_at"] == "2026-03-24T14:08:41.008487Z"
+    assert data["updated_at"] == "2026-03-24T14:08:41.008487Z"
+    assert data["public_scoreboard_url"] == "https://scoreboard.comunidadhll.es"
+
+
+def test_current_match_payload_fallback_resolves_legacy_rcon_source_ref_for_02():
+    data = _build_with_snapshot_fallback(
+        "comunidad-hispana-02",
+        {
+            "external_server_id": "snapshot-server-02",
+            "source_ref": "rcon://152.114.195.150:7879",
+            "status": "online",
+            "current_map": "Elsenborn Ridge",
+            "captured_at": "2026-03-24T14:08:41.008487Z",
+        },
+    )
+
+    assert data["found"] is True
+    assert data["server_slug"] == "comunidad-hispana-02"
+    assert data["map"] == "Elsenborn Ridge"
+    assert data["map_pretty_name"] == "Elsenborn Ridge"
+    assert data["public_scoreboard_url"] == "https://scoreboard.comunidadhll.es:5443"
+
+
+def test_current_match_payload_fallback_resolves_community_server_names():
+    number_first = _build_with_snapshot_fallback(
+        "comunidad-hispana-01",
+        {
+            "external_server_id": "snapshot-server-01",
+            "server_name": "#01 [ESP] Comunidad Hispana - Spa Onl",
+            "current_map": "Mortain",
+        },
+    )
+    community_first = _build_with_snapshot_fallback(
+        "comunidad-hispana-02",
+        {
+            "external_server_id": "snapshot-server-02",
+            "name": "Comunidad Hispana #02",
+            "current_map": "Carentan",
+        },
+    )
+
+    assert number_first["found"] is True
+    assert number_first["map"] == "Mortain"
+    assert community_first["found"] is True
+    assert community_first["map"] == "Carentan"
+
+
+def test_current_match_payload_fallback_does_not_match_unknown_snapshot():
+    data = _build_with_snapshot_fallback(
+        "comunidad-hispana-01",
+        {
+            "external_server_id": "rcon:203.0.113.10:9000",
+            "source_ref": "rcon://203.0.113.10:9000",
+            "server_name": "#03 Comunidad Hispana",
+            "current_map": "Unknown Match",
+        },
+    )
+
+    assert data["found"] is False
+    assert data["map"] is None
+    assert data["status"] == "unavailable"
+
+
 def test_current_match_route_rejects_unsupported_server():
     status, payload = resolve_get_payload("/api/current-match?server=not-trusted")
 
@@ -215,4 +299,25 @@ def _build_with_rcon_sample(sample: dict[str, object]) -> dict[str, object]:
         patch("app.payloads.query_live_server_sample", return_value=sample),
     ):
         payload = build_current_match_payload(server_slug="comunidad-hispana-01")
+    return payload["data"]
+
+
+def _build_with_snapshot_fallback(
+    server_slug: str,
+    item: dict[str, object],
+) -> dict[str, object]:
+    with (
+        patch("app.payloads._query_current_match_rcon_sample", return_value=None),
+        patch(
+            "app.payloads.build_servers_payload",
+            return_value={
+                "status": "ok",
+                "data": {
+                    "last_snapshot_at": "2026-03-24T14:08:41.008487Z",
+                    "items": [item],
+                },
+            },
+        ),
+    ):
+        payload = build_current_match_payload(server_slug=server_slug)
     return payload["data"]
