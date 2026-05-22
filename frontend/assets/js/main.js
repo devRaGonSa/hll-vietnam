@@ -452,11 +452,65 @@ function renderQuickFacts(items) {
 }
 
 function getTrustedServerActions(server) {
-  const externalServerId =
-    typeof server?.external_server_id === "string"
-      ? server.external_server_id.trim()
-      : "";
-  return TRUSTED_SERVER_ACTIONS[externalServerId] || null;
+  const trustedActionKey = resolveTrustedServerActionKey(server);
+  return TRUSTED_SERVER_ACTIONS[trustedActionKey] || null;
+}
+
+function resolveTrustedServerActionKey(server) {
+  if (!server) {
+    return "";
+  }
+
+  const externalServerId = getTrimmedServerValue(server.external_server_id);
+  if (TRUSTED_SERVER_ACTIONS[externalServerId]) {
+    return externalServerId;
+  }
+
+  const trustedSlugFields = [
+    server.server_slug,
+    server.target_key,
+    server.slug,
+    server.community_slug,
+  ];
+  const trustedSlug = trustedSlugFields
+    .map(getTrimmedServerValue)
+    .find((value) => TRUSTED_SERVER_ACTIONS[value]);
+  if (trustedSlug) {
+    return trustedSlug;
+  }
+
+  const serverNames = [server.server_name, server.name].map(getTrimmedServerValue);
+  if (
+    serverNames.some(
+      (name) => name.startsWith("#01") || name.includes("Comunidad Hispana #01"),
+    )
+  ) {
+    return "comunidad-hispana-01";
+  }
+  if (
+    serverNames.some(
+      (name) => name.startsWith("#02") || name.includes("Comunidad Hispana #02"),
+    )
+  ) {
+    return "comunidad-hispana-02";
+  }
+
+  const serverReference = [
+    getTrimmedServerValue(server.source_ref),
+    externalServerId,
+  ].join(" ");
+  if (serverReference.includes("152.114.195.174") || serverReference.includes(":7779")) {
+    return "comunidad-hispana-01";
+  }
+  if (serverReference.includes("152.114.195.150") || serverReference.includes(":7879")) {
+    return "comunidad-hispana-02";
+  }
+
+  return "";
+}
+
+function getTrimmedServerValue(value) {
+  return typeof value === "string" ? value.trim() : "";
 }
 
 function selectPrimaryServerItems(items) {
