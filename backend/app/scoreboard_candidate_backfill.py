@@ -5,11 +5,17 @@ from __future__ import annotations
 import argparse
 import json
 from datetime import datetime, timezone
+from collections.abc import Mapping
 from typing import Iterable
 
 from .historical_storage import initialize_historical_storage, list_historical_servers, upsert_historical_match
+from .postgres_rcon_storage import upsert_scoreboard_candidate
 from .providers.public_scoreboard_provider import PublicScoreboardHistoricalDataSource
-from .scoreboard_origins import list_trusted_public_scoreboard_origins
+from .scoreboard_origins import (
+    build_trusted_scoreboard_match_url,
+    get_trusted_public_scoreboard_origin,
+    list_trusted_public_scoreboard_origins,
+)
 
 DEFAULT_MAX_PAGES = 20
 DEFAULT_PAGE_SIZE = 100
@@ -34,8 +40,19 @@ def run_backfill(*, server: dict[str, object], start_at: datetime, end_at: datet
     provider = PublicScoreboardHistoricalDataSource()
     server_slug = str(server["slug"])
     base_url = str(server["scoreboard_base_url"])
-    counters = {"pages_processed": 0, "candidates_seen": 0, "candidates_inserted": 0, "candidates_updated": 0, "player_rows_inserted": 0, "player_rows_updated": 0}
+    counters = {
+        "pages_processed": 0,
+        "candidates_seen": 0,
+        "list_candidates_inserted": 0,
+        "list_candidates_updated": 0,
+        "list_candidates_skipped": 0,
+        "candidates_inserted": 0,
+        "candidates_updated": 0,
+        "player_rows_inserted": 0,
+        "player_rows_updated": 0,
+    }
     errors: list[dict[str, object]] = []
+    skipped_unsafe_urls = 0
     stopped_after_window = False
     for page in range(1, max_pages + 1):
         try:
@@ -56,6 +73,27 @@ def run_backfill(*, server: dict[str, object], start_at: datetime, end_at: datet
                 continue
             if ref_time and ref_time >= end_at:
                 continue
+            candidate = _build_list_candidate(server=server, match=match)
+            if candidate is None:
+                counters["list_candidates_skipped"] += 1
+                skipped_unsafe_urls += int(_list_candidate_url_is_unsafe(server=server, match=match))
+            else:
+                try:
+                    outcome = upsert_scoreboard_candidate(
+                        server_slug=server_slug,
+                        candidate=candidate,
+                    )
+                except Exception as exc:
+                    counters["list_candidates_skipped"] += 1
+                    errors.append(
+                        {
+                            "stage": "upsert_list_scoreboard_candidate",
+                            "match_id": candidate["external_match_id"],
+                            "message": str(exc),
+                        }
+                    )
+                else:
+                    counters[f"list_candidates_{outcome}"] += 1
             match_id = _stringify(match.get("id"))
             if match_id:
                 ids.append(match_id)
@@ -77,7 +115,7 @@ def run_backfill(*, server: dict[str, object], start_at: datetime, end_at: datet
                 counters["player_rows_updated"] += _coerce_int(delta.get("player_rows_updated"))
         if stopped_after_window:
             break
-    return {"status": "ok" if not errors else "partial", "server": server_slug, "scoreboard_base_url": base_url, "requested_window": {"from": _format_timestamp(start_at), "to": _format_timestamp(end_at)}, "stopped_after_window": stopped_after_window, "skipped_unsafe_urls": 0, "errors": errors, **counters}
+    return {"status": "ok" if not errors else "partial", "server": server_slug, "scoreboard_base_url": base_url, "requested_window": {"from": _format_timestamp(start_at), "to": _format_timestamp(end_at)}, "stopped_after_window": stopped_after_window, "skipped_unsafe_urls": skipped_unsafe_urls, "errors": errors, **counters}
 
 
 def build_arg_parser() -> argparse.ArgumentParser:
@@ -137,6 +175,65 @@ def _pick_match_timestamp(match: dict[str, object]) -> object:
     return None
 
 
+def _build_list_candidate(
+    *,
+    server: Mapping[str, object],
+    match: Mapping[str, object],
+) -> dict[str, object] | None:
+    server_slug = _stringify(server.get("slug"))
+    external_match_id = _stringify(match.get("id"))
+    origin = get_trusted_public_scoreboard_origin(server_slug)
+    map_payload = match.get("map")
+    result_payload = match.get("result")
+    if (
+        origin is None
+        or not external_match_id
+        or not external_match_id.isdigit()
+        or str(server.get("scoreboard_base_url") or "").strip() != origin.base_url
+        or _coerce_optional_int(server.get("server_number")) != origin.server_number
+        or _coerce_optional_int(match.get("server_number")) != origin.server_number
+        or not isinstance(map_payload, Mapping)
+        or not isinstance(result_payload, Mapping)
+    ):
+        return None
+
+    started_at = _stringify(match.get("start"))
+    ended_at = _stringify(match.get("end"))
+    match_url = build_trusted_scoreboard_match_url(
+        server_slug=server_slug,
+        external_match_id=external_match_id,
+    )
+    if not started_at or not ended_at or not match_url:
+        return None
+    return {
+        "external_match_id": external_match_id,
+        "started_at": started_at,
+        "ended_at": ended_at,
+        "map_name": _stringify(map_payload.get("id") or map_payload.get("name")),
+        "map_pretty_name": _stringify(map_payload.get("pretty_name")),
+        "allied_score": _coerce_optional_int(result_payload.get("allied")),
+        "axis_score": _coerce_optional_int(result_payload.get("axis")),
+        "player_count": _coerce_optional_int(match.get("player_count")),
+        "match_url": match_url,
+    }
+
+
+def _list_candidate_url_is_unsafe(
+    *,
+    server: Mapping[str, object],
+    match: Mapping[str, object],
+) -> bool:
+    external_match_id = _stringify(match.get("id"))
+    return bool(
+        external_match_id
+        and build_trusted_scoreboard_match_url(
+            server_slug=server.get("slug"),
+            external_match_id=external_match_id,
+        )
+        is None
+    )
+
+
 def _stringify(value: object) -> str | None:
     if value is None:
         return None
@@ -149,6 +246,13 @@ def _coerce_int(value: object) -> int:
         return int(value or 0)
     except (TypeError, ValueError):
         return 0
+
+
+def _coerce_optional_int(value: object) -> int | None:
+    try:
+        return None if value is None else int(value)
+    except (TypeError, ValueError):
+        return None
 
 
 if __name__ == "__main__":

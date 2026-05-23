@@ -76,6 +76,7 @@
               Cargando detalle...
             </p>
             <div class="historical-summary-grid" id="match-detail-grid" hidden></div>
+            <div class="historical-match-card__actions" id="match-detail-actions" hidden></div>
             <div class="historical-detail-section" id="match-detail-players-section" hidden>
               <div class="historical-detail-section__header">
                 <div>
@@ -87,26 +88,74 @@
                 </p>
               </div>
               <p class="historical-state" id="match-detail-players-state" hidden></p>
+              <form
+                class="historical-player-controls"
+                id="match-detail-player-controls"
+                aria-label="Controles de jugadores"
+                hidden
+              >
+                <fieldset class="historical-player-control historical-player-control--team-toggle">
+                  <legend>Equipo</legend>
+                  <div class="historical-player-team-toggle" role="radiogroup" aria-label="Filtro por equipo">
+                    <label class="historical-player-team-toggle__item historical-player-team-toggle__item--all">
+                      <input type="radio" name="match-detail-player-team-filter" value="all" checked />
+                      <span>Todos</span>
+                    </label>
+                    <label class="historical-player-team-toggle__item historical-player-team-toggle__item--allies">
+                      <input type="radio" name="match-detail-player-team-filter" value="allies" />
+                      <span>Aliados</span>
+                    </label>
+                    <label class="historical-player-team-toggle__item historical-player-team-toggle__item--axis">
+                      <input type="radio" name="match-detail-player-team-filter" value="axis" />
+                      <span>Eje</span>
+                    </label>
+                  </div>
+                </fieldset>
+                <label class="historical-player-control historical-player-control--search">
+                  <span>Buscar jugador</span>
+                  <input
+                    id="match-detail-player-search"
+                    type="search"
+                    placeholder="Nombre del jugador"
+                    autocomplete="off"
+                  />
+                </label>
+                <label class="historical-player-control">
+                  <span>Ordenar por</span>
+                  <select id="match-detail-player-sort">
+                    <option value="kills" selected>Kills</option>
+                    <option value="deaths">Muertes</option>
+                    <option value="teamkills">TK</option>
+                    <option value="kd">KD</option>
+                    <option value="kpm">KPM</option>
+                    <option value="name">Jugador</option>
+                  </select>
+                </label>
+                <label class="historical-player-control">
+                  <span>Direccion</span>
+                  <select id="match-detail-player-sort-direction">
+                    <option value="desc" selected>Descendente</option>
+                    <option value="asc">Ascendente</option>
+                  </select>
+                </label>
+              </form>
               <div class="historical-table-shell" id="match-detail-players-table-shell" hidden>
                 <table class="historical-table historical-table--players">
                   <thead>
                     <tr>
                       <th>Jugador</th>
                       <th>Equipo</th>
-                      <th>K</th>
-                      <th>D</th>
+                      <th>Kills</th>
+                      <th>Muertes</th>
                       <th>TK</th>
-                      <th>K/D</th>
-                      <th>Armas</th>
-                      <th>Mas abatido</th>
-                      <th>Muere por</th>
+                      <th>KD</th>
+                      <th>KPM</th>
                     </tr>
                   </thead>
                   <tbody id="match-detail-players-body"></tbody>
                 </table>
               </div>
             </div>
-            <div class="historical-match-card__actions" id="match-detail-actions" hidden></div>
           </div>
         </section>
       </main>

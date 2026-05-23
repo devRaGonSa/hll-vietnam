@@ -5,18 +5,29 @@ from __future__ import annotations
 import json
 import re
 import sqlite3
+from collections import Counter
 from collections.abc import Mapping
+from contextlib import closing
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from .config import get_storage_path
+from .config import get_storage_path, use_postgres_rcon_storage
 from .rcon_admin_log_parser import parse_rcon_admin_log_entry
 from .rcon_admin_log_parser import parse_rcon_player_profile_snapshot
 from .rcon_historical_storage import initialize_rcon_historical_storage
 from .sqlite_utils import connect_sqlite_writer
 
+CURRENT_MATCH_FALLBACK_FRESHNESS = timedelta(minutes=15)
+
 
 def initialize_rcon_admin_log_storage(*, db_path: Path | None = None) -> Path:
     """Create SQLite structures for parsed RCON AdminLog events."""
+    if use_postgres_rcon_storage(explicit_sqlite_path=db_path):
+        from .postgres_rcon_storage import initialize_postgres_rcon_storage
+
+        initialize_postgres_rcon_storage()
+        return get_storage_path()
+
     resolved_path = initialize_rcon_historical_storage(db_path=db_path)
 
     with connect_sqlite_writer(resolved_path) as connection:
@@ -90,6 +101,9 @@ def persist_rcon_admin_log_entries(
     db_path: Path | None = None,
 ) -> dict[str, int]:
     """Persist raw and parsed AdminLog entries idempotently."""
+    if use_postgres_rcon_storage(explicit_sqlite_path=db_path):
+        return _persist_rcon_admin_log_entries_postgres(target=target, entries=entries)
+
     resolved_path = initialize_rcon_admin_log_storage(db_path=db_path)
     target_key = str(target.get("target_key") or target.get("external_server_id") or "")
     if not target_key:
@@ -278,6 +292,25 @@ def _ensure_canonical_message_column(connection: sqlite3.Connection) -> None:
 
 def list_rcon_admin_log_event_counts(*, db_path: Path | None = None) -> list[dict[str, object]]:
     """Return event counts grouped by target and event type."""
+    if use_postgres_rcon_storage(explicit_sqlite_path=db_path):
+        from .postgres_rcon_storage import connect_postgres_compat
+
+        with connect_postgres_compat() as connection:
+            rows = connection.execute(
+                """
+                SELECT
+                    target_key,
+                    event_type,
+                    COUNT(*) AS event_count,
+                    MIN(server_time) AS first_server_time,
+                    MAX(server_time) AS last_server_time
+                FROM rcon_admin_log_events
+                GROUP BY target_key, event_type
+                ORDER BY target_key ASC, event_count DESC
+                """
+            ).fetchall()
+        return [dict(row) for row in rows]
+
     resolved_path = db_path or get_storage_path()
     initialize_rcon_admin_log_storage(db_path=resolved_path)
 
@@ -300,6 +333,203 @@ def list_rcon_admin_log_event_counts(*, db_path: Path | None = None) -> list[dic
     return [dict(row) for row in rows]
 
 
+def list_current_match_kill_feed(
+    *,
+    server_key: str,
+    limit: int = 30,
+    since_event_id: str | None = None,
+    db_path: Path | None = None,
+    now: datetime | None = None,
+) -> dict[str, object]:
+    """Return safe recent kill rows for one AdminLog server window."""
+    resolved_path = initialize_rcon_admin_log_storage(db_path=db_path)
+    since_row_id = _parse_current_match_event_row_id(since_event_id)
+    if use_postgres_rcon_storage(explicit_sqlite_path=db_path):
+        from .postgres_rcon_storage import connect_postgres_compat
+
+        connection_scope = connect_postgres_compat()
+    else:
+        connection_scope = closing(sqlite3.connect(resolved_path))
+
+    with connection_scope as connection:
+        if isinstance(connection, sqlite3.Connection):
+            connection.row_factory = sqlite3.Row
+        boundary = connection.execute(
+            """
+            SELECT event_type, server_time
+            FROM rcon_admin_log_events
+            WHERE (target_key = ? OR external_server_id = ?)
+              AND event_type IN ('match_start', 'match_end')
+              AND server_time IS NOT NULL
+            ORDER BY server_time DESC, id DESC
+            LIMIT 1
+            """,
+            (server_key, server_key),
+        ).fetchone()
+        open_start_time = (
+            boundary["server_time"]
+            if boundary is not None and boundary["event_type"] == "match_start"
+            else None
+        )
+        if open_start_time is None:
+            if since_row_id is None:
+                rows = connection.execute(
+                    """
+                    SELECT id, target_key, external_server_id, event_timestamp, server_time,
+                           parsed_payload_json
+                    FROM rcon_admin_log_events
+                    WHERE (target_key = ? OR external_server_id = ?)
+                      AND event_type = 'kill'
+                    ORDER BY server_time DESC, id DESC
+                    LIMIT ?
+                    """,
+                    (server_key, server_key, limit),
+                ).fetchall()
+            else:
+                rows = connection.execute(
+                    """
+                    SELECT id, target_key, external_server_id, event_timestamp, server_time,
+                           parsed_payload_json
+                    FROM rcon_admin_log_events
+                    WHERE (target_key = ? OR external_server_id = ?)
+                      AND event_type = 'kill'
+                      AND id > ?
+                    ORDER BY server_time DESC, id DESC
+                    LIMIT ?
+                    """,
+                    (server_key, server_key, since_row_id, limit),
+                ).fetchall()
+            scope = "recent-admin-log-window"
+            confidence = "partial"
+        else:
+            if since_row_id is None:
+                rows = connection.execute(
+                    """
+                    SELECT id, target_key, external_server_id, event_timestamp, server_time,
+                           parsed_payload_json
+                    FROM rcon_admin_log_events
+                    WHERE (target_key = ? OR external_server_id = ?)
+                      AND event_type = 'kill'
+                      AND server_time >= ?
+                    ORDER BY server_time DESC, id DESC
+                    LIMIT ?
+                    """,
+                    (server_key, server_key, open_start_time, limit),
+                ).fetchall()
+            else:
+                rows = connection.execute(
+                    """
+                    SELECT id, target_key, external_server_id, event_timestamp, server_time,
+                           parsed_payload_json
+                    FROM rcon_admin_log_events
+                    WHERE (target_key = ? OR external_server_id = ?)
+                      AND event_type = 'kill'
+                      AND server_time >= ?
+                      AND id > ?
+                    ORDER BY server_time DESC, id DESC
+                    LIMIT ?
+                    """,
+                    (server_key, server_key, open_start_time, since_row_id, limit),
+                ).fetchall()
+            scope = "open-admin-log-match-window"
+            confidence = "admin-log-boundary"
+
+    stale_events_filtered = 0
+    if scope == "recent-admin-log-window":
+        freshness_anchor = _as_utc_datetime(now) or datetime.now(timezone.utc)
+        fresh_rows = [
+            row
+            for row in rows
+            if _row_is_current_match_fallback_fresh(row, freshness_anchor)
+        ]
+        stale_events_filtered = len(rows) - len(fresh_rows)
+        rows = fresh_rows
+        if not rows:
+            scope = "no-current-match-events"
+            confidence = "stale-filtered" if stale_events_filtered else "none"
+
+    return {
+        "scope": scope,
+        "confidence": confidence,
+        "stale_events_filtered": stale_events_filtered,
+        "items": [_serialize_kill_feed_row(row) for row in rows],
+    }
+
+
+def list_current_match_player_stats(
+    *,
+    server_key: str,
+    db_path: Path | None = None,
+    now: datetime | None = None,
+) -> dict[str, object]:
+    """Return partial current player stats derived from safe AdminLog kill rows."""
+    feed = list_current_match_kill_feed(
+        server_key=server_key,
+        limit=100,
+        db_path=db_path,
+        now=now,
+    )
+    players: dict[str, dict[str, object]] = {}
+    weapon_counts: dict[str, Counter[str]] = {}
+    for item in feed["items"]:
+        if not isinstance(item, Mapping):
+            continue
+        killer = _ensure_current_match_player(
+            players,
+            item.get("killer_name"),
+            team=item.get("killer_team"),
+            event_timestamp=item.get("event_timestamp"),
+        )
+        victim = _ensure_current_match_player(
+            players,
+            item.get("victim_name"),
+            team=item.get("victim_team"),
+            event_timestamp=item.get("event_timestamp"),
+        )
+        if killer is not None:
+            weapon = _safe_event_field(item.get("weapon")) or "UNKNOWN"
+            weapon_counts.setdefault(str(killer["player_name"]), Counter())[weapon] += 1
+            if item.get("is_teamkill"):
+                killer["teamkills"] = int(killer["teamkills"]) + 1
+            else:
+                killer["kills"] = int(killer["kills"]) + 1
+        if victim is not None:
+            victim["deaths"] = int(victim["deaths"]) + 1
+            if item.get("is_teamkill"):
+                victim["deaths_by_teamkill"] = int(victim["deaths_by_teamkill"]) + 1
+
+    items = []
+    for player in players.values():
+        items.append(
+            {
+                **player,
+                "favorite_weapon": _favorite_weapon_for_player(
+                    weapon_counts.get(str(player["player_name"]))
+                ),
+                "source": "rcon-admin-log-kill-events",
+                "confidence": "event-derived-partial",
+            }
+        )
+    items.sort(
+        key=lambda player: (
+            -int(player["kills"]),
+            int(player["deaths"]),
+            str(player["player_name"]).casefold(),
+        )
+    )
+    return {
+        "scope": feed["scope"],
+        "confidence": "event-derived-partial" if items else feed["confidence"],
+        "source": "rcon-admin-log-kill-events",
+        "updated_at": max(
+            (str(item["last_seen_at"]) for item in items if item.get("last_seen_at")),
+            default=None,
+        ),
+        "stale_events_filtered": feed["stale_events_filtered"],
+        "items": items,
+    }
+
+
 def get_latest_rcon_player_profile_summaries(
     *,
     target_key: str,
@@ -310,6 +540,29 @@ def get_latest_rcon_player_profile_summaries(
     requested_ids = [str(player_id).strip() for player_id in player_ids if str(player_id).strip()]
     if not target_key or not requested_ids:
         return {}
+    if use_postgres_rcon_storage(explicit_sqlite_path=db_path):
+        from .postgres_rcon_storage import connect_postgres_compat
+
+        placeholders = ",".join("?" for _ in requested_ids)
+        with connect_postgres_compat() as connection:
+            rows = connection.execute(
+                f"""
+                SELECT snapshots.*
+                FROM rcon_player_profile_snapshots AS snapshots
+                INNER JOIN (
+                    SELECT player_id, MAX(source_server_time) AS latest_source_server_time
+                    FROM rcon_player_profile_snapshots
+                    WHERE target_key = ?
+                      AND player_id IN ({placeholders})
+                    GROUP BY player_id
+                ) AS latest
+                  ON latest.player_id = snapshots.player_id
+                 AND latest.latest_source_server_time = snapshots.source_server_time
+                WHERE snapshots.target_key = ?
+                """,
+                [target_key, *requested_ids, target_key],
+            ).fetchall()
+        return {str(row["player_id"]): _build_safe_profile_summary(row) for row in rows}
 
     resolved_path = db_path or get_storage_path()
     initialize_rcon_admin_log_storage(db_path=resolved_path)
@@ -369,3 +622,171 @@ def _json_mapping(raw_value: object) -> dict[str, object]:
     except json.JSONDecodeError:
         return {}
     return parsed if isinstance(parsed, dict) else {}
+
+
+def _serialize_kill_feed_row(row: Mapping[str, object]) -> dict[str, object]:
+    payload = _json_mapping(row["parsed_payload_json"])
+    target_key = str(row["external_server_id"] or row["target_key"] or "unknown")
+    killer_team = _safe_event_field(payload.get("killer_team"))
+    victim_team = _safe_event_field(payload.get("victim_team"))
+    return {
+        "event_id": f"rcon-admin-log:{target_key}:{row['id']}",
+        "event_timestamp": row["event_timestamp"],
+        "server_time": row["server_time"],
+        "killer_name": _safe_event_field(payload.get("killer_name")),
+        "killer_team": killer_team,
+        "victim_name": _safe_event_field(payload.get("victim_name")),
+        "victim_team": victim_team,
+        "weapon": _safe_event_field(payload.get("weapon")),
+        "is_teamkill": bool(
+            killer_team
+            and killer_team != "None"
+            and killer_team == victim_team
+        ),
+    }
+
+
+def _parse_current_match_event_row_id(value: object) -> int | None:
+    prefix, separator, row_id = str(value or "").rpartition(":")
+    if separator != ":" or not prefix.startswith("rcon-admin-log:"):
+        return None
+    try:
+        parsed = int(row_id)
+    except ValueError:
+        return None
+    return parsed if parsed > 0 else None
+
+
+def _safe_event_field(value: object) -> str | None:
+    normalized = str(value or "").strip()
+    return normalized or None
+
+
+def _ensure_current_match_player(
+    players: dict[str, dict[str, object]],
+    player_name: object,
+    *,
+    team: object,
+    event_timestamp: object,
+) -> dict[str, object] | None:
+    safe_name = _safe_event_field(player_name)
+    if safe_name is None:
+        return None
+    player = players.setdefault(
+        safe_name,
+        {
+            "player_name": safe_name,
+            "team": None,
+            "kills": 0,
+            "deaths": 0,
+            "teamkills": 0,
+            "deaths_by_teamkill": 0,
+            "last_seen_at": None,
+        },
+    )
+    safe_team = _safe_event_field(team)
+    if safe_team:
+        player["team"] = safe_team
+    safe_timestamp = _safe_event_field(event_timestamp)
+    if safe_timestamp and (
+        player["last_seen_at"] is None or safe_timestamp > str(player["last_seen_at"])
+    ):
+        player["last_seen_at"] = safe_timestamp
+    return player
+
+
+def _favorite_weapon_for_player(weapons: Counter[str] | None) -> str | None:
+    if not weapons:
+        return None
+    return min(weapons.items(), key=lambda item: (-item[1], item[0]))[0]
+
+
+def _row_is_current_match_fallback_fresh(
+    row: Mapping[str, object],
+    freshness_anchor: datetime,
+) -> bool:
+    event_time = _as_utc_datetime(row["event_timestamp"])
+    if event_time is None:
+        return False
+    age = freshness_anchor - event_time
+    return timedelta(0) <= age <= CURRENT_MATCH_FALLBACK_FRESHNESS
+
+
+def _as_utc_datetime(value: object) -> datetime | None:
+    if isinstance(value, datetime):
+        parsed = value
+    elif isinstance(value, str) and value.strip():
+        try:
+            parsed = datetime.fromisoformat(value.strip().replace("Z", "+00:00"))
+        except ValueError:
+            return None
+    else:
+        return None
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
+
+
+def _persist_rcon_admin_log_entries_postgres(
+    *,
+    target: Mapping[str, object],
+    entries: list[dict[str, object]],
+) -> dict[str, int]:
+    from .postgres_rcon_storage import connect_postgres_compat
+
+    target_key = str(target.get("target_key") or target.get("external_server_id") or "")
+    if not target_key:
+        raise ValueError("target must include target_key or external_server_id")
+
+    external_server_id = target.get("external_server_id")
+    inserted = 0
+    duplicates = 0
+    with connect_postgres_compat() as connection:
+        for entry in entries:
+            parsed = parse_rcon_admin_log_entry(entry)
+            raw_message = str(parsed.get("raw_message") or "")
+            canonical_message = _canonicalize_admin_log_message(raw_message)
+            cursor = connection.execute(
+                """
+                INSERT INTO rcon_admin_log_events (
+                    target_key,
+                    external_server_id,
+                    event_timestamp,
+                    server_time,
+                    relative_time,
+                    event_type,
+                    raw_message,
+                    canonical_message,
+                    parsed_payload_json,
+                    raw_entry_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT DO NOTHING
+                """,
+                (
+                    target_key,
+                    external_server_id,
+                    parsed.get("timestamp"),
+                    parsed.get("server_time"),
+                    parsed.get("relative_time"),
+                    parsed.get("event_type") or "unknown",
+                    raw_message,
+                    canonical_message,
+                    json.dumps(parsed, ensure_ascii=False, separators=(",", ":")),
+                    json.dumps(entry, ensure_ascii=False, separators=(",", ":")),
+                ),
+            )
+            if int(cursor.rowcount or 0):
+                inserted += 1
+            else:
+                duplicates += 1
+            _persist_profile_snapshot_if_present(
+                connection,
+                target_key=target_key,
+                external_server_id=external_server_id,
+                parsed=parsed,
+            )
+    return {
+        "events_seen": len(entries),
+        "events_inserted": inserted,
+        "duplicate_events": duplicates,
+    }

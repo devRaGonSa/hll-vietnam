@@ -8,7 +8,7 @@ from collections.abc import Mapping
 from datetime import datetime, timezone
 from pathlib import Path
 
-from .config import get_storage_path
+from .config import get_storage_path, use_postgres_rcon_storage
 from .normalizers import normalize_map_name
 from .rcon_client import load_rcon_targets
 from .sqlite_utils import connect_sqlite_readonly, connect_sqlite_writer
@@ -22,6 +22,12 @@ COMPETITIVE_MODE_EXACT = "exact"
 
 def initialize_rcon_historical_storage(*, db_path: Path | None = None) -> Path:
     """Create the SQLite structures used by prospective RCON capture."""
+    if use_postgres_rcon_storage(explicit_sqlite_path=db_path):
+        from .postgres_rcon_storage import initialize_postgres_rcon_storage
+
+        initialize_postgres_rcon_storage()
+        return get_storage_path()
+
     resolved_path = db_path or get_storage_path()
     resolved_path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -131,6 +137,11 @@ def start_rcon_historical_capture_run(
     db_path: Path | None = None,
 ) -> int:
     """Create one run row for prospective RCON capture."""
+    if use_postgres_rcon_storage(explicit_sqlite_path=db_path):
+        from .postgres_rcon_storage import start_capture_run
+
+        return start_capture_run(mode=mode, target_scope=target_scope)
+
     resolved_path = initialize_rcon_historical_storage(db_path=db_path)
     with _connect(resolved_path) as connection:
         cursor = connection.execute(
@@ -159,6 +170,20 @@ def finalize_rcon_historical_capture_run(
     db_path: Path | None = None,
 ) -> None:
     """Finalize one prospective RCON capture run."""
+    if use_postgres_rcon_storage(explicit_sqlite_path=db_path):
+        from .postgres_rcon_storage import finalize_capture_run
+
+        finalize_capture_run(
+            run_id,
+            status=status,
+            targets_seen=targets_seen,
+            samples_inserted=samples_inserted,
+            duplicate_samples=duplicate_samples,
+            failed_targets=failed_targets,
+            notes=notes,
+        )
+        return
+
     resolved_path = initialize_rcon_historical_storage(db_path=db_path)
     with _connect(resolved_path) as connection:
         connection.execute(
@@ -196,6 +221,17 @@ def persist_rcon_historical_sample(
     db_path: Path | None = None,
 ) -> dict[str, int]:
     """Persist one prospective RCON sample and refresh its checkpoint."""
+    if use_postgres_rcon_storage(explicit_sqlite_path=db_path):
+        from .postgres_rcon_storage import persist_sample
+
+        return persist_sample(
+            run_id=run_id,
+            captured_at=captured_at,
+            target=target,
+            normalized_payload=normalized_payload,
+            raw_payload=raw_payload,
+        )
+
     resolved_path = initialize_rcon_historical_storage(db_path=db_path)
     with _connect(resolved_path) as connection:
         target_id = _upsert_target(connection, target=target)
@@ -254,6 +290,12 @@ def mark_rcon_historical_capture_failure(
     db_path: Path | None = None,
 ) -> None:
     """Persist failure metadata for one target inside a capture run."""
+    if use_postgres_rcon_storage(explicit_sqlite_path=db_path):
+        from .postgres_rcon_storage import mark_capture_failure
+
+        mark_capture_failure(run_id=run_id, target=target, error_message=error_message)
+        return
+
     resolved_path = initialize_rcon_historical_storage(db_path=db_path)
     with _connect(resolved_path) as connection:
         target_id = _upsert_target(connection, target=target)
@@ -282,6 +324,11 @@ def list_rcon_historical_target_statuses(
     db_path: Path | None = None,
 ) -> list[dict[str, object]]:
     """Return per-target coverage and freshness for prospective RCON capture."""
+    if use_postgres_rcon_storage(explicit_sqlite_path=db_path):
+        from .postgres_rcon_storage import list_target_statuses
+
+        return list_target_statuses()
+
     resolved_path = _resolve_db_path(db_path)
     try:
         with _connect_readonly(resolved_path) as connection:
@@ -353,6 +400,11 @@ def list_recent_rcon_historical_samples(
     db_path: Path | None = None,
 ) -> list[dict[str, object]]:
     """Return recent prospective RCON samples for one or all configured targets."""
+    if use_postgres_rcon_storage(explicit_sqlite_path=db_path):
+        from .postgres_rcon_storage import list_recent_samples
+
+        return list_recent_samples(target_key=target_key, limit=limit)
+
     resolved_path = _resolve_db_path(db_path)
     where_clause = ""
     params: list[object] = [limit]
@@ -413,6 +465,11 @@ def list_rcon_historical_competitive_windows(
     db_path: Path | None = None,
 ) -> list[dict[str, object]]:
     """Return recent RCON-backed competitive windows derived from persisted samples."""
+    if use_postgres_rcon_storage(explicit_sqlite_path=db_path):
+        from .postgres_rcon_storage import list_competitive_windows
+
+        return list_competitive_windows(target_key=target_key, limit=limit)
+
     resolved_path = _resolve_db_path(db_path)
     where_clause = ""
     params: list[object] = [limit]
@@ -498,6 +555,11 @@ def count_rcon_historical_samples_since(
     db_path: Path | None = None,
 ) -> int:
     """Return how many RCON samples were captured after one timestamp."""
+    if use_postgres_rcon_storage(explicit_sqlite_path=db_path):
+        from .postgres_rcon_storage import count_samples_since
+
+        return count_samples_since(since)
+
     if not since:
         return 0
     resolved_path = _resolve_db_path(db_path)
@@ -522,6 +584,11 @@ def list_rcon_historical_competitive_summary_rows(
     db_path: Path | None = None,
 ) -> list[dict[str, object]]:
     """Return RCON-backed per-target summary rows over competitive windows."""
+    if use_postgres_rcon_storage(explicit_sqlite_path=db_path):
+        from .postgres_rcon_storage import list_competitive_summary_rows
+
+        return list_competitive_summary_rows(target_key=target_key)
+
     resolved_path = _resolve_db_path(db_path)
     where_clause = ""
     params: list[object] = []
@@ -593,6 +660,15 @@ def find_rcon_historical_competitive_window(
     db_path: Path | None = None,
 ) -> dict[str, object] | None:
     """Return the closest competitive window for one server/match if coverage exists."""
+    if use_postgres_rcon_storage(explicit_sqlite_path=db_path):
+        from .postgres_rcon_storage import find_competitive_window
+
+        return find_competitive_window(
+            server_key=server_key,
+            ended_at=ended_at,
+            map_name=map_name,
+        )
+
     if not ended_at:
         return None
     resolved_path = _resolve_db_path(db_path)
@@ -672,6 +748,14 @@ def get_rcon_historical_competitive_window_by_session(
     db_path: Path | None = None,
 ) -> dict[str, object] | None:
     """Return one persisted competitive RCON window by its synthetic session key."""
+    if use_postgres_rcon_storage(explicit_sqlite_path=db_path):
+        from .postgres_rcon_storage import get_competitive_window_by_session
+
+        return get_competitive_window_by_session(
+            server_key=server_key,
+            session_key=session_key,
+        )
+
     normalized_session_key = str(session_key or "").strip()
     if not normalized_session_key:
         return None

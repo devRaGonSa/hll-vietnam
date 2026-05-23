@@ -7,7 +7,11 @@ from collections.abc import Iterable
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from .config import get_player_event_refresh_overlap_hours, get_storage_path
+from .config import (
+    get_player_event_refresh_overlap_hours,
+    get_storage_path,
+    use_postgres_rcon_storage,
+)
 from .player_event_models import PlayerEventRecord
 from .sqlite_utils import connect_sqlite_writer
 
@@ -95,6 +99,10 @@ def upsert_player_events(
     db_path: Path | None = None,
 ) -> dict[str, int]:
     """Insert normalized events idempotently into the raw ledger."""
+    if use_postgres_rcon_storage(explicit_sqlite_path=db_path):
+        from .postgres_display_storage import upsert_player_event_rows
+
+        return upsert_player_event_rows(events)
     resolved_path = initialize_player_event_storage(db_path=db_path)
     inserted = 0
     duplicates = 0

@@ -5,7 +5,7 @@ from __future__ import annotations
 import sqlite3
 from pathlib import Path
 
-from .config import get_storage_path
+from .config import get_database_url, get_storage_path
 from .player_event_storage import initialize_player_event_storage
 
 
@@ -108,7 +108,10 @@ def list_net_duel_summaries(
                 COALESCE(SUM(net_value), 0) AS net_duel_value
             FROM duel_pairs
             GROUP BY player_a_key, player_a_name, player_b_key, player_b_name
-            ORDER BY ABS(net_duel_value) DESC, total_encounters DESC, player_a_name ASC, player_b_name ASC
+            ORDER BY ABS(COALESCE(SUM(net_value), 0)) DESC,
+                     COALESCE(SUM(event_value), 0) DESC,
+                     player_a_name ASC,
+                     player_b_name ASC
             LIMIT ?
             """,
             [*params, limit],
@@ -239,7 +242,7 @@ def _build_common_where(
         clauses.append("server_slug = ?")
         params.append(server_slug.strip())
     if month:
-        clauses.append("substr(COALESCE(occurred_at, ''), 1, 7) = ?")
+        clauses.append("substr(COALESCE(CAST(occurred_at AS TEXT), ''), 1, 7) = ?")
         params.append(month.strip())
     if external_match_id:
         clauses.append("external_match_id = ?")
@@ -249,6 +252,10 @@ def _build_common_where(
 
 
 def _connect(db_path: Path) -> sqlite3.Connection:
+    if get_database_url():
+        from .postgres_display_storage import connect_postgres_compat
+
+        return connect_postgres_compat()
     connection = sqlite3.connect(db_path or get_storage_path())
     connection.row_factory = sqlite3.Row
     return connection

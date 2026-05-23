@@ -5,8 +5,12 @@ from __future__ import annotations
 from http import HTTPStatus
 from urllib.parse import parse_qs, urlparse
 
+from .config import get_historical_data_source_kind
 from .payloads import (
     build_community_payload,
+    build_current_match_kill_feed_payload,
+    build_current_match_player_stats_payload,
+    build_current_match_payload,
     build_discord_payload,
     build_elo_mmr_leaderboard_payload,
     build_elo_mmr_player_payload,
@@ -37,6 +41,8 @@ from .payloads import (
     build_weekly_leaderboard_payload,
     build_weekly_top_kills_payload,
 )
+from .rcon_historical_leaderboards import build_rcon_materialized_leaderboard_snapshot_payload
+from .scoreboard_origins import get_trusted_public_scoreboard_origin
 
 
 GET_ROUTES = {
@@ -59,6 +65,38 @@ def resolve_get_payload(path: str) -> tuple[HTTPStatus | None, dict[str, object]
         if limit is None:
             return HTTPStatus.BAD_REQUEST, build_error_payload("Invalid limit parameter")
         return HTTPStatus.OK, build_server_history_payload(limit=limit)
+
+    if parsed.path == "/api/current-match":
+        server_slug = parse_qs(parsed.query).get("server", [None])[0]
+        if not server_slug:
+            return HTTPStatus.BAD_REQUEST, build_error_payload("Server parameter is required")
+        if get_trusted_public_scoreboard_origin(server_slug) is None:
+            return HTTPStatus.NOT_FOUND, build_error_payload("Current match server is not supported")
+        return HTTPStatus.OK, build_current_match_payload(server_slug=server_slug)
+
+    if parsed.path == "/api/current-match/kills":
+        limit = _parse_limit(parsed.query)
+        if limit is None:
+            return HTTPStatus.BAD_REQUEST, build_error_payload("Invalid limit parameter")
+        params = parse_qs(parsed.query)
+        server_slug = params.get("server", [None])[0]
+        if not server_slug:
+            return HTTPStatus.BAD_REQUEST, build_error_payload("Server parameter is required")
+        if get_trusted_public_scoreboard_origin(server_slug) is None:
+            return HTTPStatus.NOT_FOUND, build_error_payload("Current match server is not supported")
+        return HTTPStatus.OK, build_current_match_kill_feed_payload(
+            server_slug=server_slug,
+            limit=limit,
+            since_event_id=params.get("since_event_id", [None])[0],
+        )
+
+    if parsed.path == "/api/current-match/players":
+        server_slug = parse_qs(parsed.query).get("server", [None])[0]
+        if not server_slug:
+            return HTTPStatus.BAD_REQUEST, build_error_payload("Server parameter is required")
+        if get_trusted_public_scoreboard_origin(server_slug) is None:
+            return HTTPStatus.NOT_FOUND, build_error_payload("Current match server is not supported")
+        return HTTPStatus.OK, build_current_match_player_stats_payload(server_slug=server_slug)
 
     if parsed.path == "/api/historical/weekly-top-kills":
         limit = _parse_limit(parsed.query)
@@ -163,6 +201,13 @@ def resolve_get_payload(path: str) -> tuple[HTTPStatus | None, dict[str, object]
             return HTTPStatus.BAD_REQUEST, build_error_payload("Invalid metric parameter")
         if timeframe not in {"weekly", "monthly"}:
             return HTTPStatus.BAD_REQUEST, build_error_payload("Invalid timeframe parameter")
+        if get_historical_data_source_kind() == "rcon":
+            return HTTPStatus.OK, build_rcon_materialized_leaderboard_snapshot_payload(
+                limit=limit,
+                server_id=server_id,
+                metric=metric,
+                timeframe=timeframe,
+            )
         return HTTPStatus.OK, build_leaderboard_snapshot_payload(
             limit=limit,
             server_id=server_id,
@@ -179,6 +224,13 @@ def resolve_get_payload(path: str) -> tuple[HTTPStatus | None, dict[str, object]
         metric = params.get("metric", ["kills"])[0]
         if metric not in {"kills", "deaths", "support", "matches_over_100_kills"}:
             return HTTPStatus.BAD_REQUEST, build_error_payload("Invalid metric parameter")
+        if get_historical_data_source_kind() == "rcon":
+            return HTTPStatus.OK, build_rcon_materialized_leaderboard_snapshot_payload(
+                limit=limit,
+                server_id=server_id,
+                metric=metric,
+                timeframe="monthly",
+            )
         return HTTPStatus.OK, build_monthly_leaderboard_snapshot_payload(
             limit=limit,
             server_id=server_id,
@@ -229,6 +281,13 @@ def resolve_get_payload(path: str) -> tuple[HTTPStatus | None, dict[str, object]
         metric = params.get("metric", ["kills"])[0]
         if metric not in {"kills", "deaths", "support", "matches_over_100_kills"}:
             return HTTPStatus.BAD_REQUEST, build_error_payload("Invalid metric parameter")
+        if get_historical_data_source_kind() == "rcon":
+            return HTTPStatus.OK, build_rcon_materialized_leaderboard_snapshot_payload(
+                limit=limit,
+                server_id=server_id,
+                metric=metric,
+                timeframe="weekly",
+            )
         return HTTPStatus.OK, build_weekly_leaderboard_snapshot_payload(
             limit=limit,
             server_id=server_id,

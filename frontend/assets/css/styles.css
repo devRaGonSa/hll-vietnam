@@ -617,7 +617,7 @@ h2 {
 }
 
 .server-card__top--stats {
-  align-items: stretch;
+  align-items: flex-start;
   gap: 18px;
 }
 
@@ -669,8 +669,11 @@ h2 {
 
 .server-card__actions {
   margin: 0;
-  width: 100%;
   display: flex;
+  align-items: flex-end;
+  align-self: end;
+  flex-wrap: wrap;
+  gap: 8px;
   justify-content: flex-end;
 }
 
@@ -678,7 +681,7 @@ h2 {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 100%;
+  width: auto;
   max-width: 100%;
   min-height: 42px;
   min-width: 136px;
@@ -738,6 +741,14 @@ h2 {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
   gap: 12px;
+}
+
+.server-card__bottom {
+  display: grid;
+  grid-template-columns: minmax(0, 280px) minmax(272px, 1fr);
+  align-items: end;
+  justify-content: space-between;
+  gap: 16px;
 }
 
 .server-card__quickfact {
@@ -1017,10 +1028,14 @@ h2 {
   }
 
   .server-card__actions {
-    justify-content: start;
+    justify-content: flex-start;
   }
 
   .server-card__quickfacts {
+    grid-template-columns: 1fr;
+  }
+
+  .server-card__bottom {
     grid-template-columns: 1fr;
   }
 

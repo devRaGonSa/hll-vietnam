@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import json
 import time
+import traceback
 from datetime import datetime, timezone
 from typing import Any
 
@@ -39,7 +40,7 @@ def run_periodic_historical_refresh(
     *,
     interval_seconds: int,
     max_retries: int,
-    retry_delay_seconds: int,
+    retry_delay_seconds: float,
     server_slug: str | None = None,
     max_pages: int | None = None,
     page_size: int | None = None,
@@ -73,7 +74,7 @@ def run_periodic_historical_refresh(
                 page_size=page_size,
                 run_number=completed_runs,
             )
-            print(json.dumps({"run": completed_runs, **payload}, indent=2))
+            _emit_json_log({"run": completed_runs, **payload})
 
             if max_runs is not None and completed_runs >= max_runs:
                 break
@@ -86,7 +87,7 @@ def run_periodic_historical_refresh(
 def _run_refresh_with_retries(
     *,
     max_retries: int,
-    retry_delay_seconds: int,
+    retry_delay_seconds: float,
     server_slug: str | None,
     max_pages: int | None,
     page_size: int | None,
@@ -182,12 +183,25 @@ def _run_refresh_with_retries(
                 "elo_mmr_result": elo_mmr_result,
             }
         except Exception as exc:
+            failure_payload = {
+                "event": "historical-refresh-attempt-failed",
+                "attempt": attempt,
+                "max_retries": max_retries,
+                "server_scope": _describe_refresh_scope(server_slug),
+                "snapshot_scope": _describe_snapshot_scope(server_slug),
+                "error_type": type(exc).__name__,
+                "error": str(exc),
+                "traceback": traceback.format_exc(),
+            }
+            _emit_json_log(failure_payload)
             if attempt > max_retries:
                 return {
                     "status": "error",
                     "attempts_used": attempt,
                     "max_retries": max_retries,
+                    "error_type": type(exc).__name__,
                     "error": str(exc),
+                    "traceback": failure_payload["traceback"],
                 }
             if retry_delay_seconds > 0:
                 time.sleep(retry_delay_seconds)
@@ -202,6 +216,15 @@ def generate_historical_snapshots(
     generated_at = datetime.now(timezone.utc)
     full_snapshot_every_runs = get_historical_full_snapshot_every_runs()
     should_run_full_refresh = bool(server_slug) or run_number % full_snapshot_every_runs == 0
+    _emit_json_log(
+        {
+            "event": "historical-snapshot-refresh-started",
+            "run_number": run_number,
+            "snapshot_step": "full-matrix" if should_run_full_refresh else "priority-prewarm",
+            "server_slug": server_slug,
+            "snapshot_scope": _describe_snapshot_scope(server_slug),
+        }
+    )
     if should_run_full_refresh:
         result = generate_and_persist_historical_snapshots(
             server_key=server_slug,
@@ -219,6 +242,11 @@ def generate_historical_snapshots(
         "refresh_interval_seconds": get_historical_refresh_interval_seconds(),
         "includes_monthly_mvp_v2": True,
     }
+
+
+def _emit_json_log(payload: dict[str, Any]) -> None:
+    """Print JSON logs that remain safe for Compose and log collectors."""
+    print(json.dumps(payload, ensure_ascii=True, default=str), flush=True)
 
 
 def _describe_refresh_scope(server_slug: str | None) -> list[str]:
@@ -275,6 +303,10 @@ def _rcon_capture_has_new_useful_data(rcon_capture_result: dict[str, Any]) -> bo
         return False
     totals = rcon_capture_result.get("totals")
     if isinstance(totals, dict) and int(totals.get("samples_inserted") or 0) > 0:
+        return True
+    if isinstance(totals, dict) and int(totals.get("admin_log_events_inserted") or 0) > 0:
+        return True
+    if isinstance(totals, dict) and int(totals.get("materialized_matches_inserted") or 0) > 0:
         return True
     targets = rcon_capture_result.get("targets")
     if not isinstance(targets, list):
@@ -349,7 +381,7 @@ def main() -> None:
     )
     parser.add_argument(
         "--retry-delay",
-        type=int,
+        type=float,
         default=get_historical_refresh_retry_delay_seconds(),
         help="Seconds to wait between failed attempts.",
     )

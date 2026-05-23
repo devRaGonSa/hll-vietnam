@@ -1,1 +1,2 @@
-# El bootstrap actual usa solo la libreria estandar de Python.
+# PostgreSQL is used by the phase-1 RCON historical storage migration.
+psycopg[binary]>=3.2,<4

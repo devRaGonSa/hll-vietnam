@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+from datetime import date, datetime
 import json
 import os
 import time
@@ -16,6 +17,7 @@ from .config import (
     get_rcon_request_timeout_seconds,
 )
 from .rcon_admin_log_ingestion import ingest_rcon_admin_logs
+from .rcon_admin_log_materialization import materialize_rcon_admin_log
 from .rcon_client import (
     RconQueryError,
     build_rcon_target_key,
@@ -44,6 +46,8 @@ class RconHistoricalCaptureStats:
     admin_log_events_inserted: int = 0
     admin_log_duplicate_events: int = 0
     admin_log_failed_targets: int = 0
+    materialized_matches_inserted: int = 0
+    materialized_matches_updated: int = 0
 
 
 def run_rcon_historical_capture(
@@ -66,6 +70,7 @@ def run_rcon_historical_capture_unlocked(
     """Capture one prospective RCON sample assuming the shared writer lock is already held."""
     initialize_rcon_historical_storage()
     selected_targets = _select_targets(target_key)
+    selected_target_keys = {build_rcon_target_key(target) for target in selected_targets}
     admin_log_lookback_minutes = get_rcon_admin_log_lookback_minutes()
     captured_at = utc_now().isoformat().replace("+00:00", "Z")
     target_scope = target_key or "all-configured-rcon-targets"
@@ -127,6 +132,14 @@ def run_rcon_historical_capture_unlocked(
                 result=admin_log_result,
             )
 
+        materialization_result = materialize_rcon_admin_log()
+        stats.materialized_matches_inserted = int(
+            materialization_result.get("matches_materialized") or 0
+        )
+        stats.materialized_matches_updated = int(
+            materialization_result.get("matches_updated") or 0
+        )
+
         status = "success" if not errors else ("partial" if items else "failed")
         finalize_rcon_historical_capture_run(
             run_id,
@@ -158,7 +171,12 @@ def run_rcon_historical_capture_unlocked(
         "targets": items,
         "errors": errors,
         "admin_log_errors": admin_log_errors,
-        "storage_status": list_rcon_historical_target_statuses(),
+        "materialization_result": materialization_result,
+        "storage_status": [
+            status
+            for status in list_rcon_historical_target_statuses()
+            if status.get("target_key") in selected_target_keys
+        ],
         "totals": {
             "targets_seen": stats.targets_seen,
             "samples_inserted": stats.samples_inserted,
@@ -168,6 +186,8 @@ def run_rcon_historical_capture_unlocked(
             "admin_log_events_inserted": stats.admin_log_events_inserted,
             "admin_log_duplicate_events": stats.admin_log_duplicate_events,
             "admin_log_failed_targets": stats.admin_log_failed_targets,
+            "materialized_matches_inserted": stats.materialized_matches_inserted,
+            "materialized_matches_updated": stats.materialized_matches_updated,
         },
     }
 
@@ -182,34 +202,52 @@ def run_periodic_rcon_historical_capture(
 ) -> None:
     """Run prospective RCON capture in a local loop."""
     completed_runs = 0
-    print(
-        json.dumps(
-            {
-                "event": "rcon-historical-capture-loop-started",
-                "interval_seconds": interval_seconds,
-                "max_retries": max_retries,
-                "retry_delay_seconds": retry_delay_seconds,
-                "target_scope": target_key or "all-configured-rcon-targets",
-            },
-            indent=2,
-        )
+    startup_targets = _describe_loop_targets(target_key)
+    _emit_worker_event(
+        "rcon-historical-capture-worker-started",
+        interval_seconds=interval_seconds,
+        max_retries=max_retries,
+        retry_delay_seconds=retry_delay_seconds,
+        target_scope=target_key or "all-configured-rcon-targets",
+        target_count=len(startup_targets),
+        targets=startup_targets,
     )
     print("Press Ctrl+C to stop.")
 
     try:
         while max_runs is None or completed_runs < max_runs:
             completed_runs += 1
+            _emit_worker_event(
+                "rcon-historical-capture-cycle-started",
+                run=completed_runs,
+            )
             payload = _run_capture_with_retries(
                 max_retries=max_retries,
                 retry_delay_seconds=retry_delay_seconds,
                 target_key=target_key,
             )
-            print(json.dumps({"run": completed_runs, **payload}, indent=2))
+            _emit_worker_event(
+                "rcon-historical-capture-cycle-finished",
+                run=completed_runs,
+                result=payload,
+            )
             if max_runs is not None and completed_runs >= max_runs:
                 break
+            _emit_worker_event(
+                "rcon-historical-capture-sleep-started",
+                run=completed_runs,
+                sleep_seconds=interval_seconds,
+            )
             time.sleep(interval_seconds)
     except KeyboardInterrupt:
         print("\nRCON historical capture loop stopped by user.")
+    except Exception as exc:
+        _emit_worker_event(
+            "rcon-historical-capture-worker-exited-unexpectedly",
+            error_type=type(exc).__name__,
+            message=str(exc),
+        )
+        raise
 
 
 def _run_capture_with_retries(
@@ -229,12 +267,32 @@ def _run_capture_with_retries(
             }
         except Exception as exc:
             if attempt > max_retries:
+                _emit_worker_event(
+                    "rcon-historical-capture-attempt-failed",
+                    attempt=attempt,
+                    max_retries=max_retries,
+                    error_type=type(exc).__name__,
+                    message=str(exc),
+                    retries_exhausted=True,
+                )
                 return {
                     "status": "error",
                     "attempts_used": attempt,
                     "error": str(exc),
                 }
+            _emit_worker_event(
+                "rcon-historical-capture-attempt-failed",
+                attempt=attempt,
+                max_retries=max_retries,
+                error_type=type(exc).__name__,
+                message=str(exc),
+            )
             if retry_delay_seconds > 0:
+                _emit_worker_event(
+                    "rcon-historical-capture-retry-sleep-started",
+                    attempt=attempt,
+                    sleep_seconds=retry_delay_seconds,
+                )
                 time.sleep(retry_delay_seconds)
 
 
@@ -254,6 +312,42 @@ def _select_targets(target_key: str | None) -> list[object]:
     if not selected:
         raise ValueError(f"Unknown RCON target key: {target_key}")
     return selected
+
+
+def _describe_loop_targets(target_key: str | None) -> list[dict[str, str]]:
+    """Describe configured worker targets without exposing credentials."""
+    try:
+        targets = _select_targets(target_key)
+    except Exception as exc:  # noqa: BLE001 - startup logging must not hide capture error
+        return [
+            {
+                "status": "unavailable",
+                "error_type": type(exc).__name__,
+                "message": str(exc),
+            }
+        ]
+    return [
+        {
+            "target_key": build_rcon_target_key(target),
+            "external_server_id": str(target.external_server_id or ""),
+            "name": str(target.name or ""),
+        }
+        for target in targets
+    ]
+
+
+def _emit_worker_event(event: str, **fields: object) -> None:
+    """Print one JSON worker event using safe date/time serialization."""
+    print(
+        json.dumps({"event": event, **fields}, indent=2, default=_json_default),
+        flush=True,
+    )
+
+
+def _json_default(value: object) -> str:
+    if isinstance(value, (date, datetime)):
+        return value.isoformat()
+    return str(value)
 
 
 def get_rcon_admin_log_lookback_minutes() -> int:
@@ -434,7 +528,7 @@ def main(argv: Iterable[str] | None = None) -> int:
 
     if args.mode == "capture":
         result = run_rcon_historical_capture(target_key=args.target_key)
-        print(json.dumps(result, indent=2))
+        print(json.dumps(result, indent=2, default=_json_default))
         return 0
 
     if args.interval <= 0:

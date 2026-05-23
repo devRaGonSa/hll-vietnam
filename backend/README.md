@@ -71,6 +71,10 @@ Variables opcionales:
 - `HLL_RCON_HISTORICAL_CAPTURE_INTERVAL_SECONDS`
 - `HLL_RCON_HISTORICAL_CAPTURE_MAX_RETRIES`
 - `HLL_RCON_HISTORICAL_CAPTURE_RETRY_DELAY_SECONDS`
+- `HLL_RCON_BACKFILL_CHUNK_HOURS`
+- `HLL_RCON_BACKFILL_SLEEP_SECONDS`
+- `HLL_RCON_BACKFILL_MAX_DAYS_BACK`
+- `HLL_BACKEND_RCON_ADMIN_LOG_LOOKBACK_MINUTES`
 - `HLL_BACKEND_SQLITE_WRITER_TIMEOUT_SECONDS`
 - `HLL_BACKEND_SQLITE_BUSY_TIMEOUT_MS`
 - `HLL_BACKEND_WRITER_LOCK_TIMEOUT_SECONDS`
@@ -97,6 +101,7 @@ Variables especialmente relevantes para Docker y Compose:
 
 - `HLL_BACKEND_HOST`
 - `HLL_BACKEND_PORT`
+- `HLL_BACKEND_DATABASE_URL`
 - `HLL_BACKEND_STORAGE_PATH`
 - `HLL_BACKEND_ALLOWED_ORIGINS`
 - `HLL_BACKEND_LIVE_DATA_SOURCE`
@@ -132,6 +137,21 @@ Dentro del contenedor arranca por defecto con:
 - `HLL_BACKEND_PORT=8000`
 - `HLL_BACKEND_STORAGE_PATH=/app/data/hll_vietnam_dev.sqlite3`
 
+Compose configura ademas `HLL_BACKEND_DATABASE_URL` para que PostgreSQL sea el
+almacenamiento autoritativo de la fase 1 RCON: muestras/ventanas de captura,
+AdminLog, snapshots de perfil y partidas/estadisticas materializadas. Sin esa
+variable, la ejecucion local mantiene fallback SQLite para esos dominios.
+
+Diagnostico rapido del backend activo:
+
+```powershell
+python -m app.storage_diagnostics
+```
+
+La salida lista el backend RCON activo, counts de las tablas migradas, la ultima
+partida materializada por servidor y que superficies siguen temporalmente en
+SQLite en esta fase.
+
 Build local:
 
 ```powershell
@@ -160,8 +180,10 @@ HTML si una demo local necesita un intervalo distinto.
 Valor por defecto de `HLL_BACKEND_ALLOWED_ORIGINS`:
 
 - `null`
+- `http://127.0.0.1`
 - `http://127.0.0.1:5500`
 - `http://127.0.0.1:8080`
+- `http://localhost`
 - `http://localhost:5500`
 - `http://localhost:8080`
 
@@ -447,6 +469,15 @@ Comandos manuales equivalentes dentro de Docker Compose:
 docker compose exec backend python -m app.rcon_admin_log_ingestion --minutes 1440
 docker compose exec backend python -m app.rcon_historical_worker capture
 ```
+
+Backfill historico RCON/AdminLog:
+
+- runbook: `docs/historical-rcon-backfill.md`
+- ejemplo seco:
+
+  ```powershell
+  docker compose run --rm rcon-historical-worker python -m app.rcon_historical_backfill --ensure-recent-matches 100 --servers comunidad-hispana-01,comunidad-hispana-02 --dry-run
+  ```
 
 Comandos manuales desde `backend/`:
 
@@ -1404,7 +1435,9 @@ locales mas comunes del proyecto:
 
 - `http://127.0.0.1:5500`
 - `http://localhost:5500`
+- `http://127.0.0.1`
 - `http://127.0.0.1:8080`
+- `http://localhost`
 - `http://localhost:8080`
 
 Las respuestas `GET` y `OPTIONS` incluyen `Access-Control-Allow-Origin` cuando
@@ -1562,6 +1595,41 @@ Estado real a fecha de esta fase:
   reactive mediante una task explicita, debera respetar el contexto
   RCON-backed primario y usar `public-scoreboard` solo como suplemento/fallback
   para estadisticas por jugador sin paridad RCON
+
+## PostgreSQL Phase 2 Displayed Data Migration
+
+Cuando `HLL_BACKEND_DATABASE_URL` esta configurado, los endpoints visibles de
+historico y el cache mostrado por `/api/servers` leen PostgreSQL. SQLite y los
+JSON legacy quedan como fuente de migracion o fixture explicito con `db_path`.
+
+Migracion idempotente:
+
+```powershell
+cd backend
+python -m app.sqlite_to_postgres_migration
+python -m app.storage_diagnostics
+```
+
+La salida JSON de `sqlite_to_postgres_migration` lista rutas fuente, dominios y
+tablas migradas, filas leidas, insertadas, actualizadas, omitidas y errores.
+La migracion conserva `external_match_id`, IDs legacy y `match_key` RCON para
+que URLs de detalle existentes sigan resolviendo. Tambien copia candidatos y
+URLs seguras de scoreboard; no vuelve a activar filas visibles de
+`comunidad-hispana-03`.
+
+Paridad minima a revisar en `storage_diagnostics`:
+
+- `admin_log_events`, `materialized_matches`, `player_stats`
+- `public_scoreboard_historical_matches`
+- fuentes de rankings semanales y mensuales
+- `server_summary_cache`, `server_snapshots`, `player_event_ledger`
+- `scoreboard_candidates`
+- ultimas partidas materializadas y ultimos eventos AdminLog `match_end`
+
+Fuera de phase 2 quedan checkpoints/runs de ingesta publica que no se muestran
+en frontend y Elo/MMR pausado. Si un endpoint de mantenimiento recibe un
+`db_path` explicito, sigue trabajando contra SQLite para migracion, tests o
+compatibilidad operativa controlada.
 
 ## Elo/MMR Monthly Ranking
 

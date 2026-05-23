@@ -7,6 +7,7 @@ from datetime import datetime, timedelta, timezone
 
 from .historical_storage import ALL_SERVERS_SLUG
 from .normalizers import normalize_map_name
+from .player_external_profiles import build_external_player_profile_fields
 from .rcon_scoreboard_correlation import resolve_rcon_scoreboard_match_url
 from .rcon_historical_storage import (
     find_rcon_historical_competitive_window,
@@ -205,9 +206,9 @@ def get_rcon_historical_match_detail(
 
 
 def _build_materialized_recent_item(item: dict[str, object]) -> dict[str, object]:
-    server_slug = item.get("external_server_id") or item.get("target_key")
     timestamps = _build_materialized_timestamp_payload(item)
-    correlation_window = _build_materialized_scoreboard_correlation_window(item, timestamps)
+    player_count = _resolve_materialized_player_count(item)
+    scoreboard_correlation = build_materialized_scoreboard_correlation_input(item)
     return {
         "server": {
             "slug": item.get("target_key"),
@@ -232,7 +233,7 @@ def _build_materialized_recent_item(item: dict[str, object]) -> dict[str, object
             "winner": item.get("winner"),
         },
         "winner": item.get("winner"),
-        "player_count": None,
+        "player_count": player_count,
         "peak_players": None,
         "sample_count": None,
         "duration_seconds": _calculate_match_duration_seconds(item),
@@ -245,13 +246,7 @@ def _build_materialized_recent_item(item: dict[str, object]) -> dict[str, object
             else SESSION_RESULT_SOURCE
         ),
         "match_url": resolve_rcon_scoreboard_match_url(
-            server_slug=server_slug,
-            map_name=item.get("map_pretty_name") or item.get("map_name"),
-            started_at=correlation_window["started_at"],
-            ended_at=correlation_window["ended_at"],
-            duration_seconds=_calculate_match_duration_seconds(item),
-            allied_score=item.get("allied_score"),
-            axis_score=item.get("axis_score"),
+            **scoreboard_correlation,
         ),
         "capabilities": describe_rcon_historical_read_model()["capabilities"],
     }
@@ -273,6 +268,7 @@ def _build_materialized_detail_item(materialized: dict[str, object]) -> dict[str
         )
         for row in materialized["players"]
     ]
+    player_count = len(players) if players else recent_item.get("player_count")
     return {
         **recent_item,
         "match_id": match["match_key"],
@@ -280,11 +276,24 @@ def _build_materialized_detail_item(materialized: dict[str, object]) -> dict[str
         "winner": match.get("winner"),
         "confidence": match.get("confidence_mode"),
         "source_basis": match.get("source_basis"),
+        "player_count": player_count,
         "players": players,
         "timeline": {
             "event_counts": materialized.get("timeline", []),
         },
     }
+
+
+def _resolve_materialized_player_count(item: dict[str, object]) -> int | None:
+    for key in (
+        "player_count",
+        "materialized_player_count",
+        "materialized_distinct_player_count",
+    ):
+        value = _coerce_optional_int(item.get(key))
+        if value is not None and value > 0:
+            return value
+    return None
 
 
 def _build_player_row(
@@ -304,6 +313,7 @@ def _build_player_row(
         "top_weapons": _top_counter(row.get("weapons_json")),
         "most_killed": _top_counter(row.get("most_killed_json")),
         "death_by": _top_counter(row.get("death_by_json")),
+        **build_external_player_profile_fields(player_id=row.get("player_id")),
     }
     if profile_summary:
         player["profile_summary"] = profile_summary
@@ -367,6 +377,23 @@ def _build_materialized_scoreboard_correlation_window(
     return {
         "started_at": started_point.isoformat().replace("+00:00", "Z"),
         "ended_at": closed_point.isoformat().replace("+00:00", "Z"),
+    }
+
+
+def build_materialized_scoreboard_correlation_input(
+    item: dict[str, object],
+) -> dict[str, object]:
+    """Build safe candidate correlation inputs for one materialized RCON match."""
+    timestamps = _build_materialized_timestamp_payload(item)
+    correlation_window = _build_materialized_scoreboard_correlation_window(item, timestamps)
+    return {
+        "server_slug": item.get("external_server_id") or item.get("target_key"),
+        "map_name": item.get("map_pretty_name") or item.get("map_name"),
+        "started_at": correlation_window["started_at"],
+        "ended_at": correlation_window["ended_at"],
+        "duration_seconds": _calculate_match_duration_seconds(item),
+        "allied_score": item.get("allied_score"),
+        "axis_score": item.get("axis_score"),
     }
 
 
@@ -555,11 +582,14 @@ def _minutes_since_timestamp(timestamp: str | None) -> int | None:
 
 
 def _parse_datetime(value: object) -> datetime | None:
-    if not isinstance(value, str) or not value.strip():
-        return None
-    try:
-        parsed = datetime.fromisoformat(value.strip().replace("Z", "+00:00"))
-    except ValueError:
+    if isinstance(value, datetime):
+        parsed = value
+    elif isinstance(value, str) and value.strip():
+        try:
+            parsed = datetime.fromisoformat(value.strip().replace("Z", "+00:00"))
+        except ValueError:
+            return None
+    else:
         return None
     if parsed.tzinfo is None:
         parsed = parsed.replace(tzinfo=timezone.utc)
@@ -567,31 +597,23 @@ def _parse_datetime(value: object) -> datetime | None:
 
 
 def _calculate_coverage_hours(
-    first_sample_at: str | None,
-    last_sample_at: str | None,
+    first_sample_at: object,
+    last_sample_at: object,
 ) -> float | None:
-    if not first_sample_at or not last_sample_at:
+    first_point = _parse_datetime(first_sample_at)
+    last_point = _parse_datetime(last_sample_at)
+    if first_point is None or last_point is None:
         return None
-    first_point = datetime.fromisoformat(first_sample_at.replace("Z", "+00:00"))
-    last_point = datetime.fromisoformat(last_sample_at.replace("Z", "+00:00"))
-    if first_point.tzinfo is None:
-        first_point = first_point.replace(tzinfo=timezone.utc)
-    if last_point.tzinfo is None:
-        last_point = last_point.replace(tzinfo=timezone.utc)
-    delta = last_point.astimezone(timezone.utc) - first_point.astimezone(timezone.utc)
+    delta = last_point - first_point
     return round(delta.total_seconds() / 3600, 2)
 
 
 def _calculate_duration_seconds(first_seen_at: object, last_seen_at: object) -> int | None:
-    if not isinstance(first_seen_at, str) or not isinstance(last_seen_at, str):
+    first_point = _parse_datetime(first_seen_at)
+    last_point = _parse_datetime(last_seen_at)
+    if first_point is None or last_point is None:
         return None
-    first_point = datetime.fromisoformat(first_seen_at.replace("Z", "+00:00"))
-    last_point = datetime.fromisoformat(last_seen_at.replace("Z", "+00:00"))
-    if first_point.tzinfo is None:
-        first_point = first_point.replace(tzinfo=timezone.utc)
-    if last_point.tzinfo is None:
-        last_point = last_point.replace(tzinfo=timezone.utc)
-    return max(0, int((last_point.astimezone(timezone.utc) - first_point.astimezone(timezone.utc)).total_seconds()))
+    return max(0, int((last_point - first_point).total_seconds()))
 
 
 def _calculate_match_duration_seconds(item: dict[str, object]) -> int | None:

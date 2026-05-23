@@ -1,9 +1,16 @@
 // Progressive enhancement for local frontend-backend checks.
 const DEFAULT_SERVER_POLL_INTERVAL_MS = 300 * 1000;
-const SERVER_HISTORY_URLS_FALLBACK = Object.freeze({
-  "comunidad-hispana-01": "https://scoreboard.comunidadhll.es/games",
-  "comunidad-hispana-02": "https://scoreboard.comunidadhll.es:5443/games",
-  "comunidad-hispana-03": "https://scoreboard.comunidadhll.es:3443/games",
+const TRUSTED_SERVER_ACTIONS = Object.freeze({
+  "comunidad-hispana-01": Object.freeze({
+    publicScoreboardUrl: "https://scoreboard.comunidadhll.es",
+    historicalUrl: "./historico.html?server=comunidad-hispana-01",
+    currentMatchUrl: "./partida-actual.html?server=comunidad-hispana-01",
+  }),
+  "comunidad-hispana-02": Object.freeze({
+    publicScoreboardUrl: "https://scoreboard.comunidadhll.es:5443",
+    historicalUrl: "./historico.html?server=comunidad-hispana-02",
+    currentMatchUrl: "./partida-actual.html?server=comunidad-hispana-02",
+  }),
 });
 const COMMUNITY_CLANS = Object.freeze([
   {
@@ -266,16 +273,19 @@ function renderServerStatsCard(server) {
     server.status === "online" ? "server-state--online" : "server-state--offline";
   const isRealSnapshot = isRealLiveSnapshot(server);
   const currentMap = server.current_map || "Sin mapa disponible";
-  const region = server.region || "Region pendiente";
+  const region = normalizeServerRegion(server.region);
   const players = Number.isFinite(server.players) ? server.players : 0;
   const maxPlayers = Number.isFinite(server.max_players) ? server.max_players : 0;
   const actionMarkup = renderServerAction(server);
   const cardVariantClass = isRealSnapshot ? "server-card--real" : "server-card--reference";
   const eyebrowLabel = isRealSnapshot ? "Servidor de comunidad" : "Referencia actual";
-  const quickFacts = renderQuickFacts([
+  const quickFactItems = [
     { label: "Mapa", value: currentMap, valueClassName: "server-card__quickfact-value--map" },
-    { label: "Region", value: region },
-  ]);
+  ];
+  if (region) {
+    quickFactItems.push({ label: "Region", value: region });
+  }
+  const quickFacts = renderQuickFacts(quickFactItems);
 
   return `
     <article class="server-card server-card--stats ${cardVariantClass}">
@@ -287,10 +297,12 @@ function renderServerStatsCard(server) {
         <div class="server-card__status-column">
           <span class="server-state ${stateClass}">${escapeHtml(statusLabel)}</span>
           <p class="server-card__population">${escapeHtml(`${players} / ${maxPlayers}`)}</p>
-          ${actionMarkup}
         </div>
       </div>
-      ${quickFacts}
+      <div class="server-card__bottom">
+        ${quickFacts}
+        ${actionMarkup}
+      </div>
     </article>
   `;
 }
@@ -299,35 +311,44 @@ function renderServerSections(latestItems) {
   return latestItems.map((server) => renderServerStatsCard(server)).join("");
 }
 
-function renderServerAction(server) {
-  const historyState = getServerHistoryState(server);
-  if (!historyState.available) {
-    return `
-      <div class="server-card__actions">
-        <span
-          class="server-action-link server-action-link--disabled"
-          aria-disabled="true"
-        >
-          Historico no disponible
-        </span>
-      </div>
-    `;
+function normalizeServerRegion(value) {
+  if (typeof value !== "string") {
+    return "";
   }
+  const trimmedValue = value.trim();
+  if (!trimmedValue) {
+    return "";
+  }
+  const normalizedValue = trimmedValue
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase();
+  const placeholderValues = new Set([
+    "region pendiente",
+    "region pending",
+    "pending",
+    "unknown",
+    "desconocida",
+    "no disponible",
+    "por confirmar",
+    "n/a",
+  ]);
+  return placeholderValues.has(normalizedValue) ? "" : trimmedValue;
+}
 
-  const historyUrl = historyState.url;
-  if (!historyUrl) {
+function renderServerAction(server) {
+  const actions = getTrustedServerActions(server);
+  if (!actions) {
     return "";
   }
 
   return `
     <div class="server-card__actions">
-      <a
-        class="server-action-link"
-        href="${escapeHtml(historyUrl)}"
-        target="_blank"
-        rel="noreferrer"
-      >
+      <a class="server-action-link" href="${escapeHtml(actions.historicalUrl)}">
         Historico
+      </a>
+      <a class="server-action-link" href="${escapeHtml(actions.currentMatchUrl)}">
+        Partida actual
       </a>
     </div>
   `;
@@ -430,28 +451,66 @@ function renderQuickFacts(items) {
   `;
 }
 
-function getServerHistoryUrl(server) {
-  if (typeof server?.community_history_url === "string" && server.community_history_url.trim()) {
-    return server.community_history_url.trim();
-  }
+function getTrustedServerActions(server) {
+  const trustedActionKey = resolveTrustedServerActionKey(server);
+  return TRUSTED_SERVER_ACTIONS[trustedActionKey] || null;
+}
 
-  const externalServerId =
-    typeof server?.external_server_id === "string"
-      ? server.external_server_id.trim()
-      : "";
-  if (!externalServerId) {
+function resolveTrustedServerActionKey(server) {
+  if (!server) {
     return "";
   }
 
-  return SERVER_HISTORY_URLS_FALLBACK[externalServerId] || "";
+  const externalServerId = getTrimmedServerValue(server.external_server_id);
+  if (TRUSTED_SERVER_ACTIONS[externalServerId]) {
+    return externalServerId;
+  }
+
+  const trustedSlugFields = [
+    server.server_slug,
+    server.target_key,
+    server.slug,
+    server.community_slug,
+  ];
+  const trustedSlug = trustedSlugFields
+    .map(getTrimmedServerValue)
+    .find((value) => TRUSTED_SERVER_ACTIONS[value]);
+  if (trustedSlug) {
+    return trustedSlug;
+  }
+
+  const serverNames = [server.server_name, server.name].map(getTrimmedServerValue);
+  if (
+    serverNames.some(
+      (name) => name.startsWith("#01") || name.includes("Comunidad Hispana #01"),
+    )
+  ) {
+    return "comunidad-hispana-01";
+  }
+  if (
+    serverNames.some(
+      (name) => name.startsWith("#02") || name.includes("Comunidad Hispana #02"),
+    )
+  ) {
+    return "comunidad-hispana-02";
+  }
+
+  const serverReference = [
+    getTrimmedServerValue(server.source_ref),
+    externalServerId,
+  ].join(" ");
+  if (serverReference.includes("152.114.195.174") || serverReference.includes(":7779")) {
+    return "comunidad-hispana-01";
+  }
+  if (serverReference.includes("152.114.195.150") || serverReference.includes(":7879")) {
+    return "comunidad-hispana-02";
+  }
+
+  return "";
 }
 
-function getServerHistoryState(server) {
-  const historyUrl = getServerHistoryUrl(server);
-  return {
-    available: Boolean(historyUrl),
-    url: historyUrl,
-  };
+function getTrimmedServerValue(value) {
+  return typeof value === "string" ? value.trim() : "";
 }
 
 function selectPrimaryServerItems(items) {

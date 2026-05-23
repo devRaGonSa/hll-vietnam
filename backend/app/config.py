@@ -35,14 +35,19 @@ DEFAULT_PLAYER_EVENT_REFRESH_RETRY_DELAY_SECONDS = 30
 DEFAULT_RCON_HISTORICAL_CAPTURE_INTERVAL_SECONDS = 600
 DEFAULT_RCON_HISTORICAL_CAPTURE_MAX_RETRIES = 2
 DEFAULT_RCON_HISTORICAL_CAPTURE_RETRY_DELAY_SECONDS = 15
+DEFAULT_RCON_BACKFILL_CHUNK_HOURS = 6
+DEFAULT_RCON_BACKFILL_SLEEP_SECONDS = 1.0
+DEFAULT_RCON_BACKFILL_MAX_DAYS_BACK = 45
 DEFAULT_SQLITE_WRITER_TIMEOUT_SECONDS = 30.0
 DEFAULT_SQLITE_BUSY_TIMEOUT_MS = 30000
 DEFAULT_WRITER_LOCK_TIMEOUT_SECONDS = 120.0
 DEFAULT_WRITER_LOCK_POLL_INTERVAL_SECONDS = 1.0
 DEFAULT_ALLOWED_ORIGINS = (
     "null",
+    "http://127.0.0.1",
     "http://127.0.0.1:5500",
     "http://127.0.0.1:8080",
+    "http://localhost",
     "http://localhost:5500",
     "http://localhost:8080",
 )
@@ -83,6 +88,20 @@ def get_storage_path() -> Path:
     default_path = Path(__file__).resolve().parent.parent / "data" / DEFAULT_STORAGE_FILENAME
     configured_path = os.getenv("HLL_BACKEND_STORAGE_PATH")
     return Path(configured_path) if configured_path else default_path
+
+
+def get_database_url() -> str | None:
+    """Return the optional PostgreSQL URL for migrated backend storage domains."""
+    configured_url = os.getenv("HLL_BACKEND_DATABASE_URL")
+    if configured_url is None:
+        return None
+    normalized_url = configured_url.strip()
+    return normalized_url or None
+
+
+def use_postgres_rcon_storage(*, explicit_sqlite_path: Path | None = None) -> bool:
+    """Return whether phase-1 RCON storage should use PostgreSQL."""
+    return explicit_sqlite_path is None and get_database_url() is not None
 
 
 def get_sqlite_writer_timeout_seconds() -> float:
@@ -217,20 +236,40 @@ def get_historical_crcon_retry_delay_seconds() -> float:
 
 def get_historical_refresh_interval_seconds() -> int:
     """Return the default interval used by the historical refresh loop."""
-    configured_value = os.getenv(
+    return _read_int_env(
         "HLL_HISTORICAL_SNAPSHOT_REFRESH_INTERVAL_SECONDS",
         os.getenv(
             "HLL_HISTORICAL_REFRESH_INTERVAL_SECONDS",
             str(DEFAULT_HISTORICAL_SNAPSHOT_REFRESH_INTERVAL_SECONDS),
         ),
+        minimum=1,
     )
-    interval_seconds = int(configured_value)
-    if interval_seconds <= 0:
-        raise ValueError(
-            "HLL_HISTORICAL_SNAPSHOT_REFRESH_INTERVAL_SECONDS must be positive."
-        )
 
-    return interval_seconds
+
+def _read_int_env(name: str, default_value: str, *, minimum: int) -> int:
+    """Read one integer env var and keep validation errors actionable."""
+    configured_value = os.getenv(name, default_value)
+    try:
+        value = int(configured_value)
+    except (TypeError, ValueError) as error:
+        raise ValueError(f"{name} must be an integer.") from error
+    if value < minimum:
+        qualifier = "positive" if minimum == 1 else f"at least {minimum}"
+        raise ValueError(f"{name} must be {qualifier}.")
+    return value
+
+
+def _read_float_env(name: str, default_value: str, *, minimum: float) -> float:
+    """Read one float env var and keep validation errors actionable."""
+    configured_value = os.getenv(name, default_value)
+    try:
+        value = float(configured_value)
+    except (TypeError, ValueError) as error:
+        raise ValueError(f"{name} must be a number.") from error
+    if value < minimum:
+        qualifier = "zero or positive" if minimum == 0 else f"at least {minimum}"
+        raise ValueError(f"{name} must be {qualifier}.")
+    return value
 
 
 def get_historical_refresh_overlap_hours() -> int:
@@ -281,30 +320,20 @@ def get_rcon_request_timeout_seconds() -> float:
 
 def get_historical_refresh_max_retries() -> int:
     """Return the retry count used by the historical refresh loop."""
-    configured_value = os.getenv(
+    return _read_int_env(
         "HLL_HISTORICAL_REFRESH_MAX_RETRIES",
         str(DEFAULT_HISTORICAL_REFRESH_MAX_RETRIES),
+        minimum=0,
     )
-    max_retries = int(configured_value)
-    if max_retries < 0:
-        raise ValueError("HLL_HISTORICAL_REFRESH_MAX_RETRIES must be zero or positive.")
-
-    return max_retries
 
 
-def get_historical_refresh_retry_delay_seconds() -> int:
+def get_historical_refresh_retry_delay_seconds() -> float:
     """Return the wait time between historical refresh retries."""
-    configured_value = os.getenv(
+    return _read_float_env(
         "HLL_HISTORICAL_REFRESH_RETRY_DELAY_SECONDS",
         str(DEFAULT_HISTORICAL_REFRESH_RETRY_DELAY_SECONDS),
+        minimum=0,
     )
-    retry_delay_seconds = int(configured_value)
-    if retry_delay_seconds < 0:
-        raise ValueError(
-            "HLL_HISTORICAL_REFRESH_RETRY_DELAY_SECONDS must be zero or positive."
-        )
-
-    return retry_delay_seconds
 
 
 def get_historical_full_snapshot_every_runs() -> int:
@@ -456,6 +485,33 @@ def get_rcon_historical_capture_retry_delay_seconds() -> int:
             "HLL_RCON_HISTORICAL_CAPTURE_RETRY_DELAY_SECONDS must be zero or positive."
         )
     return retry_delay_seconds
+
+
+def get_rcon_backfill_chunk_hours() -> int:
+    """Return the AdminLog backfill chunk size in hours."""
+    return _read_int_env(
+        "HLL_RCON_BACKFILL_CHUNK_HOURS",
+        str(DEFAULT_RCON_BACKFILL_CHUNK_HOURS),
+        minimum=1,
+    )
+
+
+def get_rcon_backfill_sleep_seconds() -> float:
+    """Return the delay between AdminLog backfill RCON requests."""
+    return _read_float_env(
+        "HLL_RCON_BACKFILL_SLEEP_SECONDS",
+        str(DEFAULT_RCON_BACKFILL_SLEEP_SECONDS),
+        minimum=0,
+    )
+
+
+def get_rcon_backfill_max_days_back() -> int:
+    """Return the maximum AdminLog backfill lookback horizon in days."""
+    return _read_int_env(
+        "HLL_RCON_BACKFILL_MAX_DAYS_BACK",
+        str(DEFAULT_RCON_BACKFILL_MAX_DAYS_BACK),
+        minimum=1,
+    )
 
 
 def get_a2s_targets_payload() -> str | None:

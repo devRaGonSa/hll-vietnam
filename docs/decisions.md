@@ -177,3 +177,66 @@ son confiables `comunidad-hispana-01`, con origen
 defecto nuevos. Los datos historicos ya persistidos no se eliminan, pero las
 URLs publicas de partidas solo se aceptan si el `raw_payload_ref` usa HTTP(S),
 apunta al origen confiable del servidor activo y mantiene una ruta `/games/`.
+
+## Decision 017: PostgreSQL phase 1 for RCON historical persistence
+
+La primera migracion de persistencia a PostgreSQL cubre el camino que sufria
+contencion SQLite entre `backend`, `historical-runner` y
+`rcon-historical-worker`:
+
+- captura prospectiva RCON, muestras y ventanas competitivas
+- eventos AdminLog deduplicados y snapshots de perfil derivados
+- partidas RCON materializadas y estadisticas por jugador
+- candidatos confiables de URL de scoreboard que puedan poblarse para
+  correlacion de detalle
+
+Docker Compose configura `HLL_BACKEND_DATABASE_URL` y usa PostgreSQL como
+backend autoritativo para esas tablas. La ejecucion local sin esa variable sigue
+usando SQLite como fallback temporal para preservar comandos y tests locales.
+
+Quedan SQLite-backed en esta fase porque no forman parte del lock-prone writer
+path migrado y siguen cubriendo fallback publico o caches locales:
+
+- snapshots live y cache de `/api/servers`
+- tablas `historical_*` de scoreboard publico, rankings y correlacion legacy
+- snapshots historicos precalculados, ledger player-event y Elo/MMR pausado
+
+La correlacion de URL publica en detalle usa primero candidatos PostgreSQL
+confiables cuando existan y puede seguir leyendo filas `historical_*`
+persistidas en SQLite durante la transicion. El diagnostico operativo se expone
+con `python -m app.storage_diagnostics`.
+
+## Decision 018: PostgreSQL phase 2 for displayed historical data
+
+PostgreSQL pasa a ser la fuente de lectura para los datos historicos visibles:
+
+- fallback publico `historical_*` de partidas, detalle y rankings
+- snapshots historicos precalculados que consume `historico.html`
+- cache live de servidores que consume `/api/servers`
+- ledger player-event usado para reconstruir snapshots visibles
+- tablas RCON de AdminLog, perfiles, ventanas, partidas materializadas,
+  estadisticas y candidatos seguros ya migradas en phase 1
+
+La migracion se ejecuta de forma idempotente con:
+
+```powershell
+cd backend
+python -m app.sqlite_to_postgres_migration
+python -m app.storage_diagnostics
+```
+
+El comando conserva IDs y `external_match_id` del scoreboard publico, claves
+`match_key` materializadas y URLs seguras existentes. Copia SQLite y los JSON
+historicos de `backend/data/snapshots` como fuentes legacy; no los vuelve a
+usar como read model visible cuando `HLL_BACKEND_DATABASE_URL` esta definido.
+Las filas legacy de `comunidad-hispana-03` se omiten en el read model visible
+de esta migracion para no reactivar ese target.
+
+Permanecen fuera de phase 2:
+
+- checkpoints y runs operativos del import publico que no aparecen en frontend
+- Elo/MMR pausado y oculto en la UI actual
+
+`app.storage_diagnostics` muestra conteos PostgreSQL, ultimas partidas
+materializadas, ultimos `match_end`, dominios restantes y un resumen de paridad
+para verificar la migracion antes de retirar fuentes legacy.

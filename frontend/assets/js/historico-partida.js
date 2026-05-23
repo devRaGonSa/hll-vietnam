@@ -14,6 +14,11 @@ document.addEventListener("DOMContentLoaded", () => {
     playersSection: document.getElementById("match-detail-players-section"),
     playersNote: document.getElementById("match-detail-players-note"),
     playersState: document.getElementById("match-detail-players-state"),
+    playerControls: document.getElementById("match-detail-player-controls"),
+    playerSearch: document.getElementById("match-detail-player-search"),
+    playerTeamFilters: [...document.querySelectorAll('input[name="match-detail-player-team-filter"]')],
+    playerSort: document.getElementById("match-detail-player-sort"),
+    playerSortDirection: document.getElementById("match-detail-player-sort-direction"),
     playersTableShell: document.getElementById("match-detail-players-table-shell"),
     playersBody: document.getElementById("match-detail-players-body"),
     timelineSection: document.getElementById("match-detail-timeline-section"),
@@ -206,31 +211,456 @@ function renderPlayerSection(item, nodes) {
       nodes.playersState,
       "No hay filas de jugador registradas para esta partida.",
     );
+    nodes.playerControls.hidden = true;
     nodes.playersTableShell.hidden = true;
     nodes.playersBody.innerHTML = "";
     return;
   }
 
-  nodes.playersNote.textContent = `${formatNumber(players.length)} jugadores con estadisticas locales.`;
-  nodes.playersState.hidden = true;
-  nodes.playersBody.innerHTML = players.map((player) => renderPlayerRow(player)).join("");
+  const state = {
+    search: "",
+    team: "all",
+    sort: "kills",
+    direction: "desc",
+    isDefaultSort: true,
+  };
+  const renderRows = () => renderPlayerTable(item, players, state, nodes);
+
+  nodes.playerSearch.value = "";
+  nodes.playerTeamFilters.forEach((control) => {
+    control.checked = control.value === state.team;
+  });
+  nodes.playerSort.value = state.sort;
+  nodes.playerSortDirection.value = state.direction;
+  bindPlayerTableControls(nodes, state, renderRows);
+  renderRows();
+  nodes.playerControls.hidden = false;
   nodes.playersTableShell.hidden = false;
 }
 
-function renderPlayerRow(player) {
+function bindPlayerTableControls(nodes, state, renderRows) {
+  nodes.playerControls.onsubmit = (event) => {
+    event.preventDefault();
+  };
+  nodes.playerSearch.oninput = () => {
+    closePlayerDetailRows(nodes.playersBody);
+    state.search = nodes.playerSearch.value;
+    renderRows();
+  };
+  nodes.playerTeamFilters.forEach((control) => {
+    control.onchange = () => {
+      closePlayerDetailRows(nodes.playersBody);
+      state.team = control.value;
+      renderRows();
+    };
+  });
+  nodes.playerSort.onchange = () => {
+    state.sort = nodes.playerSort.value;
+    state.isDefaultSort = false;
+    renderRows();
+  };
+  nodes.playerSortDirection.onchange = () => {
+    state.direction = nodes.playerSortDirection.value;
+    state.isDefaultSort = false;
+    renderRows();
+  };
+}
+
+function renderPlayerTable(item, players, state, nodes) {
+  const visiblePlayers = getVisiblePlayers(players, item, state);
+  nodes.playersNote.textContent =
+    visiblePlayers.length === players.length
+      ? `${formatNumber(players.length)} jugadores con estadisticas locales.`
+      : `${formatNumber(visiblePlayers.length)} de ${formatNumber(players.length)} jugadores visibles.`;
+  nodes.playersState.hidden = visiblePlayers.length > 0;
+  if (!visiblePlayers.length) {
+    nodes.playersState.textContent = "No hay jugadores que coincidan con los controles activos.";
+  }
+  nodes.playersBody.innerHTML = visiblePlayers
+    .map((entry, index) => renderPlayerRows(entry.player, item, index, entry.inactive))
+    .join("");
+  bindPlayerDetailRows(nodes.playersBody);
+}
+
+function getVisiblePlayers(players, item, state) {
+  const normalizedSearch = normalizeLookupText(state.search);
+  return players
+    .map((player) => ({
+      player,
+      inactive: isInactiveMatchPlayer(player),
+      team: getTeamSideDisplay(player.team || player.team_side),
+    }))
+    .filter((entry) => {
+      const matchesTeam = state.team === "all" || entry.team.key === state.team;
+      const matchesName =
+        !normalizedSearch ||
+        normalizeLookupText(entry.player.player_name).includes(normalizedSearch);
+      return matchesTeam && matchesName;
+    })
+    .sort((a, b) => comparePlayerEntries(a, b, item, state));
+}
+
+function comparePlayerEntries(a, b, item, state) {
+  if (state.isDefaultSort) {
+    return (
+      compareInactivePriority(a, b) ||
+      compareNumericStat(b.player.kills, a.player.kills) ||
+      compareNumericStat(a.player.deaths, b.player.deaths) ||
+      comparePlayerNames(a.player, b.player)
+    );
+  }
+
+  if (!["name", "team"].includes(state.sort)) {
+    const inactivePriority = compareInactivePriority(a, b);
+    if (inactivePriority) {
+      return inactivePriority;
+    }
+  }
+
+  const direction = state.direction === "asc" ? 1 : -1;
+  const compared = comparePlayerSortValue(a, b, item, state.sort);
+  return compared * direction || comparePlayerNames(a.player, b.player);
+}
+
+function comparePlayerSortValue(a, b, item, sort) {
+  if (sort === "name") {
+    return comparePlayerNames(a.player, b.player);
+  }
+  if (sort === "team") {
+    return compareText(a.team.label, b.team.label);
+  }
+  if (sort === "deaths" || sort === "teamkills" || sort === "kills") {
+    return compareNumericStat(a.player[sort], b.player[sort]);
+  }
+  if (sort === "kd") {
+    return compareNumericStat(getKdRatioValue(a.player), getKdRatioValue(b.player));
+  }
+  return compareNumericStat(
+    getKpmValue(a.player.kills, item.duration_seconds),
+    getKpmValue(b.player.kills, item.duration_seconds),
+  );
+}
+
+function compareInactivePriority(a, b) {
+  return Number(a.inactive) - Number(b.inactive);
+}
+
+function comparePlayerNames(a, b) {
+  return compareText(getPlayerName(a), getPlayerName(b));
+}
+
+function compareText(a, b) {
+  return String(a || "").localeCompare(String(b || ""), "es", {
+    sensitivity: "base",
+  });
+}
+
+function compareNumericStat(a, b) {
+  return toSortableNumber(a) - toSortableNumber(b);
+}
+
+function renderPlayerRows(player, item, index, inactive = false) {
+  const team = getTeamSideDisplay(player.team || player.team_side);
+  const rowId = `match-player-row-${index}`;
+  const panelId = `match-player-panel-${index}`;
+  const playerName = getPlayerName(player);
+  const kpm = formatKpm(player.kills, item.duration_seconds);
   return `
-    <tr>
-      <td>${escapeHtml(player.player_name || player.name || "Jugador no identificado")}</td>
-      <td>${escapeHtml(formatTeamSide(player.team || player.team_side))}</td>
+    <tr
+      class="historical-player-row historical-player-row--${team.key} ${inactive ? "is-inactive" : ""}"
+      id="${escapeHtml(rowId)}"
+    >
+      <td>
+        <button
+          class="historical-player-row__details-button"
+          type="button"
+          aria-controls="${escapeHtml(panelId)}"
+          aria-expanded="false"
+          aria-label="Ver estadisticas ampliadas de ${escapeHtml(playerName)}"
+        >
+          <span>${escapeHtml(playerName)}</span>
+          <span aria-hidden="true">i</span>
+        </button>
+      </td>
+      <td class="historical-player-team-cell">
+        <span class="historical-player-team-badge historical-player-team-badge--${team.key}">
+          ${escapeHtml(team.label)}
+        </span>
+      </td>
       <td>${escapeHtml(formatOptionalNumber(player.kills))}</td>
       <td>${escapeHtml(formatOptionalNumber(player.deaths))}</td>
       <td>${escapeHtml(formatOptionalNumber(player.teamkills))}</td>
       <td>${escapeHtml(formatKdRatio(player))}</td>
-      <td>${escapeHtml(formatNamedCounts(player.top_weapons))}</td>
-      <td>${escapeHtml(formatNamedCounts(player.most_killed))}</td>
-      <td>${escapeHtml(formatNamedCounts(player.death_by))}</td>
+      <td>${escapeHtml(kpm)}</td>
+    </tr>
+    <tr
+      class="historical-player-detail-row"
+      id="${escapeHtml(panelId)}"
+      aria-labelledby="${escapeHtml(rowId)}"
+    >
+      <td colspan="7">
+        ${renderPlayerStatsPanel(player, item, { team, playerName, kpm })}
+      </td>
     </tr>
   `;
+}
+
+function bindPlayerDetailRows(playersBody) {
+  const playerRows = [...playersBody.querySelectorAll(".historical-player-row")];
+  const collapseRow = (row) => {
+    const button = row.querySelector(".historical-player-row__details-button");
+    const detailRow = row.nextElementSibling;
+    if (!button || !detailRow?.classList.contains("historical-player-detail-row")) {
+      return;
+    }
+    row.classList.remove("is-expanded");
+    detailRow.classList.remove("is-open");
+    button.setAttribute("aria-expanded", "false");
+  };
+
+  playerRows.forEach((row) => {
+    const button = row.querySelector(".historical-player-row__details-button");
+    const detailRow = row.nextElementSibling;
+    if (!button || !detailRow?.classList.contains("historical-player-detail-row")) {
+      return;
+    }
+    const setExpanded = (expanded) => {
+      if (expanded) {
+        playerRows.filter((candidate) => candidate !== row).forEach(collapseRow);
+      }
+      row.classList.toggle("is-expanded", expanded);
+      detailRow.classList.toggle("is-open", expanded);
+      button.setAttribute("aria-expanded", String(expanded));
+    };
+    const toggleExpanded = () => setExpanded(!detailRow.classList.contains("is-open"));
+
+    button.addEventListener("click", () => {
+      toggleExpanded();
+    });
+  });
+}
+
+function closePlayerDetailRows(playersBody) {
+  [...playersBody.querySelectorAll(".historical-player-row")].forEach((row) => {
+    const button = row.querySelector(".historical-player-row__details-button");
+    const detailRow = row.nextElementSibling;
+    if (!button || !detailRow?.classList.contains("historical-player-detail-row")) {
+      return;
+    }
+    row.classList.remove("is-expanded");
+    detailRow.classList.remove("is-open");
+    button.setAttribute("aria-expanded", "false");
+  });
+}
+
+function getPlayerName(player) {
+  return player.player_name || player.name || "Jugador no identificado";
+}
+
+function isInactiveMatchPlayer(player) {
+  const team = getTeamSideDisplay(player.team || player.team_side);
+  return (
+    team.key === "unknown" &&
+    toSortableNumber(player.kills) === 0 &&
+    toSortableNumber(player.deaths) === 0 &&
+    toSortableNumber(player.teamkills) === 0 &&
+    getKdRatioValue(player) === 0 &&
+    !hasNamedCounts(player.top_weapons) &&
+    !hasNamedCounts(player.most_killed) &&
+    !hasNamedCounts(player.death_by)
+  );
+}
+
+function renderPlayerStatsPanel(player, item, context) {
+  const matchups = buildPlayerDirectMatchups(player);
+  const hasExpandedStats =
+    hasNamedCounts(player.top_weapons) ||
+    hasNamedCounts(player.most_killed) ||
+    hasNamedCounts(player.death_by) ||
+    matchups.length > 0;
+
+  return `
+    <section class="historical-player-stats-panel" aria-label="Estadisticas ampliadas de ${escapeHtml(context.playerName)}">
+      <div class="historical-player-stats-panel__header">
+        <div>
+          <p>${escapeHtml(context.team.label)}</p>
+          <h4>${escapeHtml(context.playerName)}</h4>
+        </div>
+        <div class="historical-player-stats-panel__summary">
+          ${renderPlayerStatChip("Kills", formatOptionalNumber(player.kills))}
+          ${renderPlayerStatChip("Muertes", formatOptionalNumber(player.deaths))}
+          ${renderPlayerStatChip("TK", formatOptionalNumber(player.teamkills))}
+          ${renderPlayerStatChip("KD", formatKdRatio(player))}
+          ${renderPlayerStatChip("KPM", context.kpm)}
+        </div>
+      </div>
+      ${renderExternalProfilesSection(player)}
+      ${
+        hasExpandedStats
+          ? `
+            <div class="historical-player-stats-panel__grid">
+              ${renderNamedCountSection("Armas", player.top_weapons)}
+              ${renderNamedCountSection("Mas abatido", player.most_killed)}
+              ${renderNamedCountSection("Muere por", player.death_by)}
+              ${renderDirectMatchupsSection(matchups)}
+            </div>
+          `
+          : `<p class="historical-player-stats-panel__empty">Sin estadisticas ampliadas disponibles.</p>`
+      }
+    </section>
+  `;
+}
+
+function renderExternalProfilesSection(player) {
+  const links = [
+    ["steam", "Steam"],
+    ["hellor", "Hellor"],
+    ["hll_records", "HLL Records"],
+    ["helo", "Helo"],
+  ]
+    .map(([key, label]) => [label, player.external_profile_links?.[key]])
+    .filter(([, href]) => typeof href === "string" && href.trim());
+
+  return `
+    <article class="historical-player-stats-panel__section historical-player-stats-panel__profiles">
+      <h5>Perfiles externos</h5>
+      ${
+        links.length
+          ? `
+            <div class="historical-player-profile-links">
+              ${links
+                .map(
+                  ([label, href]) => `
+                    <a href="${escapeHtml(href)}" target="_blank" rel="noopener noreferrer">
+                      ${escapeHtml(label)}
+                    </a>
+                  `,
+                )
+                .join("")}
+            </div>
+          `
+          : renderExternalProfilesUnavailable(player)
+      }
+    </article>
+  `;
+}
+
+
+function renderExternalProfilesUnavailable(player) {
+  const platform = String(player.platform || "").toLowerCase();
+  const epicId = typeof player.epic_id === "string" ? player.epic_id.trim() : "";
+
+  if (platform === "epic") {
+    return epicId
+      ? `<p>Jugador detectado como Epic. ID capturado: <code>${escapeHtml(epicId)}</code>. Sin enlaces externos compatibles confirmados para este proveedor.</p>`
+      : "<p>Jugador detectado como Epic. Sin enlaces externos compatibles confirmados para este proveedor.</p>";
+  }
+
+  return "<p>Perfiles externos no disponibles.</p>";
+}
+
+function renderPlayerStatChip(label, value) {
+  return `
+    <article>
+      <span>${escapeHtml(label)}</span>
+      <strong>${escapeHtml(value)}</strong>
+    </article>
+  `;
+}
+
+function renderNamedCountSection(title, items) {
+  if (!hasNamedCounts(items)) {
+    return `
+      <article class="historical-player-stats-panel__section">
+        <h5>${escapeHtml(title)}</h5>
+        <p>No disponible</p>
+      </article>
+    `;
+  }
+  return `
+    <article class="historical-player-stats-panel__section">
+      <h5>${escapeHtml(title)}</h5>
+      <ol>
+        ${items
+          .map((stat) => {
+            const name = stat.name || stat.label || "Sin nombre";
+            const count = stat.count ?? stat.total ?? 0;
+            return `<li><span>${escapeHtml(name)}</span><strong>${escapeHtml(formatNumber(count))}</strong></li>`;
+          })
+          .join("")}
+      </ol>
+    </article>
+  `;
+}
+
+function renderDirectMatchupsSection(matchups) {
+  if (!matchups.length) {
+    return `
+      <article class="historical-player-stats-panel__section historical-player-stats-panel__section--wide">
+        <h5>Duelo directo</h5>
+        <p>No disponible</p>
+      </article>
+    `;
+  }
+  return `
+    <article class="historical-player-stats-panel__section historical-player-stats-panel__section--wide">
+      <h5>Duelo directo</h5>
+      <div class="historical-player-matchups" role="table" aria-label="Duelos directos">
+        <div role="row">
+          <span role="columnheader">Rival</span>
+          <span role="columnheader">Abatidos</span>
+          <span role="columnheader">Muertes</span>
+          <span role="columnheader">Balance</span>
+        </div>
+        ${matchups
+          .map(
+            (matchup) => `
+              <div role="row">
+                <span role="cell">${escapeHtml(matchup.name)}</span>
+                <strong role="cell">${escapeHtml(formatNumber(matchup.kills))}</strong>
+                <strong role="cell">${escapeHtml(formatNumber(matchup.deaths))}</strong>
+                <strong role="cell">${escapeHtml(formatSignedNumber(matchup.balance))}</strong>
+              </div>
+            `,
+          )
+          .join("")}
+      </div>
+    </article>
+  `;
+}
+
+function buildPlayerDirectMatchups(player) {
+  const byName = new Map();
+  const addStats = (items, key) => {
+    if (!Array.isArray(items)) {
+      return;
+    }
+    items.forEach((item) => {
+      const name = item.name || item.label;
+      if (!name) {
+        return;
+      }
+      const normalizedName = String(name);
+      const current = byName.get(normalizedName) || {
+        name: normalizedName,
+        kills: 0,
+        deaths: 0,
+      };
+      current[key] += Number(item.count ?? item.total ?? 0) || 0;
+      byName.set(normalizedName, current);
+    });
+  };
+
+  addStats(player.most_killed, "kills");
+  addStats(player.death_by, "deaths");
+  return [...byName.values()]
+    .map((matchup) => ({
+      ...matchup,
+      balance: matchup.kills - matchup.deaths,
+      involvement: matchup.kills + matchup.deaths,
+    }))
+    .sort((a, b) => b.involvement - a.involvement || a.name.localeCompare(b.name, "es"))
+    .slice(0, 8);
 }
 
 function renderActions(item, actionsNode) {
@@ -243,6 +673,7 @@ function renderActions(item, actionsNode) {
   actionsNode.innerHTML = `
     <a
       class="historical-match-card__link"
+      data-match-detail-scoreboard-link
       href="${escapeHtml(matchUrl)}"
       target="_blank"
       rel="noopener noreferrer"
@@ -338,14 +769,20 @@ function normalizeLookupText(value) {
 }
 
 function formatTeamSide(value) {
-  const normalized = String(value || "").toLowerCase();
-  if (normalized === "allies" || normalized === "allied") {
-    return "Aliados";
+  return getTeamSideDisplay(value).label;
+}
+
+function getTeamSideDisplay(value) {
+  const normalized = String(value || "")
+    .trim()
+    .toLowerCase();
+  if (normalized === "allies" || normalized === "allied" || normalized === "aliados") {
+    return { key: "allies", label: "Aliados" };
   }
-  if (normalized === "axis") {
-    return "Eje";
+  if (normalized === "axis" || normalized === "eje") {
+    return { key: "axis", label: "Eje" };
   }
-  return value || "No disponible";
+  return { key: "unknown", label: "No disponible" };
 }
 
 function formatGameMode(value) {
@@ -389,15 +826,42 @@ function formatOptionalNumber(value) {
 }
 
 function formatKdRatio(player) {
+  if (
+    !Number.isFinite(Number(player.kd_ratio)) &&
+    (!Number.isFinite(Number(player.kills)) || !Number.isFinite(Number(player.deaths)))
+  ) {
+    return "No disponible";
+  }
+  return formatDecimal(getKdRatioValue(player), 2);
+}
+
+function getKdRatioValue(player) {
   if (Number.isFinite(Number(player.kd_ratio))) {
-    return formatDecimal(player.kd_ratio, 2);
+    return Number(player.kd_ratio);
   }
   const kills = Number(player.kills);
   const deaths = Number(player.deaths);
   if (!Number.isFinite(kills) || !Number.isFinite(deaths)) {
-    return "No disponible";
+    return 0;
   }
-  return deaths > 0 ? formatDecimal(kills / deaths, 2) : formatDecimal(kills, 2);
+  return deaths > 0 ? kills / deaths : kills;
+}
+
+function formatKpm(kills, durationSeconds) {
+  return formatDecimal(getKpmValue(kills, durationSeconds), 2);
+}
+
+function getKpmValue(kills, durationSeconds) {
+  const parsedKills = Number(kills);
+  const parsedDurationSeconds = Number(durationSeconds);
+  if (
+    !Number.isFinite(parsedKills) ||
+    !Number.isFinite(parsedDurationSeconds) ||
+    parsedDurationSeconds <= 0
+  ) {
+    return 0;
+  }
+  return parsedKills / (parsedDurationSeconds / 60);
 }
 
 function formatNamedCounts(items) {
@@ -414,12 +878,29 @@ function formatNamedCounts(items) {
     .join(" / ");
 }
 
+function hasNamedCounts(items) {
+  return Array.isArray(items) && items.length > 0;
+}
+
 function formatNumber(value) {
   const parsedValue = Number(value);
   if (!Number.isFinite(parsedValue)) {
     return "0";
   }
   return new Intl.NumberFormat("es-ES").format(parsedValue);
+}
+
+function toSortableNumber(value) {
+  const parsedValue = Number(value);
+  return Number.isFinite(parsedValue) ? parsedValue : 0;
+}
+
+function formatSignedNumber(value) {
+  const parsedValue = Number(value);
+  if (!Number.isFinite(parsedValue) || parsedValue === 0) {
+    return "0";
+  }
+  return `${parsedValue > 0 ? "+" : ""}${formatNumber(parsedValue)}`;
 }
 
 function formatDecimal(value, fractionDigits = 1) {

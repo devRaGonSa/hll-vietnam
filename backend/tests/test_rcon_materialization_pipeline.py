@@ -74,8 +74,18 @@ class RconMaterializationPipelineTests(unittest.TestCase):
             self.assertEqual(detail["result_source"], "admin-log-match-ended")
             self.assertEqual(detail["result"]["allied_score"], 5)
             self.assertEqual(detail["timestamp_confidence"], "absolute")
-            self.assertNotIn("player_id", detail["players"][0])
-            self.assertIn("kd_ratio", detail["players"][0])
+            players = {row["player_name"]: row for row in detail["players"]}
+            self.assertNotIn("player_id", players["Alpha"])
+            self.assertIn("kd_ratio", players["Alpha"])
+            self.assertEqual(players["Alpha"]["steam_id_64"], "76561198000000001")
+            self.assertEqual(players["Alpha"]["platform"], "steam")
+            self.assertEqual(
+                players["Alpha"]["external_profile_links"]["hellor"],
+                "https://hellor.pro/player/76561198000000001",
+            )
+            self.assertEqual(players["Charlie"]["platform"], "unknown")
+            self.assertNotIn("steam_id_64", players["Charlie"])
+            self.assertNotIn("external_profile_links", players["Charlie"])
             gc.collect()
 
     def test_match_detail_marks_equal_materialized_timestamps_as_server_time_only(self) -> None:
@@ -248,6 +258,29 @@ class RconMaterializationPipelineTests(unittest.TestCase):
             self.assertEqual(payload["data"]["items"][0]["result_source"], "admin-log-match-ended")
             self.assertEqual(recent[0]["result_source"], "admin-log-match-ended")
             self.assertNotEqual(payload["data"]["selected_source"], "public-scoreboard")
+            gc.collect()
+
+    def test_recent_materialized_detail_id_resolves_through_detail_read_model(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = Path(tmpdir) / "historical.sqlite3"
+            previous_storage_path = os.environ.get("HLL_BACKEND_STORAGE_PATH")
+            os.environ["HLL_BACKEND_STORAGE_PATH"] = str(db_path)
+            try:
+                _persist_admin_log_fixture(db_path)
+                materialize_rcon_admin_log(db_path=db_path)
+                recent = list_rcon_historical_recent_activity(
+                    server_key="comunidad-hispana-01",
+                    limit=1,
+                )[0]
+                detail = get_rcon_historical_match_detail(
+                    server_key="comunidad-hispana-01",
+                    match_id=str(recent["internal_detail_match_id"]),
+                )
+            finally:
+                _restore_env("HLL_BACKEND_STORAGE_PATH", previous_storage_path)
+
+            self.assertIsNotNone(detail)
+            self.assertEqual(detail["match_id"], recent["internal_detail_match_id"])
             gc.collect()
 
     def test_public_scoreboard_fallback_used_only_without_rcon_activity(self) -> None:

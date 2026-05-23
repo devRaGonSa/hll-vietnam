@@ -1,9 +1,12 @@
 import gc
 import json
 import sqlite3
+from datetime import datetime, timezone
+from unittest.mock import patch
 
 from app.rcon_admin_log_storage import (
     initialize_rcon_admin_log_storage,
+    list_current_match_kill_feed,
     list_rcon_admin_log_event_counts,
     persist_rcon_admin_log_entries,
 )
@@ -258,4 +261,237 @@ def test_list_rcon_admin_log_event_counts_groups_by_target_and_event_type(tmp_pa
             "last_server_time": 120,
         },
     }
+    gc.collect()
+
+
+def test_current_match_kill_feed_prefers_open_match_window_and_normalizes_rows(tmp_path):
+    db_path = tmp_path / "admin_log.sqlite3"
+    persist_rcon_admin_log_entries(
+        target=TARGET,
+        entries=[
+            {
+                "timestamp": "2026-05-19T09:59:00Z",
+                "message": (
+                    "[0:59 min (90)] KILL: Old Killer(Allies/steam-old) -> "
+                    "Old Victim(Axis/steam-victim-old) with M1 GARAND"
+                ),
+            },
+            {
+                "timestamp": "2026-05-19T10:00:00Z",
+                "message": "[1:00 min (100)] MATCH START Mortain Warfare",
+            },
+            {
+                "timestamp": "2026-05-19T10:01:00Z",
+                "message": (
+                    "[2:00 min (120)] KILL: Alpha(Allies/steam-alpha) -> "
+                    "Bravo(Allies/steam-bravo) with GRENADE"
+                ),
+            },
+        ],
+        db_path=db_path,
+    )
+
+    feed = list_current_match_kill_feed(
+        server_key="test-rcon-target",
+        db_path=db_path,
+    )
+
+    assert feed["scope"] == "open-admin-log-match-window"
+    assert feed["confidence"] == "admin-log-boundary"
+    assert len(feed["items"]) == 1
+    assert feed["items"][0] == {
+        "event_id": "rcon-admin-log:test-rcon-target:3",
+        "event_timestamp": "2026-05-19T10:01:00Z",
+        "server_time": 120,
+        "killer_name": "Alpha",
+        "killer_team": "Allies",
+        "victim_name": "Bravo",
+        "victim_team": "Allies",
+        "weapon": "GRENADE",
+        "is_teamkill": True,
+    }
+    gc.collect()
+
+
+def test_current_match_kill_feed_filters_stale_recent_fallback_rows(tmp_path):
+    db_path = tmp_path / "admin_log.sqlite3"
+    persist_rcon_admin_log_entries(
+        target=TARGET,
+        entries=[
+            {
+                "timestamp": "2026-05-21T09:30:00Z",
+                "message": (
+                    "[1:00 min (1779355800)] KILL: Old Killer(Allies/steam-old) -> "
+                    "Old Victim(Axis/steam-victim-old) with M1 GARAND"
+                ),
+            }
+        ],
+        db_path=db_path,
+    )
+
+    feed = list_current_match_kill_feed(
+        server_key="test-rcon-target",
+        db_path=db_path,
+        now=datetime(2026, 5, 21, 10, 0, tzinfo=timezone.utc),
+    )
+
+    assert feed["scope"] == "no-current-match-events"
+    assert feed["confidence"] == "stale-filtered"
+    assert feed["stale_events_filtered"] == 1
+    assert feed["items"] == []
+    gc.collect()
+
+
+def test_current_match_kill_feed_marks_fresh_recent_fallback_rows_partial(tmp_path):
+    db_path = tmp_path / "admin_log.sqlite3"
+    persist_rcon_admin_log_entries(
+        target=TARGET,
+        entries=[
+            {
+                "timestamp": "2026-05-21T09:50:00Z",
+                "message": (
+                    "[1:00 min (1779357000)] KILL: Fresh Killer(Allies/steam-fresh) -> "
+                    "Fresh Victim(Axis/steam-victim-fresh) with M1 GARAND"
+                ),
+            }
+        ],
+        db_path=db_path,
+    )
+
+    feed = list_current_match_kill_feed(
+        server_key="test-rcon-target",
+        db_path=db_path,
+        now=datetime(2026, 5, 21, 10, 0, tzinfo=timezone.utc),
+    )
+
+    assert feed["scope"] == "recent-admin-log-window"
+    assert feed["confidence"] == "partial"
+    assert feed["stale_events_filtered"] == 0
+    assert [item["killer_name"] for item in feed["items"]] == ["Fresh Killer"]
+    gc.collect()
+
+
+def test_current_match_kill_feed_filters_rows_before_incremental_cursor(tmp_path):
+    db_path = tmp_path / "admin_log.sqlite3"
+    persist_rcon_admin_log_entries(
+        target=TARGET,
+        entries=[
+            {
+                "timestamp": "2026-05-21T10:00:00Z",
+                "message": "[1:00 min (100)] MATCH START Mortain Warfare",
+            },
+            {
+                "timestamp": "2026-05-21T10:01:00Z",
+                "message": (
+                    "[2:00 min (120)] KILL: First Killer(Allies/steam-first) -> "
+                    "First Victim(Axis/steam-first-victim) with M1 GARAND"
+                ),
+            },
+            {
+                "timestamp": "2026-05-21T10:02:00Z",
+                "message": (
+                    "[3:00 min (140)] KILL: Next Killer(Axis/steam-next) -> "
+                    "Next Victim(Allies/steam-next-victim) with MP40"
+                ),
+            },
+        ],
+        db_path=db_path,
+    )
+
+    feed = list_current_match_kill_feed(
+        server_key="test-rcon-target",
+        db_path=db_path,
+        since_event_id="rcon-admin-log:test-rcon-target:2",
+    )
+
+    assert [item["killer_name"] for item in feed["items"]] == ["Next Killer"]
+    gc.collect()
+
+
+def test_current_match_kill_feed_without_cursor_omits_nullable_id_predicate(tmp_path):
+    db_path = tmp_path / "admin_log.sqlite3"
+    persist_rcon_admin_log_entries(
+        target=TARGET,
+        entries=[
+            {
+                "timestamp": "2026-05-21T10:00:00Z",
+                "message": "[1:00 min (100)] MATCH START Mortain Warfare",
+            },
+            {
+                "timestamp": "2026-05-21T10:01:00Z",
+                "message": (
+                    "[2:00 min (120)] KILL: Cursor Killer(Allies/steam-cursor) -> "
+                    "Cursor Victim(Axis/steam-cursor-victim) with M1 GARAND"
+                ),
+            },
+        ],
+        db_path=db_path,
+    )
+    traced_sql = []
+    connect = sqlite3.connect
+
+    def connect_with_trace(*args, **kwargs):
+        connection = connect(*args, **kwargs)
+        connection.set_trace_callback(traced_sql.append)
+        return connection
+
+    with patch(
+        "app.rcon_admin_log_storage.sqlite3.connect",
+        side_effect=connect_with_trace,
+    ):
+        feed = list_current_match_kill_feed(
+            server_key="test-rcon-target",
+            db_path=db_path,
+        )
+
+    kill_queries = [
+        sql
+        for sql in traced_sql
+        if "FROM rcon_admin_log_events" in sql and "event_type = 'kill'" in sql
+    ]
+    assert [item["killer_name"] for item in feed["items"]] == ["Cursor Killer"]
+    assert kill_queries
+    assert all("IS NULL OR id >" not in sql for sql in kill_queries)
+    assert all("AND id >" not in sql for sql in kill_queries)
+    gc.collect()
+
+
+def test_current_match_kill_feed_invalid_cursor_behaves_like_no_cursor(tmp_path):
+    db_path = tmp_path / "admin_log.sqlite3"
+    persist_rcon_admin_log_entries(
+        target=TARGET,
+        entries=[
+            {
+                "timestamp": "2026-05-21T10:00:00Z",
+                "message": "[1:00 min (100)] MATCH START Mortain Warfare",
+            },
+            {
+                "timestamp": "2026-05-21T10:01:00Z",
+                "message": (
+                    "[2:00 min (120)] KILL: First Killer(Allies/steam-first) -> "
+                    "First Victim(Axis/steam-first-victim) with M1 GARAND"
+                ),
+            },
+            {
+                "timestamp": "2026-05-21T10:02:00Z",
+                "message": (
+                    "[3:00 min (140)] KILL: Next Killer(Axis/steam-next) -> "
+                    "Next Victim(Allies/steam-next-victim) with MP40"
+                ),
+            },
+        ],
+        db_path=db_path,
+    )
+
+    without_cursor = list_current_match_kill_feed(
+        server_key="test-rcon-target",
+        db_path=db_path,
+    )
+    with_invalid_cursor = list_current_match_kill_feed(
+        server_key="test-rcon-target",
+        db_path=db_path,
+        since_event_id="not-an-admin-log-event",
+    )
+
+    assert with_invalid_cursor == without_cursor
     gc.collect()

@@ -19,11 +19,15 @@ const DEFAULT_HISTORICAL_SERVER = "all-servers";
 const SNAPSHOT_CACHE_TTL_MS = 120000;
 const STALE_SNAPSHOT_CACHE_TTL_MS = 30000;
 const NEGATIVE_SNAPSHOT_CACHE_TTL_MS = 15000;
+const RECENT_MATCHES_LIMIT = 100;
+const DEFAULT_RECENT_MATCHES_PAGE_SIZE = 10;
+const RECENT_MATCHES_PAGE_SIZES = Object.freeze([10, 25, 50, 100]);
 let activeServerSlug = DEFAULT_HISTORICAL_SERVER;
 let activeLeaderboardMetric;
 let activeLeaderboardTimeframe;
 let activeServerRequestId = 0;
 let activeLeaderboardRequestId = 0;
+let recentMatchesPagination;
 const LEADERBOARD_TIMEFRAMES = Object.freeze([
   {
     key: "weekly",
@@ -100,6 +104,7 @@ document.addEventListener("DOMContentLoaded", () => {
   const recentSnapshotMetaNode = document.getElementById(
     "recent-matches-snapshot-meta",
   );
+  recentMatchesPagination = initializeRecentMatchesPagination(recentListNode);
 
   const params = new URLSearchParams(window.location.search);
   activeServerSlug = normalizeServerSlug(params.get("server"));
@@ -126,7 +131,7 @@ document.addEventListener("DOMContentLoaded", () => {
       recentMatchesCache,
       pendingRequestCache,
       buildRecentMatchesSnapshotKey(serverSlug),
-      `${backendBaseUrl}/api/historical/snapshots/recent-matches?server=${encodeURIComponent(serverSlug)}&limit=10`,
+      `${backendBaseUrl}/api/historical/snapshots/recent-matches?server=${encodeURIComponent(serverSlug)}&limit=${RECENT_MATCHES_LIMIT}`,
     );
 
   const getLeaderboardSnapshot = (serverSlug, timeframeKey, metricKey) =>
@@ -169,6 +174,7 @@ document.addEventListener("DOMContentLoaded", () => {
       weeklySnapshotMetaNode,
       `Preparando datos ${activeTimeframeConfig.shortLabel}...`,
     );
+    resetRecentMatchesPagination();
     recentListNode.innerHTML = "";
     recentNoteNode.textContent = buildRecentMatchesNote(activeServerSlug);
     setState(recentStateNode, "Cargando partidas recientes...");
@@ -635,18 +641,154 @@ function hydrateRecentMatches(result, stateNode, listNode, snapshotMetaNode) {
     buildSnapshotMetaText(payload, "Partidas pendientes de generacion."),
   );
   if (!payload?.found) {
+    resetRecentMatchesPagination();
+    listNode.innerHTML = "";
     setState(stateNode, emptyState.recentMessage);
     return;
   }
 
   const items = payload?.items;
   if (!Array.isArray(items) || items.length === 0) {
+    resetRecentMatchesPagination();
+    listNode.innerHTML = "";
     setState(stateNode, emptyState.recentMessage);
     return;
   }
 
-  listNode.innerHTML = items.map((item) => renderRecentMatchCard(item)).join("");
+  setRecentMatchesPaginationItems(items.slice(0, RECENT_MATCHES_LIMIT), listNode);
   stateNode.hidden = true;
+}
+
+function initializeRecentMatchesPagination(listNode) {
+  if (!listNode) {
+    return null;
+  }
+
+  listNode.insertAdjacentHTML(
+    "afterend",
+    `
+      <div class="historical-pagination" id="recent-matches-pagination" hidden>
+        <label class="historical-pagination__size">
+          <span>Partidas por pagina</span>
+          <select id="recent-matches-page-size" aria-label="Partidas por pagina">
+            ${RECENT_MATCHES_PAGE_SIZES.map(
+              (pageSize) => `
+                <option value="${pageSize}"${pageSize === DEFAULT_RECENT_MATCHES_PAGE_SIZE ? " selected" : ""}>
+                  ${pageSize}
+                </option>
+              `,
+            ).join("")}
+          </select>
+        </label>
+        <div class="historical-pagination__nav">
+          <button class="historical-tab" id="recent-matches-page-prev" type="button">
+            Anterior
+          </button>
+          <p id="recent-matches-page-status">Pagina 1 de 1</p>
+          <button class="historical-tab" id="recent-matches-page-next" type="button">
+            Siguiente
+          </button>
+        </div>
+      </div>
+    `,
+  );
+  const pagination = {
+    items: [],
+    page: 1,
+    pageSize: DEFAULT_RECENT_MATCHES_PAGE_SIZE,
+    root: document.getElementById("recent-matches-pagination"),
+    pageSizeSelect: document.getElementById("recent-matches-page-size"),
+    previousButton: document.getElementById("recent-matches-page-prev"),
+    nextButton: document.getElementById("recent-matches-page-next"),
+    status: document.getElementById("recent-matches-page-status"),
+  };
+  pagination.previousButton?.addEventListener("click", () => {
+    if (pagination.page <= 1) {
+      return;
+    }
+    pagination.page -= 1;
+    renderRecentMatchesPage(listNode);
+  });
+  pagination.nextButton?.addEventListener("click", () => {
+    if (pagination.page >= getRecentMatchesPageCount(pagination)) {
+      return;
+    }
+    pagination.page += 1;
+    renderRecentMatchesPage(listNode);
+  });
+  pagination.pageSizeSelect?.addEventListener("change", () => {
+    pagination.pageSize = normalizeRecentMatchesPageSize(
+      pagination.pageSizeSelect.value,
+    );
+    pagination.page = 1;
+    renderRecentMatchesPage(listNode);
+  });
+  return pagination;
+}
+
+function resetRecentMatchesPagination() {
+  if (!recentMatchesPagination) {
+    return;
+  }
+
+  recentMatchesPagination.items = [];
+  recentMatchesPagination.page = 1;
+  recentMatchesPagination.pageSize = DEFAULT_RECENT_MATCHES_PAGE_SIZE;
+  if (recentMatchesPagination.pageSizeSelect) {
+    recentMatchesPagination.pageSizeSelect.value = String(
+      DEFAULT_RECENT_MATCHES_PAGE_SIZE,
+    );
+  }
+  if (recentMatchesPagination.root) {
+    recentMatchesPagination.root.hidden = true;
+  }
+}
+
+function setRecentMatchesPaginationItems(items, listNode) {
+  if (!recentMatchesPagination) {
+    listNode.innerHTML = items.map((item) => renderRecentMatchCard(item)).join("");
+    return;
+  }
+
+  recentMatchesPagination.items = items;
+  recentMatchesPagination.page = 1;
+  renderRecentMatchesPage(listNode);
+}
+
+function renderRecentMatchesPage(listNode) {
+  const pagination = recentMatchesPagination;
+  if (!pagination) {
+    return;
+  }
+
+  const pageCount = getRecentMatchesPageCount(pagination);
+  pagination.page = Math.min(Math.max(1, pagination.page), pageCount);
+  const pageStart = (pagination.page - 1) * pagination.pageSize;
+  const visibleItems = pagination.items.slice(pageStart, pageStart + pagination.pageSize);
+  listNode.innerHTML = visibleItems.map((item) => renderRecentMatchCard(item)).join("");
+  if (pagination.status) {
+    pagination.status.textContent = `Pagina ${pagination.page} de ${pageCount}`;
+  }
+  if (pagination.previousButton) {
+    pagination.previousButton.disabled = pagination.page <= 1;
+  }
+  if (pagination.nextButton) {
+    pagination.nextButton.disabled = pagination.page >= pageCount;
+  }
+  if (pagination.root) {
+    pagination.root.hidden = pagination.items.length <= DEFAULT_RECENT_MATCHES_PAGE_SIZE;
+  }
+}
+
+function getRecentMatchesPageCount(pagination) {
+  return Math.max(1, Math.ceil(pagination.items.length / pagination.pageSize));
+}
+
+function normalizeRecentMatchesPageSize(rawValue) {
+  const pageSize = Number(rawValue);
+  return RECENT_MATCHES_PAGE_SIZES.includes(pageSize)
+    ? pageSize
+    : DEFAULT_RECENT_MATCHES_PAGE_SIZE;
 }
 
 function hydrateMonthlyMvp(
@@ -802,9 +944,9 @@ function hydrateMvpComparison(
 
 function renderRecentMatchCard(item) {
   const mapName = item.map?.pretty_name || item.map?.name || "Mapa no disponible";
-  const matchUrl = normalizeExternalMatchUrl(item.match_url);
   const detailUrl = buildInternalMatchDetailUrl(item);
   const actionLinks = [
+    `<span class="historical-match-card__result">${escapeHtml(formatMatchResult(item.result))}</span>`,
     detailUrl
       ? `
         <a
@@ -815,32 +957,14 @@ function renderRecentMatchCard(item) {
         </a>
       `
       : "",
-    matchUrl
-      ? `
-        <a
-          class="historical-match-card__link"
-          href="${escapeHtml(matchUrl)}"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          Ver partida
-        </a>
-      `
-      : "",
   ].join("");
   return `
-    <article class="historical-match-card">
-      <div class="historical-match-card__top">
-        <div>
-          <p class="historical-match-meta__label">Partida ${escapeHtml(item.match_id || "sin id")}</p>
-          <h3 class="historical-match-card__title">${escapeHtml(mapName)}</h3>
-        </div>
-        <div class="historical-match-card__actions">
-          <span class="historical-match-card__result">${escapeHtml(formatMatchResult(item.result))}</span>
-          ${actionLinks}
-        </div>
+    <article class="historical-match-card historical-match-card--clean">
+      <div class="historical-match-card__top historical-match-card__top--clean">
+        <h3 class="historical-match-card__title">${escapeHtml(mapName)}</h3>
       </div>
-      <div class="historical-match-meta">
+
+      <div class="historical-match-meta historical-match-meta--clean">
         <article>
           <p class="historical-match-meta__label">Servidor</p>
           <strong>${escapeHtml(item.server?.name || "Servidor no disponible")}</strong>
@@ -857,9 +981,10 @@ function renderRecentMatchCard(item) {
           <p class="historical-match-meta__label">Marcador</p>
           <strong>${escapeHtml(formatScore(item.result))}</strong>
         </article>
-        <article>
-          <p class="historical-match-meta__label">Estado</p>
-          <strong>${escapeHtml(formatRecentMatchStatus(item))}</strong>
+        <article class="historical-match-card__actions-cell" aria-label="Acciones de la partida">
+          <div class="historical-match-card__actions">
+            ${actionLinks}
+          </div>
         </article>
       </div>
     </article>
