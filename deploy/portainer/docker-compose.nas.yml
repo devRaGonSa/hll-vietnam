@@ -43,6 +43,18 @@ services:
   frontend:
     build:
       context: ../../frontend
+    command:
+      - sh
+      - -c
+      - |
+        python - <<'PY'
+        from pathlib import Path
+        for path in Path('/srv/frontend').glob('*.html'):
+            text = path.read_text(encoding='utf-8')
+            text = text.replace('data-backend-base-url="http://127.0.0.1:8000"', 'data-backend-base-url=""')
+            path.write_text(text, encoding='utf-8')
+        PY
+        python -m http.server 8080 --bind 0.0.0.0 --directory /srv/frontend
     expose:
       - "8080"
     depends_on:
