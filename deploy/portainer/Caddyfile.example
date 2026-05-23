@@ -1,0 +1,8 @@
+comunidadhll.devzamode.es {
+    encode zstd gzip
+
+    reverse_proxy /health hll-vietnam-backend-1:8000
+    reverse_proxy /api/* hll-vietnam-backend-1:8000
+
+    reverse_proxy hll-vietnam-frontend-1:8080
+}
