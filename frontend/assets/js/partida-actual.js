@@ -405,7 +405,7 @@ function renderPlayerStats(data, nodes, state) {
     state.visibleSignature = signature;
   }
   nodes.playerStatsShell.hidden = false;
-  setState(nodes.playerStatsState, "Estadisticas parciales derivadas de eventos recientes.");
+  setState(nodes.playerStatsState, "Estadisticas derivadas de los eventos recientes.");
 }
 
 function renderDetectedPlayerCount(count, nodes) {
