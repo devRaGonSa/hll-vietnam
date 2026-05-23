@@ -71,6 +71,10 @@ Variables opcionales:
 - `HLL_RCON_HISTORICAL_CAPTURE_INTERVAL_SECONDS`
 - `HLL_RCON_HISTORICAL_CAPTURE_MAX_RETRIES`
 - `HLL_RCON_HISTORICAL_CAPTURE_RETRY_DELAY_SECONDS`
+- `HLL_RCON_BACKFILL_CHUNK_HOURS`
+- `HLL_RCON_BACKFILL_SLEEP_SECONDS`
+- `HLL_RCON_BACKFILL_MAX_DAYS_BACK`
+- `HLL_BACKEND_RCON_ADMIN_LOG_LOOKBACK_MINUTES`
 - `HLL_BACKEND_SQLITE_WRITER_TIMEOUT_SECONDS`
 - `HLL_BACKEND_SQLITE_BUSY_TIMEOUT_MS`
 - `HLL_BACKEND_WRITER_LOCK_TIMEOUT_SECONDS`
@@ -465,6 +469,15 @@ Comandos manuales equivalentes dentro de Docker Compose:
 docker compose exec backend python -m app.rcon_admin_log_ingestion --minutes 1440
 docker compose exec backend python -m app.rcon_historical_worker capture
 ```
+
+Backfill historico RCON/AdminLog:
+
+- runbook: `docs/historical-rcon-backfill.md`
+- ejemplo seco:
+
+  ```powershell
+  docker compose run --rm rcon-historical-worker python -m app.rcon_historical_backfill --ensure-recent-matches 100 --servers comunidad-hispana-01,comunidad-hispana-02 --dry-run
+  ```
 
 Comandos manuales desde `backend/`:
 

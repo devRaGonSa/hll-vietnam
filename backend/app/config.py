@@ -35,6 +35,9 @@ DEFAULT_PLAYER_EVENT_REFRESH_RETRY_DELAY_SECONDS = 30
 DEFAULT_RCON_HISTORICAL_CAPTURE_INTERVAL_SECONDS = 600
 DEFAULT_RCON_HISTORICAL_CAPTURE_MAX_RETRIES = 2
 DEFAULT_RCON_HISTORICAL_CAPTURE_RETRY_DELAY_SECONDS = 15
+DEFAULT_RCON_BACKFILL_CHUNK_HOURS = 6
+DEFAULT_RCON_BACKFILL_SLEEP_SECONDS = 1.0
+DEFAULT_RCON_BACKFILL_MAX_DAYS_BACK = 45
 DEFAULT_SQLITE_WRITER_TIMEOUT_SECONDS = 30.0
 DEFAULT_SQLITE_BUSY_TIMEOUT_MS = 30000
 DEFAULT_WRITER_LOCK_TIMEOUT_SECONDS = 120.0
@@ -482,6 +485,33 @@ def get_rcon_historical_capture_retry_delay_seconds() -> int:
             "HLL_RCON_HISTORICAL_CAPTURE_RETRY_DELAY_SECONDS must be zero or positive."
         )
     return retry_delay_seconds
+
+
+def get_rcon_backfill_chunk_hours() -> int:
+    """Return the AdminLog backfill chunk size in hours."""
+    return _read_int_env(
+        "HLL_RCON_BACKFILL_CHUNK_HOURS",
+        str(DEFAULT_RCON_BACKFILL_CHUNK_HOURS),
+        minimum=1,
+    )
+
+
+def get_rcon_backfill_sleep_seconds() -> float:
+    """Return the delay between AdminLog backfill RCON requests."""
+    return _read_float_env(
+        "HLL_RCON_BACKFILL_SLEEP_SECONDS",
+        str(DEFAULT_RCON_BACKFILL_SLEEP_SECONDS),
+        minimum=0,
+    )
+
+
+def get_rcon_backfill_max_days_back() -> int:
+    """Return the maximum AdminLog backfill lookback horizon in days."""
+    return _read_int_env(
+        "HLL_RCON_BACKFILL_MAX_DAYS_BACK",
+        str(DEFAULT_RCON_BACKFILL_MAX_DAYS_BACK),
+        minimum=1,
+    )
 
 
 def get_a2s_targets_payload() -> str | None:

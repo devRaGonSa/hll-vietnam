@@ -67,7 +67,6 @@ SUPPORTED_LEADERBOARD_METRICS = frozenset(
 PREWARM_SNAPSHOT_SERVER_KEYS = (
     "comunidad-hispana-01",
     "comunidad-hispana-02",
-    "comunidad-hispana-03",
     ALL_SERVERS_SLUG,
 )
 PREWARM_LEADERBOARD_METRICS = ("kills",)
@@ -435,12 +434,24 @@ def _build_weekly_leaderboard_snapshot(
     limit: int,
     db_path: Path | None = None,
 ) -> dict[str, object]:
-    leaderboard_result = list_weekly_leaderboard(
-        limit=limit,
-        server_id=server_key,
-        metric=metric,
-        db_path=db_path,
-    )
+    if get_historical_data_source_kind() == SOURCE_KIND_RCON:
+        from .rcon_historical_leaderboards import list_rcon_materialized_leaderboard
+
+        leaderboard_result = list_rcon_materialized_leaderboard(
+            limit=limit,
+            server_key=server_key,
+            metric=metric,
+            timeframe="weekly",
+            db_path=db_path,
+            now=generated_at,
+        )
+    else:
+        leaderboard_result = list_weekly_leaderboard(
+            limit=limit,
+            server_id=server_key,
+            metric=metric,
+            db_path=db_path,
+        )
     return {
         "server_key": server_key,
         "snapshot_type": SNAPSHOT_TYPE_WEEKLY_LEADERBOARD,
@@ -468,12 +479,24 @@ def _build_monthly_leaderboard_snapshot(
     limit: int,
     db_path: Path | None = None,
 ) -> dict[str, object]:
-    leaderboard_result = list_monthly_leaderboard(
-        limit=limit,
-        server_id=server_key,
-        metric=metric,
-        db_path=db_path,
-    )
+    if get_historical_data_source_kind() == SOURCE_KIND_RCON:
+        from .rcon_historical_leaderboards import list_rcon_materialized_leaderboard
+
+        leaderboard_result = list_rcon_materialized_leaderboard(
+            limit=limit,
+            server_key=server_key,
+            metric=metric,
+            timeframe="monthly",
+            db_path=db_path,
+            now=generated_at,
+        )
+    else:
+        leaderboard_result = list_monthly_leaderboard(
+            limit=limit,
+            server_id=server_key,
+            metric=metric,
+            db_path=db_path,
+        )
     return {
         "server_key": server_key,
         "snapshot_type": SNAPSHOT_TYPE_MONTHLY_LEADERBOARD,

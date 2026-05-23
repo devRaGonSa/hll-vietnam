@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Literal
 
 from .config import get_storage_path, use_postgres_rcon_storage
+from .config import get_historical_weekly_fallback_min_matches
 from .historical_storage import ALL_SERVERS_SLUG
 from .rcon_admin_log_materialization import (
     MATCH_RESULT_SOURCE,
@@ -75,6 +76,8 @@ def build_rcon_materialized_leaderboard_snapshot_payload(
             "current_week_closed_matches": result.get("current_week_closed_matches"),
             "previous_week_closed_matches": result.get("previous_week_closed_matches"),
             "current_month_start": result.get("current_month_start"),
+            "selected_month_start": result.get("selected_month_start"),
+            "selected_month_end": result.get("selected_month_end"),
             "current_month_closed_matches": result.get("current_month_closed_matches"),
             "previous_month_closed_matches": result.get("previous_month_closed_matches"),
             "sufficient_sample": result.get("sufficient_sample"),
@@ -109,6 +112,7 @@ def list_rcon_materialized_leaderboard(
     metric: str = "kills",
     limit: int = 10,
     db_path: Path | None = None,
+    now: datetime | None = None,
 ) -> dict[str, object]:
     """Return a leaderboard built from materialized RCON/AdminLog player stats.
 
@@ -120,33 +124,31 @@ def list_rcon_materialized_leaderboard(
     normalized_timeframe = _normalize_timeframe(timeframe)
     normalized_metric = _normalize_metric(metric)
     normalized_limit = max(1, int(limit or 10))
-    window = _build_window(normalized_timeframe)
-
-    if normalized_metric == "support":
-        return _empty_payload(
-            server_key=server_key,
-            timeframe=normalized_timeframe,
-            metric=normalized_metric,
-            limit=normalized_limit,
-            window=window,
-            reason="rcon-materialized-stats-do-not-include-support-score",
-        )
+    anchor = _as_utc(now or datetime.now(timezone.utc))
 
     resolved_path = initialize_rcon_materialized_storage(db_path=db_path)
     connection_scope = _connect_scope(resolved_path, db_path=db_path)
     with connection_scope as connection:
+        window = select_leaderboard_window(
+            connection=connection,
+            server_key=server_key,
+            timeframe=normalized_timeframe,
+            now=anchor,
+        )
+        if normalized_metric == "support":
+            return _empty_payload(
+                server_key=server_key,
+                timeframe=normalized_timeframe,
+                metric=normalized_metric,
+                limit=normalized_limit,
+                window=window,
+                reason="rcon-materialized-stats-do-not-include-support-score",
+            )
         rows = _fetch_leaderboard_rows(
             connection,
             server_key=server_key,
             metric=normalized_metric,
             limit=normalized_limit,
-            window_start=window["start"],
-            window_end=window["end"],
-        )
-        counts = _fetch_match_counts(
-            connection,
-            server_key=server_key,
-            timeframe=normalized_timeframe,
             window_start=window["start"],
             window_end=window["end"],
         )
@@ -169,20 +171,16 @@ def list_rcon_materialized_leaderboard(
         "window_kind": window["kind"],
         "window_label": window["label"],
         "uses_fallback": False,
-        "selection_reason": "rcon-materialized-current-window",
-        "current_week_start": _to_iso(_week_start(window["end"])),
-        "current_week_closed_matches": counts["current_week_closed_matches"],
-        "previous_week_closed_matches": counts["previous_week_closed_matches"],
-        "current_month_start": _to_iso(_month_start(window["end"])),
-        "current_month_closed_matches": counts["current_month_closed_matches"],
-        "previous_month_closed_matches": counts["previous_month_closed_matches"],
-        "sufficient_sample": {
-            "minimum_closed_matches": 1,
-            "current_week_closed_matches": counts["current_week_closed_matches"],
-            "current_week_has_sufficient_sample": counts["current_week_closed_matches"] >= 1,
-            "is_early_week": False,
-            "fallback_max_weekday": 2,
-        },
+        "selection_reason": window["selection_reason"],
+        "current_week_start": _to_iso(window["current_week_start"]),
+        "current_week_closed_matches": window["current_week_closed_matches"],
+        "previous_week_closed_matches": window["previous_week_closed_matches"],
+        "current_month_start": _to_iso(window["current_month_start"]),
+        "selected_month_start": _to_iso(window["selected_month_start"]),
+        "selected_month_end": _to_iso(window["selected_month_end"]),
+        "current_month_closed_matches": window["current_month_closed_matches"],
+        "previous_month_closed_matches": window["previous_month_closed_matches"],
+        "sufficient_sample": window["sufficient_sample"],
         "source_range_start": _to_iso(source_range[0]) if source_range[0] else None,
         "source_range_end": _to_iso(source_range[1]) if source_range[1] else None,
         "items": items,
@@ -277,6 +275,108 @@ def _fetch_match_counts(
             start=previous_month_start,
             end=current_month_start,
         ),
+    }
+
+
+def select_leaderboard_window(
+    *,
+    connection: object,
+    server_key: str | None,
+    timeframe: str,
+    now: datetime | None = None,
+) -> dict[str, object]:
+    """Select the RCON leaderboard window using weekly/monthly fallback policy."""
+    anchor = _as_utc(now or datetime.now(timezone.utc))
+    current_week_start = _week_start(anchor)
+    previous_week_start = current_week_start - timedelta(days=7)
+    current_month_start = _month_start(anchor)
+    previous_month_start = _previous_month_start(current_month_start)
+    minimum_week_matches = get_historical_weekly_fallback_min_matches()
+    current_week_count = _count_matches(
+        connection,
+        server_key=server_key,
+        start=current_week_start,
+        end=anchor,
+    )
+    previous_week_count = _count_matches(
+        connection,
+        server_key=server_key,
+        start=previous_week_start,
+        end=current_week_start,
+    )
+    current_month_count = _count_matches(
+        connection,
+        server_key=server_key,
+        start=current_month_start,
+        end=anchor,
+    )
+    previous_month_count = _count_matches(
+        connection,
+        server_key=server_key,
+        start=previous_month_start,
+        end=current_month_start,
+    )
+
+    if timeframe == "monthly":
+        use_previous_month = anchor.day <= 7
+        start = previous_month_start if use_previous_month else current_month_start
+        end = current_month_start if use_previous_month else anchor
+        return {
+            "start": start,
+            "end": end,
+            "days": max(1, (end.date() - start.date()).days),
+            "kind": "previous-month" if use_previous_month else "current-month",
+            "label": "Mes anterior" if use_previous_month else "Mes actual",
+            "selection_reason": (
+                "monthly-uses-previous-month-until-day-8"
+                if use_previous_month
+                else "monthly-uses-current-month-after-day-7"
+            ),
+            "current_week_start": current_week_start,
+            "current_week_closed_matches": current_week_count,
+            "previous_week_closed_matches": previous_week_count,
+            "current_month_start": current_month_start,
+            "selected_month_start": start,
+            "selected_month_end": end,
+            "current_month_closed_matches": current_month_count,
+            "previous_month_closed_matches": previous_month_count,
+            "sufficient_sample": {
+                "minimum_closed_matches": 1,
+                "current_month_closed_matches": current_month_count,
+                "previous_month_closed_matches": previous_month_count,
+                "current_month_has_sufficient_sample": current_month_count >= 1,
+                "uses_previous_month_until_day": 7,
+            },
+        }
+
+    current_week_has_sample = current_week_count >= minimum_week_matches
+    start = current_week_start if current_week_has_sample else previous_week_start
+    end = anchor if current_week_has_sample else current_week_start
+    return {
+        "start": start,
+        "end": end,
+        "days": max(1, (end.date() - start.date()).days),
+        "kind": "current-week" if current_week_has_sample else "previous-week",
+        "label": "Semana actual" if current_week_has_sample else "Semana anterior",
+        "selection_reason": (
+            "weekly-current-week-has-sufficient-closed-matches"
+            if current_week_has_sample
+            else "weekly-fallback-previous-week-insufficient-current-week-data"
+        ),
+        "current_week_start": current_week_start,
+        "current_week_closed_matches": current_week_count,
+        "previous_week_closed_matches": previous_week_count,
+        "current_month_start": current_month_start,
+        "selected_month_start": current_month_start,
+        "selected_month_end": anchor,
+        "current_month_closed_matches": current_month_count,
+        "previous_month_closed_matches": previous_month_count,
+        "sufficient_sample": {
+            "minimum_closed_matches": minimum_week_matches,
+            "current_week_closed_matches": current_week_count,
+            "current_week_has_sufficient_sample": current_week_has_sample,
+            "previous_week_closed_matches": previous_week_count,
+        },
     }
 
 
@@ -390,19 +490,15 @@ def _empty_payload(
         "window_label": window["label"],
         "uses_fallback": False,
         "selection_reason": reason,
-        "current_week_start": _to_iso(_week_start(window["end"])),
-        "current_week_closed_matches": 0,
-        "previous_week_closed_matches": 0,
-        "current_month_start": _to_iso(_month_start(window["end"])),
-        "current_month_closed_matches": 0,
-        "previous_month_closed_matches": 0,
-        "sufficient_sample": {
-            "minimum_closed_matches": 1,
-            "current_week_closed_matches": 0,
-            "current_week_has_sufficient_sample": False,
-            "is_early_week": False,
-            "fallback_max_weekday": 2,
-        },
+        "current_week_start": _to_iso(window["current_week_start"]),
+        "current_week_closed_matches": window["current_week_closed_matches"],
+        "previous_week_closed_matches": window["previous_week_closed_matches"],
+        "current_month_start": _to_iso(window["current_month_start"]),
+        "selected_month_start": _to_iso(window["selected_month_start"]),
+        "selected_month_end": _to_iso(window["selected_month_end"]),
+        "current_month_closed_matches": window["current_month_closed_matches"],
+        "previous_month_closed_matches": window["previous_month_closed_matches"],
+        "sufficient_sample": window["sufficient_sample"],
         "source_range_start": None,
         "source_range_end": None,
         "items": [],
@@ -428,6 +524,12 @@ def _build_window(timeframe: str) -> dict[str, object]:
         "kind": "current-week",
         "label": "Semana actual",
     }
+
+
+def _as_utc(value: datetime) -> datetime:
+    if value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc)
 
 
 def _week_start(value: datetime) -> datetime:
