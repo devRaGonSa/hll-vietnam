@@ -5,8 +5,8 @@
   }
 
   .hero:not(.historical-hero) .hero__brand {
-    grid-template-columns: minmax(300px, 390px) minmax(0, 1fr);
-    gap: clamp(44px, 5vw, 76px);
+    grid-template-columns: minmax(300px, 360px) minmax(0, 1fr);
+    column-gap: clamp(96px, 8vw, 150px);
     max-width: 1360px;
     margin: 0 auto;
   }
@@ -24,7 +24,7 @@
   .hero:not(.historical-hero) .hero__copy {
     max-width: 980px;
     align-content: center;
-    transform: translateX(clamp(18px, 2.2vw, 44px));
+    transform: none;
   }
 
   .hero:not(.historical-hero) .hero__title {
@@ -44,12 +44,12 @@
 
 @media (min-width: 1121px) and (max-width: 1380px) {
   .hero:not(.historical-hero) .hero__brand {
-    grid-template-columns: minmax(260px, 330px) minmax(0, 1fr);
-    gap: 40px;
+    grid-template-columns: minmax(260px, 320px) minmax(0, 1fr);
+    column-gap: clamp(72px, 6vw, 110px);
   }
 
   .hero:not(.historical-hero) .hero__copy {
-    transform: translateX(clamp(12px, 1.6vw, 24px));
+    transform: none;
   }
 
   .hero:not(.historical-hero) .hero__title {
