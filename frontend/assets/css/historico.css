@@ -63,6 +63,92 @@
   overflow-wrap: anywhere;
 }
 
+@media (min-width: 1121px) {
+  .historical-hero__layout--registry {
+    width: 100%;
+    max-width: 1420px;
+    margin: 0 auto;
+    display: grid;
+    grid-template-columns: minmax(380px, 440px) minmax(0, 1fr);
+    column-gap: clamp(80px, 7vw, 132px);
+    align-items: center;
+  }
+
+  .historical-hero__layout--registry .historical-logo-frame {
+    justify-self: start;
+    width: min(440px, 100%);
+    min-height: 340px;
+    padding: 28px 32px;
+  }
+
+  .historical-hero__layout--registry .logo-frame__image {
+    max-height: 322px;
+  }
+
+  .historical-hero__layout--registry .historical-hero__copy {
+    justify-self: end;
+    width: min(860px, 100%);
+    max-width: 860px;
+    align-content: center;
+    justify-items: start;
+    text-align: left;
+  }
+
+  .historical-hero__layout--registry .historical-hero__title {
+    max-width: none;
+    font-size: clamp(4.2rem, 5.2vw, 6.35rem);
+    line-height: 1.02;
+  }
+
+  .historical-hero__layout--registry .historical-hero__text {
+    max-width: 68ch;
+  }
+
+  .historical-hero__layout--registry .historical-selector {
+    max-width: 760px;
+  }
+}
+
+@media (min-width: 1121px) and (max-width: 1380px) {
+  .historical-hero__layout--registry {
+    grid-template-columns: minmax(320px, 380px) minmax(0, 1fr);
+    column-gap: clamp(54px, 5vw, 86px);
+  }
+
+  .historical-hero__layout--registry .historical-logo-frame {
+    width: min(380px, 100%);
+    min-height: 306px;
+  }
+
+  .historical-hero__layout--registry .logo-frame__image {
+    max-height: 288px;
+  }
+
+  .historical-hero__layout--registry .historical-hero__copy {
+    width: min(760px, 100%);
+    max-width: 760px;
+    justify-self: end;
+  }
+
+  .historical-hero__layout--registry .historical-hero__title {
+    font-size: clamp(3.7rem, 5.35vw, 5.15rem);
+  }
+}
+
+@media (max-width: 1120px) {
+  .historical-hero__layout--registry {
+    max-width: none;
+  }
+
+  .historical-hero__layout--registry .historical-hero__copy,
+  .historical-hero__layout--registry .historical-hero__title,
+  .historical-hero__layout--registry .historical-hero__text {
+    width: auto;
+    max-width: none;
+    justify-self: stretch;
+  }
+}
+
 .historical-map-hero {
   position: relative;
   overflow: hidden;

@@ -1,29 +1,37 @@
 @media (min-width: 1121px) {
   .hero:not(.historical-hero) .hero__content {
     padding-block: 54px 60px;
-    padding-inline: clamp(48px, 5vw, 88px);
+    padding-inline: clamp(64px, 5.5vw, 104px);
   }
 
   .hero:not(.historical-hero) .hero__brand {
-    grid-template-columns: minmax(300px, 340px) minmax(0, 1fr);
-    column-gap: clamp(150px, 14vw, 260px);
+    width: 100%;
     max-width: 1420px;
     margin: 0 auto;
+    display: grid;
+    grid-template-columns: minmax(380px, 440px) minmax(0, 1fr);
+    column-gap: clamp(80px, 7vw, 132px);
+    align-items: center;
   }
 
   .hero:not(.historical-hero) .logo-frame {
-    width: min(370px, 100%);
-    min-height: 300px;
-    padding: 26px 30px;
+    justify-self: start;
+    width: min(440px, 100%);
+    min-height: 340px;
+    padding: 28px 32px;
   }
 
   .hero:not(.historical-hero) .logo-frame__image {
-    max-height: 292px;
+    max-height: 322px;
   }
 
   .hero:not(.historical-hero) .hero__copy {
-    max-width: 980px;
+    justify-self: end;
+    width: min(860px, 100%);
+    max-width: 860px;
     align-content: center;
+    justify-items: start;
+    text-align: left;
     transform: none;
   }
 
@@ -43,16 +51,38 @@
 }
 
 @media (min-width: 1121px) and (max-width: 1380px) {
+  .hero:not(.historical-hero) .hero__content {
+    padding-inline: clamp(48px, 4.5vw, 72px);
+  }
+
   .hero:not(.historical-hero) .hero__brand {
-    grid-template-columns: minmax(260px, 310px) minmax(0, 1fr);
-    column-gap: clamp(112px, 9vw, 150px);
+    grid-template-columns: minmax(320px, 380px) minmax(0, 1fr);
+    column-gap: clamp(54px, 5vw, 86px);
+  }
+
+  .hero:not(.historical-hero) .logo-frame {
+    width: min(380px, 100%);
+    min-height: 306px;
+  }
+
+  .hero:not(.historical-hero) .logo-frame__image {
+    max-height: 288px;
   }
 
   .hero:not(.historical-hero) .hero__copy {
+    width: min(760px, 100%);
+    max-width: 760px;
+    justify-self: end;
     transform: none;
   }
 
   .hero:not(.historical-hero) .hero__title {
-    font-size: clamp(3.6rem, 5.5vw, 5.1rem);
+    font-size: clamp(3.7rem, 5.35vw, 5.15rem);
+  }
+}
+
+@media (max-width: 1120px) {
+  .hero:not(.historical-hero) .hero__copy {
+    transform: none;
   }
 }
