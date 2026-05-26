@@ -24,6 +24,7 @@
   .hero:not(.historical-hero) .hero__copy {
     max-width: 980px;
     align-content: center;
+    transform: translateX(clamp(18px, 2.2vw, 44px));
   }
 
   .hero:not(.historical-hero) .hero__title {
@@ -45,6 +46,10 @@
   .hero:not(.historical-hero) .hero__brand {
     grid-template-columns: minmax(260px, 330px) minmax(0, 1fr);
     gap: 40px;
+  }
+
+  .hero:not(.historical-hero) .hero__copy {
+    transform: translateX(clamp(12px, 1.6vw, 24px));
   }
 
   .hero:not(.historical-hero) .hero__title {
