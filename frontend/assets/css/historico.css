@@ -32,6 +32,11 @@
   gap: 32px;
 }
 
+.historical-hero__layout--registry {
+  grid-template-columns: minmax(220px, 330px) minmax(0, 1fr);
+  column-gap: clamp(72px, 7vw, 140px);
+}
+
 .historical-hero__layout > * {
   min-width: 0;
 }
@@ -43,6 +48,14 @@
 
 .historical-hero__title {
   max-width: 12ch;
+}
+
+.historical-hero__layout--registry .historical-hero__copy {
+  max-width: min(100%, 760px);
+}
+
+.historical-hero__layout--registry .historical-hero__title {
+  max-width: 18ch;
 }
 
 .historical-hero__text {
@@ -1048,6 +1061,11 @@
   .historical-hero__copy > div,
   .historical-hero__text {
     width: 100%;
+    max-width: 100%;
+  }
+
+  .historical-hero__layout--registry .historical-hero__copy,
+  .historical-hero__layout--registry .historical-hero__title {
     max-width: 100%;
   }
 
