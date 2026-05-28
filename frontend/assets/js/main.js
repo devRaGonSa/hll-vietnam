@@ -28,7 +28,7 @@ const COMMUNITY_CLANS = Object.freeze([
     name: "La 129",
     badge: "Clan CH",
     description:
-      "Clan activo de la comunidad, con acceso directo a su discord.",
+      "Clan activo de la comunidad.",
     logoSrc: "./assets/img/clans/la129.png",
     logoAlt: "Logo de La 129",
     logoClassName: "clan-card__logo--wide",
@@ -62,7 +62,7 @@ const COMMUNITY_CLANS = Object.freeze([
     name: "BxB",
     badge: "Clan CH",
     description:
-      "Clan activo de la comunidad, son raretes.",
+      "Clan activo de la comunidad.",
     logoSrc: "./assets/img/clans/bxb.png",
     logoAlt: "Logo de BxB",
     logoClassName: "",
