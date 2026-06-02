@@ -10,6 +10,9 @@ from datetime import datetime, timezone
 from typing import Any
 
 from .config import (
+    DEFAULT_DB_MAINTENANCE_INTERVAL_SECONDS,
+    get_db_maintenance_enabled,
+    get_db_maintenance_interval_seconds,
     get_historical_full_snapshot_every_runs,
     get_historical_elo_mmr_min_new_samples,
     get_historical_elo_mmr_rebuild_interval_minutes,
@@ -18,6 +21,7 @@ from .config import (
     get_historical_refresh_retry_delay_seconds,
     get_historical_data_source_kind,
 )
+from .database_maintenance import run_database_maintenance_cleanup
 from .elo_mmr_engine import rebuild_elo_mmr_models
 from .elo_mmr_storage import get_latest_elo_mmr_generated_at
 from .historical_ingestion import run_incremental_refresh
@@ -34,6 +38,7 @@ DEFAULT_HISTORICAL_SERVER_SCOPE = (
     "comunidad-hispana-01",
     "comunidad-hispana-02",
 )
+_LAST_DATABASE_MAINTENANCE_RUN_AT: datetime | None = None
 
 
 def run_periodic_historical_refresh(
@@ -171,6 +176,7 @@ def _run_refresh_with_retries(
                                 rcon_capture_result=rcon_capture_result
                             ),
                         }
+                maintenance_result = _maybe_run_database_maintenance()
             return {
                 "status": "ok",
                 "attempts_used": attempt,
@@ -181,6 +187,7 @@ def _run_refresh_with_retries(
                 "refresh_result": refresh_result,
                 "snapshot_result": snapshot_result,
                 "elo_mmr_result": elo_mmr_result,
+                "database_maintenance_result": maintenance_result,
             }
         except Exception as exc:
             failure_payload = {
@@ -247,6 +254,91 @@ def generate_historical_snapshots(
 def _emit_json_log(payload: dict[str, Any]) -> None:
     """Print JSON logs that remain safe for Compose and log collectors."""
     print(json.dumps(payload, ensure_ascii=True, default=str), flush=True)
+
+
+def _maybe_run_database_maintenance(*, now: datetime | None = None) -> dict[str, Any]:
+    """Optionally run scheduled database maintenance without crashing the runner."""
+    global _LAST_DATABASE_MAINTENANCE_RUN_AT
+
+    anchor = now.astimezone(timezone.utc) if now else datetime.now(timezone.utc)
+    if not get_db_maintenance_enabled():
+        result = {"status": "skipped", "reason": "disabled", "enabled": False}
+        _emit_json_log({"event": "database-maintenance-scheduler-skipped-disabled", **result})
+        return result
+
+    interval_seconds, interval_source = _resolve_db_maintenance_interval_seconds()
+    if _LAST_DATABASE_MAINTENANCE_RUN_AT is not None:
+        elapsed_seconds = max(
+            0,
+            int((anchor - _LAST_DATABASE_MAINTENANCE_RUN_AT).total_seconds()),
+        )
+        if elapsed_seconds < interval_seconds:
+            result = {
+                "status": "skipped",
+                "reason": "not-due",
+                "enabled": True,
+                "interval_seconds": interval_seconds,
+                "interval_source": interval_source,
+                "elapsed_seconds": elapsed_seconds,
+                "last_run_at": _LAST_DATABASE_MAINTENANCE_RUN_AT.isoformat().replace(
+                    "+00:00", "Z"
+                ),
+            }
+            _emit_json_log({"event": "database-maintenance-scheduler-skipped-not-due", **result})
+            return result
+
+    _emit_json_log(
+        {
+            "event": "database-maintenance-scheduler-started",
+            "enabled": True,
+            "interval_seconds": interval_seconds,
+            "interval_source": interval_source,
+            "scheduled_at": anchor.isoformat().replace("+00:00", "Z"),
+        }
+    )
+    try:
+        result = run_database_maintenance_cleanup(apply=True, now=anchor)
+    except Exception as exc:  # noqa: BLE001 - scheduler must not crash the runner
+        result = {
+            "status": "error",
+            "error_type": type(exc).__name__,
+            "error": str(exc),
+            "enabled": True,
+            "interval_seconds": interval_seconds,
+            "interval_source": interval_source,
+        }
+        _emit_json_log({"event": "database-maintenance-scheduler-failed", **result})
+        return result
+
+    if result.get("status") == "ok":
+        _LAST_DATABASE_MAINTENANCE_RUN_AT = anchor
+        _emit_json_log(
+            {
+                "event": "database-maintenance-scheduler-completed",
+                "enabled": True,
+                "interval_seconds": interval_seconds,
+                "interval_source": interval_source,
+                "result": result,
+            }
+        )
+        return result
+
+    failed_result = {
+        "enabled": True,
+        "interval_seconds": interval_seconds,
+        "interval_source": interval_source,
+        "result": result,
+    }
+    _emit_json_log({"event": "database-maintenance-scheduler-failed", **failed_result})
+    return result
+
+
+def _resolve_db_maintenance_interval_seconds() -> tuple[int, str]:
+    """Return a safe maintenance interval even if env configuration is invalid."""
+    try:
+        return get_db_maintenance_interval_seconds(), "env"
+    except ValueError:
+        return DEFAULT_DB_MAINTENANCE_INTERVAL_SECONDS, "default-invalid-env-fallback"
 
 
 def _describe_refresh_scope(server_slug: str | None) -> list[str]:

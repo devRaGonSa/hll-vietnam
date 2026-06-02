@@ -38,6 +38,13 @@ DEFAULT_RCON_HISTORICAL_CAPTURE_RETRY_DELAY_SECONDS = 15
 DEFAULT_RCON_BACKFILL_CHUNK_HOURS = 6
 DEFAULT_RCON_BACKFILL_SLEEP_SECONDS = 1.0
 DEFAULT_RCON_BACKFILL_MAX_DAYS_BACK = 45
+DEFAULT_RECENT_MATCHES_KEEP = 100
+DEFAULT_ADMIN_LOG_NONCRITICAL_RETENTION_DAYS = 30
+DEFAULT_ADMIN_LOG_CRITICAL_RETENTION_DAYS = 90
+DEFAULT_SERVER_SNAPSHOT_RETENTION_DAYS = 14
+DEFAULT_DB_MAINTENANCE_BATCH_SIZE = 5000
+DEFAULT_DB_MAINTENANCE_ENABLED = False
+DEFAULT_DB_MAINTENANCE_INTERVAL_SECONDS = 43200
 DEFAULT_SQLITE_WRITER_TIMEOUT_SECONDS = 30.0
 DEFAULT_SQLITE_BUSY_TIMEOUT_MS = 30000
 DEFAULT_WRITER_LOCK_TIMEOUT_SECONDS = 120.0
@@ -510,6 +517,69 @@ def get_rcon_backfill_max_days_back() -> int:
     return _read_int_env(
         "HLL_RCON_BACKFILL_MAX_DAYS_BACK",
         str(DEFAULT_RCON_BACKFILL_MAX_DAYS_BACK),
+        minimum=1,
+    )
+
+
+def get_recent_matches_keep() -> int:
+    """Return how many recent closed materialized matches maintenance must protect."""
+    return _read_int_env(
+        "HLL_RECENT_MATCHES_KEEP",
+        str(DEFAULT_RECENT_MATCHES_KEEP),
+        minimum=1,
+    )
+
+
+def get_admin_log_noncritical_retention_days() -> int:
+    """Return retention days for non-critical AdminLog events."""
+    return _read_int_env(
+        "HLL_ADMIN_LOG_NONCRITICAL_RETENTION_DAYS",
+        str(DEFAULT_ADMIN_LOG_NONCRITICAL_RETENTION_DAYS),
+        minimum=1,
+    )
+
+
+def get_admin_log_critical_retention_days() -> int:
+    """Return retention days for critical AdminLog events."""
+    return _read_int_env(
+        "HLL_ADMIN_LOG_CRITICAL_RETENTION_DAYS",
+        str(DEFAULT_ADMIN_LOG_CRITICAL_RETENTION_DAYS),
+        minimum=1,
+    )
+
+
+def get_server_snapshot_retention_days() -> int:
+    """Return retention days for live server snapshots."""
+    return _read_int_env(
+        "HLL_SERVER_SNAPSHOT_RETENTION_DAYS",
+        str(DEFAULT_SERVER_SNAPSHOT_RETENTION_DAYS),
+        minimum=1,
+    )
+
+
+def get_db_maintenance_batch_size() -> int:
+    """Return the delete batch size used by database maintenance."""
+    return _read_int_env(
+        "HLL_DB_MAINTENANCE_BATCH_SIZE",
+        str(DEFAULT_DB_MAINTENANCE_BATCH_SIZE),
+        minimum=1,
+    )
+
+
+def get_db_maintenance_enabled() -> bool:
+    """Return whether scheduled database maintenance is enabled."""
+    normalized = os.getenv(
+        "HLL_DB_MAINTENANCE_ENABLED",
+        "true" if DEFAULT_DB_MAINTENANCE_ENABLED else "false",
+    ).strip().lower()
+    return normalized in {"1", "true", "yes", "on"}
+
+
+def get_db_maintenance_interval_seconds() -> int:
+    """Return the scheduled database maintenance interval in seconds."""
+    return _read_int_env(
+        "HLL_DB_MAINTENANCE_INTERVAL_SECONDS",
+        str(DEFAULT_DB_MAINTENANCE_INTERVAL_SECONDS),
         minimum=1,
     )
 
