@@ -1,9 +1,11 @@
 (() => {
   const RECENT_MATCHES_ENDPOINT = "/api/historical/recent-matches";
-  const REFRESH_DELAYS_MS = [150, 1000, 3000];
+  const REFRESH_DELAYS_MS = [150, 1000, 3000, 6000];
   const RECENT_MATCHES_LIMIT = 100;
   const DEFAULT_RECENT_MATCHES_PAGE_SIZE = 10;
   const RECENT_MATCHES_PAGE_SIZES = Object.freeze([10, 25, 50, 100]);
+  const LIVE_PAGINATION_ID = "recent-matches-live-pagination";
+  const LEGACY_PAGINATION_ID = "recent-matches-pagination";
 
   const recentMatchesState = {
     items: [],
@@ -11,10 +13,13 @@
     page: 1,
     pageSize: DEFAULT_RECENT_MATCHES_PAGE_SIZE,
     activeRequestId: 0,
+    rendering: false,
+    observerReady: false,
   };
 
   document.addEventListener("DOMContentLoaded", () => {
     ensureDynamicPaginationControls();
+    setupRecentMatchesOwnershipObserver();
 
     REFRESH_DELAYS_MS.forEach((delay) => {
       window.setTimeout(() => {
@@ -67,7 +72,7 @@
       if (!items.length) {
         recentMatchesState.page = 1;
         setDynamicState(stateNode, "No hay partidas recientes disponibles para este alcance.");
-        listNode.innerHTML = "";
+        renderOwnedList(listNode, "");
         metaNode.textContent = "Datos recientes sin partidas disponibles.";
         renderDynamicPagination();
         return;
@@ -99,7 +104,7 @@
     recentMatchesState.page = clampDynamicPage(recentMatchesState.page, totalPages);
 
     if (!totalItems) {
-      listNode.innerHTML = "";
+      renderOwnedList(listNode, "");
       setDynamicState(stateNode, "No hay partidas recientes disponibles para este alcance.");
       renderDynamicPagination();
       return;
@@ -107,18 +112,42 @@
 
     const startIndex = (recentMatchesState.page - 1) * recentMatchesState.pageSize;
     const pageItems = recentMatchesState.items.slice(startIndex, startIndex + recentMatchesState.pageSize);
-    listNode.innerHTML = pageItems.map((item) => renderDynamicRecentMatchCard(item)).join("");
+    renderOwnedList(listNode, pageItems.map((item) => renderDynamicRecentMatchCard(item)).join(""));
     stateNode.hidden = true;
     renderDynamicPagination();
   }
 
+  function renderOwnedList(listNode, html) {
+    recentMatchesState.rendering = true;
+    listNode.innerHTML = html;
+    window.queueMicrotask(() => {
+      recentMatchesState.rendering = false;
+    });
+  }
+
+  function setupRecentMatchesOwnershipObserver() {
+    const listNode = document.getElementById("recent-matches-list");
+    if (!listNode || recentMatchesState.observerReady || typeof MutationObserver === "undefined") return;
+
+    recentMatchesState.observerReady = true;
+    const observer = new MutationObserver(() => {
+      if (recentMatchesState.rendering || !recentMatchesState.items.length) return;
+      window.setTimeout(() => {
+        if (!recentMatchesState.rendering && recentMatchesState.items.length) {
+          renderDynamicRecentMatchesPage();
+        }
+      }, 0);
+    });
+    observer.observe(listNode, { childList: true });
+  }
+
   function ensureDynamicPaginationControls() {
     const listNode = document.getElementById("recent-matches-list");
-    if (!listNode || document.getElementById("recent-matches-pagination")) return;
+    if (!listNode || document.getElementById(LIVE_PAGINATION_ID)) return;
 
     const paginationNode = document.createElement("div");
     paginationNode.className = "historical-pagination";
-    paginationNode.id = "recent-matches-pagination";
+    paginationNode.id = LIVE_PAGINATION_ID;
     paginationNode.hidden = true;
 
     const sizeLabel = document.createElement("label");
@@ -126,7 +155,7 @@
     sizeLabel.append("Mostrar ");
 
     const pageSizeSelect = document.createElement("select");
-    pageSizeSelect.id = "recent-matches-page-size";
+    pageSizeSelect.id = "recent-matches-live-page-size";
     pageSizeSelect.setAttribute("aria-label", "Partidas por pagina");
     RECENT_MATCHES_PAGE_SIZES.forEach((size) => {
       const option = document.createElement("option");
@@ -144,17 +173,17 @@
     const prevButton = document.createElement("button");
     prevButton.className = "historical-tab";
     prevButton.type = "button";
-    prevButton.id = "recent-matches-prev";
+    prevButton.id = "recent-matches-live-prev";
     prevButton.textContent = "Anterior";
 
     const pageLabel = document.createElement("p");
-    pageLabel.id = "recent-matches-page-label";
+    pageLabel.id = "recent-matches-live-page-label";
     pageLabel.textContent = "Pagina 1 de 1";
 
     const nextButton = document.createElement("button");
     nextButton.className = "historical-tab";
     nextButton.type = "button";
-    nextButton.id = "recent-matches-next";
+    nextButton.id = "recent-matches-live-next";
     nextButton.textContent = "Siguiente";
 
     navNode.append(prevButton, pageLabel, nextButton);
@@ -177,13 +206,22 @@
     });
   }
 
+  function hideLegacyPagination() {
+    const legacyPagination = document.getElementById(LEGACY_PAGINATION_ID);
+    if (legacyPagination) {
+      legacyPagination.hidden = true;
+    }
+  }
+
   function renderDynamicPagination() {
     ensureDynamicPaginationControls();
-    const paginationNode = document.getElementById("recent-matches-pagination");
-    const pageSizeSelect = document.getElementById("recent-matches-page-size");
-    const prevButton = document.getElementById("recent-matches-prev");
-    const nextButton = document.getElementById("recent-matches-next");
-    const pageLabel = document.getElementById("recent-matches-page-label");
+    hideLegacyPagination();
+
+    const paginationNode = document.getElementById(LIVE_PAGINATION_ID);
+    const pageSizeSelect = document.getElementById("recent-matches-live-page-size");
+    const prevButton = document.getElementById("recent-matches-live-prev");
+    const nextButton = document.getElementById("recent-matches-live-next");
+    const pageLabel = document.getElementById("recent-matches-live-page-label");
     if (!paginationNode || !pageSizeSelect || !prevButton || !nextButton || !pageLabel) return;
 
     const totalItems = recentMatchesState.items.length;
