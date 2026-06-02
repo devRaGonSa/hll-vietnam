@@ -1,8 +1,20 @@
-﻿(() => {
+(() => {
   const RECENT_MATCHES_ENDPOINT = "/api/historical/recent-matches";
   const REFRESH_DELAYS_MS = [150, 1000, 3000];
+  const RECENT_MATCHES_LIMIT = 100;
+  const DEFAULT_RECENT_MATCHES_PAGE_SIZE = 10;
+  const RECENT_MATCHES_PAGE_SIZES = Object.freeze([10, 25, 50, 100]);
+
+  const recentMatchesState = {
+    items: [],
+    serverSlug: "all-servers",
+    page: 1,
+    pageSize: DEFAULT_RECENT_MATCHES_PAGE_SIZE,
+  };
 
   document.addEventListener("DOMContentLoaded", () => {
+    ensureDynamicPaginationControls();
+
     REFRESH_DELAYS_MS.forEach((delay) => {
       window.setTimeout(() => {
         void refreshDynamicRecentMatches();
@@ -26,47 +38,159 @@
     const metaNode = document.getElementById("recent-matches-snapshot-meta");
     const noteNode = document.getElementById("recent-matches-note");
 
-    if (!listNode || !stateNode || !metaNode) {
-      return;
-    }
+    if (!listNode || !stateNode || !metaNode) return;
 
-    const backendBaseUrl =
-      document.body.dataset.backendBaseUrl || "http://127.0.0.1:8000";
+    const backendBaseUrl = document.body.dataset.backendBaseUrl || "http://127.0.0.1:8000";
     const serverSlug = normalizeDynamicServerSlug(forcedServerSlug || readServerFromUrl());
 
     try {
-      const response = await fetch(
-        `${backendBaseUrl}${RECENT_MATCHES_ENDPOINT}?server=${encodeURIComponent(serverSlug)}&limit=20`,
-        { cache: "no-store" },
-      );
-
-      if (!response.ok) {
-        throw new Error(`HTTP ${response.status}`);
-      }
+      const response = await fetch(`${backendBaseUrl}${RECENT_MATCHES_ENDPOINT}?server=${encodeURIComponent(serverSlug)}&limit=${RECENT_MATCHES_LIMIT}`, { cache: "no-store" });
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
 
       const payload = await response.json();
       const data = payload?.data || {};
       const items = Array.isArray(data.items) ? data.items : [];
 
+      recentMatchesState.items = items;
+      recentMatchesState.serverSlug = serverSlug;
+      recentMatchesState.page = 1;
+
       if (!items.length) {
         setDynamicState(stateNode, "No hay partidas recientes disponibles para este alcance.");
         listNode.innerHTML = "";
         metaNode.textContent = "Datos recientes sin partidas disponibles.";
+        renderDynamicPagination();
         return;
       }
 
-      listNode.innerHTML = items.map((item) => renderDynamicRecentMatchCard(item)).join("");
       stateNode.hidden = true;
-
-      if (noteNode) {
-        noteNode.textContent = "Lista dinámica de partidas registradas.";
-      }
-
+      if (noteNode) noteNode.textContent = "Lista dinámica de partidas registradas.";
       metaNode.textContent = buildDynamicRecentMeta(items);
+      renderDynamicRecentMatchesPage();
     } catch (error) {
+      recentMatchesState.items = [];
+      recentMatchesState.page = 1;
       setDynamicState(stateNode, "No se pudieron cargar las partidas recientes dinámicas.", true);
       metaNode.textContent = "Error al leer las partidas recientes dinámicas.";
+      renderDynamicPagination();
     }
+  }
+
+  function renderDynamicRecentMatchesPage() {
+    const listNode = document.getElementById("recent-matches-list");
+    const stateNode = document.getElementById("recent-matches-state");
+    if (!listNode || !stateNode) return;
+
+    const totalItems = recentMatchesState.items.length;
+    const totalPages = getDynamicTotalPages();
+    recentMatchesState.page = clampDynamicPage(recentMatchesState.page, totalPages);
+
+    if (!totalItems) {
+      listNode.innerHTML = "";
+      setDynamicState(stateNode, "No hay partidas recientes disponibles para este alcance.");
+      renderDynamicPagination();
+      return;
+    }
+
+    const startIndex = (recentMatchesState.page - 1) * recentMatchesState.pageSize;
+    const pageItems = recentMatchesState.items.slice(startIndex, startIndex + recentMatchesState.pageSize);
+    listNode.innerHTML = pageItems.map((item) => renderDynamicRecentMatchCard(item)).join("");
+    stateNode.hidden = true;
+    renderDynamicPagination();
+  }
+
+  function ensureDynamicPaginationControls() {
+    const listNode = document.getElementById("recent-matches-list");
+    if (!listNode || document.getElementById("recent-matches-pagination")) return;
+
+    const paginationNode = document.createElement("div");
+    paginationNode.className = "historical-pagination";
+    paginationNode.id = "recent-matches-pagination";
+    paginationNode.hidden = true;
+
+    const sizeLabel = document.createElement("label");
+    sizeLabel.className = "historical-pagination__size";
+    sizeLabel.append("Mostrar ");
+
+    const pageSizeSelect = document.createElement("select");
+    pageSizeSelect.id = "recent-matches-page-size";
+    pageSizeSelect.setAttribute("aria-label", "Partidas por pagina");
+    RECENT_MATCHES_PAGE_SIZES.forEach((size) => {
+      const option = document.createElement("option");
+      option.value = String(size);
+      option.textContent = String(size);
+      option.selected = size === DEFAULT_RECENT_MATCHES_PAGE_SIZE;
+      pageSizeSelect.append(option);
+    });
+    sizeLabel.append(pageSizeSelect);
+
+    const navNode = document.createElement("div");
+    navNode.className = "historical-pagination__nav";
+    navNode.setAttribute("aria-label", "Paginacion de partidas recientes");
+
+    const prevButton = document.createElement("button");
+    prevButton.className = "historical-tab";
+    prevButton.type = "button";
+    prevButton.id = "recent-matches-prev";
+    prevButton.textContent = "Anterior";
+
+    const pageLabel = document.createElement("p");
+    pageLabel.id = "recent-matches-page-label";
+    pageLabel.textContent = "Pagina 1 de 1";
+
+    const nextButton = document.createElement("button");
+    nextButton.className = "historical-tab";
+    nextButton.type = "button";
+    nextButton.id = "recent-matches-next";
+    nextButton.textContent = "Siguiente";
+
+    navNode.append(prevButton, pageLabel, nextButton);
+    paginationNode.append(sizeLabel, navNode);
+    listNode.insertAdjacentElement("afterend", paginationNode);
+
+    pageSizeSelect.addEventListener("change", () => {
+      const nextPageSize = Number(pageSizeSelect.value);
+      recentMatchesState.pageSize = RECENT_MATCHES_PAGE_SIZES.includes(nextPageSize) ? nextPageSize : DEFAULT_RECENT_MATCHES_PAGE_SIZE;
+      recentMatchesState.page = 1;
+      renderDynamicRecentMatchesPage();
+    });
+    prevButton.addEventListener("click", () => {
+      recentMatchesState.page -= 1;
+      renderDynamicRecentMatchesPage();
+    });
+    nextButton.addEventListener("click", () => {
+      recentMatchesState.page += 1;
+      renderDynamicRecentMatchesPage();
+    });
+  }
+
+  function renderDynamicPagination() {
+    ensureDynamicPaginationControls();
+    const paginationNode = document.getElementById("recent-matches-pagination");
+    const pageSizeSelect = document.getElementById("recent-matches-page-size");
+    const prevButton = document.getElementById("recent-matches-prev");
+    const nextButton = document.getElementById("recent-matches-next");
+    const pageLabel = document.getElementById("recent-matches-page-label");
+    if (!paginationNode || !pageSizeSelect || !prevButton || !nextButton || !pageLabel) return;
+
+    const totalItems = recentMatchesState.items.length;
+    const totalPages = getDynamicTotalPages();
+    recentMatchesState.page = clampDynamicPage(recentMatchesState.page, totalPages);
+    paginationNode.hidden = totalItems <= 0;
+    pageSizeSelect.value = String(recentMatchesState.pageSize);
+    prevButton.disabled = recentMatchesState.page <= 1;
+    nextButton.disabled = recentMatchesState.page >= totalPages;
+    pageLabel.textContent = `Pagina ${recentMatchesState.page} de ${totalPages}`;
+  }
+
+  function getDynamicTotalPages() {
+    return Math.max(1, Math.ceil(recentMatchesState.items.length / recentMatchesState.pageSize));
+  }
+
+  function clampDynamicPage(page, totalPages) {
+    const numericPage = Number(page);
+    if (!Number.isFinite(numericPage)) return 1;
+    return Math.min(Math.max(1, Math.trunc(numericPage)), totalPages);
   }
 
   function renderDynamicRecentMatchCard(item) {
@@ -74,12 +198,7 @@
     const serverName = item?.server?.name || "Servidor no disponible";
     const closedAt = item?.closed_at || item?.ended_at || item?.started_at;
     const detailUrl = buildDynamicInternalMatchDetailUrl(item);
-    const actionLinks = [
-      `<span class="historical-match-card__result">${escapeDynamicHtml(formatDynamicResultLabel(item?.result))}</span>`,
-      detailUrl
-        ? `<a class="historical-match-card__link" href="${escapeDynamicHtml(detailUrl)}">Ver detalles</a>`
-        : "",
-    ].join("");
+    const actionLinks = [`<span class="historical-match-card__result">${escapeDynamicHtml(formatDynamicResultLabel(item?.result))}</span>`, detailUrl ? `<a class="historical-match-card__link" href="${escapeDynamicHtml(detailUrl)}">Ver detalles</a>` : ""].join("");
 
     return `
       <article class="historical-match-card historical-match-card--clean">
@@ -124,9 +243,7 @@
 
   function normalizeDynamicServerSlug(value) {
     const normalized = String(value || "").trim();
-    if (["comunidad-hispana-01", "comunidad-hispana-02", "all-servers"].includes(normalized)) {
-      return normalized;
-    }
+    if (["comunidad-hispana-01", "comunidad-hispana-02", "all-servers"].includes(normalized)) return normalized;
     return "all-servers";
   }
 
@@ -142,22 +259,10 @@
   }
 
   function formatDynamicTimestamp(value) {
-    if (!value) {
-      return "Fecha no disponible";
-    }
-
+    if (!value) return "Fecha no disponible";
     const date = new Date(value);
-    if (Number.isNaN(date.getTime())) {
-      return String(value);
-    }
-
-    return new Intl.DateTimeFormat("es-ES", {
-      day: "numeric",
-      month: "numeric",
-      year: "2-digit",
-      hour: "2-digit",
-      minute: "2-digit",
-    }).format(date);
+    if (Number.isNaN(date.getTime())) return String(value);
+    return new Intl.DateTimeFormat("es-ES", { day: "numeric", month: "numeric", year: "2-digit", hour: "2-digit", minute: "2-digit" }).format(date);
   }
 
   function formatDynamicNumber(value) {
@@ -168,44 +273,26 @@
   function formatDynamicScore(result) {
     const allied = result?.allied_score;
     const axis = result?.axis_score;
-
-    if (Number.isFinite(Number(allied)) && Number.isFinite(Number(axis))) {
-      return `${allied} - ${axis}`;
-    }
-
+    if (Number.isFinite(Number(allied)) && Number.isFinite(Number(axis))) return `${allied} - ${axis}`;
     return "- - -";
   }
 
   function formatDynamicResultLabel(result) {
     const winner = String(result?.winner || "").toLowerCase();
-
-    if (winner === "allies" || winner === "allied") {
-      return "Victoria aliada";
-    }
-
-    if (winner === "axis") {
-      return "Victoria axis";
-    }
-
+    if (winner === "allies" || winner === "allied") return "Victoria aliada";
+    if (winner === "axis") return "Victoria axis";
     return "Empate";
   }
 
   function buildDynamicInternalMatchDetailUrl(item) {
     const serverSlug = item?.server?.slug;
     const matchId = item?.internal_detail_match_id || item?.match_id;
-
-    if (!serverSlug || matchId === undefined || matchId === null) {
-      return "";
-    }
-
+    if (!serverSlug || matchId === undefined || matchId === null) return "";
     return `./historico-partida.html?server=${encodeURIComponent(String(serverSlug))}&match=${encodeURIComponent(String(matchId))}`;
   }
 
   function normalizeDynamicExternalMatchUrl(value) {
-    if (typeof value !== "string" || !value.trim()) {
-      return "";
-    }
-
+    if (typeof value !== "string" || !value.trim()) return "";
     try {
       const url = new URL(value.trim());
       return ["http:", "https:"].includes(url.protocol) ? url.href : "";
