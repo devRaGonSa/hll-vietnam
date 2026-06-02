@@ -10,6 +10,7 @@
     serverSlug: "all-servers",
     page: 1,
     pageSize: DEFAULT_RECENT_MATCHES_PAGE_SIZE,
+    activeRequestId: 0,
   };
 
   document.addEventListener("DOMContentLoaded", () => {
@@ -42,20 +43,29 @@
 
     const backendBaseUrl = document.body.dataset.backendBaseUrl || "http://127.0.0.1:8000";
     const serverSlug = normalizeDynamicServerSlug(forcedServerSlug || readServerFromUrl());
+    const shouldResetPage = serverSlug !== recentMatchesState.serverSlug;
+    const requestId = recentMatchesState.activeRequestId + 1;
+    recentMatchesState.activeRequestId = requestId;
+    recentMatchesState.serverSlug = serverSlug;
 
     try {
       const response = await fetch(`${backendBaseUrl}${RECENT_MATCHES_ENDPOINT}?server=${encodeURIComponent(serverSlug)}&limit=${RECENT_MATCHES_LIMIT}`, { cache: "no-store" });
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
 
       const payload = await response.json();
+      if (requestId !== recentMatchesState.activeRequestId || serverSlug !== recentMatchesState.serverSlug) {
+        return;
+      }
       const data = payload?.data || {};
       const items = Array.isArray(data.items) ? data.items : [];
 
       recentMatchesState.items = items;
-      recentMatchesState.serverSlug = serverSlug;
-      recentMatchesState.page = 1;
+      if (shouldResetPage) {
+        recentMatchesState.page = 1;
+      }
 
       if (!items.length) {
+        recentMatchesState.page = 1;
         setDynamicState(stateNode, "No hay partidas recientes disponibles para este alcance.");
         listNode.innerHTML = "";
         metaNode.textContent = "Datos recientes sin partidas disponibles.";
@@ -68,6 +78,9 @@
       metaNode.textContent = buildDynamicRecentMeta(items);
       renderDynamicRecentMatchesPage();
     } catch (error) {
+      if (requestId !== recentMatchesState.activeRequestId || serverSlug !== recentMatchesState.serverSlug) {
+        return;
+      }
       recentMatchesState.items = [];
       recentMatchesState.page = 1;
       setDynamicState(stateNode, "No se pudieron cargar las partidas recientes dinámicas.", true);
@@ -176,7 +189,7 @@
     const totalItems = recentMatchesState.items.length;
     const totalPages = getDynamicTotalPages();
     recentMatchesState.page = clampDynamicPage(recentMatchesState.page, totalPages);
-    paginationNode.hidden = totalItems <= 0;
+    paginationNode.hidden = totalItems <= recentMatchesState.pageSize;
     pageSizeSelect.value = String(recentMatchesState.pageSize);
     prevButton.disabled = recentMatchesState.page <= 1;
     nextButton.disabled = recentMatchesState.page >= totalPages;
