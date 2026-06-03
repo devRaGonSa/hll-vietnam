@@ -838,6 +838,15 @@
   line-height: 1.2;
 }
 
+.current-match-killfeed__player-identity {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  max-width: 100%;
+  flex-wrap: wrap;
+}
+
 .current-match-killfeed__player-name {
   min-width: 0;
   overflow: hidden;
@@ -858,6 +867,16 @@
   align-items: center;
   gap: 4px;
   min-width: 0;
+}
+
+.current-match-killfeed__player--killer .current-match-killfeed__player-identity,
+.current-match-killfeed__player--killer .current-match-killfeed__player-meta {
+  justify-content: flex-end;
+}
+
+.current-match-killfeed__player--victim .current-match-killfeed__player-identity,
+.current-match-killfeed__player--victim .current-match-killfeed__player-meta {
+  justify-content: flex-start;
 }
 
 .current-match-killfeed__weapon {
@@ -913,7 +932,6 @@
   white-space: nowrap;
 }
 
-.current-match-killfeed__team-badge,
 .current-match-killfeed__teamkill {
   display: inline-flex;
   align-items: center;
@@ -925,33 +943,15 @@
   font-weight: 800;
 }
 
-.current-match-killfeed__team-badge {
-  border: 1px solid rgba(159, 168, 141, 0.2);
-  color: var(--text-soft);
-  background: rgba(159, 168, 141, 0.08);
-}
-
-.current-match-killfeed__team-badge--allies {
-  border-color: rgba(100, 139, 178, 0.34);
-  color: rgba(192, 215, 238, 0.96);
-  background: rgba(67, 101, 137, 0.28);
-}
-
-.current-match-killfeed__team-badge--axis {
-  border-color: rgba(167, 109, 96, 0.36);
-  color: rgba(231, 198, 190, 0.96);
-  background: rgba(116, 68, 58, 0.3);
-}
-
-.current-match-killfeed__team-badge--unknown {
-  border-color: rgba(159, 168, 141, 0.22);
-  color: var(--muted);
-  background: rgba(159, 168, 141, 0.1);
-}
-
 .current-match-killfeed__teamkill {
   border: 1px solid rgba(210, 182, 118, 0.36);
   color: var(--accent-warm);
+}
+
+.current-match-killfeed__team-badge {
+  min-width: auto;
+  padding-inline: 8px;
+  font-size: 0.62rem;
 }
 
 .current-match-player-intro {
@@ -1259,6 +1259,10 @@
     -webkit-line-clamp: 2;
     text-overflow: ellipsis;
     white-space: normal;
+  }
+
+  .current-match-killfeed__player-identity {
+    gap: 5px;
   }
 
   .current-match-killfeed__teamkill {

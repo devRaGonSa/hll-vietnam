@@ -479,11 +479,13 @@ function renderKillFeedRow(event) {
       data-event-id="${escapeHtml(event.event_id || "")}"
     >
       <span class="current-match-killfeed__player current-match-killfeed__player--killer">
-        <strong class="current-match-killfeed__player-name" title="${escapeHtml(event.killer_name || "Jugador no disponible")}">
-          ${escapeHtml(event.killer_name || "Jugador no disponible")}
-        </strong>
-        <span class="current-match-killfeed__player-meta">
+        <span class="current-match-killfeed__player-identity">
+          <strong class="current-match-killfeed__player-name" title="${escapeHtml(event.killer_name || "Jugador no disponible")}">
+            ${escapeHtml(event.killer_name || "Jugador no disponible")}
+          </strong>
           ${renderKillFeedTeamBadge(killerTeam)}
+        </span>
+        <span class="current-match-killfeed__player-meta">
           ${teamkillBadge}
         </span>
       </span>
@@ -496,10 +498,12 @@ function renderKillFeedRow(event) {
         <em>${escapeHtml(weapon.label)}</em>
       </span>
       <span class="current-match-killfeed__player current-match-killfeed__player--victim">
-        <span class="current-match-killfeed__player-name" title="${escapeHtml(event.victim_name || "Objetivo no disponible")}">
-          ${escapeHtml(event.victim_name || "Objetivo no disponible")}
+        <span class="current-match-killfeed__player-identity">
+          <span class="current-match-killfeed__player-name" title="${escapeHtml(event.victim_name || "Objetivo no disponible")}">
+            ${escapeHtml(event.victim_name || "Objetivo no disponible")}
+          </span>
+          ${renderKillFeedTeamBadge(victimTeam)}
         </span>
-        ${renderKillFeedTeamBadge(victimTeam)}
       </span>
     </article>
   `;
@@ -511,8 +515,11 @@ function getKillFeedTeamDisplay(value) {
 }
 
 function renderKillFeedTeamBadge(team) {
+  if (!team || team.key === "unknown") {
+    return "";
+  }
   return `
-    <span class="current-match-killfeed__team-badge current-match-killfeed__team-badge--${team.key}">
+    <span class="historical-player-team-badge historical-player-team-badge--${team.key} current-match-killfeed__team-badge">
       ${escapeHtml(team.label)}
     </span>
   `;

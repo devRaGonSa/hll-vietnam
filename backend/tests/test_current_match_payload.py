@@ -245,22 +245,223 @@ def test_current_match_player_stats_aggregate_safe_admin_log_rows(tmp_path):
     )
 
     assert stats["scope"] == "open-admin-log-match-window"
-    assert stats["confidence"] == "event-derived-partial"
-    assert stats["source"] == "rcon-admin-log-kill-events"
+    assert stats["confidence"] == "admin-log-boundary"
+    assert stats["source"] == "rcon-admin-log-current-match-summary"
     assert [item["player_name"] for item in stats["items"]] == ["Alpha", "Bravo", "Charlie"]
     assert stats["items"][0] == {
         "player_name": "Alpha",
+        "player_id": "steam-alpha",
         "team": "Allies",
         "kills": 1,
         "deaths": 1,
         "teamkills": 1,
         "deaths_by_teamkill": 0,
+        "is_connected": None,
+        "connected": None,
         "last_seen_at": "2026-05-21T10:03:00Z",
         "favorite_weapon": "M1 GARAND",
-        "source": "rcon-admin-log-kill-events",
-        "confidence": "event-derived-partial",
+        "source": "kill",
+        "confidence": "admin-log-boundary",
     }
     assert "raw_message" not in stats["items"][0]
+
+
+def test_current_match_player_stats_include_connected_players_without_kills(tmp_path):
+    db_path = tmp_path / "admin-log.sqlite3"
+    persist_rcon_admin_log_entries(
+        target={
+            "target_key": "comunidad-hispana-01",
+            "external_server_id": "comunidad-hispana-01",
+        },
+        entries=[
+            {
+                "timestamp": "2026-05-21T10:00:00Z",
+                "message": "[1:00 min (100)] MATCH START Mortain Warfare",
+            },
+            {
+                "timestamp": "2026-05-21T10:01:00Z",
+                "message": "[2:00 min (120)] CONNECTED Quiet Player (steam-quiet)",
+            },
+        ],
+        db_path=db_path,
+    )
+
+    stats = list_current_match_player_stats(
+        server_key="comunidad-hispana-01",
+        db_path=db_path,
+    )
+
+    assert stats["scope"] == "open-admin-log-match-window"
+    assert stats["items"] == [
+        {
+            "player_name": "Quiet Player",
+            "player_id": "steam-quiet",
+            "team": None,
+            "kills": 0,
+            "deaths": 0,
+            "teamkills": 0,
+            "deaths_by_teamkill": 0,
+            "favorite_weapon": None,
+            "last_seen_at": "2026-05-21T10:01:00Z",
+            "is_connected": True,
+            "connected": True,
+            "source": "connected",
+            "confidence": "admin-log-boundary",
+        }
+    ]
+
+
+def test_current_match_player_stats_keep_disconnected_participants_visible(tmp_path):
+    db_path = tmp_path / "admin-log.sqlite3"
+    persist_rcon_admin_log_entries(
+        target={
+            "target_key": "comunidad-hispana-01",
+            "external_server_id": "comunidad-hispana-01",
+        },
+        entries=[
+            {
+                "timestamp": "2026-05-21T10:00:00Z",
+                "message": "[1:00 min (100)] MATCH START Mortain Warfare",
+            },
+            {
+                "timestamp": "2026-05-21T10:01:00Z",
+                "message": "[2:00 min (120)] CONNECTED Brief Player (steam-brief)",
+            },
+            {
+                "timestamp": "2026-05-21T10:05:00Z",
+                "message": "[6:00 min (180)] DISCONNECTED Brief Player (steam-brief)",
+            },
+        ],
+        db_path=db_path,
+    )
+
+    stats = list_current_match_player_stats(
+        server_key="comunidad-hispana-01",
+        db_path=db_path,
+    )
+
+    assert stats["items"] == [
+        {
+            "player_name": "Brief Player",
+            "player_id": "steam-brief",
+            "team": None,
+            "kills": 0,
+            "deaths": 0,
+            "teamkills": 0,
+            "deaths_by_teamkill": 0,
+            "favorite_weapon": None,
+            "last_seen_at": "2026-05-21T10:05:00Z",
+            "is_connected": False,
+            "connected": False,
+            "source": "connected,disconnected",
+            "confidence": "admin-log-boundary",
+        }
+    ]
+
+
+def test_current_match_player_stats_include_victim_only_players(tmp_path):
+    db_path = tmp_path / "admin-log.sqlite3"
+    persist_rcon_admin_log_entries(
+        target={
+            "target_key": "comunidad-hispana-01",
+            "external_server_id": "comunidad-hispana-01",
+        },
+        entries=[
+            {
+                "timestamp": "2026-05-21T10:00:00Z",
+                "message": "[1:00 min (100)] MATCH START Mortain Warfare",
+            },
+            {
+                "timestamp": "2026-05-21T10:01:00Z",
+                "message": (
+                    "[2:00 min (120)] KILL: Killer One(Axis/steam-killer) -> "
+                    "Victim Only(Allies/steam-victim) with MP40"
+                ),
+            },
+        ],
+        db_path=db_path,
+    )
+
+    stats = list_current_match_player_stats(
+        server_key="comunidad-hispana-01",
+        db_path=db_path,
+    )
+    by_name = {item["player_name"]: item for item in stats["items"]}
+
+    assert by_name["Victim Only"]["kills"] == 0
+    assert by_name["Victim Only"]["deaths"] == 1
+    assert by_name["Victim Only"]["favorite_weapon"] is None
+
+
+def test_current_match_player_stats_exclude_players_before_open_match_start(tmp_path):
+    db_path = tmp_path / "admin-log.sqlite3"
+    persist_rcon_admin_log_entries(
+        target={
+            "target_key": "comunidad-hispana-01",
+            "external_server_id": "comunidad-hispana-01",
+        },
+        entries=[
+            {
+                "timestamp": "2026-05-21T09:55:00Z",
+                "message": "[0:30 min (90)] CONNECTED Old Match Player (steam-old)",
+            },
+            {
+                "timestamp": "2026-05-21T10:00:00Z",
+                "message": "[1:00 min (100)] MATCH START Mortain Warfare",
+            },
+            {
+                "timestamp": "2026-05-21T10:01:00Z",
+                "message": "[2:00 min (120)] CONNECTED New Match Player (steam-new)",
+            },
+        ],
+        db_path=db_path,
+    )
+
+    stats = list_current_match_player_stats(
+        server_key="comunidad-hispana-01",
+        db_path=db_path,
+    )
+
+    assert [item["player_name"] for item in stats["items"]] == ["New Match Player"]
+
+
+def test_current_match_player_stats_sort_connected_before_disconnected_with_same_stats(tmp_path):
+    db_path = tmp_path / "admin-log.sqlite3"
+    persist_rcon_admin_log_entries(
+        target={
+            "target_key": "comunidad-hispana-01",
+            "external_server_id": "comunidad-hispana-01",
+        },
+        entries=[
+            {
+                "timestamp": "2026-05-21T10:00:00Z",
+                "message": "[1:00 min (100)] MATCH START Mortain Warfare",
+            },
+            {
+                "timestamp": "2026-05-21T10:01:00Z",
+                "message": "[2:00 min (120)] CONNECTED Connected Alpha (steam-connected)",
+            },
+            {
+                "timestamp": "2026-05-21T10:02:00Z",
+                "message": "[3:00 min (140)] CONNECTED Disconnected Bravo (steam-disconnected)",
+            },
+            {
+                "timestamp": "2026-05-21T10:03:00Z",
+                "message": "[4:00 min (160)] DISCONNECTED Disconnected Bravo (steam-disconnected)",
+            },
+        ],
+        db_path=db_path,
+    )
+
+    stats = list_current_match_player_stats(
+        server_key="comunidad-hispana-01",
+        db_path=db_path,
+    )
+
+    assert [item["player_name"] for item in stats["items"]] == [
+        "Connected Alpha",
+        "Disconnected Bravo",
+    ]
 
 
 def test_current_match_player_stats_filter_stale_recent_events(tmp_path):
