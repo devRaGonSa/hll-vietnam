@@ -18,6 +18,14 @@ from .rcon_historical_storage import initialize_rcon_historical_storage
 from .sqlite_utils import connect_sqlite_writer
 
 CURRENT_MATCH_FALLBACK_FRESHNESS = timedelta(minutes=15)
+CURRENT_MATCH_PLAYER_EVENT_TYPES = (
+    "kill",
+    "team_switch",
+    "connected",
+    "disconnected",
+    "chat",
+    "message",
+)
 
 
 def initialize_rcon_admin_log_storage(*, db_path: Path | None = None) -> Path:
@@ -462,72 +470,218 @@ def list_current_match_player_stats(
     db_path: Path | None = None,
     now: datetime | None = None,
 ) -> dict[str, object]:
-    """Return partial current player stats derived from safe AdminLog kill rows."""
-    feed = list_current_match_kill_feed(
-        server_key=server_key,
-        limit=100,
-        db_path=db_path,
-        now=now,
-    )
-    players: dict[str, dict[str, object]] = {}
-    weapon_counts: dict[str, Counter[str]] = {}
-    for item in feed["items"]:
-        if not isinstance(item, Mapping):
-            continue
-        killer = _ensure_current_match_player(
-            players,
-            item.get("killer_name"),
-            team=item.get("killer_team"),
-            event_timestamp=item.get("event_timestamp"),
-        )
-        victim = _ensure_current_match_player(
-            players,
-            item.get("victim_name"),
-            team=item.get("victim_team"),
-            event_timestamp=item.get("event_timestamp"),
-        )
-        if killer is not None:
-            weapon = _safe_event_field(item.get("weapon")) or "UNKNOWN"
-            weapon_counts.setdefault(str(killer["player_name"]), Counter())[weapon] += 1
-            if item.get("is_teamkill"):
-                killer["teamkills"] = int(killer["teamkills"]) + 1
-            else:
-                killer["kills"] = int(killer["kills"]) + 1
-        if victim is not None:
-            victim["deaths"] = int(victim["deaths"]) + 1
-            if item.get("is_teamkill"):
-                victim["deaths_by_teamkill"] = int(victim["deaths_by_teamkill"]) + 1
+    """Return current-match participants and partial stats from the safe AdminLog window."""
+    resolved_path = initialize_rcon_admin_log_storage(db_path=db_path)
+    if use_postgres_rcon_storage(explicit_sqlite_path=db_path):
+        from .postgres_rcon_storage import connect_postgres_compat
 
-    items = []
-    for player in players.values():
-        items.append(
-            {
-                **player,
-                "favorite_weapon": _favorite_weapon_for_player(
-                    weapon_counts.get(str(player["player_name"]))
-                ),
-                "source": "rcon-admin-log-kill-events",
-                "confidence": "event-derived-partial",
-            }
+        connection_scope = connect_postgres_compat()
+    else:
+        connection_scope = closing(sqlite3.connect(resolved_path))
+
+    with connection_scope as connection:
+        if isinstance(connection, sqlite3.Connection):
+            connection.row_factory = sqlite3.Row
+        window = _resolve_current_match_window(
+            connection,
+            server_key=server_key,
+            now=now,
         )
-    items.sort(
-        key=lambda player: (
-            -int(player["kills"]),
-            int(player["deaths"]),
-            str(player["player_name"]).casefold(),
+        rows = _list_current_match_participant_rows(
+            connection,
+            server_key=server_key,
+            window=window,
         )
-    )
+
+    players: dict[str, dict[str, object]] = {}
+    for row in rows:
+        payload = _json_mapping(row["parsed_payload_json"])
+        event_timestamp = row["event_timestamp"]
+        event_type = str(row["event_type"] or "")
+        if event_type == "kill":
+            killer = _ensure_current_match_player(
+                players,
+                player_name=payload.get("killer_name"),
+                player_id=payload.get("killer_id"),
+                team=payload.get("killer_team"),
+                event_timestamp=event_timestamp,
+                is_connected=None,
+                source=event_type,
+            )
+            victim = _ensure_current_match_player(
+                players,
+                player_name=payload.get("victim_name"),
+                player_id=payload.get("victim_id"),
+                team=payload.get("victim_team"),
+                event_timestamp=event_timestamp,
+                is_connected=None,
+                source=event_type,
+            )
+            if killer is not None:
+                weapon = _safe_event_field(payload.get("weapon")) or "UNKNOWN"
+                _player_weapon_counts(killer)[weapon] += 1
+                if payload.get("killer_team") and payload.get("killer_team") == payload.get("victim_team"):
+                    killer["teamkills"] = int(killer["teamkills"]) + 1
+                else:
+                    killer["kills"] = int(killer["kills"]) + 1
+            if victim is not None:
+                victim["deaths"] = int(victim["deaths"]) + 1
+                if payload.get("killer_team") and payload.get("killer_team") == payload.get("victim_team"):
+                    victim["deaths_by_teamkill"] = int(victim["deaths_by_teamkill"]) + 1
+            continue
+
+        if event_type == "team_switch":
+            _ensure_current_match_player(
+                players,
+                player_name=payload.get("player_name"),
+                player_id=payload.get("player_id"),
+                team=payload.get("to_team"),
+                event_timestamp=event_timestamp,
+                is_connected=None,
+                source=event_type,
+            )
+            continue
+
+        if event_type == "connected":
+            _ensure_current_match_player(
+                players,
+                player_name=payload.get("player_name"),
+                player_id=payload.get("player_id"),
+                team=None,
+                event_timestamp=event_timestamp,
+                is_connected=True,
+                source=event_type,
+            )
+            continue
+
+        if event_type == "disconnected":
+            _ensure_current_match_player(
+                players,
+                player_name=payload.get("player_name"),
+                player_id=payload.get("player_id"),
+                team=None,
+                event_timestamp=event_timestamp,
+                is_connected=False,
+                source=event_type,
+            )
+            continue
+
+        if event_type in {"chat", "message"}:
+            _ensure_current_match_player(
+                players,
+                player_name=payload.get("player_name"),
+                player_id=payload.get("player_id"),
+                team=payload.get("chat_team"),
+                event_timestamp=event_timestamp,
+                is_connected=None,
+                source=event_type,
+            )
+
+    items = [_serialize_current_match_player(player, window_confidence=window["confidence"]) for player in players.values()]
+    items.sort(key=_current_match_player_sort_key)
     return {
-        "scope": feed["scope"],
-        "confidence": "event-derived-partial" if items else feed["confidence"],
-        "source": "rcon-admin-log-kill-events",
+        "scope": window["scope"],
+        "confidence": window["confidence"] if items else window["confidence"],
+        "source": "rcon-admin-log-current-match-summary",
         "updated_at": max(
             (str(item["last_seen_at"]) for item in items if item.get("last_seen_at")),
             default=None,
         ),
-        "stale_events_filtered": feed["stale_events_filtered"],
+        "stale_events_filtered": int(window["stale_events_filtered"]),
         "items": items,
     }
+
+
+def _resolve_current_match_window(
+    connection: sqlite3.Connection | object,
+    *,
+    server_key: str,
+    now: datetime | None,
+) -> dict[str, object]:
+    boundary = connection.execute(
+        """
+        SELECT event_type, server_time
+        FROM rcon_admin_log_events
+        WHERE (target_key = ? OR external_server_id = ?)
+          AND event_type IN ('match_start', 'match_end')
+          AND server_time IS NOT NULL
+        ORDER BY server_time DESC, id DESC
+        LIMIT 1
+        """,
+        (server_key, server_key),
+    ).fetchone()
+    open_start_time = (
+        boundary["server_time"]
+        if boundary is not None and boundary["event_type"] == "match_start"
+        else None
+    )
+    if open_start_time is not None:
+        return {
+            "scope": "open-admin-log-match-window",
+            "confidence": "admin-log-boundary",
+            "open_start_time": int(open_start_time),
+            "stale_events_filtered": 0,
+            "freshness_anchor": None,
+        }
+
+    freshness_anchor = _as_utc_datetime(now) or datetime.now(timezone.utc)
+    return {
+        "scope": "recent-admin-log-window",
+        "confidence": "partial",
+        "open_start_time": None,
+        "stale_events_filtered": 0,
+        "freshness_anchor": freshness_anchor,
+    }
+
+
+def _list_current_match_participant_rows(
+    connection: sqlite3.Connection | object,
+    *,
+    server_key: str,
+    window: Mapping[str, object],
+) -> list[Mapping[str, object]]:
+    event_placeholders = ",".join("?" for _ in CURRENT_MATCH_PLAYER_EVENT_TYPES)
+    params: list[object] = [server_key, server_key, *CURRENT_MATCH_PLAYER_EVENT_TYPES]
+    if window.get("open_start_time") is not None:
+        params.append(window["open_start_time"])
+        rows = connection.execute(
+            f"""
+            SELECT id, target_key, external_server_id, event_timestamp, server_time, event_type,
+                   parsed_payload_json
+            FROM rcon_admin_log_events
+            WHERE (target_key = ? OR external_server_id = ?)
+              AND event_type IN ({event_placeholders})
+              AND server_time >= ?
+            ORDER BY server_time ASC, id ASC
+            """,
+            params,
+        ).fetchall()
+        return rows
+
+    rows = connection.execute(
+        f"""
+        SELECT id, target_key, external_server_id, event_timestamp, server_time, event_type,
+               parsed_payload_json
+        FROM rcon_admin_log_events
+        WHERE (target_key = ? OR external_server_id = ?)
+          AND event_type IN ({event_placeholders})
+        ORDER BY server_time DESC, id DESC
+        LIMIT 500
+        """,
+        params,
+    ).fetchall()
+    freshness_anchor = window.get("freshness_anchor")
+    fresh_rows = [
+        row
+        for row in rows
+        if _row_is_current_match_fallback_fresh(row, freshness_anchor)
+    ]
+    window["stale_events_filtered"] = len(rows) - len(fresh_rows)
+    if not fresh_rows:
+        window["scope"] = "no-current-match-events"
+        window["confidence"] = "stale-filtered" if window["stale_events_filtered"] else "none"
+        return []
+    return list(reversed(fresh_rows))
 
 
 def get_latest_rcon_player_profile_summaries(
@@ -664,35 +818,110 @@ def _safe_event_field(value: object) -> str | None:
 
 def _ensure_current_match_player(
     players: dict[str, dict[str, object]],
-    player_name: object,
     *,
+    player_name: object,
+    player_id: object,
     team: object,
     event_timestamp: object,
+    is_connected: bool | None,
+    source: str,
 ) -> dict[str, object] | None:
     safe_name = _safe_event_field(player_name)
-    if safe_name is None:
+    safe_id = _safe_event_field(player_id)
+    key = _current_match_player_key(safe_id, safe_name)
+    if key is None:
         return None
     player = players.setdefault(
-        safe_name,
+        key,
         {
+            "player_id": safe_id,
             "player_name": safe_name,
             "team": None,
             "kills": 0,
             "deaths": 0,
             "teamkills": 0,
             "deaths_by_teamkill": 0,
+            "is_connected": None,
             "last_seen_at": None,
+            "_weapon_counts": Counter(),
+            "_sources": set(),
         },
     )
+    if safe_id:
+        player["player_id"] = safe_id
+    if safe_name:
+        current_name = _safe_event_field(player.get("player_name"))
+        if current_name is None or len(safe_name) >= len(current_name):
+            player["player_name"] = safe_name
     safe_team = _safe_event_field(team)
     if safe_team:
         player["team"] = safe_team
+    if is_connected is not None:
+        player["is_connected"] = is_connected
     safe_timestamp = _safe_event_field(event_timestamp)
     if safe_timestamp and (
         player["last_seen_at"] is None or safe_timestamp > str(player["last_seen_at"])
     ):
         player["last_seen_at"] = safe_timestamp
+    player["_sources"].add(source)
     return player
+
+
+def _current_match_player_key(
+    player_id: str | None,
+    player_name: str | None,
+) -> str | None:
+    if player_id:
+        return f"id:{player_id}"
+    if player_name:
+        return f"name:{player_name.casefold()}"
+    return None
+
+
+def _player_weapon_counts(player: Mapping[str, object]) -> Counter[str]:
+    weapon_counts = player.get("_weapon_counts")
+    if isinstance(weapon_counts, Counter):
+        return weapon_counts
+    return Counter()
+
+
+def _serialize_current_match_player(
+    player: Mapping[str, object],
+    *,
+    window_confidence: object,
+) -> dict[str, object]:
+    sources = sorted(str(value) for value in player.get("_sources", set()))
+    return {
+        "player_name": player.get("player_name"),
+        "player_id": player.get("player_id"),
+        "team": player.get("team"),
+        "kills": int(player.get("kills") or 0),
+        "deaths": int(player.get("deaths") or 0),
+        "teamkills": int(player.get("teamkills") or 0),
+        "deaths_by_teamkill": int(player.get("deaths_by_teamkill") or 0),
+        "favorite_weapon": _favorite_weapon_for_player(_player_weapon_counts(player)),
+        "last_seen_at": player.get("last_seen_at"),
+        "is_connected": player.get("is_connected"),
+        "connected": player.get("is_connected"),
+        "source": ",".join(sources) if sources else "unknown",
+        "confidence": str(window_confidence or "partial"),
+    }
+
+
+def _current_match_player_sort_key(player: Mapping[str, object]) -> tuple[int, int, int, str]:
+    connected = player.get("is_connected")
+    if connected is True:
+        connected_rank = 0
+    elif connected is None:
+        connected_rank = 1
+    else:
+        connected_rank = 2
+    return (
+        -int(player.get("kills") or 0),
+        int(player.get("deaths") or 0),
+        connected_rank,
+        str(player.get("player_name") or "").casefold(),
+    )
 
 
 def _favorite_weapon_for_player(weapons: Counter[str] | None) -> str | None:
