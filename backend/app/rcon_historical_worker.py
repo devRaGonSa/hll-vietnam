@@ -11,10 +11,14 @@ from dataclasses import dataclass
 from typing import Iterable
 
 from .config import (
+    get_rcon_capture_mode,
+    get_rcon_current_match_capture_interval_seconds,
+    get_rcon_current_match_writer_lock_timeout_seconds,
     get_rcon_historical_capture_interval_seconds,
     get_rcon_historical_capture_max_retries,
     get_rcon_historical_capture_retry_delay_seconds,
     get_rcon_request_timeout_seconds,
+    get_rcon_skip_historical_materialization,
 )
 from .rcon_admin_log_ingestion import ingest_rcon_admin_logs
 from .rcon_admin_log_materialization import materialize_rcon_admin_log
@@ -33,7 +37,13 @@ from .rcon_historical_storage import (
     start_rcon_historical_capture_run,
 )
 from .snapshots import utc_now
-from .writer_lock import backend_writer_lock, build_writer_lock_holder
+from .writer_lock import (
+    backend_writer_lock,
+    build_writer_lock_holder,
+)
+
+CAPTURE_MODE_HISTORICAL = "historical"
+CAPTURE_MODE_CURRENT_LIVE = "current-live"
 
 
 @dataclass(slots=True)
@@ -53,28 +63,52 @@ class RconHistoricalCaptureStats:
 def run_rcon_historical_capture(
     *,
     target_key: str | None = None,
+    capture_mode: str | None = None,
+    skip_materialization: bool | None = None,
+    writer_lock_timeout_seconds: float | None = None,
 ) -> dict[str, object]:
     """Capture one prospective RCON sample for one or all configured targets."""
+    resolved_capture_mode, resolved_skip_materialization = _resolve_capture_options(
+        capture_mode=capture_mode,
+        skip_materialization=skip_materialization,
+    )
+    resolved_lock_timeout = writer_lock_timeout_seconds
+    if resolved_lock_timeout is None and resolved_capture_mode == CAPTURE_MODE_CURRENT_LIVE:
+        resolved_lock_timeout = get_rcon_current_match_writer_lock_timeout_seconds()
     with backend_writer_lock(
         holder=build_writer_lock_holder(
             f"app.rcon_historical_worker capture:{target_key or 'all-targets'}"
-        )
+        ),
+        timeout_seconds=resolved_lock_timeout,
     ):
-        return run_rcon_historical_capture_unlocked(target_key=target_key)
+        return run_rcon_historical_capture_unlocked(
+            target_key=target_key,
+            capture_mode=resolved_capture_mode,
+            skip_materialization=resolved_skip_materialization,
+        )
 
 
 def run_rcon_historical_capture_unlocked(
     *,
     target_key: str | None = None,
+    capture_mode: str | None = None,
+    skip_materialization: bool | None = None,
 ) -> dict[str, object]:
     """Capture one prospective RCON sample assuming the shared writer lock is already held."""
+    resolved_capture_mode, resolved_skip_materialization = _resolve_capture_options(
+        capture_mode=capture_mode,
+        skip_materialization=skip_materialization,
+    )
     initialize_rcon_historical_storage()
     selected_targets = _select_targets(target_key)
     selected_target_keys = {build_rcon_target_key(target) for target in selected_targets}
     admin_log_lookback_minutes = get_rcon_admin_log_lookback_minutes()
     captured_at = utc_now().isoformat().replace("+00:00", "Z")
     target_scope = target_key or "all-configured-rcon-targets"
-    run_id = start_rcon_historical_capture_run(mode="capture", target_scope=target_scope)
+    run_id = start_rcon_historical_capture_run(
+        mode=resolved_capture_mode,
+        target_scope=target_scope,
+    )
     stats = RconHistoricalCaptureStats()
     items: list[dict[str, object]] = []
     errors: list[dict[str, object]] = []
@@ -132,13 +166,16 @@ def run_rcon_historical_capture_unlocked(
                 result=admin_log_result,
             )
 
-        materialization_result = materialize_rcon_admin_log()
-        stats.materialized_matches_inserted = int(
-            materialization_result.get("matches_materialized") or 0
+        materialization_result = _run_materialization_if_enabled(
+            skip_materialization=resolved_skip_materialization
         )
-        stats.materialized_matches_updated = int(
-            materialization_result.get("matches_updated") or 0
-        )
+        if not resolved_skip_materialization:
+            stats.materialized_matches_inserted = int(
+                materialization_result.get("matches_materialized") or 0
+            )
+            stats.materialized_matches_updated = int(
+                materialization_result.get("matches_updated") or 0
+            )
 
         status = "success" if not errors else ("partial" if items else "failed")
         finalize_rcon_historical_capture_run(
@@ -167,7 +204,13 @@ def run_rcon_historical_capture_unlocked(
         "run_status": status,
         "captured_at": captured_at,
         "target_scope": target_scope,
+        "capture_mode": resolved_capture_mode,
+        "materialization_skipped": resolved_skip_materialization,
         "admin_log_lookback_minutes": admin_log_lookback_minutes,
+        "admin_log_events_seen": stats.admin_log_events_seen,
+        "admin_log_events_inserted": stats.admin_log_events_inserted,
+        "duplicate_events": stats.admin_log_duplicate_events,
+        "samples_inserted": stats.samples_inserted,
         "targets": items,
         "errors": errors,
         "admin_log_errors": admin_log_errors,
@@ -198,9 +241,15 @@ def run_periodic_rcon_historical_capture(
     max_retries: int,
     retry_delay_seconds: int,
     target_key: str | None = None,
+    capture_mode: str | None = None,
+    skip_materialization: bool | None = None,
     max_runs: int | None = None,
 ) -> None:
     """Run prospective RCON capture in a local loop."""
+    resolved_capture_mode, resolved_skip_materialization = _resolve_capture_options(
+        capture_mode=capture_mode,
+        skip_materialization=skip_materialization,
+    )
     completed_runs = 0
     startup_targets = _describe_loop_targets(target_key)
     _emit_worker_event(
@@ -208,6 +257,8 @@ def run_periodic_rcon_historical_capture(
         interval_seconds=interval_seconds,
         max_retries=max_retries,
         retry_delay_seconds=retry_delay_seconds,
+        capture_mode=resolved_capture_mode,
+        materialization_skipped=resolved_skip_materialization,
         target_scope=target_key or "all-configured-rcon-targets",
         target_count=len(startup_targets),
         targets=startup_targets,
@@ -225,6 +276,8 @@ def run_periodic_rcon_historical_capture(
                 max_retries=max_retries,
                 retry_delay_seconds=retry_delay_seconds,
                 target_key=target_key,
+                capture_mode=resolved_capture_mode,
+                skip_materialization=resolved_skip_materialization,
             )
             _emit_worker_event(
                 "rcon-historical-capture-cycle-finished",
@@ -255,6 +308,8 @@ def _run_capture_with_retries(
     max_retries: int,
     retry_delay_seconds: int,
     target_key: str | None,
+    capture_mode: str,
+    skip_materialization: bool,
 ) -> dict[str, object]:
     attempt = 0
     while True:
@@ -263,7 +318,11 @@ def _run_capture_with_retries(
             return {
                 "status": "ok",
                 "attempts_used": attempt,
-                "capture_result": run_rcon_historical_capture(target_key=target_key),
+                "capture_result": run_rcon_historical_capture(
+                    target_key=target_key,
+                    capture_mode=capture_mode,
+                    skip_materialization=skip_materialization,
+                ),
             }
         except Exception as exc:
             if attempt > max_retries:
@@ -480,6 +539,34 @@ def _format_error_message(error: Exception) -> str:
     return f"[{error_type}] {error}"
 
 
+def _resolve_capture_options(
+    *,
+    capture_mode: str | None,
+    skip_materialization: bool | None,
+) -> tuple[str, bool]:
+    resolved_capture_mode = capture_mode or get_rcon_capture_mode()
+    if resolved_capture_mode not in {CAPTURE_MODE_HISTORICAL, CAPTURE_MODE_CURRENT_LIVE}:
+        raise ValueError("capture_mode must be 'historical' or 'current-live'.")
+
+    if skip_materialization is None:
+        resolved_skip_materialization = get_rcon_skip_historical_materialization()
+    else:
+        resolved_skip_materialization = skip_materialization
+
+    if resolved_capture_mode == CAPTURE_MODE_CURRENT_LIVE:
+        resolved_skip_materialization = True
+    return resolved_capture_mode, resolved_skip_materialization
+
+
+def _run_materialization_if_enabled(*, skip_materialization: bool) -> dict[str, object]:
+    if skip_materialization:
+        return {
+            "status": "skipped",
+            "reason": "skip-materialization-enabled",
+        }
+    return materialize_rcon_admin_log()
+
+
 def build_arg_parser() -> argparse.ArgumentParser:
     """Create the CLI parser for manual or periodic prospective RCON capture."""
     parser = argparse.ArgumentParser(
@@ -518,6 +605,18 @@ def build_arg_parser() -> argparse.ArgumentParser:
         type=int,
         help="optional safety cap for loop mode",
     )
+    parser.add_argument(
+        "--capture-mode",
+        choices=(CAPTURE_MODE_HISTORICAL, CAPTURE_MODE_CURRENT_LIVE),
+        default=get_rcon_capture_mode(),
+        help="historical keeps materialization; current-live only captures lightweight live data",
+    )
+    parser.add_argument(
+        "--skip-materialization",
+        action="store_true",
+        default=None,
+        help="capture AdminLog and live snapshots without running heavy historical materialization",
+    )
     return parser
 
 
@@ -527,9 +626,21 @@ def main(argv: Iterable[str] | None = None) -> int:
     args = parser.parse_args(list(argv) if argv is not None else None)
 
     if args.mode == "capture":
-        result = run_rcon_historical_capture(target_key=args.target_key)
+        result = run_rcon_historical_capture(
+            target_key=args.target_key,
+            capture_mode=args.capture_mode,
+            skip_materialization=args.skip_materialization,
+        )
         print(json.dumps(result, indent=2, default=_json_default))
         return 0
+
+    default_interval = (
+        get_rcon_current_match_capture_interval_seconds()
+        if args.capture_mode == CAPTURE_MODE_CURRENT_LIVE
+        and "--interval" not in (argv or [])
+        else args.interval
+    )
+    args.interval = default_interval
 
     if args.interval <= 0:
         raise ValueError("--interval must be a positive integer.")
@@ -545,6 +656,8 @@ def main(argv: Iterable[str] | None = None) -> int:
         max_retries=args.retries,
         retry_delay_seconds=args.retry_delay,
         target_key=args.target_key,
+        capture_mode=args.capture_mode,
+        skip_materialization=args.skip_materialization,
         max_runs=args.max_runs,
     )
     return 0

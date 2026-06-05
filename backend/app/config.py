@@ -35,6 +35,8 @@ DEFAULT_PLAYER_EVENT_REFRESH_RETRY_DELAY_SECONDS = 30
 DEFAULT_RCON_HISTORICAL_CAPTURE_INTERVAL_SECONDS = 600
 DEFAULT_RCON_HISTORICAL_CAPTURE_MAX_RETRIES = 2
 DEFAULT_RCON_HISTORICAL_CAPTURE_RETRY_DELAY_SECONDS = 15
+DEFAULT_RCON_CURRENT_MATCH_CAPTURE_INTERVAL_SECONDS = 5
+DEFAULT_RCON_CURRENT_MATCH_WRITER_LOCK_TIMEOUT_SECONDS = 4.0
 DEFAULT_RCON_BACKFILL_CHUNK_HOURS = 6
 DEFAULT_RCON_BACKFILL_SLEEP_SECONDS = 1.0
 DEFAULT_RCON_BACKFILL_MAX_DAYS_BACK = 45
@@ -279,6 +281,20 @@ def _read_float_env(name: str, default_value: str, *, minimum: float) -> float:
     return value
 
 
+def _read_bool_env(name: str, *, default: bool) -> bool:
+    """Read one boolean env var using a small set of explicit truthy/falsey values."""
+    configured_value = os.getenv(name)
+    if configured_value is None:
+        return default
+
+    normalized = configured_value.strip().lower()
+    if normalized in {"1", "true", "yes", "on"}:
+        return True
+    if normalized in {"0", "false", "no", "off"}:
+        return False
+    raise ValueError(f"{name} must be a boolean value.")
+
+
 def get_historical_refresh_overlap_hours() -> int:
     """Return the overlap window used by incremental historical refreshes."""
     configured_value = os.getenv(
@@ -490,8 +506,47 @@ def get_rcon_historical_capture_retry_delay_seconds() -> int:
     if retry_delay_seconds < 0:
         raise ValueError(
             "HLL_RCON_HISTORICAL_CAPTURE_RETRY_DELAY_SECONDS must be zero or positive."
-        )
+    )
     return retry_delay_seconds
+
+
+def get_rcon_capture_mode() -> str:
+    """Return whether the worker runs the normal historical pipeline or live capture only."""
+    configured_mode = os.getenv("HLL_RCON_CAPTURE_MODE")
+    if configured_mode is not None:
+        normalized_mode = configured_mode.strip().lower()
+        if normalized_mode in {"historical", "current-live"}:
+            return normalized_mode
+        raise ValueError("HLL_RCON_CAPTURE_MODE must be 'historical' or 'current-live'.")
+
+    if _read_bool_env("HLL_RCON_CURRENT_MATCH_MODE", default=False):
+        return "current-live"
+    if _read_bool_env("HLL_RCON_SKIP_HISTORICAL_MATERIALIZATION", default=False):
+        return "current-live"
+    return "historical"
+
+
+def get_rcon_skip_historical_materialization() -> bool:
+    """Return whether the worker must skip heavy historical AdminLog materialization."""
+    return get_rcon_capture_mode() == "current-live"
+
+
+def get_rcon_current_match_capture_interval_seconds() -> int:
+    """Return the preferred live current-match capture interval."""
+    return _read_int_env(
+        "HLL_RCON_CURRENT_MATCH_CAPTURE_INTERVAL_SECONDS",
+        str(DEFAULT_RCON_CURRENT_MATCH_CAPTURE_INTERVAL_SECONDS),
+        minimum=1,
+    )
+
+
+def get_rcon_current_match_writer_lock_timeout_seconds() -> float:
+    """Return the lock wait budget for the lightweight current-match worker."""
+    return _read_float_env(
+        "HLL_RCON_CURRENT_MATCH_WRITER_LOCK_TIMEOUT_SECONDS",
+        str(DEFAULT_RCON_CURRENT_MATCH_WRITER_LOCK_TIMEOUT_SECONDS),
+        minimum=0,
+    )
 
 
 def get_rcon_backfill_chunk_hours() -> int:
