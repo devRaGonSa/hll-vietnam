@@ -1,25 +1,20 @@
 services:
   postgres:
     image: postgres:16-alpine
-    command:
-      - postgres
-      - -p
-      - ${POSTGRES_PORT:-5432}
     environment:
       POSTGRES_DB: ${POSTGRES_DB:-hll_vietnam}
       POSTGRES_USER: ${POSTGRES_USER:-hll_vietnam}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-change-me}
-      POSTGRES_PORT: ${POSTGRES_PORT:-5432}
       TZ: Europe/Madrid
     ports:
-      - "${POSTGRES_PORT:-5432}:${POSTGRES_PORT:-5432}"
+      - "${POSTGRES_PORT:-5432}:5432"
     volumes:
       - jta-postgres-data:/var/lib/postgresql/data
       - ./backups:/backups
     healthcheck:
       test:
         - CMD-SHELL
-        - pg_isready -U "$$POSTGRES_USER" -d "$$POSTGRES_DB" -p "$$POSTGRES_PORT"
+        - pg_isready -U "$$POSTGRES_USER" -d "$$POSTGRES_DB" -p 5432
       interval: 10s
       timeout: 5s
       retries: 12
