@@ -1,7 +1,7 @@
 ---
 id: TASK-161
 title: Define Stats section functional contract
-status: pending
+status: done
 type: documentation
 team: Analista
 supporting_teams:
@@ -176,17 +176,21 @@ Before completing the task ensure:
 
 ## Outcome
 
-Document:
+Completed as documentation-only.
 
-- validation performed
-- files changed
-- notable decisions
-- recommended next tasks, likely:
-  - add player stats search endpoint
-  - add player personal stats endpoint
-  - add annual leaderboard timeframe support
-  - design annual ranking snapshot schema
-  - add Stats frontend section
+- Created `docs/stats-section-functional-plan.md` as the focused contract for the future `Stats` section.
+- Kept the contract aligned with the current RCON-first materialized historical read model and the weekly/monthly window policy already present in `backend/app/rcon_historical_leaderboards.py`.
+- Defined the V1 user flow, player search contract, personal stats payload, ranking position rules and annual top 20 snapshot persistence direction.
+- Explicitly kept backend endpoints, database migrations and frontend implementation out of scope.
+
+## Validation Result
+
+- Verified `docs/stats-section-functional-plan.md` exists and is specific to HLL Vietnam.
+- Verified the document references the RCON-first materialized data direction.
+- Verified the document defines V1 scope, API contracts, payload expectations and annual snapshot direction.
+- Verified no backend implementation files were modified for this task.
+- Verified no frontend implementation files were modified for this task.
+- No automated or integration tests applied because this task is documentation-only.
 
 ## Change Budget
 
