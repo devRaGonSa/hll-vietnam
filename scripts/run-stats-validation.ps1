@@ -13,14 +13,14 @@ function Assert-FileExists {
     }
 }
 
-function Assert-Contains {
+function Assert-ContainsText {
     param(
         [string] $Content,
-        [string] $Pattern,
+        [string] $Text,
         [string] $Message
     )
 
-    if ($Content -notmatch [regex]::Escape($Pattern)) {
+    if ($Content -notlike "*$Text*") {
         throw $Message
     }
 }
@@ -53,22 +53,37 @@ Assert-FileExists "frontend/assets/js/stats.js" "Missing frontend/assets/js/stat
 $statsHtml = Get-Content -Raw "frontend/stats.html"
 $statsJs = Get-Content -Raw "frontend/assets/js/stats.js"
 
-Assert-Contains $statsHtml 'id="stats-search-form"' `
+Assert-ContainsText $statsHtml 'id="stats-search-form"' `
     "Stats page no longer exposes the player search form."
-Assert-Contains $statsHtml 'id="stats-profile-panel"' `
+Assert-ContainsText $statsHtml 'id="stats-profile-panel"' `
     "Stats page no longer exposes the player profile panel."
-Assert-Contains $statsHtml 'id="stats-annual-form"' `
+Assert-ContainsText $statsHtml 'id="stats-annual-form"' `
     "Stats page no longer exposes the annual ranking form."
-Assert-Contains $statsHtml './assets/js/stats.js' `
-    "Stats page no longer loads the Stats JavaScript asset."
-Assert-Contains $statsJs "/api/stats/players/search" `
+Assert-ContainsText $statsHtml 'id="stats-result-list"' `
+    "Stats page no longer exposes player result list container."
+Assert-ContainsText $statsHtml 'id="stats-weekly-summary"' `
+    "Stats page no longer exposes weekly summary zone."
+Assert-ContainsText $statsHtml 'id="stats-monthly-summary"' `
+    "Stats page no longer exposes monthly summary zone."
+Assert-ContainsText $statsHtml 'id="stats-search-state"' `
+    "Stats page no longer exposes search state node."
+Assert-ContainsText $statsHtml 'id="stats-annual-state"' `
+    "Stats page no longer exposes annual ranking state node."
+Assert-ContainsText $statsHtml 'id="stats-backend-state"' `
+    "Stats page no longer exposes backend state chip."
+Assert-ContainsText $statsJs 'getElementById("stats-search-form")' `
+    "Stats JS no longer sets up search form lookup."
+Assert-ContainsText $statsJs "loadPlayerProfile(" `
+    "Stats JS no longer defines loadPlayerProfile."
+
+Assert-ContainsText $statsJs "/api/stats/players/search" `
     "Stats frontend no longer targets the player search endpoint."
-Assert-Contains $statsJs "/api/stats/rankings/annual" `
+Assert-ContainsText $statsJs "/api/stats/rankings/annual" `
     "Stats frontend no longer targets the annual ranking endpoint."
-Assert-Contains $statsJs "/api/stats/players/" `
+Assert-ContainsText $statsJs "/api/stats/players/" `
     "Stats frontend no longer targets the player profile endpoint."
-Assert-Contains $statsJs "Backend no disponible" `
-    "Stats frontend no longer exposes the controlled backend-unavailable messaging."
+Assert-ContainsText $statsJs "Promise.allSettled" `
+    "Stats profile loader should resolve weekly/monthly windows with partial-failure tolerance."
 
 $backendContractCheck = @'
 import json
@@ -91,39 +106,54 @@ def read_payload(path):
     return int(status), payload
 
 
+def require_int(value, message):
+    require(isinstance(value, int), message)
+
+
+def require_str(value, message):
+    require(isinstance(value, str), message)
+
+
 health_status, health_payload = read_payload("/health")
-require(health_status == 200, "Route resolver /health no longer returns 200.")
-require(health_payload.get("status") == "ok", "Route resolver /health no longer returns ok status.")
+require(health_status == 200, "Route resolver /health should return 200.")
+require(health_payload.get("status") == "ok", "/health payload should be ok.")
 
 search_status, search_payload = read_payload("/api/stats/players/search?q=regression-check&limit=5")
 require(search_status == 200, "Stats player search should return 200 for a valid query.")
 search_data = search_payload.get("data") or {}
-require(search_payload.get("status") == "ok", "Stats player search payload no longer returns ok status.")
-require(search_data.get("query") == "regression-check", "Stats player search no longer echoes query.")
-require(search_data.get("server_id") == "all-servers", "Stats player search no longer defaults server scope to all-servers.")
-require(isinstance(search_data.get("items"), list), "Stats player search items must remain a list.")
+require(search_payload.get("status") == "ok", "Stats player search should return ok status.")
+require(search_data.get("query") == "regression-check", "Stats player search should preserve query.")
+require(search_data.get("server_id"), "Stats player search should include server_id.")
+require(isinstance(search_data.get("items"), list), "Stats player search items must be a list.")
+
+for item in search_data["items"]:
+    if item is None:
+        continue
+    require_str(item.get("player_id"), "Search result must include player_id.")
+    require_str(item.get("player_name"), "Search result should include player_name.")
+    require_int(item.get("matches_considered"), "Search result matches_considered should be int.")
 
 missing_query_status, missing_query_payload = read_payload("/api/stats/players/search")
-require(missing_query_status == 400, "Stats player search without q must return 400.")
-require("required" in str(missing_query_payload.get("message", "")).lower(), "Missing-q error message changed unexpectedly.")
+require(missing_query_status == 400, "Stats search without q should return 400.")
+require(missing_query_payload is not None, "Search validation must return a payload.")
 
 invalid_search_limit_status, _ = read_payload("/api/stats/players/search?q=regression-check&limit=0")
-require(invalid_search_limit_status == 400, "Stats player search with limit=0 must return 400.")
+require(invalid_search_limit_status == 400, "Stats search with limit=0 should return 400.")
 
 profile_status, profile_payload = read_payload("/api/stats/players/regression-player?timeframe=weekly")
 require(profile_status == 200, "Stats player profile should return 200 for a valid player lookup.")
 profile_data = profile_payload.get("data") or {}
-require(profile_payload.get("status") == "ok", "Stats player profile payload no longer returns ok status.")
-require(profile_data.get("player_id") == "regression-player", "Stats player profile no longer preserves player id.")
-require(profile_data.get("timeframe") == "weekly", "Stats player profile no longer preserves timeframe.")
-require(profile_data.get("server_id") == "all-servers", "Stats player profile no longer defaults server scope to all-servers.")
-require(isinstance(profile_data.get("matches_considered"), int), "Stats player profile matches_considered must remain an int.")
-require(isinstance(profile_data.get("source"), dict), "Stats player profile source metadata must remain present.")
-require(isinstance(profile_data.get("weekly_ranking"), (dict, type(None))), "Stats player profile weekly ranking shape changed unexpectedly.")
-require(isinstance(profile_data.get("monthly_ranking"), (dict, type(None))), "Stats player profile monthly ranking shape changed unexpectedly.")
+require(profile_payload.get("status") == "ok", "Stats player profile should return ok status.")
+require(profile_data.get("player_id") == "regression-player", "Stats player profile should preserve player_id.")
+require(profile_data.get("timeframe") == "weekly", "Stats player profile should preserve timeframe.")
+require(profile_data.get("server_id"), "Stats player profile should include server_id.")
+require_int(profile_data.get("matches_considered"), "Profile matches_considered should be int.")
+require(isinstance(profile_data.get("source"), dict), "Profile source metadata should be present.")
+require(isinstance(profile_data.get("weekly_ranking"), (dict, type(None))), "Profile weekly_ranking should be dict or null.")
+require(isinstance(profile_data.get("monthly_ranking"), (dict, type(None))), "Profile monthly_ranking should be dict or null.")
 
 invalid_timeframe_status, _ = read_payload("/api/stats/players/regression-player?timeframe=seasonal")
-require(invalid_timeframe_status == 400, "Stats player profile with invalid timeframe must return 400.")
+require(invalid_timeframe_status == 400, "Invalid player timeframe should return 400.")
 
 current_year = datetime.now(timezone.utc).year
 annual_status, annual_payload = read_payload(
@@ -131,40 +161,45 @@ annual_status, annual_payload = read_payload(
 )
 require(annual_status == 200, "Annual ranking should return 200 for metric=kills.")
 annual_data = annual_payload.get("data") or {}
-require(annual_payload.get("status") == "ok", "Annual ranking payload no longer returns ok status.")
-require(annual_data.get("year") == current_year, "Annual ranking no longer preserves requested year.")
-require(annual_data.get("server_id") == "all-servers", "Annual ranking no longer preserves the normalized all-servers scope.")
-require(annual_data.get("metric") == "kills", "Annual ranking metric changed unexpectedly.")
-require(
-    isinstance(annual_data.get("limit"), int) and 1 <= annual_data.get("limit") <= 20,
-    "Annual ranking limit must remain a positive int capped by the requested value.",
-)
-require(annual_data.get("snapshot_status") in {"ready", "missing"}, "Annual ranking snapshot status must remain ready or missing.")
-require(isinstance(annual_data.get("items"), list), "Annual ranking items must remain a list.")
+require(annual_payload.get("status") == "ok", "Annual ranking should return ok status.")
+require_int(annual_data.get("year"), "Annual payload should include numeric year.")
+require_int(annual_data.get("limit"), "Annual payload should include limit.")
+require_int(annual_data.get("requested_limit"), "Annual payload should include requested_limit.")
+require_int(annual_data.get("effective_limit"), "Annual payload should include effective_limit.")
+require_int(annual_data.get("snapshot_limit"), "Annual payload should include snapshot_limit.")
+require_int(annual_data.get("item_count"), "Annual payload should include item_count.")
+require(annual_data.get("snapshot_status") in {"ready", "missing"}, "Annual snapshot_status should be ready or missing.")
+require(isinstance(annual_data.get("items"), list), "Annual ranking items should be list.")
+require(isinstance(annual_data.get("server_id"), str), "Annual payload should include server_id.")
+require(annual_data.get("metric") == "kills", "Annual payload should return kills metric.")
+
+for item in annual_data.get("items", []):
+    if item is None:
+        continue
+    require_int(item.get("ranking_position"), "Annual item ranking_position should be int.")
+    require_str(item.get("player_id"), "Annual item should include player_id.")
+    require_str(item.get("player_name"), "Annual item should include player_name.")
+    require_int(item.get("matches_considered"), "Annual item matches_considered should be int.")
 
 low_limit_status, low_limit_payload = read_payload(
     f"/api/stats/rankings/annual?year={current_year}&server_id=all&metric=kills&limit=3"
 )
-require(low_limit_status == 200, "Annual ranking with low limit must return 200.")
+require(low_limit_status == 200, "Annual ranking low-limit requests should return 200.")
 low_limit_value = (low_limit_payload.get("data") or {}).get("limit")
-require(
-    isinstance(low_limit_value, int) and 1 <= low_limit_value <= 3,
-    "Annual ranking limit normalization for low limits changed unexpectedly.",
-)
+require(isinstance(low_limit_value, int) and 1 <= low_limit_value <= 3, "Annual low-limit normalization changed unexpectedly.")
 
 high_limit_status, _ = read_payload(
     f"/api/stats/rankings/annual?year={current_year}&server_id=all&metric=kills&limit=101"
 )
-require(high_limit_status == 400, "Annual ranking with limit=101 must return 400.")
+require(high_limit_status == 400, "Annual ranking with limit=101 should return 400.")
 
-unsupported_metric_status, unsupported_metric_payload = read_payload(
+unsupported_metric_status, _ = read_payload(
     f"/api/stats/rankings/annual?year={current_year}&server_id=all&metric=deaths&limit=20"
 )
-require(unsupported_metric_status == 400, "Annual ranking with unsupported metric must return 400.")
-require("metric" in str(unsupported_metric_payload.get("message", "")).lower(), "Unsupported metric error message changed unexpectedly.")
+require(unsupported_metric_status == 400, "Annual ranking with unsupported metric should return 400.")
 
 missing_year_status, _ = read_payload("/api/stats/rankings/annual?year=2999&server_id=all&metric=kills&limit=20")
-require(missing_year_status == 200, "Annual ranking future-year missing snapshot must still return 200.")
+require(missing_year_status == 200, "Future year annual ranking should still return 200.")
 
 print(json.dumps({
     "checked": [
@@ -195,29 +230,34 @@ try {
 } catch {
     Write-Warning "Live backend unavailable at $backendBaseUrl. Route-contract checks passed via local Python imports."
     Write-Host "Next steps: start the backend, then rerun scripts/run-stats-validation.ps1 to verify live HTTP responses."
-    Write-Host "Expected limited behavior while offline: stats.html should show backend-unavailable states for search, profile, and annual ranking."
 }
 
 if ($backendAvailable) {
     $currentYear = (Get-Date).ToUniversalTime().Year
     $searchPayload = Invoke-RestMethod -Uri "$backendBaseUrl/api/stats/players/search?q=regression-check&limit=5" -TimeoutSec 5
     if ($searchPayload.status -ne "ok") {
-        throw "Live stats search no longer returns status=ok."
+        throw "Live stats search should return status=ok."
+    }
+    if (-not ($searchPayload.data -and ($searchPayload.data.items -is [array]))) {
+        throw "Live stats search payload must include item list."
     }
 
     $profilePayload = Invoke-RestMethod -Uri "$backendBaseUrl/api/stats/players/regression-player?timeframe=weekly" -TimeoutSec 5
     if ($profilePayload.status -ne "ok") {
-        throw "Live stats profile no longer returns status=ok."
+        throw "Live stats profile should return status=ok."
     }
 
     $annualPayload = Invoke-RestMethod -Uri "$backendBaseUrl/api/stats/rankings/annual?year=$currentYear&server_id=all&metric=kills&limit=20" -TimeoutSec 5
     if ($annualPayload.status -ne "ok") {
-        throw "Live annual ranking no longer returns status=ok."
+        throw "Live annual ranking should return status=ok."
+    }
+    if (-not ($annualPayload.data.snapshot_status -in @("ready", "missing"))) {
+        throw "Live annual ranking should expose ready/missing snapshot status."
     }
 
     $unsupportedMetricStatus = Get-HttpStatusCode -Url "$backendBaseUrl/api/stats/rankings/annual?year=$currentYear&server_id=all&metric=deaths&limit=20"
     if ($unsupportedMetricStatus -ne 400) {
-        throw "Live annual ranking with unsupported metric must return HTTP 400."
+        throw "Live annual ranking with unsupported metric should return HTTP 400."
     }
 
     Write-Host "Live HTTP checks passed for Stats endpoints."

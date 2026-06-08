@@ -87,7 +87,7 @@ Search result notes:
 ### 2. Personal player stats
 
 ```http
-GET /api/stats/players/{player_id}?server_id=<server-or-all>&timeframe=weekly|monthly|all
+GET /api/stats/players/{player_id}?server_id=<server-or-all>&timeframe=weekly|monthly
 ```
 
 Purpose:
@@ -143,7 +143,7 @@ Field rules:
 
 - `timeframe=weekly` returns the player totals within the same weekly window policy used by leaderboard reads
 - `timeframe=monthly` returns the player totals within the same monthly window policy used by leaderboard reads
-- `timeframe=all` returns all-time totals for the selected scope, but still includes weekly and monthly ranking blocks as separate comparative context
+- `timeframe=all` is not implemented in the current contract and remains out of scope until a dedicated implementation is added.
 - `kd_ratio`, `kills_per_match` and `deaths_per_match` should be rounded for display-safe payloads
 
 ### 3. Annual ranking snapshot

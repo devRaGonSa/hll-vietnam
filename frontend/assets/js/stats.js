@@ -60,12 +60,18 @@ document.addEventListener("DOMContentLoaded", () => {
       "Sin datos semanales. El ranking semanal se actualiza al cargar un jugador.",
     monthlyPlaceholder:
       "Sin datos mensuales. El ranking mensual se actualiza al cargar un jugador.",
+    weeklyWindowUnavailable:
+      "No se pudo cargar el bloque semanal; se muestran los datos mensuales.",
+    monthlyWindowUnavailable:
+      "No se pudo cargar el bloque mensual; se muestran los datos semanales.",
+    weeklyWindowUnavailableSummary:
+      "Resumen semanal no disponible temporalmente.",
+    monthlyWindowUnavailableSummary:
+      "Resumen mensual no disponible temporalmente.",
     profileReadyTitle: "Perfil personal",
     profileEmptyTitle: "Selecciona un jugador para ver sus estadisticas.",
-    weeklySummaryHelp:
-      "Resumen semanal: muestra la ventana activa del jugador.",
-    monthlySummaryHelp:
-      "Resumen mensual: muestra la ventana activa del jugador.",
+    partialProfileLoadWarning:
+      "Algunos bloques de ranking no se cargaron; se mantienen los disponibles.",
   };
 
   let isBackendOnline = false;
@@ -427,17 +433,32 @@ document.addEventListener("DOMContentLoaded", () => {
     }
 
     try {
-      const [weeklyData, monthlyData] = await Promise.all([
+      const [weeklyProfileResult, monthlyProfileResult] = await Promise.allSettled([
         fetchPlayerProfile(playerId, "weekly"),
         fetchPlayerProfile(playerId, "monthly"),
       ]);
+
+      const weeklyData =
+        weeklyProfileResult.status === "fulfilled" ? weeklyProfileResult.value : null;
+      const monthlyData =
+        monthlyProfileResult.status === "fulfilled" ? monthlyProfileResult.value : null;
+      const weeklyFailed = weeklyProfileResult.status === "rejected";
+      const monthlyFailed = monthlyProfileResult.status === "rejected";
+
+      if (!weeklyData && !monthlyData) {
+        throw new Error("Both weekly and monthly profile windows failed.");
+      }
+
       profilePanel.hidden = false;
       profileTitle.textContent = messages.profileReadyTitle;
-      const playerName = String(weeklyData.player_name || monthlyData.player_name || "Sin nombre");
-      const playerIdText = String(weeklyData.player_id || monthlyData.player_id || playerId);
-      const hasWeeklyStats = Number(weeklyData.matches_considered || 0) > 0;
-      const hasMonthlyStats = Number(monthlyData.matches_considered || 0) > 0;
+      const playerName = String(
+        (weeklyData?.player_name || monthlyData?.player_name || "Sin nombre"),
+      );
+      const playerIdText = String(weeklyData?.player_id || monthlyData?.player_id || playerId);
+      const hasWeeklyStats = Number(weeklyData?.matches_considered || 0) > 0;
+      const hasMonthlyStats = Number(monthlyData?.matches_considered || 0) > 0;
       const hasStats = hasWeeklyStats || hasMonthlyStats;
+      const partialLoadWarning = weeklyFailed || monthlyFailed;
 
       profileStateNode.textContent = hasStats
         ? `${playerName} (${playerIdText})`
@@ -446,42 +467,46 @@ document.addEventListener("DOMContentLoaded", () => {
         ? "stats-state stats-state--neutral"
         : "stats-state stats-state--warning";
 
-      summaryGrid.innerHTML = `
-        <article class="stats-summary-card">
-          <p class="stats-summary-title">Identidad</p>
-          <p><strong>Jugador:</strong> ${escapeHtml(playerName)}</p>
-          <p><strong>ID:</strong> ${escapeHtml(playerIdText)}</p>
-          <p><strong>Partidas semanales:</strong> ${safeInt(weeklyData.matches_considered, 0)}</p>
-          <p><strong>Partidas mensuales:</strong> ${safeInt(monthlyData.matches_considered, 0)}</p>
-        </article>
-        <article class="stats-summary-card">
-          <p class="stats-summary-title">Ventana semanal</p>
-          <p><strong>Kills:</strong> ${safeInt(weeklyData.kills, 0)}</p>
-          <p><strong>Deaths:</strong> ${safeInt(weeklyData.deaths, 0)}</p>
-          <p><strong>Teamkills:</strong> ${safeInt(weeklyData.teamkills, 0)}</p>
-        </article>
-        <article class="stats-summary-card">
-          <p class="stats-summary-title">Ventana mensual</p>
-          <p><strong>Kills:</strong> ${safeInt(monthlyData.kills, 0)}</p>
-          <p><strong>Deaths:</strong> ${safeInt(monthlyData.deaths, 0)}</p>
-          <p><strong>Teamkills:</strong> ${safeInt(monthlyData.teamkills, 0)}</p>
-        </article>
-      `;
+      summaryGrid.innerHTML = renderProfileSummaryCards({
+        playerName,
+        playerIdText,
+        weeklyData,
+        monthlyData,
+        weeklyFailed,
+        monthlyFailed,
+      });
 
-      if (comparisonGrid) {
-        comparisonGrid.innerHTML = renderComparisonCards(weeklyData, monthlyData);
+      if (partialLoadWarning) {
+        profileStateNode.textContent += ` ${messages.partialProfileLoadWarning}`;
       }
 
-      weeklySummaryNode.innerHTML = formatRankingSummary(
-        weeklyData.weekly_ranking,
-        "Semanal",
-        weeklyData.matches_considered,
-      );
-      monthlySummaryNode.innerHTML = formatRankingSummary(
-        monthlyData.monthly_ranking,
-        "Mensual",
-        monthlyData.matches_considered,
-      );
+      if (comparisonGrid) {
+        comparisonGrid.innerHTML = renderComparisonCards({
+          weeklyData,
+          weeklyFailed,
+          monthlyData,
+          monthlyFailed,
+        });
+      }
+
+      if (weeklySummaryNode) {
+        weeklySummaryNode.innerHTML = weeklyFailed
+          ? `<p>${escapeHtml(messages.weeklyWindowUnavailableSummary)}</p>`
+          : formatRankingSummary(
+              weeklyData?.weekly_ranking,
+              "Semanal",
+              weeklyData?.matches_considered,
+            );
+      }
+      if (monthlySummaryNode) {
+        monthlySummaryNode.innerHTML = monthlyFailed
+          ? `<p>${escapeHtml(messages.monthlyWindowUnavailableSummary)}</p>`
+          : formatRankingSummary(
+              monthlyData?.monthly_ranking,
+              "Mensual",
+              monthlyData?.matches_considered,
+            );
+      }
 
       setBackendState(messages.backendOnline, true);
       isBackendOnline = true;
@@ -505,6 +530,59 @@ document.addEventListener("DOMContentLoaded", () => {
         monthlySummaryNode.textContent = messages.monthlyPlaceholder;
       }
     }
+  }
+
+  function renderProfileSummaryCards({
+    playerName,
+    playerIdText,
+    weeklyData,
+    monthlyData,
+    weeklyFailed,
+    monthlyFailed,
+  }) {
+    const weeklySummary = weeklyFailed
+      ? `
+          <article class="stats-summary-card">
+            <p class="stats-summary-title">Ventana semanal</p>
+            <p>${escapeHtml(messages.weeklyWindowUnavailable)}</p>
+          </article>
+        `
+      : `
+          <article class="stats-summary-card">
+            <p class="stats-summary-title">Ventana semanal</p>
+            <p><strong>Kills:</strong> ${safeInt(weeklyData?.kills, 0)}</p>
+            <p><strong>Deaths:</strong> ${safeInt(weeklyData?.deaths, 0)}</p>
+            <p><strong>Teamkills:</strong> ${safeInt(weeklyData?.teamkills, 0)}</p>
+          </article>
+        `;
+
+    const monthlySummary = monthlyFailed
+      ? `
+          <article class="stats-summary-card">
+            <p class="stats-summary-title">Ventana mensual</p>
+            <p>${escapeHtml(messages.monthlyWindowUnavailable)}</p>
+          </article>
+        `
+      : `
+          <article class="stats-summary-card">
+            <p class="stats-summary-title">Ventana mensual</p>
+            <p><strong>Kills:</strong> ${safeInt(monthlyData?.kills, 0)}</p>
+            <p><strong>Deaths:</strong> ${safeInt(monthlyData?.deaths, 0)}</p>
+            <p><strong>Teamkills:</strong> ${safeInt(monthlyData?.teamkills, 0)}</p>
+          </article>
+        `;
+
+    return `
+      <article class="stats-summary-card">
+        <p class="stats-summary-title">Identidad</p>
+        <p><strong>Jugador:</strong> ${escapeHtml(playerName)}</p>
+        <p><strong>ID:</strong> ${escapeHtml(playerIdText)}</p>
+        <p><strong>Partidas semanales:</strong> ${safeInt(weeklyData?.matches_considered, 0)}</p>
+        <p><strong>Partidas mensuales:</strong> ${safeInt(monthlyData?.matches_considered, 0)}</p>
+      </article>
+      ${weeklySummary}
+      ${monthlySummary}
+    `;
   }
 
   function clearProfilePanel(openPanel) {
@@ -544,16 +622,35 @@ document.addEventListener("DOMContentLoaded", () => {
     return payload.data || {};
   }
 
-  function renderComparisonCards(weeklyData, monthlyData) {
-    return [
-      renderWindowComparisonCard("Semanal", weeklyData, weeklyData.weekly_ranking),
-      renderWindowComparisonCard("Mensual", monthlyData, monthlyData.monthly_ranking),
-      renderDeltaComparisonCard(weeklyData, monthlyData),
-    ].join("");
+  function renderComparisonCards({
+    weeklyData,
+    weeklyFailed,
+    monthlyData,
+    monthlyFailed,
+  }) {
+    const cards = [
+      renderWindowComparisonCard(
+        "Semanal",
+        weeklyData,
+        weeklyData?.weekly_ranking,
+        weeklyFailed,
+      ),
+      renderWindowComparisonCard(
+        "Mensual",
+        monthlyData,
+        monthlyData?.monthly_ranking,
+        monthlyFailed,
+      ),
+    ];
+
+    if (!weeklyFailed && !monthlyFailed) {
+      cards.push(renderDeltaComparisonCard(weeklyData, monthlyData));
+    }
+    return cards.join("");
   }
 
-  function renderWindowComparisonCard(label, data, ranking) {
-    const rankingState = describeRankingState(ranking, data?.matches_considered, label);
+  function renderWindowComparisonCard(label, data, ranking, failed) {
+    const rankingState = describeRankingState(ranking, data?.matches_considered, label, failed);
     const matches = safeInt(data?.matches_considered, 0);
     const kills = safeInt(data?.kills, 0);
     const deaths = safeInt(data?.deaths, 0);
@@ -664,9 +761,17 @@ document.addEventListener("DOMContentLoaded", () => {
     `;
   }
 
-  function describeRankingState(ranking, matchesConsidered, timeframeLabel) {
+  function describeRankingState(ranking, matchesConsidered, timeframeLabel, requestFailed = false) {
     const matches = safeInt(matchesConsidered, 0);
     const label = String(timeframeLabel || "ranking").toLowerCase();
+    if (requestFailed) {
+      return {
+        tone: "warning",
+        title: "Bloque no disponible",
+        detail: `No fue posible cargar los datos de la ventana ${label} en este intento.`,
+      };
+    }
+
     if (!ranking) {
       return {
         tone: "error",
