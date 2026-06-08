@@ -16,18 +16,72 @@ document.addEventListener("DOMContentLoaded", () => {
   const annualYearInput = document.getElementById("stats-annual-year");
   const annualStateNode = document.getElementById("stats-annual-state");
   const annualContentNode = document.getElementById("stats-annual-content");
+
   const annualDefaultYear = new Date().getUTCFullYear();
   const annualMetric = "kills";
+  const annualMetricSupportedOnly = "kills";
   const annualLimit = 20;
   const annualServerId = "all";
 
+  const messages = {
+    backendChecking: "Comprobando disponibilidad del backend",
+    backendOnline: "Backend operativo",
+    backendUnavailable: "Backend no disponible. Reintenta en unos segundos.",
+    backendUnavailableForSearch:
+      "Backend no disponible. No se pueden buscar jugadores ni cargar su perfil.",
+    backendUnavailableForAnnual:
+      "Backend no disponible. No se puede consultar el ranking anual.",
+    searchNoInput: "Escribe un nombre o ID para buscar.",
+    searchLoading: "Buscando jugadores...",
+    searchEmpty: "Sin resultados. Prueba con otro texto o ID.",
+    searchError:
+      "Error al buscar jugadores. Verifica backend y reintenta.",
+    searchReadyPrefix: "Se encontraron ",
+    searchReadySuffix:
+      " jugador(es). Selecciona uno para ver sus estadisticas.",
+    searchShortQueryHelp:
+      "Usa al menos 1 caracter para iniciar la busqueda.",
+    profileLoading: "Cargando estadisticas personales...",
+    profileNoStats:
+      "Jugador sin estadisticas suficientes para mostrar datos personales.",
+    profileError: "No fue posible cargar las estadisticas del jugador.",
+    annualLoading: "Cargando ranking anual...",
+    annualMissing:
+      "No hay snapshot generado para el ano solicitado. Mostrara estado missing hasta que exista.",
+    annualReadyEmpty:
+      "Snapshot anual listo pero sin datos para el ano y servidor seleccionado.",
+    annualUnsupportedMetric:
+      "La metrica anual solicitada no esta soportada en V1.",
+    annualMetricInvalid:
+      "Parametro de ranking anual invalido. Usa metric=kills en V1.",
+    annualReadyPrefix: "Ranking anual listo para",
+    weeklyPlaceholder:
+      "Sin datos semanales. El ranking semanal se actualiza al cargar un jugador.",
+    monthlyPlaceholder:
+      "Sin datos mensuales. El ranking mensual se actualiza al cargar un jugador.",
+    profileReadyTitle: "Perfil personal",
+    profileEmptyTitle: "Selecciona un jugador para ver sus estadisticas.",
+    weeklySummaryHelp:
+      "Resumen semanal: muestra la ventana activa del jugador.",
+    monthlySummaryHelp:
+      "Resumen mensual: muestra la ventana activa del jugador.",
+  };
+
   let isBackendOnline = false;
 
-  setBackendState("Comprobando disponibilidad del backend", false);
+  if (searchHelpNode) {
+    searchHelpNode.textContent =
+      "Usa el buscador para encontrar un jugador. Al seleccionar uno veras resumen semanal y mensual. " +
+      "El ranking anual se consulta por separado con el ano indicado.";
+  }
+
+  setBackendState(messages.backendChecking, false);
   if (annualYearInput) {
     annualYearInput.value = String(annualDefaultYear);
   }
+  clearProfilePanel(false);
   refreshBackendHealth();
+
   if (annualForm && annualYearInput) {
     annualForm.addEventListener("submit", (event) => {
       event.preventDefault();
@@ -40,7 +94,7 @@ document.addEventListener("DOMContentLoaded", () => {
       event.preventDefault();
       const query = (searchInput.value || "").trim();
       if (!query) {
-        setSearchState("error", "Escribe un nombre o ID para buscar.");
+        setSearchState("error", messages.searchNoInput);
         return;
       }
       void searchPlayers(query);
@@ -58,12 +112,44 @@ document.addEventListener("DOMContentLoaded", () => {
   }
 
   function markAsBackendUnavailable() {
-    setBackendState("Backend no disponible", false);
+    setBackendState(messages.backendUnavailable, false);
     if (searchStateNode) {
-      searchStateNode.textContent = "Backend no disponible. Reintenta en unos segundos.";
+      searchStateNode.textContent = messages.backendUnavailableForSearch;
       searchStateNode.className = "stats-state stats-state--error";
     }
-    setAnnualState("error", "Backend no disponible. No se puede cargar ranking anual.");
+    setAnnualState("error", messages.backendUnavailableForAnnual);
+  }
+
+  function setSearchState(state, message) {
+    if (!searchStateNode) {
+      return;
+    }
+    searchStateNode.textContent = message;
+    searchStateNode.className = `stats-state stats-state--${state}`;
+  }
+
+  function setAnnualState(state, message) {
+    if (!annualStateNode) {
+      return;
+    }
+    annualStateNode.textContent = message;
+    annualStateNode.className = `stats-state stats-state--${state}`;
+  }
+
+  function setProfileState(state, message) {
+    if (!profileStateNode || !profilePanel) {
+      return;
+    }
+    profilePanel.hidden = false;
+    profileStateNode.textContent = message;
+    profileStateNode.className = `stats-state stats-state--${state}`;
+    summaryGrid.innerHTML = "";
+    if (weeklySummaryNode) {
+      weeklySummaryNode.textContent = "Cargando ...";
+    }
+    if (monthlySummaryNode) {
+      monthlySummaryNode.textContent = "Cargando ...";
+    }
   }
 
   async function refreshBackendHealth() {
@@ -73,13 +159,16 @@ document.addEventListener("DOMContentLoaded", () => {
         throw new Error(`Health request failed with ${response.status}`);
       }
       const payload = await response.json();
-      if (payload && payload.status === "ok") {
-        setBackendState("Backend operativo", true);
-        setAnnualState("loading", "Cargando ranking anual...");
-        void loadAnnualRanking();
-        return;
+      if (!payload || payload.status !== "ok") {
+        throw new Error("Unexpected health payload");
       }
-      throw new Error("Unexpected health payload");
+
+      setBackendState(messages.backendOnline, true);
+      setAnnualState(
+        "neutral",
+        "Backend disponible. Selecciona un ano para cargar el ranking anual (kills).",
+      );
+      void loadAnnualRanking();
     } catch (error) {
       markAsBackendUnavailable();
       console.warn("Backend health check failed", error);
@@ -90,14 +179,17 @@ document.addEventListener("DOMContentLoaded", () => {
     if (!resultListNode) {
       return;
     }
-
+    if (!query) {
+      setSearchState("error", messages.searchShortQueryHelp);
+      return;
+    }
     if (!isBackendOnline) {
       markAsBackendUnavailable();
       return;
     }
 
-    setSearchState("loading", "Buscando jugadores...");
-    clearProfilePanel();
+    setSearchState("loading", messages.searchLoading);
+    clearProfilePanel(true);
     resultListNode.innerHTML = "";
 
     try {
@@ -110,16 +202,19 @@ document.addEventListener("DOMContentLoaded", () => {
 
       const payload = await searchResponse.json();
       if (!payload || payload.status !== "ok") {
-        throw new Error(payload?.message || "Respuesta de búsqueda inválida");
+        throw new Error(payload?.message || "Respuesta de busqueda invalida");
       }
 
       const items = normalizeArray(payload.data?.items);
       if (!items.length) {
-        setSearchState("empty", "Sin resultados.");
+        setSearchState("empty", messages.searchEmpty);
         return;
       }
 
-      setSearchState("ready", `Se encontraron ${items.length} jugadores.`);
+      setSearchState(
+        "ready",
+        `${messages.searchReadyPrefix}${items.length}${messages.searchReadySuffix}`,
+      );
       resultListNode.innerHTML = items.map(renderResultItem).join("");
       resultListNode.querySelectorAll("[data-player-id]").forEach((button) => {
         button.addEventListener("click", () => {
@@ -132,7 +227,7 @@ document.addEventListener("DOMContentLoaded", () => {
     } catch (error) {
       console.warn("Player search failed", error);
       markAsBackendUnavailable();
-      setSearchState("error", "Error al buscar. Verifica backend y reintenta.");
+      setSearchState("error", messages.searchError);
     }
   }
 
@@ -151,7 +246,7 @@ document.addEventListener("DOMContentLoaded", () => {
       return;
     }
 
-    setAnnualState("loading", "Cargando ranking anual...");
+    setAnnualState("loading", messages.annualLoading);
     annualContentNode.innerHTML = "";
 
     try {
@@ -164,6 +259,21 @@ document.addEventListener("DOMContentLoaded", () => {
 
       const annualResponse = await fetch(annualUrl);
       if (!annualResponse.ok) {
+        const annualErrorPayload = await safeParseJson(annualResponse);
+        const annualErrorMessage = String(
+          annualErrorPayload?.message || annualErrorPayload?.detail || "",
+        ).toLowerCase();
+
+        if (isAnnualMetricUnsupportedError(annualResponse.status, annualErrorMessage)) {
+          setAnnualState("warning", messages.annualUnsupportedMetric);
+          return;
+        }
+
+        if (annualResponse.status === 400 && annualErrorMessage.includes("metric")) {
+          setAnnualState("warning", messages.annualMetricInvalid);
+          return;
+        }
+
         throw new Error(`Annual ranking request failed with ${annualResponse.status}`);
       }
 
@@ -171,6 +281,7 @@ document.addEventListener("DOMContentLoaded", () => {
       if (!payload || payload.status !== "ok") {
         throw new Error(payload?.message || "Respuesta de ranking anual invalida");
       }
+
       renderAnnualRanking(payload.data || {});
     } catch (error) {
       console.warn("Annual ranking failed", error);
@@ -178,6 +289,16 @@ document.addEventListener("DOMContentLoaded", () => {
       setAnnualState("error", "Error al cargar ranking anual.");
       annualContentNode.innerHTML = "";
     }
+  }
+
+  function isAnnualMetricUnsupportedError(statusCode, message) {
+    const normalized = String(message || "").toLowerCase();
+    return (
+      statusCode === 400 &&
+      normalized.includes("metric") &&
+      normalized.includes("unsupported") &&
+      annualMetric.toLowerCase() === annualMetricSupportedOnly
+    );
   }
 
   function resolveAnnualYear() {
@@ -199,24 +320,22 @@ document.addEventListener("DOMContentLoaded", () => {
     const serverId = String(data.server_id || annualServerId);
     const sourceMatches = safeInt(data.source_matches_count, 0);
     const generatedAt = formatDateTime(data.generated_at);
+    const year = safeInt(data.year, annualDefaultYear);
+    const metric = escapeHtml(String(data.metric || annualMetric));
 
     if (snapshotStatus !== "ready" || !items.length) {
       const isReadyButEmpty = snapshotStatus === "ready" && !items.length;
       setAnnualState(
         "neutral",
-        isReadyButEmpty
-          ? "Ranking anual listo pero sin resultados para el ano seleccionado."
-          : "No hay ranking anual generado para el ano seleccionado.",
+        isReadyButEmpty ? messages.annualReadyEmpty : messages.annualMissing,
       );
-      if (!items.length) {
-        annualContentNode.innerHTML = "";
-      }
+      annualContentNode.innerHTML = "";
       return;
     }
 
     setAnnualState(
       "neutral",
-      `Ranking anual listo para ${serverId}. Generado: ${generatedAt || "sin marca de tiempo"}.`,
+      `${messages.annualReadyPrefix} ${serverId}, ano ${year}, metrica ${metric}`,
     );
 
     annualContentNode.innerHTML = `
@@ -224,7 +343,7 @@ document.addEventListener("DOMContentLoaded", () => {
         <p class="stats-summary-title">Top ${limit} anual</p>
         <div class="stats-annual-meta">
           <p><strong>Servidor:</strong> ${escapeHtml(serverId)}</p>
-          <p><strong>Metrica:</strong> kills</p>
+          <p><strong>Metrica:</strong> ${escapeHtml(metric)}</p>
           <p><strong>Partidas fuente:</strong> ${safeInt(sourceMatches, 0)}</p>
           <p><strong>Actualizado:</strong> ${escapeHtml(generatedAt || "No disponible")}</p>
         </div>
@@ -245,11 +364,12 @@ document.addEventListener("DOMContentLoaded", () => {
         const deaths = safeInt(item.deaths, 0);
         const teamkills = safeInt(item.teamkills, 0);
         const kd = safeDecimal(item.kd_ratio, 2, "0.00");
+
         return `
           <article class="stats-annual-item">
             <p><strong>#${rank}</strong> ${playerName} <span class="stats-annual-sub">(ID: ${playerId})</span></p>
-            <p><strong>Valor:</strong> ${metricValue} · <strong>Partidas:</strong> ${matches}</p>
-            <p><strong>Kills:</strong> ${kills} · <strong>Deaths:</strong> ${deaths} · <strong>Teamkills:</strong> ${teamkills} · <strong>K/D:</strong> ${kd}</p>
+            <p><strong>Valor:</strong> ${metricValue} - <strong>Partidas:</strong> ${matches}</p>
+            <p><strong>Kills:</strong> ${kills} - <strong>Deaths:</strong> ${deaths} - <strong>Teamkills:</strong> ${teamkills} - <strong>K/D:</strong> ${kd}</p>
           </article>
         `;
       })
@@ -272,13 +392,18 @@ document.addEventListener("DOMContentLoaded", () => {
 
     return `
       <article class="stats-result-item">
-        <button class="stats-result-item__button" type="button" data-player-id="${playerId}">
+        <button
+          class="stats-result-item__button"
+          type="button"
+          data-player-id="${playerId}"
+          aria-label="Cargar perfil de ${playerName}"
+        >
           <div class="stats-result-item__main">
             <p class="stats-result-item__name">${playerName}</p>
             <p class="stats-result-item__meta">ID: ${playerId}</p>
           </div>
           <p class="stats-result-item__metrics">
-            Partidas: ${matches} · Última aparición: ${lastSeen}
+            Partidas: ${matches} - Ultima aparicion: ${lastSeen}
           </p>
           ${serversSeen ? `<p class="stats-result-item__meta">Servidores: ${serversSeen}</p>` : ""}
         </button>
@@ -292,8 +417,10 @@ document.addEventListener("DOMContentLoaded", () => {
       return;
     }
 
-    setProfileState("loading", "Cargando estadísticas personales...");
-    clearProfilePanel();
+    setProfileState("loading", messages.profileLoading);
+    if (!profilePanel) {
+      return;
+    }
 
     try {
       const response = await fetch(
@@ -305,19 +432,19 @@ document.addEventListener("DOMContentLoaded", () => {
 
       const payload = await response.json();
       if (!payload || payload.status !== "ok") {
-        throw new Error(payload?.message || "Respuesta de perfil inválida");
+        throw new Error(payload?.message || "Respuesta de perfil invalida");
       }
 
       const data = payload.data || {};
       profilePanel.hidden = false;
-      profileTitle.textContent = `Perfil personal`;
+      profileTitle.textContent = messages.profileReadyTitle;
       const playerName = String(data.player_name || "Sin nombre");
       const playerIdText = String(data.player_id || playerId);
       const hasStats = Number(data.matches_considered || 0) > 0;
 
       profileStateNode.textContent = hasStats
         ? `${playerName} (${playerIdText})`
-        : `Jugador sin estadísticas registradas: ${playerName} (${playerIdText})`;
+        : `${messages.profileNoStats} (${playerIdText})`;
       profileStateNode.className = hasStats
         ? "stats-state stats-state--neutral"
         : "stats-state stats-state--warning";
@@ -352,72 +479,52 @@ document.addEventListener("DOMContentLoaded", () => {
         "Mensual",
       );
 
-      setBackendState("Backend operativo", true);
+      setBackendState(messages.backendOnline, true);
       isBackendOnline = true;
     } catch (error) {
       console.warn("Player profile failed", error);
       markAsBackendUnavailable();
-      profilePanel.hidden = false;
-      profileTitle.textContent = "Perfil personal";
-      profileStateNode.textContent = "No fue posible cargar las estadísticas del jugador.";
+      if (profilePanel) {
+        profilePanel.hidden = false;
+      }
+      profileTitle.textContent = messages.profileReadyTitle;
+      profileStateNode.textContent = messages.profileError;
       profileStateNode.className = "stats-state stats-state--error";
       summaryGrid.innerHTML = "";
-      weeklySummaryNode.textContent = "Sin datos de semana disponibles.";
-      monthlySummaryNode.textContent = "Sin datos de mes disponibles.";
+      if (weeklySummaryNode) {
+        weeklySummaryNode.textContent = messages.weeklyPlaceholder;
+      }
+      if (monthlySummaryNode) {
+        monthlySummaryNode.textContent = messages.monthlyPlaceholder;
+      }
     }
   }
 
-  function setSearchState(state, message) {
-    if (!searchStateNode) {
-      return;
-    }
-    searchStateNode.textContent = message;
-    searchStateNode.className = `stats-state stats-state--${state}`;
-  }
-
-  function setAnnualState(state, message) {
-    if (!annualStateNode) {
-      return;
-    }
-    annualStateNode.textContent = message;
-    annualStateNode.className = `stats-state stats-state--${state}`;
-  }
-
-  function setProfileState(state, message) {
-    if (!profileStateNode || !profilePanel) {
-      return;
-    }
-    profilePanel.hidden = false;
-    profileStateNode.textContent = message;
-    profileStateNode.className = `stats-state stats-state--${state}`;
-    summaryGrid.innerHTML = "";
-    weeklySummaryNode.textContent = "Cargando...";
-    monthlySummaryNode.textContent = "Cargando...";
-  }
-
-  function clearProfilePanel() {
+  function clearProfilePanel(openPanel) {
     if (!profilePanel || !summaryGrid || !profileStateNode) {
       return;
     }
-    profilePanel.hidden = true;
+    if (openPanel) {
+      profilePanel.hidden = true;
+    }
     summaryGrid.innerHTML = "";
     if (weeklySummaryNode) {
-      weeklySummaryNode.textContent = "Sin datos de semana disponibles.";
+      weeklySummaryNode.textContent = messages.weeklyPlaceholder;
     }
     if (monthlySummaryNode) {
-      monthlySummaryNode.textContent = "Sin datos de mes disponibles.";
+      monthlySummaryNode.textContent = messages.monthlyPlaceholder;
     }
-    profileStateNode.textContent = "Selecciona un jugador para ver sus estadisticas.";
+    profileStateNode.textContent = messages.profileEmptyTitle;
     profileStateNode.className = "stats-state stats-state--neutral";
   }
 
   function formatRankingSummary(ranking, timeframeLabel) {
     if (!ranking || !Number.isFinite(safeParseNumber(ranking.ranking_position))) {
-      return `Sin ranking ${timeframeLabel} registrado para este jugador.`;
+      return `Sin ranking ${timeframeLabel.toLowerCase()} registrado para este jugador.`;
     }
 
     const rank = safeInt(ranking.ranking_position, 0);
-    const metric = escapeHtml(String(ranking.metric || "kills"));
+    const metric = escapeHtml(String(ranking.metric || annualMetric));
     const windowLabel = escapeHtml(String(ranking.window_kind || ""));
     const windowStart = formatDateTime(ranking.window_start);
     const windowEnd = formatDateTime(ranking.window_end);
@@ -426,7 +533,7 @@ document.addEventListener("DOMContentLoaded", () => {
       : `Ventana: ${windowStart} - ${windowEnd}`;
 
     return `
-      <p><strong>Posición:</strong> ${rank}</p>
+      <p><strong>Posicion:</strong> ${rank}</p>
       <p><strong>Metric:</strong> ${metric}</p>
       <p>${windowRange}</p>
     `;
@@ -454,6 +561,16 @@ document.addEventListener("DOMContentLoaded", () => {
   function safeParseNumber(value) {
     const parsed = Number(value);
     return Number.isFinite(parsed) ? parsed : Number.NaN;
+  }
+
+  function safeParseJson(response) {
+    if (!response) {
+      return null;
+    }
+    return response
+      .json()
+      .then((parsed) => parsed)
+      .catch(() => null);
   }
 
   function formatDateTime(value) {

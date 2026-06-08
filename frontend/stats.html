@@ -22,8 +22,8 @@
               <span class="hero__title-accent">Personales</span>
             </h1>
             <p class="hero__text">
-              Busca un jugador por nombre o ID y revisa sus resultados semanales y
-              mensuales con base en datos materializados.
+              Busca un jugador por nombre o ID y revisa sus resultados semanales, mensuales
+              y ranking anual con base en datos materializados.
             </p>
             <p class="status-chip status-chip--fallback" id="stats-backend-state">
               Comprobando disponibilidad del backend
@@ -48,7 +48,8 @@
               <h2>Buscar por nombre o ID</h2>
             </div>
             <p class="panel__intro panel__intro--tight" id="stats-search-help">
-              Usa minimo 1 caracter para comenzar la consulta.
+              Usa al menos 1 caracter para buscar. Al seleccionar un jugador se cargan sus
+              stats y ranking semanal y mensual. El ranking anual se consulta por separado.
             </p>
             <form class="stats-search-form" id="stats-search-form">
               <label class="stats-search-form__label" for="stats-search-input">
@@ -62,14 +63,15 @@
                   name="query"
                   placeholder="Ej: Rambo o 76561198000000000"
                   autocomplete="off"
+                  aria-label="Texto de busqueda de jugadores"
                 />
-                <button class="discord-button" type="submit">
-                  Buscar
+                <button class="discord-button" type="submit" aria-label="Buscar jugador por nombre o ID">
+                  Buscar jugador
                 </button>
               </div>
             </form>
             <p class="stats-state stats-state--neutral" id="stats-search-state" role="status" aria-live="polite">
-              Esperando consulta.
+              Estado inicial: usa el buscador para encontrar jugadores.
             </p>
             <div class="stats-result-list" id="stats-result-list" aria-live="polite"></div>
           </div>
@@ -82,17 +84,21 @@
               <h2 id="stats-profile-title">Perfil personal</h2>
             </div>
             <p class="panel__intro panel__intro--tight" id="stats-profile-state">
-              Selecciona un jugador para ver sus estadisticas.
+              Selecciona un jugador para ver su panel personal.
             </p>
             <div class="stats-summary-grid" id="stats-summary-grid"></div>
             <div class="stats-ranking-grid">
               <article class="stats-summary-card">
                 <p class="stats-summary-title">Resumen semanal</p>
-                <div id="stats-weekly-summary">Sin datos de semana disponibles.</div>
+                <div id="stats-weekly-summary">
+                  Sin datos semanales. El ranking semanal se actualiza al cargar un jugador.
+                </div>
               </article>
               <article class="stats-summary-card">
                 <p class="stats-summary-title">Resumen mensual</p>
-                <div id="stats-monthly-summary">Sin datos de mes disponibles.</div>
+                <div id="stats-monthly-summary">
+                  Sin datos mensuales. El ranking mensual se actualiza al cargar un jugador.
+                </div>
               </article>
             </div>
           </div>
@@ -105,7 +111,7 @@
               <h2>Top 20 anual</h2>
             </div>
             <p class="panel__intro panel__intro--tight">
-              El ranking anual consume snapshots precomputados de backend para evitar recalculo en cada vista.
+              El ranking anual usa snapshots pre-computados para evitar recalcular toda la temporada en cada consulta.
             </p>
             <form class="stats-annual-form" id="stats-annual-form">
               <label class="stats-search-form__label" for="stats-annual-year">Ano</label>
@@ -116,15 +122,16 @@
                   type="number"
                   min="2019"
                   value=""
+                  aria-label="Ano del ranking anual"
                   aria-describedby="stats-annual-state"
                 />
-                <button class="discord-button" type="submit">
-                  Cargar ranking
+                <button class="discord-button" type="submit" aria-label="Cargar ranking anual">
+                  Cargar ranking anual
                 </button>
               </div>
             </form>
             <p class="stats-state stats-state--neutral" id="stats-annual-state" role="status" aria-live="polite">
-              Esperando ano para cargar ranking anual.
+              Esperando ano para cargar el ranking anual (Top 20 por kills).
             </p>
             <div class="stats-annual-table-wrap" id="stats-annual-content" aria-live="polite"></div>
           </div>
@@ -136,4 +143,3 @@
     <script src="./assets/js/stats.js"></script>
   </body>
 </html>
-
