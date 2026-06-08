@@ -1,7 +1,7 @@
 ---
 id: TASK-162
 title: Add Stats player search endpoint (RCON materialized backend V1)
-status: pending
+status: done
 type: backend
 team: Backend Senior
 supporting_teams: [Arquitecto de Base de Datos, Arquitecto Python]
@@ -111,3 +111,46 @@ Document:
 - Prefer <5 modified files.
 - Prefer <200 added/changed lines per file when feasible.
 - Split into follow-up tasks if the scope starts expanding.
+
+## Outcome
+
+- Endpoint creado: `GET /api/stats/players/search`
+  - Soporte de query param `q` obligatorio.
+  - Soporte de `server_id` opcional (con alias alterno `server`).
+  - Soporte de `limit` con default 10 y validación de rango 1-100.
+- Patrón SQL:
+  - `rcon_match_player_stats` unido con `rcon_materialized_matches`.
+  - filtro por `matches.source_basis = 'admin-log-match-ended'`.
+  - filtro por `LOWER(COALESCE(stats.player_name, '')) LIKE ...` o `LOWER(stats.player_id) LIKE ...`.
+  - filtro opcional por servidor con `(target_key = ? OR external_server_id = ?)`.
+  - agregación por `player_id` con `COUNT(DISTINCT stats.match_key)` y `MAX(COALESCE(matches.ended_at, matches.started_at))`.
+  - orden por `matches_considered DESC`, `last_seen_at DESC`.
+- Resultado del payload:
+  - `status` (global)
+  - `data.query`
+  - `data.server_id` (normaliza vacío/`all` a `all-servers`)
+  - `data.items[]`
+    - `player_id`
+    - `player_name`
+    - `matches_considered`
+    - `last_seen_at`
+    - `servers_seen` (obtenido por consulta agregada por player-id y servidor)
+- Validaciones ejecutadas:
+  - `python -m compileall backend/app`
+  - `powershell -ExecutionPolicy Bypass -File scripts/run-integration-tests.ps1` (OK)
+  - validación manual de endpoint con `resolve_get_payload`:
+    - `/api/stats/players/search?q=a`
+    - `/api/stats/players/search?q=steam`
+    - `/api/stats/players/search?q=zzzz-no-results-expected-12345`
+  - validación HTTP real con `Invoke-WebRequest` contra servidor local (`127.0.0.1:8000`):
+    - consulta corta: `/api/stats/players/search?q=a&limit=2`
+    - consulta normal: `/api/stats/players/search?q=steam&server=all&limit=1`
+    - sin resultados: `/api/stats/players/search?q=zzzz-no-results-expected-12345`
+- Limitaciones conocidas:
+  - alcance de texto simple por `LIKE` (`%` y `_` escapados); no hay ranking de relevancia por prefijo en este V1.
+  - `servers_seen` depende de coincidencia de `external_server_id`/`target_key` en materialized matches, por eso puede ser ruidoso en casos de aliases.
+- No se detectó anomalía operativa con TASK-161 en esta implementación.
+- Siguiente task recomendada: `endpoint de estadísticas personales del jugador`.
+- Nota de numeración TASK-161: detectada doble definición de `id: TASK-161` entre
+  - TASK-161-current-match-full-player-summary-and-feed-badges.md
+  - TASK-161-define-stats-section-functional-contract.md
