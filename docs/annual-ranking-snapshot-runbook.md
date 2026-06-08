@@ -94,6 +94,11 @@ Verificación local (reconstruir estado esperable):
    - `ready`: existe snapshot;
    - `missing`: no existe snapshot.
 3. Verificar `generated_at`, `window_start`, `window_end`, `source_matches_count`.
+4. Verificar metadatos de limite:
+   - `requested_limit`: limite pedido por el cliente;
+   - `snapshot_limit`: limite persistido en snapshot;
+   - `effective_limit`: limite realmente servido;
+   - `item_count`: filas actualmente disponibles.
 
 Se considera snapshot existente si API responde `snapshot_status="ready"`.
 
@@ -109,6 +114,8 @@ Checklist:
 
 - HTTP 200 esperado para parámetros válidos de V1.
 - `status` debe ser `"ok"` con estructura de data consistente.
+- Para snapshots `ready`, `effective_limit` puede ser menor que `requested_limit`
+  cuando el snapshot fue generado con un limite menor o contiene menos filas.
 - en V1 con `metric` no soportada, esperar error de request (400) sin recomputar ranking.
 
 ## 8) Como validar desde frontend Stats

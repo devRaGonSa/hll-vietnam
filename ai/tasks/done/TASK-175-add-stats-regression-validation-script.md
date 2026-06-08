@@ -1,7 +1,7 @@
 ---
 id: TASK-175-add-stats-regression-validation-script
 title: Add Stats regression validation script
-status: pending
+status: done
 type: platform
 team: PM
 supporting_teams:
@@ -67,5 +67,31 @@ The Stats section already has public-facing pages, JS assets, and backend endpoi
 
 ## Outcome
 
-Document validated endpoints, controlled limitations, and the immediate next task recommendation.
+Validated surfaces:
 
+- `frontend/stats.html` asset wiring and required Stats UI anchors
+- `GET /health`
+- `GET /api/stats/players/search`
+- `GET /api/stats/players/{player_id}`
+- `GET /api/stats/rankings/annual`
+
+Implemented validation:
+
+- Added `scripts/run-stats-validation.ps1` to check Stats asset presence, route-contract behavior, invalid parameter handling, and controlled backend-unavailable messaging.
+- Wired `scripts/run-integration-tests.ps1` to execute the Stats validation and fail on non-zero child process exit codes.
+
+Controlled limitations observed during validation:
+
+- The local live backend was not running during task validation, so live HTTP checks reported the expected offline guidance instead of ambiguous failure.
+- Current normalized all-server scope is returned as `all-servers`.
+- Annual ranking `data.limit` currently reflects the effective stored snapshot size when a ready snapshot contains fewer rows than the requested limit; the validator accepts that current behavior without changing runtime logic.
+
+Validation run:
+
+- `node --check frontend/assets/js/stats.js`
+- `powershell -ExecutionPolicy Bypass -File scripts/run-stats-validation.ps1`
+- `powershell -ExecutionPolicy Bypass -File scripts/run-integration-tests.ps1`
+
+Immediate follow-up recommendation:
+
+- Continue with `TASK-176-add-stats-player-comparison-cards`, using the new Stats validation script as the regression guard for the existing Stats surface.

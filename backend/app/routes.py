@@ -101,12 +101,15 @@ def resolve_get_payload(path: str) -> tuple[HTTPStatus | None, dict[str, object]
         server_id = params.get("server_id", [None])[0]
         if server_id is None:
             server_id = params.get("server", [None])[0]
-        return HTTPStatus.OK, build_annual_ranking_snapshot_payload(
-            year=year,
-            server_id=server_id,
-            metric=metric,
-            limit=limit,
-        )
+        try:
+            return HTTPStatus.OK, build_annual_ranking_snapshot_payload(
+                year=year,
+                server_id=server_id,
+                metric=metric,
+                limit=limit,
+            )
+        except ValueError as error:
+            return HTTPStatus.BAD_REQUEST, build_error_payload(str(error))
 
     if parsed.path == "/api/current-match":
         server_slug = parse_qs(parsed.query).get("server", [None])[0]

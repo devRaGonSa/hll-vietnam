@@ -1,7 +1,7 @@
 ---
 id: TASK-177-harden-annual-ranking-snapshot-operations
 title: Harden annual ranking snapshot operations
-status: pending
+status: done
 type: backend
 team: Backend Senior
 supporting_teams:
@@ -74,5 +74,45 @@ The annual snapshot flow is implemented and documented, but edge cases around mi
 
 ## Outcome
 
-Document applied hardening, validated responses, known limits, and whether a future task is needed for scheduled/hardening automation.
+Applied hardening:
 
+- Added explicit annual year normalization in `backend/app/rcon_annual_rankings.py` for supported `1..9999` values.
+- Added reusable limit normalization in the annual snapshot reader/generator with a bounded cap of `100`.
+- Added response metadata for annual snapshot reads:
+  - `requested_limit`
+  - `effective_limit`
+  - `snapshot_limit`
+  - `item_count`
+- Hardened effective-limit resolution so a ready snapshot serves no more rows than:
+  - the requested limit,
+  - the persisted snapshot limit,
+  - and the actual stored item count.
+- Wrapped the annual route payload build in a `ValueError` guard so invalid annual requests return controlled `400` payloads.
+
+Documentation updated:
+
+- `docs/annual-ranking-snapshot-runbook.md` now documents annual limit metadata and explains why `effective_limit` can be lower than `requested_limit` for ready snapshots.
+
+Validated responses:
+
+- current year with `metric=kills` -> `200`
+- past year with no guaranteed data -> controlled `200` with `ready` or `missing` depending on stored snapshot presence
+- future year without snapshot -> `200` with `snapshot_status="missing"`
+- unsupported metric -> `400`
+- low limit `3` -> `200`, `requested_limit=3`, `effective_limit<=3`
+- high limit `101` -> `400`
+- unsupported year `10000` -> `400`
+
+Validation run:
+
+- Inline Python route validation for the annual endpoint cases above
+- `powershell -ExecutionPolicy Bypass -File scripts/run-integration-tests.ps1`
+
+Known limits:
+
+- The API still keeps `limit` aligned with the served effective limit for ready snapshots so current frontend behavior remains unchanged.
+- This task does not add scheduling or regeneration automation; it only hardens the existing read/generate contract.
+
+Future task recommendation:
+
+- If operations need stronger guarantees, create a follow-up task for scheduled annual snapshot generation/audit reporting rather than broadening this read-path hardening further.

@@ -9,6 +9,7 @@ document.addEventListener("DOMContentLoaded", () => {
   const profilePanel = document.getElementById("stats-profile-panel");
   const profileTitle = document.getElementById("stats-profile-title");
   const profileStateNode = document.getElementById("stats-profile-state");
+  const comparisonGrid = document.getElementById("stats-comparison-grid");
   const summaryGrid = document.getElementById("stats-summary-grid");
   const weeklySummaryNode = document.getElementById("stats-weekly-summary");
   const monthlySummaryNode = document.getElementById("stats-monthly-summary");
@@ -143,6 +144,9 @@ document.addEventListener("DOMContentLoaded", () => {
     profilePanel.hidden = false;
     profileStateNode.textContent = message;
     profileStateNode.className = `stats-state stats-state--${state}`;
+    if (comparisonGrid) {
+      comparisonGrid.innerHTML = "";
+    }
     summaryGrid.innerHTML = "";
     if (weeklySummaryNode) {
       weeklySummaryNode.textContent = "Cargando ...";
@@ -423,24 +427,17 @@ document.addEventListener("DOMContentLoaded", () => {
     }
 
     try {
-      const response = await fetch(
-        `${backendBaseUrl}/api/stats/players/${encodeURIComponent(playerId)}?timeframe=weekly`,
-      );
-      if (!response.ok) {
-        throw new Error(`Profile request failed with ${response.status}`);
-      }
-
-      const payload = await response.json();
-      if (!payload || payload.status !== "ok") {
-        throw new Error(payload?.message || "Respuesta de perfil invalida");
-      }
-
-      const data = payload.data || {};
+      const [weeklyData, monthlyData] = await Promise.all([
+        fetchPlayerProfile(playerId, "weekly"),
+        fetchPlayerProfile(playerId, "monthly"),
+      ]);
       profilePanel.hidden = false;
       profileTitle.textContent = messages.profileReadyTitle;
-      const playerName = String(data.player_name || "Sin nombre");
-      const playerIdText = String(data.player_id || playerId);
-      const hasStats = Number(data.matches_considered || 0) > 0;
+      const playerName = String(weeklyData.player_name || monthlyData.player_name || "Sin nombre");
+      const playerIdText = String(weeklyData.player_id || monthlyData.player_id || playerId);
+      const hasWeeklyStats = Number(weeklyData.matches_considered || 0) > 0;
+      const hasMonthlyStats = Number(monthlyData.matches_considered || 0) > 0;
+      const hasStats = hasWeeklyStats || hasMonthlyStats;
 
       profileStateNode.textContent = hasStats
         ? `${playerName} (${playerIdText})`
@@ -454,29 +451,36 @@ document.addEventListener("DOMContentLoaded", () => {
           <p class="stats-summary-title">Identidad</p>
           <p><strong>Jugador:</strong> ${escapeHtml(playerName)}</p>
           <p><strong>ID:</strong> ${escapeHtml(playerIdText)}</p>
-          <p><strong>Partidas:</strong> ${safeInt(data.matches_considered, 0)}</p>
+          <p><strong>Partidas semanales:</strong> ${safeInt(weeklyData.matches_considered, 0)}</p>
+          <p><strong>Partidas mensuales:</strong> ${safeInt(monthlyData.matches_considered, 0)}</p>
         </article>
         <article class="stats-summary-card">
-          <p class="stats-summary-title">Totales</p>
-          <p><strong>Kills:</strong> ${safeInt(data.kills, 0)}</p>
-          <p><strong>Deaths:</strong> ${safeInt(data.deaths, 0)}</p>
-          <p><strong>Teamkills:</strong> ${safeInt(data.teamkills, 0)}</p>
+          <p class="stats-summary-title">Ventana semanal</p>
+          <p><strong>Kills:</strong> ${safeInt(weeklyData.kills, 0)}</p>
+          <p><strong>Deaths:</strong> ${safeInt(weeklyData.deaths, 0)}</p>
+          <p><strong>Teamkills:</strong> ${safeInt(weeklyData.teamkills, 0)}</p>
         </article>
         <article class="stats-summary-card">
-          <p class="stats-summary-title">Ratios</p>
-          <p><strong>K/D:</strong> ${safeDecimal(data.kd_ratio, 2, "0.00")}</p>
-          <p><strong>Kills/partida:</strong> ${safeDecimal(data.kills_per_match, 2, "0.00")}</p>
-          <p><strong>Deaths/partida:</strong> ${safeDecimal(data.deaths_per_match, 2, "0.00")}</p>
+          <p class="stats-summary-title">Ventana mensual</p>
+          <p><strong>Kills:</strong> ${safeInt(monthlyData.kills, 0)}</p>
+          <p><strong>Deaths:</strong> ${safeInt(monthlyData.deaths, 0)}</p>
+          <p><strong>Teamkills:</strong> ${safeInt(monthlyData.teamkills, 0)}</p>
         </article>
       `;
 
+      if (comparisonGrid) {
+        comparisonGrid.innerHTML = renderComparisonCards(weeklyData, monthlyData);
+      }
+
       weeklySummaryNode.innerHTML = formatRankingSummary(
-        data.weekly_ranking,
+        weeklyData.weekly_ranking,
         "Semanal",
+        weeklyData.matches_considered,
       );
       monthlySummaryNode.innerHTML = formatRankingSummary(
-        data.monthly_ranking,
+        monthlyData.monthly_ranking,
         "Mensual",
+        monthlyData.matches_considered,
       );
 
       setBackendState(messages.backendOnline, true);
@@ -490,6 +494,9 @@ document.addEventListener("DOMContentLoaded", () => {
       profileTitle.textContent = messages.profileReadyTitle;
       profileStateNode.textContent = messages.profileError;
       profileStateNode.className = "stats-state stats-state--error";
+      if (comparisonGrid) {
+        comparisonGrid.innerHTML = "";
+      }
       summaryGrid.innerHTML = "";
       if (weeklySummaryNode) {
         weeklySummaryNode.textContent = messages.weeklyPlaceholder;
@@ -507,6 +514,9 @@ document.addEventListener("DOMContentLoaded", () => {
     if (openPanel) {
       profilePanel.hidden = true;
     }
+    if (comparisonGrid) {
+      comparisonGrid.innerHTML = "";
+    }
     summaryGrid.innerHTML = "";
     if (weeklySummaryNode) {
       weeklySummaryNode.textContent = messages.weeklyPlaceholder;
@@ -518,25 +528,211 @@ document.addEventListener("DOMContentLoaded", () => {
     profileStateNode.className = "stats-state stats-state--neutral";
   }
 
-  function formatRankingSummary(ranking, timeframeLabel) {
-    if (!ranking || !Number.isFinite(safeParseNumber(ranking.ranking_position))) {
-      return `Sin ranking ${timeframeLabel.toLowerCase()} registrado para este jugador.`;
+  async function fetchPlayerProfile(playerId, timeframe) {
+    const response = await fetch(
+      `${backendBaseUrl}/api/stats/players/${encodeURIComponent(playerId)}?timeframe=${encodeURIComponent(timeframe)}`,
+    );
+    if (!response.ok) {
+      throw new Error(`Profile request failed with ${response.status}`);
+    }
+
+    const payload = await response.json();
+    if (!payload || payload.status !== "ok") {
+      throw new Error(payload?.message || "Respuesta de perfil invalida");
+    }
+
+    return payload.data || {};
+  }
+
+  function renderComparisonCards(weeklyData, monthlyData) {
+    return [
+      renderWindowComparisonCard("Semanal", weeklyData, weeklyData.weekly_ranking),
+      renderWindowComparisonCard("Mensual", monthlyData, monthlyData.monthly_ranking),
+      renderDeltaComparisonCard(weeklyData, monthlyData),
+    ].join("");
+  }
+
+  function renderWindowComparisonCard(label, data, ranking) {
+    const rankingState = describeRankingState(ranking, data?.matches_considered, label);
+    const matches = safeInt(data?.matches_considered, 0);
+    const kills = safeInt(data?.kills, 0);
+    const deaths = safeInt(data?.deaths, 0);
+    const kdRatio = safeDecimal(data?.kd_ratio, 2, "0.00");
+    const killsPerMatch = safeDecimal(data?.kills_per_match, 2, "0.00");
+
+    return `
+      <article class="stats-comparison-card">
+        <p class="stats-comparison-card__eyebrow">Comparativa ${label.toLowerCase()}</p>
+        <h3 class="stats-comparison-card__title">Ventana ${label.toLowerCase()}</h3>
+        <span class="stats-comparison-card__badge stats-comparison-card__badge--${rankingState.tone}">
+          ${escapeHtml(rankingState.title)}
+        </span>
+        <div class="stats-comparison-card__grid">
+          <div class="stats-comparison-card__metric">
+            <span class="stats-comparison-card__metric-label">Partidas</span>
+            <span class="stats-comparison-card__metric-value">${matches}</span>
+          </div>
+          <div class="stats-comparison-card__metric">
+            <span class="stats-comparison-card__metric-label">Kills</span>
+            <span class="stats-comparison-card__metric-value">${kills}</span>
+          </div>
+          <div class="stats-comparison-card__metric">
+            <span class="stats-comparison-card__metric-label">Deaths</span>
+            <span class="stats-comparison-card__metric-value">${deaths}</span>
+          </div>
+          <div class="stats-comparison-card__metric">
+            <span class="stats-comparison-card__metric-label">K/D</span>
+            <span class="stats-comparison-card__metric-value">${kdRatio}</span>
+          </div>
+        </div>
+        <p class="stats-comparison-card__detail">
+          <strong>Kills por partida:</strong> ${killsPerMatch}
+        </p>
+        <p class="stats-comparison-card__note">${escapeHtml(rankingState.detail)}</p>
+      </article>
+    `;
+  }
+
+  function renderDeltaComparisonCard(weeklyData, monthlyData) {
+    const weeklyKpm = safeParseNumber(weeklyData?.kills_per_match);
+    const monthlyKpm = safeParseNumber(monthlyData?.kills_per_match);
+    const weeklyKd = safeParseNumber(weeklyData?.kd_ratio);
+    const monthlyKd = safeParseNumber(monthlyData?.kd_ratio);
+    const killsDelta = safeInt(monthlyData?.kills, 0) - safeInt(weeklyData?.kills, 0);
+    const matchesDelta =
+      safeInt(monthlyData?.matches_considered, 0) - safeInt(weeklyData?.matches_considered, 0);
+
+    return `
+      <article class="stats-comparison-card">
+        <p class="stats-comparison-card__eyebrow">Lectura comparada</p>
+        <h3 class="stats-comparison-card__title">Pulso semanal vs mensual</h3>
+        <span class="stats-comparison-card__badge stats-comparison-card__badge--ok">
+          ${escapeHtml(buildDeltaHeadline(killsDelta, matchesDelta))}
+        </span>
+        <div class="stats-comparison-card__grid">
+          <div class="stats-comparison-card__metric">
+            <span class="stats-comparison-card__metric-label">KPM semanal</span>
+            <span class="stats-comparison-card__metric-value">${safeDecimal(weeklyKpm, 2, "0.00")}</span>
+          </div>
+          <div class="stats-comparison-card__metric">
+            <span class="stats-comparison-card__metric-label">KPM mensual</span>
+            <span class="stats-comparison-card__metric-value">${safeDecimal(monthlyKpm, 2, "0.00")}</span>
+          </div>
+          <div class="stats-comparison-card__metric">
+            <span class="stats-comparison-card__metric-label">K/D semanal</span>
+            <span class="stats-comparison-card__metric-value">${safeDecimal(weeklyKd, 2, "0.00")}</span>
+          </div>
+          <div class="stats-comparison-card__metric">
+            <span class="stats-comparison-card__metric-label">K/D mensual</span>
+            <span class="stats-comparison-card__metric-value">${safeDecimal(monthlyKd, 2, "0.00")}</span>
+          </div>
+        </div>
+        <p class="stats-comparison-card__detail">
+          <strong>Delta de kills:</strong> ${formatSignedNumber(killsDelta)}
+        </p>
+        <p class="stats-comparison-card__detail">
+          <strong>Delta de partidas:</strong> ${formatSignedNumber(matchesDelta)}
+        </p>
+        <p class="stats-comparison-card__note">
+          La lectura compara solo datos existentes del backend actual, sin recalcular rankings ni pedir nuevos endpoints.
+        </p>
+      </article>
+    `;
+  }
+
+  function formatRankingSummary(ranking, timeframeLabel, matchesConsidered) {
+    const rankingState = describeRankingState(ranking, matchesConsidered, timeframeLabel);
+    if (!ranking) {
+      return escapeHtml(rankingState.detail);
+    }
+
+    if (!Number.isFinite(safeParseNumber(ranking.ranking_position))) {
+      return `
+        <p><strong>Estado:</strong> ${escapeHtml(rankingState.title)}</p>
+        <p>${escapeHtml(rankingState.detail)}</p>
+        <p>${escapeHtml(formatWindowRange(ranking))}</p>
+      `;
     }
 
     const rank = safeInt(ranking.ranking_position, 0);
     const metric = escapeHtml(String(ranking.metric || annualMetric));
-    const windowLabel = escapeHtml(String(ranking.window_kind || ""));
-    const windowStart = formatDateTime(ranking.window_start);
-    const windowEnd = formatDateTime(ranking.window_end);
-    const windowRange = windowLabel
-      ? `${windowLabel}: ${windowStart} - ${windowEnd}`
-      : `Ventana: ${windowStart} - ${windowEnd}`;
 
     return `
       <p><strong>Posicion:</strong> ${rank}</p>
       <p><strong>Metric:</strong> ${metric}</p>
-      <p>${windowRange}</p>
+      <p>${escapeHtml(formatWindowRange(ranking))}</p>
     `;
+  }
+
+  function describeRankingState(ranking, matchesConsidered, timeframeLabel) {
+    const matches = safeInt(matchesConsidered, 0);
+    const label = String(timeframeLabel || "ranking").toLowerCase();
+    if (!ranking) {
+      return {
+        tone: "error",
+        title: "Ranking ausente",
+        detail: `No se recibio bloque de ranking ${label} desde el backend.`,
+      };
+    }
+
+    if (Number.isFinite(safeParseNumber(ranking.ranking_position))) {
+      return {
+        tone: "ok",
+        title: `Posicion #${safeInt(ranking.ranking_position, 0)}`,
+        detail: `Jugador posicionado en el ranking ${label} activo por kills.`,
+      };
+    }
+
+    if (matches <= 0) {
+      return {
+        tone: "warning",
+        title: "Sin actividad",
+        detail: `No hay actividad cerrada del jugador en la ventana ${label} actual.`,
+      };
+    }
+
+    const windowKind = String(ranking.window_kind || "").toLowerCase();
+    if (windowKind.startsWith("previous-")) {
+      return {
+        tone: "warning",
+        title: "Profundidad insuficiente",
+        detail: `La ventana ${label} activa usa fallback previo y el jugador no aparece posicionado.`,
+      };
+    }
+
+    return {
+      tone: "warning",
+      title: "Fuera del ranking visible",
+      detail: `El jugador tiene actividad en la ventana ${label}, pero no figura en el ranking visible actual.`,
+    };
+  }
+
+  function buildDeltaHeadline(killsDelta, matchesDelta) {
+    if (killsDelta === 0 && matchesDelta === 0) {
+      return "Ritmo estable";
+    }
+    if (killsDelta > 0 || matchesDelta > 0) {
+      return "Presion mensual superior";
+    }
+    return "Ventana corta mas intensa";
+  }
+
+  function formatSignedNumber(value) {
+    const parsed = safeInt(value, 0);
+    if (parsed > 0) {
+      return `+${parsed}`;
+    }
+    return String(parsed);
+  }
+
+  function formatWindowRange(ranking) {
+    const windowLabel = String(ranking?.window_kind || "").trim();
+    const windowStart = formatDateTime(ranking?.window_start);
+    const windowEnd = formatDateTime(ranking?.window_end);
+    if (windowLabel) {
+      return `${windowLabel}: ${windowStart} - ${windowEnd}`;
+    }
+    return `Ventana: ${windowStart} - ${windowEnd}`;
   }
 
   function safeInt(value, fallback = 0) {

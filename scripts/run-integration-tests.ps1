@@ -2,6 +2,14 @@ $ErrorActionPreference = "Stop"
 
 Write-Host "HLL Vietnam platform validation"
 
+function Assert-LastExitCode {
+    param([string] $Message)
+
+    if ($LASTEXITCODE -ne 0) {
+        throw $Message
+    }
+}
+
 $configPath = "ai-platform.json"
 if (-not (Test-Path $configPath)) {
     throw "Missing $configPath"
@@ -54,8 +62,12 @@ if status is None or payload.get("status") != "ok":
 '@
 
 $backendImportCheck | python -
+Assert-LastExitCode "Backend startup import check failed."
 
 powershell -ExecutionPolicy Bypass -File scripts/run-historical-ui-regression-tests.ps1
+Assert-LastExitCode "Historical UI regression validation failed."
+powershell -ExecutionPolicy Bypass -File scripts/run-stats-validation.ps1
+Assert-LastExitCode "Stats regression validation failed."
 
 Write-Host "No product integration tests are configured for this platform-only scope."
 Write-Host "Backend startup import check passed."

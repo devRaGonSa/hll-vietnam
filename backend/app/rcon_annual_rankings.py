@@ -24,10 +24,11 @@ def generate_annual_ranking_snapshot(
     db_path: Path | None = None,
 ) -> dict[str, object]:
     """Generate and persist an annual top-k ranking snapshot for materialized RCON data."""
+    normalized_year = _normalize_year(year)
     normalized_server_key = _normalize_server_key(server_key)
     normalized_metric = _normalize_metric(metric)
-    normalized_limit = max(1, int(limit))
-    window_start, window_end = _annual_window(year)
+    normalized_limit = _normalize_limit(limit)
+    window_start, window_end = _annual_window(normalized_year)
 
     resolved_path = initialize_rcon_materialized_storage(db_path=db_path)
     scope_sql, scope_params = _build_scope_sql(normalized_server_key)
@@ -48,7 +49,7 @@ def generate_annual_ranking_snapshot(
         )
         existing_snapshot_id = _find_existing_snapshot(
             connection=connection,
-            year=year,
+            year=normalized_year,
             server_key=normalized_server_key,
             metric=normalized_metric,
         )
@@ -76,13 +77,13 @@ def generate_annual_ranking_snapshot(
 
         _delete_existing_snapshot(
             connection=connection,
-            year=year,
+            year=normalized_year,
             server_key=normalized_server_key,
             metric=normalized_metric,
         )
         snapshot_id = _insert_snapshot(
             connection=connection,
-            year=year,
+            year=normalized_year,
             server_key=normalized_server_key,
             metric=normalized_metric,
             limit=normalized_limit,
@@ -119,13 +120,10 @@ def get_annual_ranking_snapshot(
     db_path: Path | None = None,
 ) -> dict[str, object]:
     """Load one annual ranking snapshot without recalculating the ranking."""
-    normalized_year = int(year)
-    if normalized_year < 1:
-        raise ValueError("year must be greater than zero")
-
+    normalized_year = _normalize_year(year)
     normalized_server_key = _normalize_server_key(server_key)
     normalized_metric = _normalize_metric(metric)
-    normalized_limit = max(1, int(limit))
+    normalized_limit = _normalize_limit(limit)
 
     resolved_path = initialize_rcon_materialized_storage(db_path=db_path)
     if use_postgres_rcon_storage(explicit_sqlite_path=db_path):
@@ -149,6 +147,10 @@ def get_annual_ranking_snapshot(
                 "server_id": normalized_server_key,
                 "metric": normalized_metric,
                 "limit": normalized_limit,
+                "requested_limit": normalized_limit,
+                "effective_limit": 0,
+                "snapshot_limit": None,
+                "item_count": 0,
                 "source": "rcon-annual-ranking-snapshot",
                 "generated_at": None,
                 "window_start": None,
@@ -157,11 +159,20 @@ def get_annual_ranking_snapshot(
                 "items": [],
             }
 
-        effective_limit = min(normalized_limit, int(snapshot.get("limit_size") or normalized_limit))
+        snapshot_limit = _normalize_limit(snapshot.get("limit_size") or normalized_limit)
+        item_count = _count_items(
+            connection=connection,
+            snapshot_id=int(snapshot["id"]),
+        )
+        effective_limit = _resolve_effective_limit(
+            requested_limit=normalized_limit,
+            snapshot_limit=snapshot_limit,
+            item_count=item_count,
+        )
         items = _list_items(
             connection=connection,
             snapshot_id=int(snapshot["id"]),
-            limit=effective_limit,
+            limit=effective_limit if effective_limit > 0 else None,
         )
 
     return {
@@ -170,6 +181,10 @@ def get_annual_ranking_snapshot(
         "server_id": normalized_server_key,
         "metric": normalized_metric,
         "limit": effective_limit,
+        "requested_limit": normalized_limit,
+        "effective_limit": effective_limit,
+        "snapshot_limit": snapshot_limit,
+        "item_count": item_count,
         "source": "rcon-annual-ranking-snapshot",
         "generated_at": snapshot.get("generated_at"),
         "window_start": snapshot.get("window_start"),
@@ -192,6 +207,29 @@ def _normalize_metric(metric: str) -> str:
     if normalized != "kills":
         raise ValueError("Only metric 'kills' is supported for annual ranking endpoints.")
     return normalized
+
+
+def _normalize_year(year: int) -> int:
+    normalized_year = int(year)
+    if normalized_year < 1 or normalized_year > 9999:
+        raise ValueError("year must be between 1 and 9999")
+    return normalized_year
+
+
+def _normalize_limit(limit: object, *, maximum: int = 100) -> int:
+    normalized_limit = int(limit or 1)
+    if normalized_limit < 1:
+        raise ValueError("limit must be greater than zero")
+    return min(normalized_limit, maximum)
+
+
+def _resolve_effective_limit(
+    *,
+    requested_limit: int,
+    snapshot_limit: int,
+    item_count: int,
+) -> int:
+    return max(0, min(requested_limit, snapshot_limit, item_count))
 
 
 def _annual_window(year: int) -> tuple[str, str]:
@@ -484,6 +522,18 @@ def _list_items(*, connection: object, snapshot_id: int, limit: int | None = Non
         params.append(limit)
     rows = connection.execute(query, params).fetchall()
     return [dict(row) for row in rows]
+
+
+def _count_items(*, connection: object, snapshot_id: int) -> int:
+    row = connection.execute(
+        """
+        SELECT COUNT(*) AS item_count
+        FROM rcon_annual_ranking_snapshot_items
+        WHERE snapshot_id = ?
+        """,
+        [snapshot_id],
+    ).fetchone()
+    return int(row["item_count"] or 0) if row else 0
 
 
 def _build_scope_sql(server_key: str, *, table_alias: str = "matches") -> tuple[str, list[object]]:
