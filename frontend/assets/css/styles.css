@@ -1034,6 +1034,34 @@ h2 {
   font-size: 0.85rem;
 }
 
+.stats-annual-table-wrap {
+  display: grid;
+  gap: 10px;
+}
+
+.stats-annual-meta {
+  display: grid;
+  gap: 4px;
+  margin: 0 0 8px;
+}
+
+.stats-annual-item {
+  padding: 10px 12px;
+  border: 1px solid rgba(159, 168, 141, 0.22);
+  border-radius: 14px;
+  margin-bottom: 8px;
+  background:
+    linear-gradient(180deg, rgba(28, 34, 25, 0.82), rgba(12, 15, 11, 0.92));
+}
+
+.stats-annual-item p {
+  margin: 0 0 6px;
+}
+
+.stats-annual-sub {
+  color: var(--muted);
+}
+
 .stats-summary-grid {
   display: grid;
   gap: 12px;

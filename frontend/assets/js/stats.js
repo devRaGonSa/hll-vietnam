@@ -12,11 +12,28 @@ document.addEventListener("DOMContentLoaded", () => {
   const summaryGrid = document.getElementById("stats-summary-grid");
   const weeklySummaryNode = document.getElementById("stats-weekly-summary");
   const monthlySummaryNode = document.getElementById("stats-monthly-summary");
+  const annualForm = document.getElementById("stats-annual-form");
+  const annualYearInput = document.getElementById("stats-annual-year");
+  const annualStateNode = document.getElementById("stats-annual-state");
+  const annualContentNode = document.getElementById("stats-annual-content");
+  const annualDefaultYear = new Date().getUTCFullYear();
+  const annualMetric = "kills";
+  const annualLimit = 20;
+  const annualServerId = "all";
 
   let isBackendOnline = false;
 
   setBackendState("Comprobando disponibilidad del backend", false);
+  if (annualYearInput) {
+    annualYearInput.value = String(annualDefaultYear);
+  }
   refreshBackendHealth();
+  if (annualForm && annualYearInput) {
+    annualForm.addEventListener("submit", (event) => {
+      event.preventDefault();
+      void loadAnnualRanking();
+    });
+  }
 
   if (searchForm && searchInput) {
     searchForm.addEventListener("submit", (event) => {
@@ -46,6 +63,7 @@ document.addEventListener("DOMContentLoaded", () => {
       searchStateNode.textContent = "Backend no disponible. Reintenta en unos segundos.";
       searchStateNode.className = "stats-state stats-state--error";
     }
+    setAnnualState("error", "Backend no disponible. No se puede cargar ranking anual.");
   }
 
   async function refreshBackendHealth() {
@@ -57,6 +75,8 @@ document.addEventListener("DOMContentLoaded", () => {
       const payload = await response.json();
       if (payload && payload.status === "ok") {
         setBackendState("Backend operativo", true);
+        setAnnualState("loading", "Cargando ranking anual...");
+        void loadAnnualRanking();
         return;
       }
       throw new Error("Unexpected health payload");
@@ -114,6 +134,126 @@ document.addEventListener("DOMContentLoaded", () => {
       markAsBackendUnavailable();
       setSearchState("error", "Error al buscar. Verifica backend y reintenta.");
     }
+  }
+
+  async function loadAnnualRanking() {
+    if (!annualForm || !annualYearInput || !annualContentNode) {
+      return;
+    }
+    if (!isBackendOnline) {
+      markAsBackendUnavailable();
+      return;
+    }
+
+    const year = resolveAnnualYear();
+    if (year === null) {
+      setAnnualState("error", "El ano ingresado no es valido.");
+      return;
+    }
+
+    setAnnualState("loading", "Cargando ranking anual...");
+    annualContentNode.innerHTML = "";
+
+    try {
+      const annualUrl =
+        `${backendBaseUrl}/api/stats/rankings/annual?` +
+        `year=${encodeURIComponent(year)}&` +
+        `server_id=${encodeURIComponent(annualServerId)}&` +
+        `metric=${encodeURIComponent(annualMetric)}&` +
+        `limit=${encodeURIComponent(annualLimit)}`;
+
+      const annualResponse = await fetch(annualUrl);
+      if (!annualResponse.ok) {
+        throw new Error(`Annual ranking request failed with ${annualResponse.status}`);
+      }
+
+      const payload = await annualResponse.json();
+      if (!payload || payload.status !== "ok") {
+        throw new Error(payload?.message || "Respuesta de ranking anual invalida");
+      }
+      renderAnnualRanking(payload.data || {});
+    } catch (error) {
+      console.warn("Annual ranking failed", error);
+      markAsBackendUnavailable();
+      setAnnualState("error", "Error al cargar ranking anual.");
+      annualContentNode.innerHTML = "";
+    }
+  }
+
+  function resolveAnnualYear() {
+    const normalized = Number.parseInt(String(annualYearInput?.value || "").trim(), 10);
+    if (!Number.isFinite(normalized) || normalized <= 0) {
+      return null;
+    }
+    return normalized;
+  }
+
+  function renderAnnualRanking(data) {
+    if (!annualContentNode || !annualStateNode) {
+      return;
+    }
+
+    const snapshotStatus = String(data.snapshot_status || "").toLowerCase();
+    const items = normalizeArray(data.items);
+    const limit = safeInt(data.limit, 0);
+    const serverId = String(data.server_id || annualServerId);
+    const sourceMatches = safeInt(data.source_matches_count, 0);
+    const generatedAt = formatDateTime(data.generated_at);
+
+    if (snapshotStatus !== "ready" || !items.length) {
+      const isReadyButEmpty = snapshotStatus === "ready" && !items.length;
+      setAnnualState(
+        "neutral",
+        isReadyButEmpty
+          ? "Ranking anual listo pero sin resultados para el ano seleccionado."
+          : "No hay ranking anual generado para el ano seleccionado.",
+      );
+      if (!items.length) {
+        annualContentNode.innerHTML = "";
+      }
+      return;
+    }
+
+    setAnnualState(
+      "neutral",
+      `Ranking anual listo para ${serverId}. Generado: ${generatedAt || "sin marca de tiempo"}.`,
+    );
+
+    annualContentNode.innerHTML = `
+      <article class="stats-summary-card">
+        <p class="stats-summary-title">Top ${limit} anual</p>
+        <div class="stats-annual-meta">
+          <p><strong>Servidor:</strong> ${escapeHtml(serverId)}</p>
+          <p><strong>Metrica:</strong> kills</p>
+          <p><strong>Partidas fuente:</strong> ${safeInt(sourceMatches, 0)}</p>
+          <p><strong>Actualizado:</strong> ${escapeHtml(generatedAt || "No disponible")}</p>
+        </div>
+        ${renderAnnualRows(items)}
+      </article>
+    `;
+  }
+
+  function renderAnnualRows(items) {
+    return items
+      .map((item) => {
+        const rank = safeInt(item.ranking_position, 0);
+        const playerId = escapeHtml(String(item.player_id || ""));
+        const playerName = escapeHtml(String(item.player_name || "Jugador sin nombre"));
+        const metricValue = safeInt(item.metric_value, 0);
+        const matches = safeInt(item.matches_considered, 0);
+        const kills = safeInt(item.kills, 0);
+        const deaths = safeInt(item.deaths, 0);
+        const teamkills = safeInt(item.teamkills, 0);
+        const kd = safeDecimal(item.kd_ratio, 2, "0.00");
+        return `
+          <article class="stats-annual-item">
+            <p><strong>#${rank}</strong> ${playerName} <span class="stats-annual-sub">(ID: ${playerId})</span></p>
+            <p><strong>Valor:</strong> ${metricValue} · <strong>Partidas:</strong> ${matches}</p>
+            <p><strong>Kills:</strong> ${kills} · <strong>Deaths:</strong> ${deaths} · <strong>Teamkills:</strong> ${teamkills} · <strong>K/D:</strong> ${kd}</p>
+          </article>
+        `;
+      })
+      .join("");
   }
 
   function renderResultItem(item) {
@@ -235,6 +375,14 @@ document.addEventListener("DOMContentLoaded", () => {
     searchStateNode.className = `stats-state stats-state--${state}`;
   }
 
+  function setAnnualState(state, message) {
+    if (!annualStateNode) {
+      return;
+    }
+    annualStateNode.textContent = message;
+    annualStateNode.className = `stats-state stats-state--${state}`;
+  }
+
   function setProfileState(state, message) {
     if (!profileStateNode || !profilePanel) {
       return;
@@ -336,4 +484,3 @@ document.addEventListener("DOMContentLoaded", () => {
       .replaceAll("'", "&#39;");
   }
 });
-
