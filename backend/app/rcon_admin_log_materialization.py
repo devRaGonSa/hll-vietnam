@@ -83,6 +83,51 @@ def initialize_rcon_materialized_storage(*, db_path: Path | None = None) -> Path
 
                 CREATE INDEX IF NOT EXISTS idx_rcon_match_player_stats_match
                 ON rcon_match_player_stats(target_key, match_key);
+
+                CREATE TABLE IF NOT EXISTS rcon_annual_ranking_snapshots (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    year INTEGER NOT NULL,
+                    server_key TEXT NOT NULL,
+                    metric TEXT NOT NULL,
+                    limit_size INTEGER NOT NULL DEFAULT 20,
+                    source_basis TEXT NOT NULL DEFAULT 'rcon-admin-log',
+                    window_start TEXT,
+                    window_end TEXT,
+                    generated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    status TEXT NOT NULL DEFAULT 'ready',
+                    source_matches_count INTEGER NOT NULL DEFAULT 0,
+                    CHECK (limit_size > 0),
+                    CHECK (metric IN ('kills', 'deaths', 'matches_over_100_kills', 'support')),
+                    UNIQUE (year, server_key, metric)
+                );
+
+                CREATE INDEX IF NOT EXISTS idx_rcon_annual_ranking_snapshots_year
+                ON rcon_annual_ranking_snapshots(year, server_key, metric);
+
+                CREATE INDEX IF NOT EXISTS idx_rcon_annual_ranking_snapshots_status
+                ON rcon_annual_ranking_snapshots(status);
+
+                CREATE TABLE IF NOT EXISTS rcon_annual_ranking_snapshot_items (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    snapshot_id INTEGER NOT NULL REFERENCES rcon_annual_ranking_snapshots(id) ON DELETE CASCADE,
+                    ranking_position INTEGER NOT NULL,
+                    player_id TEXT NOT NULL,
+                    player_name TEXT NOT NULL,
+                    metric_value INTEGER NOT NULL DEFAULT 0,
+                    matches_considered INTEGER NOT NULL DEFAULT 0,
+                    kills INTEGER NOT NULL DEFAULT 0,
+                    deaths INTEGER NOT NULL DEFAULT 0,
+                    teamkills INTEGER NOT NULL DEFAULT 0,
+                    kd_ratio REAL NOT NULL DEFAULT 0.0,
+                    UNIQUE(snapshot_id, ranking_position),
+                    UNIQUE(snapshot_id, player_id)
+                );
+
+                CREATE INDEX IF NOT EXISTS idx_rcon_annual_snapshot_items_snapshot
+                ON rcon_annual_ranking_snapshot_items(snapshot_id, ranking_position);
+
+                CREATE INDEX IF NOT EXISTS idx_rcon_annual_snapshot_items_player
+                ON rcon_annual_ranking_snapshot_items(snapshot_id, player_id);
                 """
             )
     return resolved_path

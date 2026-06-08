@@ -28,6 +28,8 @@ RCON_TABLES = (
     "rcon_player_profile_snapshots",
     "rcon_materialized_matches",
     "rcon_match_player_stats",
+    "rcon_annual_ranking_snapshots",
+    "rcon_annual_ranking_snapshot_items",
     "rcon_scoreboard_match_candidates",
 )
 DISPLAY_TABLES = (
@@ -315,6 +317,8 @@ def _sync_sequences() -> None:
         "rcon_player_profile_snapshots",
         "rcon_materialized_matches",
         "rcon_match_player_stats",
+        "rcon_annual_ranking_snapshots",
+        "rcon_annual_ranking_snapshot_items",
         "rcon_scoreboard_match_candidates",
     )
     with connect_display_postgres() as connection:

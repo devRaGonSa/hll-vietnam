@@ -188,6 +188,39 @@ CREATE TABLE IF NOT EXISTS rcon_match_player_stats (
     UNIQUE(target_key, match_key, player_id)
 );
 
+CREATE TABLE IF NOT EXISTS rcon_annual_ranking_snapshots (
+    id BIGSERIAL PRIMARY KEY,
+    year INTEGER NOT NULL,
+    server_key TEXT NOT NULL,
+    metric TEXT NOT NULL,
+    limit_size INTEGER NOT NULL DEFAULT 20,
+    source_basis TEXT NOT NULL DEFAULT 'rcon-admin-log',
+    window_start TEXT,
+    window_end TEXT,
+    generated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    status TEXT NOT NULL DEFAULT 'ready',
+    source_matches_count INTEGER NOT NULL DEFAULT 0,
+    CHECK (limit_size > 0),
+    CHECK (metric IN ('kills', 'deaths', 'matches_over_100_kills', 'support')),
+    UNIQUE (year, server_key, metric)
+);
+
+CREATE TABLE IF NOT EXISTS rcon_annual_ranking_snapshot_items (
+    id BIGSERIAL PRIMARY KEY,
+    snapshot_id BIGINT NOT NULL REFERENCES rcon_annual_ranking_snapshots(id) ON DELETE CASCADE,
+    ranking_position INTEGER NOT NULL,
+    player_id TEXT NOT NULL,
+    player_name TEXT NOT NULL,
+    metric_value BIGINT NOT NULL DEFAULT 0,
+    matches_considered INTEGER NOT NULL DEFAULT 0,
+    kills BIGINT NOT NULL DEFAULT 0,
+    deaths BIGINT NOT NULL DEFAULT 0,
+    teamkills BIGINT NOT NULL DEFAULT 0,
+    kd_ratio DOUBLE PRECISION NOT NULL DEFAULT 0.0,
+    UNIQUE(snapshot_id, ranking_position),
+    UNIQUE(snapshot_id, player_id)
+);
+
 CREATE TABLE IF NOT EXISTS rcon_scoreboard_match_candidates (
     id BIGSERIAL PRIMARY KEY,
     server_slug TEXT NOT NULL,
@@ -219,6 +252,14 @@ CREATE INDEX IF NOT EXISTS idx_rcon_materialized_matches_recent
 ON rcon_materialized_matches(target_key, ended_at DESC, ended_server_time DESC);
 CREATE INDEX IF NOT EXISTS idx_rcon_match_player_stats_match
 ON rcon_match_player_stats(target_key, match_key);
+CREATE INDEX IF NOT EXISTS idx_rcon_annual_ranking_snapshots_year
+ON rcon_annual_ranking_snapshots(year, server_key, metric);
+CREATE INDEX IF NOT EXISTS idx_rcon_annual_ranking_snapshots_status
+ON rcon_annual_ranking_snapshots(status);
+CREATE INDEX IF NOT EXISTS idx_rcon_annual_snapshot_items_snapshot
+ON rcon_annual_ranking_snapshot_items(snapshot_id, ranking_position);
+CREATE INDEX IF NOT EXISTS idx_rcon_annual_snapshot_items_player
+ON rcon_annual_ranking_snapshot_items(snapshot_id, player_id);
 CREATE INDEX IF NOT EXISTS idx_rcon_scoreboard_candidates_server_end
 ON rcon_scoreboard_match_candidates(server_slug, ended_at DESC, started_at DESC);
 """
