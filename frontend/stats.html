@@ -1,0 +1,123 @@
+<!DOCTYPE html>
+<html lang="es">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta
+      name="description"
+      content="Consulta estadísticas personales de jugadores en el panel Stats de HLL Vietnam."
+    />
+    <title>Stats - HLL Vietnam</title>
+    <link rel="stylesheet" href="./assets/css/styles.css" />
+  </head>
+  <body data-backend-base-url="http://127.0.0.1:8000">
+    <div class="page-shell stats-page-shell">
+      <header class="hero stats-hero">
+        <div class="hero__overlay"></div>
+        <div class="hero__content">
+          <div class="hero__copy">
+            <p class="eyebrow eyebrow--section">Sección Stats</p>
+            <h1 class="hero__title">
+              Estadisticas
+              <span class="hero__title-accent">Personales</span>
+            </h1>
+            <p class="hero__text">
+              Busca un jugador por nombre o ID y revisa sus resultados semanales y
+              mensuales con base en datos materializados.
+            </p>
+            <p class="status-chip status-chip--fallback" id="stats-backend-state">
+              Comprobando disponibilidad del backend
+            </p>
+            <div class="hero__actions stats__hero-actions">
+              <a class="secondary-button secondary-button--ghost" href="./index.html">
+                Volver al inicio
+              </a>
+              <a class="secondary-button secondary-button--compact" href="./historico.html">
+                Historico
+              </a>
+            </div>
+          </div>
+        </div>
+      </header>
+
+      <main class="content stats-content">
+        <section class="panel">
+          <div class="panel__shell">
+            <div class="panel__header">
+              <p class="eyebrow eyebrow--section">Buscador de jugadores</p>
+              <h2>Buscar por nombre o ID</h2>
+            </div>
+            <p class="panel__intro panel__intro--tight" id="stats-search-help">
+              Usa minimo 1 carácter para comenzar la consulta.
+            </p>
+            <form class="stats-search-form" id="stats-search-form">
+              <label class="stats-search-form__label" for="stats-search-input">
+                Jugador
+              </label>
+              <div class="stats-search-form__fields">
+                <input
+                  class="stats-search-input"
+                  id="stats-search-input"
+                  type="search"
+                  name="query"
+                  placeholder="Ej: Rambo o 76561198000000000"
+                  autocomplete="off"
+                />
+                <button class="discord-button" type="submit">
+                  Buscar
+                </button>
+              </div>
+            </form>
+            <p class="stats-state stats-state--neutral" id="stats-search-state" role="status" aria-live="polite">
+              Esperando consulta.
+            </p>
+            <div class="stats-result-list" id="stats-result-list" aria-live="polite"></div>
+          </div>
+        </section>
+
+        <section class="panel stats-panel" id="stats-profile-panel" hidden>
+          <div class="panel__shell">
+            <div class="panel__header">
+              <p class="eyebrow eyebrow--section">Resumen de jugador</p>
+              <h2 id="stats-profile-title">Perfil personal</h2>
+            </div>
+            <p class="panel__intro panel__intro--tight" id="stats-profile-state">
+              Selecciona un jugador para ver sus estadisticas.
+            </p>
+            <div class="stats-summary-grid" id="stats-summary-grid"></div>
+            <div class="stats-ranking-grid">
+              <article class="stats-summary-card">
+                <p class="stats-summary-title">Resumen semanal</p>
+                <div id="stats-weekly-summary">Sin datos de semana disponibles.</div>
+              </article>
+              <article class="stats-summary-card">
+                <p class="stats-summary-title">Resumen mensual</p>
+                <div id="stats-monthly-summary">Sin datos de mes disponibles.</div>
+              </article>
+            </div>
+          </div>
+        </section>
+
+        <section class="panel">
+          <div class="panel__shell">
+            <div class="panel__header">
+              <p class="eyebrow eyebrow--section">Ranking anual</p>
+              <h2>Top 20 anual - Proximo despliegue</h2>
+            </div>
+            <p class="panel__intro panel__intro--tight">
+              Se reservará este bloque para integrar ranking anual snapshot cuando el endpoint esté activo.
+            </p>
+            <article class="stats-summary-card stats-summary-card--placeholder">
+              <p>Top 20 anual (futuro)</p>
+              <p>La implementación real de ranking anual se conectara en una siguiente tarea.</p>
+            </article>
+          </div>
+        </section>
+      </main>
+    </div>
+
+    <script src="./assets/js/config.js"></script>
+    <script src="./assets/js/stats.js"></script>
+  </body>
+</html>
+
