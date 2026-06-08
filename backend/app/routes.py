@@ -7,6 +7,7 @@ from urllib.parse import parse_qs, urlparse
 
 from .config import get_historical_data_source_kind
 from .payloads import (
+    build_stats_player_profile_payload,
     build_community_payload,
     build_current_match_kill_feed_payload,
     build_current_match_player_stats_payload,
@@ -40,6 +41,7 @@ from .payloads import (
     build_weekly_leaderboard_snapshot_payload,
     build_weekly_leaderboard_payload,
     build_weekly_top_kills_payload,
+    build_stats_player_search_payload,
 )
 from .rcon_historical_leaderboards import build_rcon_materialized_leaderboard_snapshot_payload
 from .scoreboard_origins import get_trusted_public_scoreboard_origin
@@ -66,6 +68,23 @@ def resolve_get_payload(path: str) -> tuple[HTTPStatus | None, dict[str, object]
             return HTTPStatus.BAD_REQUEST, build_error_payload("Invalid limit parameter")
         return HTTPStatus.OK, build_server_history_payload(limit=limit)
 
+    if parsed.path == "/api/stats/players/search":
+        params = parse_qs(parsed.query)
+        query = str(params.get("q", [None])[0] or "").strip()
+        if not query:
+            return HTTPStatus.BAD_REQUEST, build_error_payload("Query parameter is required")
+        limit = _parse_limit_with_default(parsed.query, default=10)
+        if limit is None:
+            return HTTPStatus.BAD_REQUEST, build_error_payload("Invalid limit parameter")
+        server_id = params.get("server_id", [None])[0]
+        if server_id is None:
+            server_id = params.get("server", [None])[0]
+        return HTTPStatus.OK, build_stats_player_search_payload(
+            query=query,
+            server_id=server_id,
+            limit=limit,
+        )
+
     if parsed.path == "/api/current-match":
         server_slug = parse_qs(parsed.query).get("server", [None])[0]
         if not server_slug:
@@ -73,6 +92,23 @@ def resolve_get_payload(path: str) -> tuple[HTTPStatus | None, dict[str, object]
         if get_trusted_public_scoreboard_origin(server_slug) is None:
             return HTTPStatus.NOT_FOUND, build_error_payload("Current match server is not supported")
         return HTTPStatus.OK, build_current_match_payload(server_slug=server_slug)
+
+    if parsed.path.startswith("/api/stats/players/"):
+        player_id = parsed.path.removeprefix("/api/stats/players/").strip()
+        if not player_id:
+            return HTTPStatus.BAD_REQUEST, build_error_payload("Player id is required")
+        params = parse_qs(parsed.query)
+        timeframe = params.get("timeframe", ["weekly"])[0] or "weekly"
+        if timeframe not in {"weekly", "monthly"}:
+            return HTTPStatus.BAD_REQUEST, build_error_payload("Invalid timeframe parameter")
+        server_id = params.get("server_id", [None])[0]
+        if server_id is None:
+            server_id = params.get("server", [None])[0]
+        return HTTPStatus.OK, build_stats_player_profile_payload(
+            player_id=player_id,
+            server_id=server_id,
+            timeframe=timeframe,
+        )
 
     if parsed.path == "/api/current-match/kills":
         limit = _parse_limit(parsed.query)
@@ -393,3 +429,10 @@ def _parse_limit(query: str) -> int | None:
         return None
 
     return limit
+
+
+def _parse_limit_with_default(query: str, default: int = 20) -> int | None:
+    params = parse_qs(query)
+    if "limit" not in params:
+        return default
+    return _parse_limit(query)

@@ -49,6 +49,8 @@ from .historical_storage import (
     list_weekly_top_kills,
 )
 from .rcon_historical_read_model import get_rcon_historical_match_detail
+from .rcon_historical_player_stats import search_rcon_materialized_players
+from .rcon_historical_player_stats import get_rcon_materialized_player_stats
 from .normalizers import normalize_map_name
 from .rcon_client import load_rcon_targets, query_live_server_sample
 from .rcon_admin_log_storage import list_current_match_kill_feed, list_current_match_player_stats
@@ -460,6 +462,23 @@ def _utc_timestamp_now() -> str:
     return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
 
 
+def _to_iso_or_none(value: object) -> str | None:
+    if value is None:
+        return None
+    if isinstance(value, datetime):
+        parsed = value
+    elif isinstance(value, str) and value.strip():
+        try:
+            parsed = datetime.fromisoformat(value.strip().replace("Z", "+00:00"))
+        except ValueError:
+            return None
+    else:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
+
+
 def _source_when_present(*values: object, source: str) -> str | None:
     return source if any(value is not None for value in values) else None
 
@@ -569,6 +588,75 @@ def build_historical_leaderboard_payload(
                 fallback_reason="rcon-historical-read-model-does-not-support-competitive-leaderboards",
             ),
             "items": result["items"],
+        },
+    }
+
+
+def build_stats_player_search_payload(
+    *,
+    query: str,
+    server_id: str | None = None,
+    limit: int = 10,
+) -> dict[str, object]:
+    """Return lightweight player search results for future stats UX flows."""
+    normalized_query = query.strip()
+    if not normalized_query:
+        raise ValueError("Query cannot be empty.")
+
+    result = search_rcon_materialized_players(
+        query=normalized_query,
+        server_id=server_id,
+        limit=limit,
+    )
+    return {
+        "status": "ok",
+        "data": {
+            "query": result["query"],
+            "server_id": result["server_id"],
+            "items": result["items"],
+        },
+    }
+
+
+def build_stats_player_profile_payload(
+    *,
+    player_id: str,
+    server_id: str | None = None,
+    timeframe: str = "weekly",
+) -> dict[str, object]:
+    """Return personal RCON materialized stats and weekly/monthly ranking context."""
+    result = get_rcon_materialized_player_stats(
+        player_id=player_id,
+        server_id=server_id,
+        timeframe=timeframe,
+    )
+    kills = int(result.get("kills", 0) or 0)
+    deaths = int(result.get("deaths", 0) or 0)
+    matches_considered = int(result.get("matches_considered", 0) or 0)
+    teamkills = int(result.get("teamkills", 0) or 0)
+    kills_per_match = round(kills / matches_considered, 2) if matches_considered else 0.0
+    deaths_per_match = round(deaths / matches_considered, 2) if matches_considered else 0.0
+    kd_ratio = round(kills / deaths, 2) if deaths else float(kills)
+    return {
+        "status": "ok",
+        "data": {
+            "player_id": result.get("player_id"),
+            "player_name": result.get("player_name"),
+            "server_id": result.get("server_id"),
+            "timeframe": result.get("timeframe"),
+            "window_start": _to_iso_or_none(result.get("window_start")),
+            "window_end": _to_iso_or_none(result.get("window_end")),
+            "window_kind": result.get("window_kind"),
+            "matches_considered": matches_considered,
+            "kills": kills,
+            "deaths": deaths,
+            "teamkills": teamkills,
+            "kd_ratio": kd_ratio,
+            "kills_per_match": kills_per_match,
+            "deaths_per_match": deaths_per_match,
+            "weekly_ranking": result.get("weekly_ranking"),
+            "monthly_ranking": result.get("monthly_ranking"),
+            "source": result.get("source"),
         },
     }
 
