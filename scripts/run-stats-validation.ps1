@@ -201,14 +201,73 @@ require(unsupported_metric_status == 400, "Annual ranking with unsupported metri
 missing_year_status, _ = read_payload("/api/stats/rankings/annual?year=2999&server_id=all&metric=kills&limit=20")
 require(missing_year_status == 200, "Future year annual ranking should still return 200.")
 
+weekly_ranking_status, weekly_ranking_payload = read_payload(
+    "/api/ranking?timeframe=weekly&server_id=all&metric=kills&limit=20"
+)
+require(weekly_ranking_status == 200, "Global ranking weekly route should return 200.")
+weekly_ranking_data = weekly_ranking_payload.get("data") or {}
+require(weekly_ranking_payload.get("status") == "ok", "Global ranking weekly payload should return ok status.")
+require(weekly_ranking_data.get("page_kind") == "global-ranking", "Global ranking should expose page_kind.")
+require(weekly_ranking_data.get("timeframe") == "weekly", "Global ranking weekly timeframe should be preserved.")
+require(weekly_ranking_data.get("metric") == "kills", "Global ranking weekly metric should be kills.")
+require(weekly_ranking_data.get("snapshot_status") == "ready", "Global ranking weekly should expose ready snapshot status.")
+require(isinstance(weekly_ranking_data.get("items"), list), "Global ranking weekly items must be list.")
+require(isinstance(weekly_ranking_data.get("source"), dict), "Global ranking weekly should expose source metadata.")
+
+monthly_ranking_status, monthly_ranking_payload = read_payload(
+    "/api/ranking?timeframe=monthly&server_id=comunidad-hispana-01&metric=kills&limit=20"
+)
+require(monthly_ranking_status == 200, "Global ranking monthly route should return 200.")
+monthly_ranking_data = monthly_ranking_payload.get("data") or {}
+require(monthly_ranking_data.get("timeframe") == "monthly", "Global ranking monthly timeframe should be preserved.")
+require(monthly_ranking_data.get("server_id") == "comunidad-hispana-01", "Global ranking monthly should preserve server_id.")
+
+annual_ranking_status, annual_ranking_payload = read_payload(
+    f"/api/ranking?timeframe=annual&year={current_year}&server_id=all&metric=kills&limit=20"
+)
+require(annual_ranking_status == 200, "Global ranking annual route should return 200.")
+annual_ranking_data = annual_ranking_payload.get("data") or {}
+require(annual_ranking_data.get("timeframe") == "annual", "Global ranking annual timeframe should be preserved.")
+require(annual_ranking_data.get("metric") == "kills", "Global ranking annual metric should be kills.")
+require(annual_ranking_data.get("snapshot_status") in {"ready", "missing"}, "Global ranking annual snapshot_status should be ready or missing.")
+require(isinstance(annual_ranking_data.get("items"), list), "Global ranking annual items must be list.")
+
+low_limit_ranking_status, low_limit_ranking_payload = read_payload(
+    "/api/ranking?timeframe=weekly&server_id=all&metric=kills&limit=3"
+)
+require(low_limit_ranking_status == 200, "Global ranking with low limit should return 200.")
+require((low_limit_ranking_payload.get("data") or {}).get("limit") == 3, "Global ranking low-limit response should preserve limit 3.")
+
+high_limit_ranking_status, _ = read_payload(
+    "/api/ranking?timeframe=weekly&server_id=all&metric=kills&limit=101"
+)
+require(high_limit_ranking_status == 400, "Global ranking with limit=101 should return 400.")
+
+unsupported_metric_ranking_status, _ = read_payload(
+    "/api/ranking?timeframe=weekly&server_id=all&metric=deaths&limit=20"
+)
+require(unsupported_metric_ranking_status == 400, "Global ranking with unsupported metric should return 400.")
+
+unsupported_timeframe_ranking_status, _ = read_payload(
+    "/api/ranking?timeframe=seasonal&server_id=all&metric=kills&limit=20"
+)
+require(unsupported_timeframe_ranking_status == 400, "Global ranking with unsupported timeframe should return 400.")
+
+missing_year_ranking_status, _ = read_payload(
+    "/api/ranking?timeframe=annual&server_id=all&metric=kills&limit=20"
+)
+require(missing_year_ranking_status == 400, "Global ranking annual requests without year should return 400.")
+
 print(json.dumps({
     "checked": [
         "health",
         "stats-player-search",
         "stats-player-profile",
         "stats-annual-ranking",
+        "global-ranking",
     ],
     "annual_snapshot_status": annual_data.get("snapshot_status"),
+    "global_ranking_annual_snapshot_status": annual_ranking_data.get("snapshot_status"),
     "search_items_count": len(search_data.get("items") or []),
     "profile_matches_considered": profile_data.get("matches_considered"),
 }))
@@ -258,6 +317,24 @@ if ($backendAvailable) {
     $unsupportedMetricStatus = Get-HttpStatusCode -Url "$backendBaseUrl/api/stats/rankings/annual?year=$currentYear&server_id=all&metric=deaths&limit=20"
     if ($unsupportedMetricStatus -ne 400) {
         throw "Live annual ranking with unsupported metric should return HTTP 400."
+    }
+
+    $rankingWeeklyPayload = Invoke-RestMethod -Uri "$backendBaseUrl/api/ranking?timeframe=weekly&server_id=all&metric=kills&limit=20" -TimeoutSec 5
+    if ($rankingWeeklyPayload.status -ne "ok") {
+        throw "Live global ranking weekly route should return status=ok."
+    }
+
+    $rankingAnnualPayload = Invoke-RestMethod -Uri "$backendBaseUrl/api/ranking?timeframe=annual&year=$currentYear&server_id=all&metric=kills&limit=20" -TimeoutSec 5
+    if ($rankingAnnualPayload.status -ne "ok") {
+        throw "Live global ranking annual route should return status=ok."
+    }
+    if (-not ($rankingAnnualPayload.data.snapshot_status -in @("ready", "missing"))) {
+        throw "Live global ranking annual should expose ready/missing snapshot status."
+    }
+
+    $rankingUnsupportedMetricStatus = Get-HttpStatusCode -Url "$backendBaseUrl/api/ranking?timeframe=weekly&server_id=all&metric=deaths&limit=20"
+    if ($rankingUnsupportedMetricStatus -ne 400) {
+        throw "Live global ranking with unsupported metric should return HTTP 400."
     }
 
     Write-Host "Live HTTP checks passed for Stats endpoints."

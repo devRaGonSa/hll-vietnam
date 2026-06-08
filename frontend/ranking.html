@@ -1,0 +1,149 @@
+<!DOCTYPE html>
+<html lang="es">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta
+      name="description"
+      content="Ranking global de HLL Vietnam con filtros por periodo, servidor y limite."
+    />
+    <title>Ranking - HLL Vietnam</title>
+    <link rel="stylesheet" href="./assets/css/styles.css" />
+  </head>
+  <body data-backend-base-url="http://127.0.0.1:8000">
+    <div class="page-shell stats-page-shell">
+      <header class="hero stats-hero ranking-hero">
+        <div class="hero__overlay"></div>
+        <div class="hero__content">
+          <div class="hero__copy">
+            <p class="eyebrow eyebrow--section">Seccion Ranking</p>
+            <h1 class="hero__title">
+              Ranking
+              <span class="hero__title-accent">Global</span>
+            </h1>
+            <p class="hero__text">
+              Consulta los lideres publicos por kills con lectura RCON-first, cambia
+              periodo y servidor sin salir de la pagina, y usa Stats solo cuando
+              necesites revisar el rendimiento de un jugador concreto.
+            </p>
+            <p class="status-chip status-chip--fallback" id="ranking-backend-state">
+              Comprobando disponibilidad del backend
+            </p>
+            <div class="hero__actions stats__hero-actions">
+              <a class="secondary-button secondary-button--ghost" href="./index.html">
+                Volver al inicio
+              </a>
+              <a class="secondary-button secondary-button--compact" href="./stats.html">
+                Stats
+              </a>
+              <a class="secondary-button secondary-button--compact" href="./historico.html">
+                Historico
+              </a>
+            </div>
+          </div>
+        </div>
+      </header>
+
+      <main class="content stats-content">
+        <section class="panel">
+          <div class="panel__shell">
+            <div class="panel__header">
+              <p class="eyebrow eyebrow--section">Filtros de lectura</p>
+              <h2>Top publico por ventana</h2>
+            </div>
+            <p class="panel__intro panel__intro--tight">
+              El ranking expone solo la lectura publica de lideres. Para busqueda
+              individual usa la seccion Stats.
+            </p>
+            <form class="ranking-form" id="ranking-form">
+              <div class="ranking-form__grid">
+                <label class="stats-search-form__label" for="ranking-timeframe">
+                  Periodo
+                  <select class="ranking-select" id="ranking-timeframe" name="timeframe">
+                    <option value="weekly">Semanal</option>
+                    <option value="monthly">Mensual</option>
+                    <option value="annual">Anual</option>
+                  </select>
+                </label>
+                <label class="stats-search-form__label" for="ranking-server">
+                  Servidor
+                  <select class="ranking-select" id="ranking-server" name="server_id">
+                    <option value="all">Todos</option>
+                    <option value="comunidad-hispana-01">Comunidad Hispana #01</option>
+                    <option value="comunidad-hispana-02">Comunidad Hispana #02</option>
+                  </select>
+                </label>
+                <label class="stats-search-form__label" for="ranking-metric">
+                  Metrica
+                  <select class="ranking-select" id="ranking-metric" name="metric">
+                    <option value="kills">Kills</option>
+                  </select>
+                </label>
+                <label class="stats-search-form__label" for="ranking-limit">
+                  Limite
+                  <select class="ranking-select" id="ranking-limit" name="limit">
+                    <option value="10">Top 10</option>
+                    <option value="20" selected>Top 20</option>
+                    <option value="30">Top 30</option>
+                  </select>
+                </label>
+                <label class="stats-search-form__label" for="ranking-year" id="ranking-year-wrap" hidden>
+                  Ano
+                  <input
+                    class="stats-search-input"
+                    id="ranking-year"
+                    name="year"
+                    type="number"
+                    min="1"
+                    step="1"
+                    inputmode="numeric"
+                    aria-describedby="ranking-state"
+                  />
+                </label>
+              </div>
+              <div class="hero__actions ranking-form__actions">
+                <button class="discord-button" type="submit">Actualizar ranking</button>
+                <a class="secondary-button secondary-button--compact" href="./stats.html">
+                  Buscar jugador en Stats
+                </a>
+              </div>
+            </form>
+            <p class="stats-state stats-state--neutral" id="ranking-state" role="status" aria-live="polite">
+              Esperando filtros para cargar el ranking global.
+            </p>
+          </div>
+        </section>
+
+        <section class="panel">
+          <div class="panel__shell">
+            <div class="panel__header">
+              <p class="eyebrow eyebrow--section">Resultados</p>
+              <h2 id="ranking-title">Tabla activa</h2>
+            </div>
+            <div class="ranking-meta" id="ranking-meta"></div>
+            <div class="ranking-table-shell">
+              <table class="historical-table ranking-table" id="ranking-table" hidden>
+                <thead>
+                  <tr>
+                    <th>Pos.</th>
+                    <th>Jugador</th>
+                    <th>Kills</th>
+                    <th>Partidas</th>
+                    <th>Deaths</th>
+                    <th>Teamkills</th>
+                    <th>K/D</th>
+                  </tr>
+                </thead>
+                <tbody id="ranking-table-body"></tbody>
+              </table>
+            </div>
+            <div class="ranking-empty" id="ranking-empty" hidden></div>
+          </div>
+        </section>
+      </main>
+    </div>
+
+    <script src="./assets/js/config.js"></script>
+    <script src="./assets/js/ranking.js"></script>
+  </body>
+</html>

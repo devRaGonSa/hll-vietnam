@@ -50,6 +50,7 @@ from .historical_storage import (
 )
 from .rcon_historical_read_model import get_rcon_historical_match_detail
 from .rcon_annual_rankings import get_annual_ranking_snapshot
+from .rcon_historical_leaderboards import list_rcon_materialized_leaderboard
 from .rcon_historical_player_stats import search_rcon_materialized_players
 from .rcon_historical_player_stats import get_rcon_materialized_player_stats
 from .normalizers import normalize_map_name
@@ -480,6 +481,41 @@ def _to_iso_or_none(value: object) -> str | None:
     return parsed.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
 
 
+def _normalize_public_server_id(server_id: str | None) -> str:
+    normalized = str(server_id or "").strip().lower()
+    if not normalized or normalized == "all":
+        return ALL_SERVERS_SLUG
+    return str(server_id).strip()
+
+
+def _serialize_public_server_id(server_id: object) -> str:
+    normalized = str(server_id or "").strip()
+    if not normalized or normalized == ALL_SERVERS_SLUG:
+        return "all"
+    return normalized
+
+
+def _normalize_global_ranking_items(items: object) -> list[dict[str, object]]:
+    normalized_items: list[dict[str, object]] = []
+    for item in items if isinstance(items, list) else []:
+        if not isinstance(item, dict):
+            continue
+        normalized_items.append(
+            {
+                "ranking_position": int(item.get("ranking_position") or 0),
+                "player_id": item.get("player_id"),
+                "player_name": item.get("player_name"),
+                "metric_value": int(item.get("metric_value") or 0),
+                "matches_considered": int(item.get("matches_considered") or 0),
+                "kills": int(item.get("kills") or 0),
+                "deaths": int(item.get("deaths") or 0),
+                "teamkills": int(item.get("teamkills") or 0),
+                "kd_ratio": float(item.get("kd_ratio") or 0.0),
+            }
+        )
+    return normalized_items
+
+
 def _source_when_present(*values: object, source: str) -> str | None:
     return source if any(value is not None for value in values) else None
 
@@ -709,6 +745,95 @@ def build_annual_ranking_snapshot_payload(
                 for item in items
                 if isinstance(item, dict)
             ],
+        },
+    }
+
+
+def build_global_ranking_payload(
+    *,
+    timeframe: str = "weekly",
+    server_id: str | None = None,
+    metric: str = "kills",
+    limit: int = 20,
+    year: int | None = None,
+) -> dict[str, object]:
+    """Return the dedicated Ranking page payload without changing Stats contracts."""
+    normalized_timeframe = str(timeframe or "weekly").strip().lower()
+    normalized_server_id = _normalize_public_server_id(server_id)
+
+    if normalized_timeframe == "annual":
+        if year is None:
+            raise ValueError("year is required when timeframe=annual")
+        result = get_annual_ranking_snapshot(
+            year=year,
+            server_key=normalized_server_id,
+            metric=metric,
+            limit=limit,
+        )
+        return {
+            "status": "ok",
+            "data": {
+                "page_kind": "global-ranking",
+                "title": "Ranking global anual",
+                "context": "global-ranking-annual",
+                "timeframe": "annual",
+                "server_id": _serialize_public_server_id(result.get("server_id")),
+                "metric": result.get("metric"),
+                "limit": int(result.get("limit") or 0),
+                "requested_limit": int(result.get("requested_limit") or 0),
+                "effective_limit": int(result.get("effective_limit") or 0),
+                "year": int(result.get("year") or year),
+                "window_start": result.get("window_start"),
+                "window_end": result.get("window_end"),
+                "window_kind": "annual-snapshot",
+                "window_label": "Anual",
+                "snapshot_status": result.get("snapshot_status"),
+                "snapshot_limit": result.get("snapshot_limit"),
+                "item_count": int(result.get("item_count") or 0),
+                "source_matches_count": int(result.get("source_matches_count") or 0),
+                "source": {
+                    "primary_source": "rcon",
+                    "read_model": "rcon-annual-ranking-snapshot",
+                    "generated_at": result.get("generated_at"),
+                    "freshness": (
+                        "snapshot" if result.get("snapshot_status") == "ready" else "missing"
+                    ),
+                },
+                "items": _normalize_global_ranking_items(result.get("items")),
+            },
+        }
+
+    result = list_rcon_materialized_leaderboard(
+        server_key=normalized_server_id,
+        timeframe=normalized_timeframe,
+        metric=metric,
+        limit=limit,
+    )
+    return {
+        "status": "ok",
+        "data": {
+            "page_kind": "global-ranking",
+            "title": "Ranking global",
+            "context": f"global-ranking-{normalized_timeframe}",
+            "timeframe": normalized_timeframe,
+            "server_id": _serialize_public_server_id(result.get("server_key")),
+            "metric": result.get("metric"),
+            "limit": int(result.get("limit") or limit),
+            "requested_limit": int(limit),
+            "effective_limit": int(result.get("limit") or limit),
+            "window_start": result.get("window_start"),
+            "window_end": result.get("window_end"),
+            "window_kind": result.get("window_kind"),
+            "window_label": result.get("window_label"),
+            "selection_reason": result.get("selection_reason"),
+            "snapshot_status": "ready",
+            "source": {
+                "primary_source": "rcon",
+                "read_model": "rcon-materialized-admin-log-leaderboard",
+                "generated_at": _utc_timestamp_now(),
+                "freshness": "runtime",
+            },
+            "items": _normalize_global_ranking_items(result.get("items")),
         },
     }
 

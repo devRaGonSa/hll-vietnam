@@ -8,6 +8,7 @@ from urllib.parse import parse_qs, urlparse
 
 from .config import get_historical_data_source_kind
 from .payloads import (
+    build_global_ranking_payload,
     build_stats_player_profile_payload,
     build_community_payload,
     build_current_match_kill_feed_payload,
@@ -107,6 +108,38 @@ def resolve_get_payload(path: str) -> tuple[HTTPStatus | None, dict[str, object]
                 server_id=server_id,
                 metric=metric,
                 limit=limit,
+            )
+        except ValueError as error:
+            return HTTPStatus.BAD_REQUEST, build_error_payload(str(error))
+
+    if parsed.path == "/api/ranking":
+        params = parse_qs(parsed.query)
+        timeframe = params.get("timeframe", ["weekly"])[0]
+        if timeframe not in {"weekly", "monthly", "annual"}:
+            return HTTPStatus.BAD_REQUEST, build_error_payload("Invalid timeframe parameter")
+        metric = params.get("metric", ["kills"])[0]
+        if metric != "kills":
+            return HTTPStatus.BAD_REQUEST, build_error_payload("Invalid metric parameter")
+        limit = _parse_limit(parsed.query)
+        if limit is None:
+            return HTTPStatus.BAD_REQUEST, build_error_payload("Invalid limit parameter")
+        server_id = params.get("server_id", [None])[0]
+        if server_id is None:
+            server_id = params.get("server", [None])[0]
+        if not _is_supported_ranking_server_id(server_id):
+            return HTTPStatus.BAD_REQUEST, build_error_payload("Invalid server_id parameter")
+        year = None
+        if timeframe == "annual":
+            year = _parse_required_year(parsed.query)
+            if year is None:
+                return HTTPStatus.BAD_REQUEST, build_error_payload("Invalid year parameter")
+        try:
+            return HTTPStatus.OK, build_global_ranking_payload(
+                timeframe=timeframe,
+                server_id=server_id,
+                metric=metric,
+                limit=limit,
+                year=year,
             )
         except ValueError as error:
             return HTTPStatus.BAD_REQUEST, build_error_payload(str(error))
@@ -471,8 +504,28 @@ def _parse_year(query: str) -> int | None:
     return year
 
 
+def _parse_required_year(query: str) -> int | None:
+    params = parse_qs(query)
+    if "year" not in params:
+        return None
+    return _parse_year(query)
+
+
 def _parse_limit_with_default(query: str, default: int = 20) -> int | None:
     params = parse_qs(query)
     if "limit" not in params:
         return default
     return _parse_limit(query)
+
+
+def _is_supported_ranking_server_id(server_id: str | None) -> bool:
+    if server_id is None:
+        return True
+    normalized = str(server_id).strip().lower()
+    return normalized in {
+        "",
+        "all",
+        "all-servers",
+        "comunidad-hispana-01",
+        "comunidad-hispana-02",
+    }
