@@ -1,16 +1,17 @@
-"""Annual ranking snapshot generator over materialized RCON match stats."""
+"""Annual ranking snapshot generator and reader over materialized RCON match stats."""
 
 from __future__ import annotations
 
 import argparse
 import json
+from contextlib import closing
 from datetime import datetime, timezone
 from pathlib import Path
 
 from .config import get_storage_path, use_postgres_rcon_storage
 from .historical_storage import ALL_SERVERS_SLUG
 from .rcon_admin_log_materialization import MATCH_RESULT_SOURCE, initialize_rcon_materialized_storage
-from .sqlite_utils import connect_sqlite_writer
+from .sqlite_utils import connect_sqlite_readonly, connect_sqlite_writer
 
 
 def generate_annual_ranking_snapshot(
@@ -73,7 +74,7 @@ def generate_annual_ranking_snapshot(
             scope_params=scope_params,
         )
 
-        snapshot_id = _delete_existing_snapshot(
+        _delete_existing_snapshot(
             connection=connection,
             year=year,
             server_key=normalized_server_key,
@@ -109,6 +110,75 @@ def generate_annual_ranking_snapshot(
     }
 
 
+def get_annual_ranking_snapshot(
+    *,
+    year: int,
+    server_key: str | None = None,
+    metric: str = "kills",
+    limit: int = 20,
+    db_path: Path | None = None,
+) -> dict[str, object]:
+    """Load one annual ranking snapshot without recalculating the ranking."""
+    normalized_year = int(year)
+    if normalized_year < 1:
+        raise ValueError("year must be greater than zero")
+
+    normalized_server_key = _normalize_server_key(server_key)
+    normalized_metric = _normalize_metric(metric)
+    normalized_limit = max(1, int(limit))
+
+    resolved_path = initialize_rcon_materialized_storage(db_path=db_path)
+    if use_postgres_rcon_storage(explicit_sqlite_path=db_path):
+        from .postgres_rcon_storage import connect_postgres_compat
+
+        connection_scope = connect_postgres_compat()
+    else:
+        connection_scope = closing(connect_sqlite_readonly(resolved_path))
+
+    with connection_scope as connection:
+        snapshot = _find_snapshot(
+            connection=connection,
+            year=normalized_year,
+            server_key=normalized_server_key,
+            metric=normalized_metric,
+        )
+        if snapshot is None:
+            return {
+                "snapshot_status": "missing",
+                "year": normalized_year,
+                "server_id": normalized_server_key,
+                "metric": normalized_metric,
+                "limit": normalized_limit,
+                "source": "rcon-annual-ranking-snapshot",
+                "generated_at": None,
+                "window_start": None,
+                "window_end": None,
+                "source_matches_count": 0,
+                "items": [],
+            }
+
+        effective_limit = min(normalized_limit, int(snapshot.get("limit_size") or normalized_limit))
+        items = _list_items(
+            connection=connection,
+            snapshot_id=int(snapshot["id"]),
+            limit=effective_limit,
+        )
+
+    return {
+        "snapshot_status": "ready",
+        "year": normalized_year,
+        "server_id": normalized_server_key,
+        "metric": normalized_metric,
+        "limit": effective_limit,
+        "source": "rcon-annual-ranking-snapshot",
+        "generated_at": snapshot.get("generated_at"),
+        "window_start": snapshot.get("window_start"),
+        "window_end": snapshot.get("window_end"),
+        "source_matches_count": int(snapshot.get("source_matches_count") or 0),
+        "items": items,
+    }
+
+
 def _normalize_server_key(server_key: str | None) -> str:
     normalized = str(server_key or "").strip()
     normalized_lower = normalized.lower()
@@ -120,7 +190,7 @@ def _normalize_server_key(server_key: str | None) -> str:
 def _normalize_metric(metric: str) -> str:
     normalized = str(metric or "kills").strip().lower()
     if normalized != "kills":
-        raise ValueError("Only metric 'kills' is supported for annual ranking generation.")
+        raise ValueError("Only metric 'kills' is supported for annual ranking endpoints.")
     return normalized
 
 
@@ -141,6 +211,9 @@ def _fetch_annual_ranking_rows(
     scope_params: list[object],
 ) -> list[dict[str, object]]:
     # For now metric support is intentionally narrowed to kills only.
+    if metric != "kills":
+        return []
+
     rows = connection.execute(
         f"""
         SELECT
@@ -167,8 +240,6 @@ def _fetch_annual_ranking_rows(
         """,
         [MATCH_RESULT_SOURCE, start, end, *scope_params, limit],
     ).fetchall()
-    if metric != "kills":
-        return []
     return [dict(row) for row in rows]
 
 
@@ -196,6 +267,36 @@ def _count_matches_in_window(
         [MATCH_RESULT_SOURCE, start, end, *scope_params],
     ).fetchone()
     return int(row["source_matches_count"] or 0) if row else 0
+
+
+def _find_snapshot(
+    *,
+    connection: object,
+    year: int,
+    server_key: str,
+    metric: str,
+) -> dict[str, object] | None:
+    row = connection.execute(
+        """
+        SELECT
+            id,
+            year,
+            server_key,
+            metric,
+            limit_size,
+            source_basis,
+            window_start,
+            window_end,
+            status,
+            source_matches_count,
+            generated_at
+        FROM rcon_annual_ranking_snapshots
+        WHERE year = ? AND server_key = ? AND metric = ?
+        LIMIT 1
+        """,
+        [year, server_key, metric],
+    ).fetchone()
+    return dict(row) if row else None
 
 
 def _find_existing_snapshot(
@@ -361,9 +462,9 @@ def _get_snapshot(*, connection: object, snapshot_id: int) -> dict[str, object] 
     return dict(row)
 
 
-def _list_items(*, connection: object, snapshot_id: int) -> list[dict[str, object]]:
-    rows = connection.execute(
-        """
+def _list_items(*, connection: object, snapshot_id: int, limit: int | None = None) -> list[dict[str, object]]:
+    params: list[object] = [snapshot_id]
+    query = """
         SELECT
             ranking_position,
             player_id,
@@ -377,16 +478,21 @@ def _list_items(*, connection: object, snapshot_id: int) -> list[dict[str, objec
         FROM rcon_annual_ranking_snapshot_items
         WHERE snapshot_id = ?
         ORDER BY ranking_position ASC
-        """,
-        [snapshot_id],
-    ).fetchall()
+    """
+    if limit is not None:
+        query = f"{query}\n        LIMIT ?"
+        params.append(limit)
+    rows = connection.execute(query, params).fetchall()
     return [dict(row) for row in rows]
 
 
 def _build_scope_sql(server_key: str, *, table_alias: str = "matches") -> tuple[str, list[object]]:
     if server_key == ALL_SERVERS_SLUG:
         return "", []
-    return f"AND ({table_alias}.target_key = ? OR {table_alias}.external_server_id = ?)", [server_key, server_key]
+    return (
+        f"AND ({table_alias}.target_key = ? OR {table_alias}.external_server_id = ?)",
+        [server_key, server_key],
+    )
 
 
 def _main(argv: list[str] | None = None) -> int:

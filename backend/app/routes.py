@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from http import HTTPStatus
+from datetime import datetime, timezone
 from urllib.parse import parse_qs, urlparse
 
 from .config import get_historical_data_source_kind
@@ -17,6 +18,7 @@ from .payloads import (
     build_elo_mmr_player_payload,
     build_error_payload,
     build_health_payload,
+    build_annual_ranking_snapshot_payload,
     build_historical_leaderboard_payload,
     build_historical_match_detail_payload,
     build_monthly_mvp_payload,
@@ -82,6 +84,27 @@ def resolve_get_payload(path: str) -> tuple[HTTPStatus | None, dict[str, object]
         return HTTPStatus.OK, build_stats_player_search_payload(
             query=query,
             server_id=server_id,
+            limit=limit,
+        )
+
+    if parsed.path == "/api/stats/rankings/annual":
+        params = parse_qs(parsed.query)
+        metric = params.get("metric", ["kills"])[0]
+        if metric != "kills":
+            return HTTPStatus.BAD_REQUEST, build_error_payload("Invalid metric parameter")
+        year = _parse_year(parsed.query)
+        if year is None:
+            return HTTPStatus.BAD_REQUEST, build_error_payload("Invalid year parameter")
+        limit = _parse_limit(parsed.query)
+        if limit is None:
+            return HTTPStatus.BAD_REQUEST, build_error_payload("Invalid limit parameter")
+        server_id = params.get("server_id", [None])[0]
+        if server_id is None:
+            server_id = params.get("server", [None])[0]
+        return HTTPStatus.OK, build_annual_ranking_snapshot_payload(
+            year=year,
+            server_id=server_id,
+            metric=metric,
             limit=limit,
         )
 
@@ -429,6 +452,20 @@ def _parse_limit(query: str) -> int | None:
         return None
 
     return limit
+
+
+def _parse_year(query: str) -> int | None:
+    params = parse_qs(query)
+    raw_year = params.get("year", [None])[0]
+    if raw_year is None:
+        return datetime.now(timezone.utc).year
+    try:
+        year = int(raw_year)
+    except ValueError:
+        return None
+    if year <= 0:
+        return None
+    return year
 
 
 def _parse_limit_with_default(query: str, default: int = 20) -> int | None:

@@ -49,6 +49,7 @@ from .historical_storage import (
     list_weekly_top_kills,
 )
 from .rcon_historical_read_model import get_rcon_historical_match_detail
+from .rcon_annual_rankings import get_annual_ranking_snapshot
 from .rcon_historical_player_stats import search_rcon_materialized_players
 from .rcon_historical_player_stats import get_rcon_materialized_player_stats
 from .normalizers import normalize_map_name
@@ -657,6 +658,53 @@ def build_stats_player_profile_payload(
             "weekly_ranking": result.get("weekly_ranking"),
             "monthly_ranking": result.get("monthly_ranking"),
             "source": result.get("source"),
+        },
+    }
+
+
+def build_annual_ranking_snapshot_payload(
+    *,
+    year: int,
+    server_id: str | None = None,
+    metric: str = "kills",
+    limit: int = 20,
+) -> dict[str, object]:
+    """Return an annual ranking payload from precomputed snapshots."""
+    result = get_annual_ranking_snapshot(
+        year=year,
+        server_key=server_id,
+        metric=metric,
+        limit=limit,
+    )
+    items = result.get("items") or []
+    return {
+        "status": "ok",
+        "data": {
+            "year": result.get("year"),
+            "server_id": result.get("server_id"),
+            "metric": result.get("metric"),
+            "limit": result.get("limit"),
+            "source": result.get("source"),
+            "snapshot_status": result.get("snapshot_status"),
+            "generated_at": result.get("generated_at"),
+            "window_start": result.get("window_start"),
+            "window_end": result.get("window_end"),
+            "source_matches_count": int(result.get("source_matches_count") or 0),
+            "items": [
+                {
+                    "ranking_position": int(item.get("ranking_position") or 0),
+                    "player_id": item.get("player_id"),
+                    "player_name": item.get("player_name"),
+                    "metric_value": int(item.get("metric_value") or 0),
+                    "matches_considered": int(item.get("matches_considered") or 0),
+                    "kills": int(item.get("kills") or 0),
+                    "deaths": int(item.get("deaths") or 0),
+                    "teamkills": int(item.get("teamkills") or 0),
+                    "kd_ratio": float(item.get("kd_ratio") or 0.0),
+                }
+                for item in items
+                if isinstance(item, dict)
+            ],
         },
     }
 
