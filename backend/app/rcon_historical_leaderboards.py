@@ -6,7 +6,7 @@ import argparse
 import json
 import os
 from contextlib import closing
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Literal
 
@@ -1237,6 +1237,14 @@ def _to_iso(value: object) -> str:
     return parsed.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
 
 
+def _json_default(value: object) -> str:
+    if isinstance(value, datetime):
+        return _to_iso(value)
+    if isinstance(value, date):
+        return value.isoformat()
+    raise TypeError(f"Object of type {type(value).__name__} is not JSON serializable")
+
+
 def _main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         description="Read and generate weekly/monthly ranking snapshots.",
@@ -1279,7 +1287,14 @@ def _main(argv: list[str] | None = None) -> int:
             replace_existing=args.replace_existing,
             db_path=args.sqlite_path,
         )
-        print(json.dumps({"status": "ok", "data": payload}, ensure_ascii=True, indent=2))
+        print(
+            json.dumps(
+                {"status": "ok", "data": payload},
+                ensure_ascii=True,
+                indent=2,
+                default=_json_default,
+            )
+        )
         return 0
 
     parser.print_help()

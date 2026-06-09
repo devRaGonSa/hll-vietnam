@@ -118,7 +118,7 @@ import os
 import sqlite3
 import sys
 from contextlib import contextmanager, redirect_stdout
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from io import StringIO
 from pathlib import Path
 
@@ -293,7 +293,14 @@ def validate_ranking_snapshot_cli_defaults():
 
     def fake_generate_ranking_snapshot(**kwargs):
         captured.update(kwargs)
-        return {"status": "ok", "snapshot": None, "items": []}
+        return {
+            "status": "ok",
+            "snapshot": {
+                "generated_at": datetime(2026, 6, 9, 8, 0, 0, tzinfo=timezone.utc),
+                "window_start": date(2026, 6, 2),
+            },
+            "items": [],
+        }
 
     ranking_leaderboards.generate_ranking_snapshot = fake_generate_ranking_snapshot
 
@@ -312,8 +319,18 @@ def validate_ranking_snapshot_cli_defaults():
             captured.get("db_path") is None,
             "Ranking snapshot CLI should use PostgreSQL-compatible db_path=None by default.",
         )
+        serialized_default_payload = json.loads(stdout_buffer.getvalue())
+        require(
+            serialized_default_payload.get("data", {}).get("snapshot", {}).get("generated_at") == "2026-06-09T08:00:00Z",
+            "Ranking snapshot CLI should serialize datetime values as ISO strings.",
+        )
+        require(
+            serialized_default_payload.get("data", {}).get("snapshot", {}).get("window_start") == "2026-06-02",
+            "Ranking snapshot CLI should serialize date values as ISO strings.",
+        )
 
         captured.clear()
+        stdout_buffer = StringIO()
         with redirect_stdout(stdout_buffer):
             exit_code = ranking_leaderboards._main([
                 "generate-ranking-snapshot",
