@@ -526,6 +526,14 @@ function renderKillFeedTeamBadge(team) {
 }
 
 function resolveKillFeedWeapon(value) {
+  const runtimeWeaponIcons = globalThis.HLL_VIETNAM_CURRENT_MATCH_WEAPON_ICONS;
+  if (runtimeWeaponIcons?.lookup) {
+    const runtimeKey = runtimeWeaponIcons.normalize(value);
+    return runtimeWeaponIcons.lookup[runtimeKey] || {
+      label: String(value || runtimeWeaponIcons.unknown.label),
+      icon: runtimeWeaponIcons.unknown.icon,
+    };
+  }
   const key = normalizeLookupText(value);
   return CURRENT_MATCH_WEAPONS[key] || {
     label: String(value || CURRENT_MATCH_WEAPONS.unknown.label),
