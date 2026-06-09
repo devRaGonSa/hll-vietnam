@@ -128,9 +128,11 @@ from app.routes import resolve_get_payload
 from app.config import use_postgres_rcon_storage
 import app.postgres_rcon_storage as postgres_rcon_storage
 import app.historical_runner as historical_runner
+import app.rcon_annual_rankings as annual_rankings
 import app.rcon_historical_leaderboards as ranking_leaderboards
 import app.rcon_historical_player_stats as player_search_stats
 
+generate_annual_ranking_snapshot = annual_rankings.generate_annual_ranking_snapshot
 initialize_ranking_snapshot_storage = ranking_leaderboards.initialize_ranking_snapshot_storage
 generate_ranking_snapshot = ranking_leaderboards.generate_ranking_snapshot
 get_latest_ranking_snapshot = ranking_leaderboards.get_latest_ranking_snapshot
@@ -546,6 +548,147 @@ def validate_ranking_snapshot_postgres_selection():
         else:
             os.environ["HLL_BACKEND_DATABASE_URL"] = original_database_url
         postgres_rcon_storage.connect_postgres_compat = original_connect_postgres_compat
+
+
+def validate_annual_ranking_cli_defaults():
+    original_generate_annual_ranking_snapshot = annual_rankings.generate_annual_ranking_snapshot
+    captured = {}
+
+    def fake_generate_annual_ranking_snapshot(**kwargs):
+        captured.update(kwargs)
+        return {
+            "status": "ok",
+            "snapshot": {
+                "generated_at": datetime(2026, 6, 9, 8, 0, 0, tzinfo=timezone.utc),
+                "window_start": date(2026, 1, 1),
+            },
+            "items": [],
+        }
+
+    annual_rankings.generate_annual_ranking_snapshot = fake_generate_annual_ranking_snapshot
+
+    try:
+        stdout_buffer = StringIO()
+        with redirect_stdout(stdout_buffer):
+            exit_code = annual_rankings._main([
+                "generate",
+                "--year", "2026",
+                "--server-key", "all-servers",
+                "--metric", "kills",
+                "--limit", "30",
+            ])
+        require(exit_code == 0, "Annual ranking CLI should exit 0 for a valid command.")
+        require(
+            captured.get("db_path") is None,
+            "Annual ranking CLI should use PostgreSQL-compatible db_path=None by default.",
+        )
+        serialized_default_payload = json.loads(stdout_buffer.getvalue())
+        require(
+            serialized_default_payload.get("data", {}).get("snapshot", {}).get("generated_at") == "2026-06-09T08:00:00Z",
+            "Annual ranking CLI should serialize datetime values as ISO strings.",
+        )
+        require(
+            serialized_default_payload.get("data", {}).get("snapshot", {}).get("window_start") == "2026-01-01",
+            "Annual ranking CLI should serialize date values as ISO strings.",
+        )
+
+        captured.clear()
+        stdout_buffer = StringIO()
+        with redirect_stdout(stdout_buffer):
+            exit_code = annual_rankings._main([
+                "generate",
+                "--year", "2026",
+                "--server-key", "all-servers",
+                "--metric", "kills",
+                "--limit", "30",
+                "--sqlite-path", "backend/data/hll_vietnam_dev.sqlite3",
+            ])
+        require(exit_code == 0, "Annual ranking CLI with --sqlite-path should exit 0.")
+        require(
+            captured.get("db_path") == Path("backend/data/hll_vietnam_dev.sqlite3"),
+            "Annual ranking CLI should pass the explicit --sqlite-path override through to generate_annual_ranking_snapshot.",
+        )
+    finally:
+        annual_rankings.generate_annual_ranking_snapshot = original_generate_annual_ranking_snapshot
+
+
+def validate_annual_ranking_postgres_selection():
+    original_database_url = os.environ.get("HLL_BACKEND_DATABASE_URL")
+    original_initialize_materialized = annual_rankings.initialize_rcon_materialized_storage
+    original_connect_postgres_compat = postgres_rcon_storage.connect_postgres_compat
+    original_count_matches_in_window = annual_rankings._count_matches_in_window
+    original_find_existing_snapshot = annual_rankings._find_existing_snapshot
+    original_fetch_annual_ranking_rows = annual_rankings._fetch_annual_ranking_rows
+    original_delete_existing_snapshot = annual_rankings._delete_existing_snapshot
+    original_insert_snapshot = annual_rankings._insert_snapshot
+    original_insert_items = annual_rankings._insert_items
+    original_get_snapshot = annual_rankings._get_snapshot
+    original_list_items = annual_rankings._list_items
+    calls = {"postgres_connect": 0}
+
+    @contextmanager
+    def fake_connect_postgres_compat():
+        calls["postgres_connect"] += 1
+        yield object()
+
+    os.environ["HLL_BACKEND_DATABASE_URL"] = "postgresql://validation-user:validation-pass@127.0.0.1:5432/hll_validation"
+    annual_rankings.initialize_rcon_materialized_storage = (
+        lambda db_path=None: Path("backend/data/hll_vietnam_dev.sqlite3")
+    )
+    postgres_rcon_storage.connect_postgres_compat = fake_connect_postgres_compat
+    annual_rankings._count_matches_in_window = lambda **kwargs: 0
+    annual_rankings._find_existing_snapshot = lambda **kwargs: None
+    annual_rankings._fetch_annual_ranking_rows = lambda **kwargs: []
+    annual_rankings._delete_existing_snapshot = lambda **kwargs: None
+    annual_rankings._insert_snapshot = lambda **kwargs: 1
+    annual_rankings._insert_items = lambda **kwargs: None
+    annual_rankings._get_snapshot = lambda **kwargs: {
+        "id": 1,
+        "year": 2026,
+        "server_key": "all-servers",
+        "metric": "kills",
+        "limit_size": 30,
+        "generated_at": "2026-06-09T08:00:00Z",
+    }
+    annual_rankings._list_items = lambda **kwargs: []
+
+    try:
+        require(
+            use_postgres_rcon_storage(explicit_sqlite_path=None) is True,
+            "PostgreSQL storage should be selected for annual ranking when DATABASE_URL is configured and no explicit SQLite path is provided.",
+        )
+        require(
+            use_postgres_rcon_storage(explicit_sqlite_path=Path("backend/data/hll_vietnam_dev.sqlite3")) is False,
+            "Explicit SQLite paths should still disable PostgreSQL storage selection for annual ranking.",
+        )
+        payload = generate_annual_ranking_snapshot(
+            year=2026,
+            server_key="all-servers",
+            metric="kills",
+            limit=30,
+            replace_existing=True,
+            db_path=None,
+        )
+        require(payload.get("status") == "ok", "Annual ranking snapshot generator should still return ok in the PostgreSQL selection validation.")
+        require(
+            calls["postgres_connect"] == 1,
+            "Annual ranking snapshot generator should use PostgreSQL when db_path=None and DATABASE_URL is configured.",
+        )
+    finally:
+        if original_database_url is None:
+            os.environ.pop("HLL_BACKEND_DATABASE_URL", None)
+        else:
+            os.environ["HLL_BACKEND_DATABASE_URL"] = original_database_url
+        annual_rankings.initialize_rcon_materialized_storage = original_initialize_materialized
+        postgres_rcon_storage.connect_postgres_compat = original_connect_postgres_compat
+        annual_rankings._count_matches_in_window = original_count_matches_in_window
+        annual_rankings._find_existing_snapshot = original_find_existing_snapshot
+        annual_rankings._fetch_annual_ranking_rows = original_fetch_annual_ranking_rows
+        annual_rankings._delete_existing_snapshot = original_delete_existing_snapshot
+        annual_rankings._insert_snapshot = original_insert_snapshot
+        annual_rankings._insert_items = original_insert_items
+        annual_rankings._get_snapshot = original_get_snapshot
+        annual_rankings._list_items = original_list_items
 
 
 def validate_postgres_player_search_index_schema_path():
@@ -1506,6 +1649,8 @@ validate_ranking_snapshot_cli_defaults()
 validate_ranking_snapshot_postgres_selection()
 validate_ranking_snapshot_bulk_refresh()
 validate_ranking_snapshot_bulk_partial_failure()
+validate_annual_ranking_cli_defaults()
+validate_annual_ranking_postgres_selection()
 validate_postgres_player_search_index_schema_path()
 validate_player_search_index_cli_defaults()
 validate_player_search_index_refresh_and_search()
@@ -1894,6 +2039,8 @@ print(json.dumps({
         "ranking-snapshot-postgres-selection",
         "ranking-snapshot-bulk-refresh",
         "ranking-snapshot-bulk-partial-failure",
+        "annual-ranking-cli-postgres-default",
+        "annual-ranking-postgres-selection",
         "ranking-snapshot-generator",
         "ranking-snapshot-ready",
         "ranking-snapshot-missing",

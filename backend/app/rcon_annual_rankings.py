@@ -5,10 +5,10 @@ from __future__ import annotations
 import argparse
 import json
 from contextlib import closing
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from pathlib import Path
 
-from .config import get_storage_path, use_postgres_rcon_storage
+from .config import use_postgres_rcon_storage
 from .historical_storage import ALL_SERVERS_SLUG
 from .rcon_admin_log_materialization import MATCH_RESULT_SOURCE, initialize_rcon_materialized_storage
 from .sqlite_utils import connect_sqlite_readonly, connect_sqlite_writer
@@ -547,6 +547,14 @@ def _build_scope_sql(server_key: str, *, table_alias: str = "matches") -> tuple[
     )
 
 
+def _json_default(value: object) -> str:
+    if isinstance(value, datetime):
+        return value.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
+    if isinstance(value, date):
+        return value.isoformat()
+    raise TypeError(f"Object of type {type(value).__name__} is not JSON serializable")
+
+
 def _main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Generate annual ranking snapshots.")
     subparsers = parser.add_subparsers(dest="command")
@@ -555,6 +563,12 @@ def _main(argv: list[str] | None = None) -> int:
     generate_parser.add_argument("--server-key", default=None)
     generate_parser.add_argument("--metric", default="kills")
     generate_parser.add_argument("--limit", type=int, default=20)
+    generate_parser.add_argument(
+        "--sqlite-path",
+        type=Path,
+        default=None,
+        help="explicit local SQLite override; default operational mode uses PostgreSQL when configured",
+    )
     generate_parser.add_argument("--replace-existing", action="store_true", default=True)
     parser.set_defaults(command="generate")
     args = parser.parse_args(argv)
@@ -566,9 +580,16 @@ def _main(argv: list[str] | None = None) -> int:
             metric=args.metric,
             limit=args.limit,
             replace_existing=args.replace_existing,
-            db_path=get_storage_path(),
+            db_path=args.sqlite_path,
         )
-        print(json.dumps({"status": "ok", "data": payload}, ensure_ascii=True, indent=2))
+        print(
+            json.dumps(
+                {"status": "ok", "data": payload},
+                ensure_ascii=True,
+                indent=2,
+                default=_json_default,
+            )
+        )
         return 0
 
     parser.print_help()

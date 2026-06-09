@@ -2,16 +2,16 @@
 
 Objetivo: operar el ranking anual top 20 de `Stats` de forma reproducible, usando snapshots precomputados para no recalcular anualmente por cada request.
 
-## 1) Propósito del snapshot anual top 20
+## 1) Proposito del snapshot anual top 20
 
 El snapshot anual proporciona la tabla de posiciones de jugadores para el bloque de ranking anual de `Stats` con impacto bajo en latencia y costo de consulta.
 
-Objetivos del diseño:
+Objetivos del diseno:
 
-- entregar `top 20` de la temporada por métrica (V1: `kills`);
-- consumir un resultado estable desde API pública sin recalcular toda la historia anual en cada request;
-- permitir validación operativa clara de si el ranking está disponible o no;
-- soportar regeneración controlada por proceso de mantenimiento.
+- entregar `top 20` de la temporada por metrica (V1: `kills`);
+- consumir un resultado estable desde API publica sin recalcular toda la historia anual en cada request;
+- permitir validacion operativa clara de si el ranking esta disponible o no;
+- soportar regeneracion controlada por proceso de mantenimiento.
 
 ## 2) Fuente de datos
 
@@ -24,12 +24,12 @@ Filtro principal:
 
 - `matches.source_basis = admin-log-match-ended`
 
-Reglas clave de cálculo:
+Reglas clave de calculo:
 
-- ventanas por año (`YYYY-01-01T00:00:00Z` a `YYYY+1-01-01T00:00:00Z`);
+- ventanas por ano (`YYYY-01-01T00:00:00Z` a `YYYY+1-01-01T00:00:00Z`);
 - acumulado de `kills`, `deaths`, `teamkills` por `player_id`;
 - orden por `metric_value` desc, `matches_considered` desc, `player_name` asc;
-- sólo posiciones con actividad válida y `player_name` no vacío.
+- solo posiciones con actividad valida y `player_name` no vacio.
 
 ## 3) Endpoint consumidor
 
@@ -44,28 +44,42 @@ En V1:
 
 ## 4) Como generar snapshot anual
 
-La generación se hace fuera de la API (job/comando) para precomputar:
+La generacion se hace fuera de la API (job/comando) para precomputar:
 
-1. Definir año objetivo `year`.
-2. Definir alcance `server_id` (`all` para global o servidor específico).
-3. Ejecutar generador de snapshot anual con la configuración necesaria.
+1. Definir ano objetivo `year`.
+2. Definir alcance `server_id` (`all` para global o servidor especifico).
+3. Ejecutar generador de snapshot anual con la configuracion necesaria.
 4. Generador:
    - elimina snapshot previo del mismo `(year, server_id, metric)` si existe;
    - recalcula top-k desde datos materializados RCON;
    - guarda cabecera + items del ranking en tablas snapshots;
    - persiste metadatos (`generated_at`, ventana y conteo fuente).
 
-### Comando recomendado (si el entorno lo habilita)
+### Comando recomendado
 
 ```bash
-python -m app.rcon_annual_rankings generate --year 2026 --server-key all --metric kills --limit 20
+python -m app.rcon_annual_rankings generate --year 2026 --server-key all-servers --metric kills --limit 30 --replace-existing
 ```
 
 Notas:
 
-- El comando puede fallar si la capa de datos local no está inicializada;
-- en entornos manuales, validar entorno y ruta de DB antes de ejecutar;
-- si no hay datos, se puede generar un snapshot vacío (ready con `items=[]`).
+- Cuando `HLL_BACKEND_DATABASE_URL` esta configurado, el comando usa PostgreSQL por defecto.
+- SQLite queda solo como override explicito mediante `--sqlite-path <path>`.
+- El comando puede fallar si la capa de datos local no esta inicializada.
+- En entornos manuales, validar entorno y storage objetivo antes de ejecutar.
+- Si no hay datos, se puede generar un snapshot vacio (`ready` con `items=[]`).
+
+### Override local SQLite
+
+```bash
+python -m app.rcon_annual_rankings generate --year 2026 --server-key all-servers --metric kills --limit 30 --replace-existing --sqlite-path backend/data/hll_vietnam_dev.sqlite3
+```
+
+### Comando Docker recomendado
+
+```bash
+docker compose exec backend python -m app.rcon_annual_rankings generate --year 2026 --server-key all-servers --metric kills --limit 30 --replace-existing
+```
 
 ## 5) Como regenerarlo
 
@@ -77,19 +91,19 @@ Regenerar cuando:
 
 Procedimiento:
 
-1. Ejecutar nuevamente el generador con el mismo `year` y `server_id`;
-2. Aceptar reemplazo seguro del snapshot existente;
+1. Ejecutar nuevamente el generador con el mismo `year` y `server_id`.
+2. Aceptar reemplazo seguro del snapshot existente.
 3. Validar que el snapshot nuevo refleje el recuento de partidas fuente actualizado.
 
-Recomendación:
+Recomendacion:
 
-- programar recálculo en ventanas de mantenimiento (idealmente cierre anual o rutina periódica definida por operaciones).
+- programar recalculo en ventanas de mantenimiento (idealmente cierre anual o rutina periodica definida por operaciones).
 
 ## 6) Como validar que existe un snapshot
 
-Verificación local (reconstruir estado esperable):
+Verificacion local:
 
-1. Consultar API de ranking anual del año objetivo.
+1. Consultar API de ranking anual del ano objetivo.
 2. Revisar `snapshot_status` en respuesta:
    - `ready`: existe snapshot;
    - `missing`: no existe snapshot.
@@ -112,37 +126,36 @@ Usar llamadas directas a backend para validar estado y contenido:
 
 Checklist:
 
-- HTTP 200 esperado para parámetros válidos de V1.
+- HTTP 200 esperado para parametros validos de V1.
 - `status` debe ser `"ok"` con estructura de data consistente.
-- Para snapshots `ready`, `effective_limit` puede ser menor que `requested_limit`
-  cuando el snapshot fue generado con un limite menor o contiene menos filas.
-- en V1 con `metric` no soportada, esperar error de request (400) sin recomputar ranking.
+- Para snapshots `ready`, `effective_limit` puede ser menor que `requested_limit` cuando el snapshot fue generado con un limite menor o contiene menos filas.
+- En V1 con `metric` no soportada, esperar error de request (400) sin recomputar ranking.
 
 ## 8) Como validar desde frontend Stats
 
 Desde `frontend/stats.html`:
 
-1. Abrir la pestaña `Stats`.
+1. Abrir la pestana `Stats`.
 2. Ejecutar consulta anual usando `year`.
 3. Confirmar:
    - estado de mensaje de carga/success/empty/error;
    - render de filas cuando haya items;
-   - texto explícito cuando el snapshot está `missing`;
-   - texto explícito cuando el snapshot existe pero no tiene items.
-4. Confirmar que no rompe bloque semanal/mensual ni búsqueda cuando el anual no está disponible.
-5. Si endpoint retorna métricas inválidas, validar estado de warning en UI y que no cambia el resto del flujo.
+   - texto explicito cuando el snapshot esta `missing`;
+   - texto explicito cuando el snapshot existe pero no tiene items.
+4. Confirmar que no rompe bloque semanal/mensual ni busqueda cuando el anual no esta disponible.
+5. Si endpoint retorna metricas invalidas, validar estado de warning en UI y que no cambia el resto del flujo.
 
 ## 9) Casos esperados
 
 ### 9.1 `snapshot_status=ready` con items
 
-Respuesta típica:
+Respuesta tipica:
 
 - `status: "ok"`
 - `data.snapshot_status: "ready"`
 - `data.items` con ranking ordenado.
 
-Debe mostrarse top 20 con campos mínimos:
+Debe mostrarse top 20 con campos minimos:
 
 - `ranking_position`
 - `player_name`
@@ -155,55 +168,55 @@ Debe mostrarse top 20 con campos mínimos:
 
 ### 9.2 `snapshot_status=ready` sin items
 
-Respuesta típica:
+Respuesta tipica:
 
 - `snapshot_status: "ready"`
 - `items: []`
 - `generated_at` puede estar presente
 
-Debe renderizar estado "snapshot ready vacío" y no tratarlo como error de sistema.
+Debe renderizar estado "snapshot ready vacio" y no tratarlo como error de sistema.
 
 ### 9.3 `snapshot_status=missing`
 
-Respuesta típica:
+Respuesta tipica:
 
 - `snapshot_status: "missing"`
 - `items: []`
 
-Debe mostrar estado informativo claro de que el ranking no fue generado aún.
+Debe mostrar estado informativo claro de que el ranking no fue generado aun.
 
-### 9.4 Métrica no soportada
+### 9.4 Metrica no soportada
 
-Respuesta típica:
+Respuesta tipica:
 
-- error request (400) con mensaje de métrica inválida/no soportada.
+- error request (400) con mensaje de metrica invalida/no soportada.
 
 La UI/backend no debe intentar recalcular ni degradar a comportamiento inesperado.
 
 ## 10) Advertencias operativas
 
-- No reactivar Elo/MMR ni lógica dependiente en este bloque.
+- No reactivar Elo/MMR ni logica dependiente en este bloque.
 - No reintroducir `Comunidad Hispana #03` como alcance normal.
-- No usar scoreboard público como fuente primaria si RCON materializado está disponible.
-- No recalcular ranking anual completo en cada request público; siempre leer snapshot.
+- No usar scoreboard publico como fuente primaria si RCON materializado esta disponible.
+- No recalcular ranking anual completo en cada request publico; siempre leer snapshot.
 - No tocar `frontend/assets/js/partida-actual.js` ni `frontend/assets/img/clans/bxb.png` en este runbook.
 
-## Checklist de operación
+## Checklist de operacion
 
-- [ ] Definir año/servidor/limite.
-- [ ] Ejecutar generación o regeneración.
-- [ ] Confirmar respuesta de API por año objetivo.
+- [ ] Definir ano/servidor/limite.
+- [ ] Ejecutar generacion o regeneracion.
+- [ ] Confirmar respuesta de API por ano objetivo.
 - [ ] Confirmar estado en UI de Stats.
-- [ ] Registrar fecha/hora de generación y responsable.
+- [ ] Registrar fecha/hora de generacion y responsable.
 - [ ] Si faltan datos esperados, revisar pipeline RCON materializado.
 
-## Validación de la task
+## Validacion de la task
 
-- `docs/annual-ranking-snapshot-runbook.md` creado.
-- Cambios esperados únicamente de documentación.
-- No se aplican tests automáticos (task de documentación-only); se documenta explícitamente.
+- `docs/annual-ranking-snapshot-runbook.md` actualizado.
+- Cambios esperados unicamente de documentacion.
+- No se aplican tests automaticos en este runbook; la validacion real se ejecuta en la task de backend correspondiente.
 
-## Próximos pasos recomendados
+## Proximos pasos recomendados
 
-- Si el bloque muestra estados esperados y refrescos, conectar este runbook con operación de mantenimiento programada.
-- Mantener la misma política de fuentes en futuros reportes o automatizaciones de jobs.
+- Si el bloque muestra estados esperados y refrescos, conectar este runbook con operacion de mantenimiento programada.
+- Mantener la misma politica de fuentes en futuros reportes o automatizaciones de jobs.
