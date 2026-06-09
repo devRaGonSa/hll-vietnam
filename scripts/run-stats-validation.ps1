@@ -307,6 +307,26 @@ require(health_payload.get("status") == "ok", "/health payload should be ok.")
 
 validate_postgres_ranking_snapshot_schema_path()
 
+kd_metric_sql, _, _ = ranking_leaderboards._resolve_metric_sql("kd_ratio")
+require(
+    "AS REAL" not in kd_metric_sql,
+    "kd_ratio SQL should not keep SQLite REAL casting in the shared query path.",
+)
+require(
+    "AS NUMERIC" in kd_metric_sql,
+    "kd_ratio SQL should cast to NUMERIC for PostgreSQL-compatible rounding.",
+)
+
+kpm_metric_sql, _, _ = ranking_leaderboards._resolve_metric_sql("kills_per_match")
+require(
+    "AS REAL" not in kpm_metric_sql,
+    "kills_per_match SQL should not keep SQLite REAL casting in the shared query path.",
+)
+require(
+    "AS NUMERIC" in kpm_metric_sql,
+    "kills_per_match SQL should cast to NUMERIC for PostgreSQL-compatible rounding.",
+)
+
 search_status, search_payload = read_payload("/api/stats/players/search?q=regression-check&limit=5")
 require(search_status == 200, "Stats player search should return 200 for a valid query.")
 search_data = search_payload.get("data") or {}
@@ -588,6 +608,7 @@ print(json.dumps({
         "stats-player-profile",
         "stats-annual-ranking",
         "global-ranking",
+        "postgres-ranking-derived-metric-sql",
         "postgres-ranking-schema-path",
         "ranking-snapshot-ready",
         "ranking-snapshot-missing",

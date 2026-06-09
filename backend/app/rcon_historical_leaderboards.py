@@ -847,15 +847,17 @@ def _resolve_metric_sql(metric: str) -> tuple[str, str, str]:
         "kd_ratio": (
             "CASE "
             "WHEN SUM(COALESCE(stats.deaths, 0)) > 0 "
-            "THEN ROUND(CAST(SUM(COALESCE(stats.kills, 0)) AS REAL) / SUM(COALESCE(stats.deaths, 0)), 2) "
-            "ELSE CAST(SUM(COALESCE(stats.kills, 0)) AS REAL) "
+            "THEN ROUND(CAST(SUM(COALESCE(stats.kills, 0)) AS NUMERIC) / "
+            "CAST(SUM(COALESCE(stats.deaths, 0)) AS NUMERIC), 2) "
+            "ELSE CAST(SUM(COALESCE(stats.kills, 0)) AS NUMERIC) "
             "END"
         ),
         "kills_per_match": (
             "CASE "
             "WHEN COUNT(DISTINCT stats.match_key) > 0 "
-            "THEN ROUND(CAST(SUM(COALESCE(stats.kills, 0)) AS REAL) / COUNT(DISTINCT stats.match_key), 2) "
-            "ELSE 0.0 "
+            "THEN ROUND(CAST(SUM(COALESCE(stats.kills, 0)) AS NUMERIC) / "
+            "CAST(COUNT(DISTINCT stats.match_key) AS NUMERIC), 2) "
+            "ELSE CAST(0 AS NUMERIC) "
             "END"
         ),
         "matches_over_100_kills": "SUM(CASE WHEN COALESCE(stats.kills, 0) >= 100 THEN 1 ELSE 0 END)",
