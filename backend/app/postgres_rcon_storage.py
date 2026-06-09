@@ -250,8 +250,27 @@ CREATE INDEX IF NOT EXISTS idx_rcon_player_profile_snapshots_player
 ON rcon_player_profile_snapshots(target_key, player_id, source_server_time DESC);
 CREATE INDEX IF NOT EXISTS idx_rcon_materialized_matches_recent
 ON rcon_materialized_matches(target_key, ended_at DESC, ended_server_time DESC);
+CREATE INDEX IF NOT EXISTS idx_rcon_materialized_matches_source_window_text
+ON rcon_materialized_matches(
+    source_basis,
+    COALESCE(CAST(ended_at AS TEXT), CAST(started_at AS TEXT))
+);
+CREATE INDEX IF NOT EXISTS idx_rcon_materialized_matches_target_source_window_text
+ON rcon_materialized_matches(
+    target_key,
+    source_basis,
+    COALESCE(CAST(ended_at AS TEXT), CAST(started_at AS TEXT))
+);
+CREATE INDEX IF NOT EXISTS idx_rcon_materialized_matches_external_source_window_text
+ON rcon_materialized_matches(
+    external_server_id,
+    source_basis,
+    COALESCE(CAST(ended_at AS TEXT), CAST(started_at AS TEXT))
+);
 CREATE INDEX IF NOT EXISTS idx_rcon_match_player_stats_match
 ON rcon_match_player_stats(target_key, match_key);
+CREATE INDEX IF NOT EXISTS idx_rcon_match_player_stats_player_id_match
+ON rcon_match_player_stats(player_id, target_key, match_key);
 CREATE INDEX IF NOT EXISTS idx_rcon_annual_ranking_snapshots_year
 ON rcon_annual_ranking_snapshots(year, server_key, metric);
 CREATE INDEX IF NOT EXISTS idx_rcon_annual_ranking_snapshots_status

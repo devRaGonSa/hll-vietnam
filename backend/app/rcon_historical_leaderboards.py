@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from contextlib import closing
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -14,7 +15,7 @@ from .rcon_admin_log_materialization import (
     MATCH_RESULT_SOURCE,
     initialize_rcon_materialized_storage,
 )
-from .sqlite_utils import connect_sqlite_readonly
+from .sqlite_utils import connect_sqlite_readonly, connect_sqlite_writer
 
 LeaderboardTimeframe = Literal["weekly", "monthly"]
 LeaderboardMetric = Literal[
@@ -27,6 +28,156 @@ LeaderboardMetric = Literal[
     "matches_over_100_kills",
     "support",
 ]
+
+RANKING_SNAPSHOT_SCHEMA_SQL = """
+CREATE TABLE IF NOT EXISTS ranking_snapshots (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    timeframe TEXT NOT NULL,
+    server_id TEXT NOT NULL,
+    metric TEXT NOT NULL,
+    window_start TEXT NOT NULL,
+    window_end TEXT NOT NULL,
+    generated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    source TEXT NOT NULL DEFAULT 'rcon-materialized-admin-log',
+    snapshot_status TEXT NOT NULL DEFAULT 'ready',
+    item_count INTEGER NOT NULL DEFAULT 0,
+    limit_size INTEGER NOT NULL DEFAULT 20,
+    source_matches_count INTEGER NOT NULL DEFAULT 0,
+    freshness TEXT NOT NULL DEFAULT 'fresh',
+    window_kind TEXT,
+    window_label TEXT,
+    error_message TEXT,
+    UNIQUE(timeframe, server_id, metric, window_start, window_end)
+);
+
+CREATE INDEX IF NOT EXISTS idx_ranking_snapshots_lookup
+ON ranking_snapshots(timeframe, server_id, metric, snapshot_status, window_end DESC, generated_at DESC);
+
+CREATE TABLE IF NOT EXISTS ranking_snapshot_items (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    snapshot_id INTEGER NOT NULL REFERENCES ranking_snapshots(id) ON DELETE CASCADE,
+    ranking_position INTEGER NOT NULL,
+    player_id TEXT NOT NULL,
+    player_name TEXT NOT NULL,
+    metric_value REAL NOT NULL DEFAULT 0,
+    matches_considered INTEGER NOT NULL DEFAULT 0,
+    kills INTEGER NOT NULL DEFAULT 0,
+    deaths INTEGER NOT NULL DEFAULT 0,
+    teamkills INTEGER NOT NULL DEFAULT 0,
+    kd_ratio REAL NOT NULL DEFAULT 0.0,
+    kills_per_match REAL NOT NULL DEFAULT 0.0,
+    UNIQUE(snapshot_id, ranking_position),
+    UNIQUE(snapshot_id, player_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_ranking_snapshot_items_snapshot
+ON ranking_snapshot_items(snapshot_id, ranking_position);
+
+CREATE INDEX IF NOT EXISTS idx_ranking_snapshot_items_player
+ON ranking_snapshot_items(snapshot_id, player_id);
+"""
+
+
+def initialize_ranking_snapshot_storage(*, db_path: Path | None = None) -> Path:
+    """Create ranking snapshot tables used by weekly/monthly public ranking reads."""
+    resolved_path = initialize_rcon_materialized_storage(db_path=db_path)
+    if use_postgres_rcon_storage(explicit_sqlite_path=db_path):
+        from .postgres_rcon_storage import connect_postgres
+
+        with connect_postgres() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(RANKING_SNAPSHOT_SCHEMA_SQL)
+        return resolved_path
+
+    with closing(connect_sqlite_writer(resolved_path)) as connection:
+        with connection:
+            connection.executescript(RANKING_SNAPSHOT_SCHEMA_SQL)
+    return resolved_path
+
+
+def is_ranking_runtime_fallback_enabled() -> bool:
+    """Return whether `/api/ranking` may fall back to runtime reads when snapshot is missing."""
+    normalized = os.getenv(
+        "HLL_BACKEND_RANKING_RUNTIME_FALLBACK_ENABLED",
+        "true",
+    ).strip().lower()
+    return normalized in {"1", "true", "yes", "on"}
+
+
+def get_latest_ranking_snapshot(
+    *,
+    server_key: str | None = None,
+    timeframe: str = "weekly",
+    metric: str = "kills",
+    limit: int = 10,
+    db_path: Path | None = None,
+) -> dict[str, object]:
+    """Return the latest ready weekly/monthly ranking snapshot for the requested scope."""
+    normalized_server_key = _normalize_snapshot_server_key(server_key)
+    normalized_timeframe = _normalize_timeframe(timeframe)
+    normalized_metric = _normalize_metric(metric)
+    normalized_limit = max(1, int(limit or 10))
+
+    resolved_path = initialize_ranking_snapshot_storage(db_path=db_path)
+    connection_scope = _connect_scope(resolved_path, db_path=db_path)
+    with connection_scope as connection:
+        snapshot = _find_latest_snapshot(
+            connection=connection,
+            timeframe=normalized_timeframe,
+            server_key=normalized_server_key,
+            metric=normalized_metric,
+        )
+        if snapshot is None:
+            return {
+                "snapshot_status": "missing",
+                "timeframe": normalized_timeframe,
+                "server_id": normalized_server_key,
+                "metric": normalized_metric,
+                "limit": normalized_limit,
+                "requested_limit": normalized_limit,
+                "effective_limit": 0,
+                "snapshot_limit": None,
+                "item_count": 0,
+                "generated_at": None,
+                "window_start": None,
+                "window_end": None,
+                "window_kind": None,
+                "window_label": None,
+                "source": "ranking-snapshot",
+                "freshness": "missing",
+                "source_matches_count": 0,
+                "items": [],
+            }
+
+        snapshot_limit = max(1, int(snapshot.get("limit_size") or normalized_limit))
+        item_count = int(snapshot.get("item_count") or 0)
+        effective_limit = max(0, min(normalized_limit, snapshot_limit, item_count))
+        items = _list_snapshot_items(
+            connection=connection,
+            snapshot_id=int(snapshot["id"]),
+            limit=effective_limit if effective_limit > 0 else None,
+        )
+
+    return {
+        "snapshot_status": "ready",
+        "timeframe": normalized_timeframe,
+        "server_id": normalized_server_key,
+        "metric": normalized_metric,
+        "limit": effective_limit,
+        "requested_limit": normalized_limit,
+        "effective_limit": effective_limit,
+        "snapshot_limit": snapshot_limit,
+        "item_count": item_count,
+        "generated_at": snapshot.get("generated_at"),
+        "window_start": snapshot.get("window_start"),
+        "window_end": snapshot.get("window_end"),
+        "window_kind": snapshot.get("window_kind"),
+        "window_label": snapshot.get("window_label"),
+        "source": snapshot.get("source") or "ranking-snapshot",
+        "freshness": snapshot.get("freshness") or "fresh",
+        "source_matches_count": int(snapshot.get("source_matches_count") or 0),
+        "items": items,
+    }
 
 
 def build_rcon_materialized_leaderboard_snapshot_payload(
@@ -194,6 +345,74 @@ def list_rcon_materialized_leaderboard(
         "source_range_end": _to_iso(source_range[1]) if source_range[1] else None,
         "items": items,
     }
+
+
+def _find_latest_snapshot(
+    *,
+    connection: object,
+    timeframe: str,
+    server_key: str,
+    metric: str,
+) -> dict[str, object] | None:
+    row = connection.execute(
+        """
+        SELECT
+            id,
+            timeframe,
+            server_id,
+            metric,
+            window_start,
+            window_end,
+            generated_at,
+            source,
+            snapshot_status,
+            item_count,
+            limit_size,
+            source_matches_count,
+            freshness,
+            window_kind,
+            window_label
+        FROM ranking_snapshots
+        WHERE timeframe = ?
+          AND server_id = ?
+          AND metric = ?
+          AND snapshot_status = 'ready'
+        ORDER BY window_end DESC, generated_at DESC
+        LIMIT 1
+        """,
+        [timeframe, server_key, metric],
+    ).fetchone()
+    return dict(row) if row else None
+
+
+def _list_snapshot_items(
+    *,
+    connection: object,
+    snapshot_id: int,
+    limit: int | None = None,
+) -> list[dict[str, object]]:
+    params: list[object] = [snapshot_id]
+    query = """
+        SELECT
+            ranking_position,
+            player_id,
+            player_name,
+            metric_value,
+            matches_considered,
+            kills,
+            deaths,
+            teamkills,
+            kd_ratio,
+            kills_per_match
+        FROM ranking_snapshot_items
+        WHERE snapshot_id = ?
+        ORDER BY ranking_position ASC
+    """
+    if limit is not None:
+        query = f"{query}\n        LIMIT ?"
+        params.append(limit)
+    rows = connection.execute(query, params).fetchall()
+    return [dict(row) for row in rows]
 
 
 def _fetch_leaderboard_rows(
@@ -467,6 +686,14 @@ def _build_scope_sql(
         server_key,
         server_key,
     ]
+
+
+def _normalize_snapshot_server_key(server_key: str | None) -> str:
+    normalized = str(server_key or "").strip()
+    normalized_lower = normalized.lower()
+    if not normalized or normalized_lower in {ALL_SERVERS_SLUG, "all"}:
+        return ALL_SERVERS_SLUG
+    return normalized
 
 
 def _connect_scope(resolved_path: Path, *, db_path: Path | None):

@@ -1,7 +1,7 @@
 ---
 id: TASK-190-design-weekly-monthly-ranking-snapshots
 title: Design weekly monthly ranking snapshots
-status: pending
+status: done
 type: documentation
 team: Arquitecto de Base de Datos
 supporting_teams:
@@ -98,12 +98,34 @@ Before completing the task ensure:
 
 ## Outcome
 
-Document:
-
-- the proposed read-model schema
-- refresh policy
-- fallback policy
-- transition notes for implementation in `TASK-191`
+- Snapshot design documented in `docs/ranking-snapshot-read-model-plan.md`.
+- Proposed read model uses:
+  - `ranking_snapshots`
+  - `ranking_snapshot_items`
+- The plan explicitly covers:
+  - `timeframe` weekly/monthly/annual
+  - `server_id`
+  - `metric`
+  - `window_start`
+  - `window_end`
+  - `generated_at`
+  - `source`
+  - `snapshot_status`
+  - `item_count`
+  - `limit_size`
+  - per-item ranking and player fields
+- Refresh policy defined:
+  - weekly current every `5` to `15` minutes
+  - monthly current every `15` to `30` minutes
+  - previous week/month stable once closed
+  - annual manual or daily
+- Fallback policy defined:
+  - serve snapshot when `ready`
+  - return controlled `missing` or use runtime fallback only by configuration when snapshot is absent
+  - never recalculate by default on every public request
+- Transition notes prepared for `TASK-191`:
+  - weekly/monthly snapshot-first read path
+  - annual remains on the existing annual snapshot implementation until a dedicated migration task consolidates storage
 
 ## Change Budget
 

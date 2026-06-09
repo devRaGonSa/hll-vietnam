@@ -1,7 +1,7 @@
 ---
 id: TASK-191-serve-ranking-from-snapshots-with-runtime-fallback
 title: Serve ranking from snapshots with runtime fallback
-status: pending
+status: done
 type: backend
 team: Backend Senior
 supporting_teams:
@@ -99,12 +99,35 @@ Before completing the task ensure:
 
 ## Outcome
 
-Document:
-
-- final read-path behavior
-- fallback conditions
-- validation results
-- any remaining operational dependency for snapshot generation
+- Implemented weekly/monthly `/api/ranking` as snapshot-first:
+  - snapshot `ready` rows are served from `ranking_snapshots` + `ranking_snapshot_items`
+  - annual requests remain on the existing annual snapshot path
+- Added controlled runtime fallback behavior:
+  - fallback is used only when the weekly/monthly snapshot is missing
+  - fallback is controlled by `HLL_BACKEND_RANKING_RUNTIME_FALLBACK_ENABLED`
+  - default remains enabled for transition
+  - setting the variable to `false` returns controlled `snapshot_status='missing'` with empty items
+- Response metadata now distinguishes:
+  - snapshot-ready
+  - snapshot-missing
+  - runtime-fallback
+- Metadata exposed on ranking responses now includes:
+  - `source`
+  - `snapshot_status`
+  - `generated_at`
+  - `freshness`
+  - `fallback_used`
+  - `window_start`
+  - `window_end`
+- Validation completed:
+  - `powershell -ExecutionPolicy Bypass -File scripts/run-stats-validation.ps1`
+  - `powershell -ExecutionPolicy Bypass -File scripts/run-integration-tests.ps1`
+- Validation script now proves:
+  - normal route-contract behavior
+  - snapshot-ready behavior using temporary fixture rows
+  - snapshot-missing behavior with runtime fallback disabled
+- Remaining operational dependency:
+  - snapshot tables now exist on first access, but snapshot rows are not generated automatically yet; a future generator/job still needs to populate weekly/monthly snapshots for production use
 
 ## Change Budget
 

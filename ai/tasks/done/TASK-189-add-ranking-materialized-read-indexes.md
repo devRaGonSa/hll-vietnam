@@ -1,7 +1,7 @@
 ---
 id: TASK-189-add-ranking-materialized-read-indexes
 title: Add ranking materialized read indexes
-status: pending
+status: done
 type: backend
 team: Arquitecto de Base de Datos
 supporting_teams:
@@ -80,12 +80,24 @@ Before completing the task ensure:
 
 ## Outcome
 
-Document:
-
-- indexes added
-- why each index was chosen
-- observed improvement or inability to measure it
-- residual performance gaps that still require snapshot-based reads
+- Added SQLite/PostgreSQL-compatible indexes in the materialized storage initialization path:
+  - `idx_rcon_materialized_matches_source_window_text`
+  - `idx_rcon_materialized_matches_target_source_window_text`
+  - `idx_rcon_materialized_matches_external_source_window_text`
+  - `idx_rcon_match_player_stats_player_id_match`
+- Kept existing annual snapshot indexes unchanged because the annual read path was already using matching indexes.
+- Did not add a plain `player_name` B-tree because the current search query uses `LOWER(player_name) LIKE '%term%'` with a leading wildcard, so the audit did not justify it as a useful narrow index.
+- Post-index validation confirmed plan improvement:
+  - weekly count queries now use the new `source_basis + window` covering index
+  - the stats player-detail aggregate now narrows through the match window index and then probes stats by `(target_key, match_key, player_id)`
+- Before/after timing was captured for representative endpoints:
+  - `/api/stats/players/{player_id}` weekly improved from `8.924 ms / 4.494 ms SQL` to `4.300 ms / 1.043 ms SQL`
+  - `/api/ranking` weekly `kills` showed no meaningful change in this dataset because the active weekly window on `2026-06-09` is empty
+- Validation scripts executed successfully:
+  - `powershell -ExecutionPolicy Bypass -File scripts/run-stats-validation.ps1`
+  - `powershell -ExecutionPolicy Bypass -File scripts/run-integration-tests.ps1`
+- Remaining gap:
+  - weekly/monthly public ranking still does repeated runtime counting and grouped aggregation per request, so snapshot-backed reads remain necessary in `TASK-190` and `TASK-191`
 
 ## Change Budget
 

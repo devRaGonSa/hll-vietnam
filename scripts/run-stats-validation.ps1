@@ -114,12 +114,16 @@ Assert-ContainsText $statsJs "Promise.allSettled" `
 
 $backendContractCheck = @'
 import json
+import os
+import sqlite3
 import sys
 from datetime import datetime, timezone
+from pathlib import Path
 
 sys.path.insert(0, "backend")
 
 from app.routes import resolve_get_payload
+from app.rcon_historical_leaderboards import initialize_ranking_snapshot_storage
 
 
 def require(condition, message):
@@ -143,6 +147,109 @@ def require_str(value, message):
 
 def require_number(value, message):
     require(isinstance(value, (int, float)), message)
+
+
+def build_snapshot_fixture():
+    db_path = Path("backend/data/hll_vietnam_dev.sqlite3")
+    initialize_ranking_snapshot_storage(db_path=db_path)
+    weekly_window_start = "2026-06-02T00:00:00Z"
+    weekly_window_end = "2026-06-09T00:00:00Z"
+    monthly_window_start = "2026-06-01T00:00:00Z"
+    monthly_window_end = "2026-06-09T00:00:00Z"
+    fixture_generated_at = "2026-06-09T08:00:00Z"
+    connection = sqlite3.connect(db_path)
+    connection.row_factory = sqlite3.Row
+    with connection:
+        connection.execute(
+            """
+            DELETE FROM ranking_snapshot_items
+            WHERE snapshot_id IN (
+                SELECT id
+                FROM ranking_snapshots
+                WHERE source = 'stats-validation-fixture'
+            )
+            """
+        )
+        connection.execute(
+            "DELETE FROM ranking_snapshots WHERE source = 'stats-validation-fixture'"
+        )
+        weekly_id = connection.execute(
+            """
+            INSERT INTO ranking_snapshots (
+                timeframe, server_id, metric, window_start, window_end, generated_at,
+                source, snapshot_status, item_count, limit_size, source_matches_count,
+                freshness, window_kind, window_label
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, 'ready', 1, 20, 4, 'fresh', 'current-week', 'Semana actual')
+            RETURNING id
+            """,
+            (
+                "weekly",
+                "all-servers",
+                "kills",
+                weekly_window_start,
+                weekly_window_end,
+                fixture_generated_at,
+                "stats-validation-fixture",
+            ),
+        ).fetchone()["id"]
+        monthly_id = connection.execute(
+            """
+            INSERT INTO ranking_snapshots (
+                timeframe, server_id, metric, window_start, window_end, generated_at,
+                source, snapshot_status, item_count, limit_size, source_matches_count,
+                freshness, window_kind, window_label
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, 'ready', 1, 20, 5, 'fresh', 'current-month', 'Mes actual')
+            RETURNING id
+            """,
+            (
+                "monthly",
+                "comunidad-hispana-01",
+                "kills_per_match",
+                monthly_window_start,
+                monthly_window_end,
+                fixture_generated_at,
+                "stats-validation-fixture",
+            ),
+        ).fetchone()["id"]
+        connection.execute(
+            """
+            INSERT INTO ranking_snapshot_items (
+                snapshot_id, ranking_position, player_id, player_name, metric_value,
+                matches_considered, kills, deaths, teamkills, kd_ratio, kills_per_match
+            ) VALUES (?, 1, 'fixture-player', 'Fixture Player', 99, 3, 297, 120, 1, 2.48, 99)
+            """,
+            (weekly_id,),
+        )
+        connection.execute(
+            """
+            INSERT INTO ranking_snapshot_items (
+                snapshot_id, ranking_position, player_id, player_name, metric_value,
+                matches_considered, kills, deaths, teamkills, kd_ratio, kills_per_match
+            ) VALUES (?, 1, 'fixture-kpm-player', 'Fixture KPM Player', 42.5, 4, 170, 80, 0, 2.13, 42.5)
+            """,
+            (monthly_id,),
+        )
+    connection.close()
+    return db_path
+
+
+def cleanup_snapshot_fixture(db_path):
+    connection = sqlite3.connect(db_path)
+    with connection:
+        connection.execute(
+            """
+            DELETE FROM ranking_snapshot_items
+            WHERE snapshot_id IN (
+                SELECT id
+                FROM ranking_snapshots
+                WHERE source = 'stats-validation-fixture'
+            )
+            """
+        )
+        connection.execute(
+            "DELETE FROM ranking_snapshots WHERE source = 'stats-validation-fixture'"
+        )
+    connection.close()
 
 
 health_status, health_payload = read_payload("/health")
@@ -241,9 +348,14 @@ require(weekly_ranking_payload.get("status") == "ok", "Global ranking weekly pay
 require(weekly_ranking_data.get("page_kind") == "global-ranking", "Global ranking should expose page_kind.")
 require(weekly_ranking_data.get("timeframe") == "weekly", "Global ranking weekly timeframe should be preserved.")
 require(weekly_ranking_data.get("metric") == "kills", "Global ranking weekly metric should be kills.")
-require(weekly_ranking_data.get("snapshot_status") == "ready", "Global ranking weekly should expose ready snapshot status.")
+require(weekly_ranking_data.get("snapshot_status") in {"ready", "missing"}, "Global ranking weekly should expose ready/missing snapshot status.")
 require(isinstance(weekly_ranking_data.get("items"), list), "Global ranking weekly items must be list.")
 require(isinstance(weekly_ranking_data.get("source"), dict), "Global ranking weekly should expose source metadata.")
+require("fallback_used" in weekly_ranking_data, "Global ranking weekly should expose fallback_used.")
+require("freshness" in weekly_ranking_data, "Global ranking weekly should expose freshness.")
+require("generated_at" in weekly_ranking_data, "Global ranking weekly should expose generated_at.")
+require("window_start" in weekly_ranking_data, "Global ranking weekly should expose window_start.")
+require("window_end" in weekly_ranking_data, "Global ranking weekly should expose window_end.")
 
 weekly_deaths_status, weekly_deaths_payload = read_payload(
     "/api/ranking?timeframe=weekly&server_id=all&metric=deaths&limit=20"
@@ -282,6 +394,11 @@ require(monthly_ranking_status == 200, "Global ranking monthly route should retu
 monthly_ranking_data = monthly_ranking_payload.get("data") or {}
 require(monthly_ranking_data.get("timeframe") == "monthly", "Global ranking monthly timeframe should be preserved.")
 require(monthly_ranking_data.get("server_id") == "comunidad-hispana-01", "Global ranking monthly should preserve server_id.")
+require("fallback_used" in monthly_ranking_data, "Global ranking monthly should expose fallback_used.")
+require("freshness" in monthly_ranking_data, "Global ranking monthly should expose freshness.")
+require("generated_at" in monthly_ranking_data, "Global ranking monthly should expose generated_at.")
+require("window_start" in monthly_ranking_data, "Global ranking monthly should expose window_start.")
+require("window_end" in monthly_ranking_data, "Global ranking monthly should expose window_end.")
 
 monthly_kd_status, monthly_kd_payload = read_payload(
     "/api/ranking?timeframe=monthly&server_id=comunidad-hispana-01&metric=kd_ratio&limit=20"
@@ -304,6 +421,9 @@ require(annual_ranking_data.get("timeframe") == "annual", "Global ranking annual
 require(annual_ranking_data.get("metric") == "kills", "Global ranking annual metric should be kills.")
 require(annual_ranking_data.get("snapshot_status") in {"ready", "missing"}, "Global ranking annual snapshot_status should be ready or missing.")
 require(isinstance(annual_ranking_data.get("items"), list), "Global ranking annual items must be list.")
+require("generated_at" in annual_ranking_data, "Global ranking annual should expose generated_at.")
+require("window_start" in annual_ranking_data, "Global ranking annual should expose window_start.")
+require("window_end" in annual_ranking_data, "Global ranking annual should expose window_end.")
 
 for ranking_payload in [
     weekly_ranking_payload,
@@ -367,6 +487,40 @@ missing_year_ranking_status, _ = read_payload(
 )
 require(missing_year_ranking_status == 400, "Global ranking annual requests without year should return 400.")
 
+fixture_db_path = build_snapshot_fixture()
+try:
+    fixture_weekly_status, fixture_weekly_payload = read_payload(
+        "/api/ranking?timeframe=weekly&server_id=all&metric=kills&limit=20"
+    )
+    require(fixture_weekly_status == 200, "Fixture weekly ranking should return 200.")
+    fixture_weekly_data = fixture_weekly_payload.get("data") or {}
+    require(fixture_weekly_data.get("snapshot_status") == "ready", "Fixture weekly ranking should serve ready snapshot.")
+    require(fixture_weekly_data.get("fallback_used") is False, "Fixture weekly ranking should not use fallback.")
+    require((fixture_weekly_data.get("source") or {}).get("read_model") == "ranking-snapshot", "Fixture weekly ranking should identify snapshot read model.")
+    require(fixture_weekly_data.get("generated_at"), "Fixture weekly ranking should expose generated_at.")
+
+    fixture_monthly_status, fixture_monthly_payload = read_payload(
+        "/api/ranking?timeframe=monthly&server_id=comunidad-hispana-01&metric=kills_per_match&limit=20"
+    )
+    require(fixture_monthly_status == 200, "Fixture monthly ranking should return 200.")
+    fixture_monthly_data = fixture_monthly_payload.get("data") or {}
+    require(fixture_monthly_data.get("snapshot_status") == "ready", "Fixture monthly ranking should serve ready snapshot.")
+    require(fixture_monthly_data.get("fallback_used") is False, "Fixture monthly ranking should not use fallback.")
+    require((fixture_monthly_data.get("source") or {}).get("read_model") == "ranking-snapshot", "Fixture monthly ranking should identify snapshot read model.")
+
+    os.environ["HLL_BACKEND_RANKING_RUNTIME_FALLBACK_ENABLED"] = "false"
+    missing_snapshot_status, missing_snapshot_payload = read_payload(
+        "/api/ranking?timeframe=weekly&server_id=all&metric=deaths&limit=20"
+    )
+    require(missing_snapshot_status == 200, "Missing snapshot weekly ranking should return 200.")
+    missing_snapshot_data = missing_snapshot_payload.get("data") or {}
+    require(missing_snapshot_data.get("snapshot_status") == "missing", "Missing snapshot weekly ranking should expose missing snapshot_status.")
+    require(missing_snapshot_data.get("fallback_used") is False, "Missing snapshot weekly ranking should not use runtime fallback when disabled.")
+    require(isinstance(missing_snapshot_data.get("items"), list) and len(missing_snapshot_data.get("items")) == 0, "Missing snapshot weekly ranking should return empty items when fallback is disabled.")
+finally:
+    os.environ["HLL_BACKEND_RANKING_RUNTIME_FALLBACK_ENABLED"] = "true"
+    cleanup_snapshot_fixture(fixture_db_path)
+
 print(json.dumps({
     "checked": [
         "health",
@@ -374,6 +528,8 @@ print(json.dumps({
         "stats-player-profile",
         "stats-annual-ranking",
         "global-ranking",
+        "ranking-snapshot-ready",
+        "ranking-snapshot-missing",
     ],
     "annual_snapshot_status": annual_data.get("snapshot_status"),
     "global_ranking_annual_snapshot_status": annual_ranking_data.get("snapshot_status"),

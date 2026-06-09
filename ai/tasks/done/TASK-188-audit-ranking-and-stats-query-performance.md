@@ -1,7 +1,7 @@
 ---
 id: TASK-188-audit-ranking-and-stats-query-performance
 title: Audit ranking and stats query performance
-status: pending
+status: done
 type: research
 team: Arquitecto de Base de Datos
 supporting_teams:
@@ -85,12 +85,21 @@ Before completing the task ensure:
 
 ## Outcome
 
-Document:
-
-- measured baseline results
-- environment limitations
-- the most likely root cause of slow public reads
-- the follow-up recommendation that should feed `TASK-189` and `TASK-190`
+- Audit completed in `docs/ranking-stats-performance-audit.md`.
+- Measured baseline captured for the six required endpoint probes.
+- Environment limitation documented: backend HTTP server was not running locally, so request timing used in-process route resolution and SQL tracing over SQLite.
+- Current runtime weekly/monthly ranking windows on `2026-06-09` are empty because the latest materialized `admin-log-match-ended` data ends on `2026-05-20T23:21:45.816Z`.
+- Slowest measured endpoint is `/api/stats/players/{player_id}` because it issues 16 SQL statements, including repeated window counts and two ranking-position subqueries.
+- Primary future performance risks identified:
+  - full scans on `rcon_materialized_matches` for `source_basis + time-window` filters
+  - a full scan on `rcon_match_player_stats` for player-detail-by-`player_id`
+  - temp B-trees for grouping, `COUNT(DISTINCT)` and ordering in leaderboard/search queries
+- Follow-up recommendation for `TASK-189`:
+  - add time-window indexes on `rcon_materialized_matches`
+  - add a direct `player_id` index on `rcon_match_player_stats`
+  - keep annual snapshot indexes as-is
+- Follow-up recommendation for `TASK-190`:
+  - move weekly/monthly public ranking to snapshot-backed reads with controlled runtime fallback
 
 ## Change Budget
 

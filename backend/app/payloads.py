@@ -50,7 +50,11 @@ from .historical_storage import (
 )
 from .rcon_historical_read_model import get_rcon_historical_match_detail
 from .rcon_annual_rankings import get_annual_ranking_snapshot
-from .rcon_historical_leaderboards import list_rcon_materialized_leaderboard
+from .rcon_historical_leaderboards import (
+    get_latest_ranking_snapshot,
+    is_ranking_runtime_fallback_enabled,
+    list_rcon_materialized_leaderboard,
+)
 from .rcon_historical_player_stats import search_rcon_materialized_players
 from .rcon_historical_player_stats import get_rcon_materialized_player_stats
 from .normalizers import normalize_map_name
@@ -818,6 +822,11 @@ def build_global_ranking_payload(
                 "window_kind": "annual-snapshot",
                 "window_label": "Anual",
                 "snapshot_status": result.get("snapshot_status"),
+                "generated_at": result.get("generated_at"),
+                "freshness": (
+                    "snapshot" if result.get("snapshot_status") == "ready" else "missing"
+                ),
+                "fallback_used": False,
                 "snapshot_limit": result.get("snapshot_limit"),
                 "item_count": int(result.get("item_count") or 0),
                 "source_matches_count": int(result.get("source_matches_count") or 0),
@@ -830,6 +839,79 @@ def build_global_ranking_payload(
                     ),
                 },
                 "items": _normalize_global_ranking_items(result.get("items")),
+            },
+        }
+
+    snapshot_result = get_latest_ranking_snapshot(
+        server_key=normalized_server_id,
+        timeframe=normalized_timeframe,
+        metric=metric,
+        limit=limit,
+    )
+    if snapshot_result.get("snapshot_status") == "ready":
+        return {
+            "status": "ok",
+            "data": {
+                "page_kind": "global-ranking",
+                "title": "Ranking global",
+                "context": f"global-ranking-{normalized_timeframe}",
+                "timeframe": normalized_timeframe,
+                "server_id": _serialize_public_server_id(snapshot_result.get("server_id")),
+                "metric": snapshot_result.get("metric"),
+                "limit": int(snapshot_result.get("limit") or 0),
+                "requested_limit": int(snapshot_result.get("requested_limit") or limit),
+                "effective_limit": int(snapshot_result.get("effective_limit") or 0),
+                "window_start": snapshot_result.get("window_start"),
+                "window_end": snapshot_result.get("window_end"),
+                "window_kind": snapshot_result.get("window_kind"),
+                "window_label": snapshot_result.get("window_label"),
+                "snapshot_status": "ready",
+                "generated_at": snapshot_result.get("generated_at"),
+                "freshness": snapshot_result.get("freshness") or "fresh",
+                "fallback_used": False,
+                "source_matches_count": int(snapshot_result.get("source_matches_count") or 0),
+                "source": {
+                    "primary_source": "rcon",
+                    "read_model": "ranking-snapshot",
+                    "snapshot_source": snapshot_result.get("source"),
+                    "generated_at": snapshot_result.get("generated_at"),
+                    "freshness": snapshot_result.get("freshness") or "fresh",
+                },
+                "items": _normalize_global_ranking_items(snapshot_result.get("items")),
+            },
+        }
+
+    runtime_fallback_enabled = is_ranking_runtime_fallback_enabled()
+    if not runtime_fallback_enabled:
+        return {
+            "status": "ok",
+            "data": {
+                "page_kind": "global-ranking",
+                "title": "Ranking global",
+                "context": f"global-ranking-{normalized_timeframe}",
+                "timeframe": normalized_timeframe,
+                "server_id": _serialize_public_server_id(snapshot_result.get("server_id")),
+                "metric": snapshot_result.get("metric"),
+                "limit": int(snapshot_result.get("limit") or limit),
+                "requested_limit": int(snapshot_result.get("requested_limit") or limit),
+                "effective_limit": int(snapshot_result.get("effective_limit") or 0),
+                "window_start": snapshot_result.get("window_start"),
+                "window_end": snapshot_result.get("window_end"),
+                "window_kind": snapshot_result.get("window_kind"),
+                "window_label": snapshot_result.get("window_label"),
+                "snapshot_status": "missing",
+                "generated_at": None,
+                "freshness": "missing",
+                "fallback_used": False,
+                "source_matches_count": 0,
+                "source": {
+                    "primary_source": "rcon",
+                    "read_model": "ranking-snapshot",
+                    "snapshot_source": snapshot_result.get("source"),
+                    "generated_at": None,
+                    "freshness": "missing",
+                },
+                "items": [],
             },
         }
 
@@ -856,10 +938,14 @@ def build_global_ranking_payload(
             "window_kind": result.get("window_kind"),
             "window_label": result.get("window_label"),
             "selection_reason": result.get("selection_reason"),
-            "snapshot_status": "ready",
+            "snapshot_status": "missing",
+            "generated_at": None,
+            "freshness": "runtime",
+            "fallback_used": True,
             "source": {
                 "primary_source": "rcon",
                 "read_model": "rcon-materialized-admin-log-leaderboard",
+                "snapshot_source": "ranking-snapshot",
                 "generated_at": _utc_timestamp_now(),
                 "freshness": "runtime",
             },
