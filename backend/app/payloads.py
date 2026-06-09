@@ -671,6 +671,7 @@ def build_stats_player_search_payload(
         "data": {
             "query": result["query"],
             "server_id": result["server_id"],
+            "source": result.get("source"),
             "items": result["items"],
         },
     }

@@ -128,11 +128,16 @@ from app.routes import resolve_get_payload
 from app.config import use_postgres_rcon_storage
 import app.postgres_rcon_storage as postgres_rcon_storage
 import app.rcon_historical_leaderboards as ranking_leaderboards
+import app.rcon_historical_player_stats as player_search_stats
 
 initialize_ranking_snapshot_storage = ranking_leaderboards.initialize_ranking_snapshot_storage
 generate_ranking_snapshot = ranking_leaderboards.generate_ranking_snapshot
 get_latest_ranking_snapshot = ranking_leaderboards.get_latest_ranking_snapshot
 refresh_ranking_snapshots = ranking_leaderboards.refresh_ranking_snapshots
+initialize_player_search_index_storage = player_search_stats.initialize_player_search_index_storage
+refresh_player_search_index = player_search_stats.refresh_player_search_index
+search_rcon_materialized_players = player_search_stats.search_rcon_materialized_players
+MATCH_RESULT_SOURCE = player_search_stats.MATCH_RESULT_SOURCE
 
 
 def require(condition, message):
@@ -539,6 +544,283 @@ def validate_ranking_snapshot_postgres_selection():
         postgres_rcon_storage.connect_postgres_compat = original_connect_postgres_compat
 
 
+def validate_postgres_player_search_index_schema_path():
+    require(
+        "CREATE TABLE IF NOT EXISTS player_search_index" in postgres_rcon_storage.RCON_SCHEMA_SQL,
+        "PostgreSQL schema should define player_search_index.",
+    )
+    require(
+        "CREATE INDEX IF NOT EXISTS idx_player_search_index_name" in postgres_rcon_storage.RCON_SCHEMA_SQL,
+        "PostgreSQL schema should define the player_search_index normalized name index.",
+    )
+
+    original_initialize_materialized = player_search_stats.initialize_rcon_materialized_storage
+    original_use_postgres_storage = player_search_stats.use_postgres_rcon_storage
+    original_initialize_postgres_storage = postgres_rcon_storage.initialize_postgres_rcon_storage
+    calls = {"postgres_init": 0}
+
+    player_search_stats.initialize_rcon_materialized_storage = (
+        lambda db_path=None: Path("backend/data/hll_vietnam_dev.sqlite3")
+    )
+    player_search_stats.use_postgres_rcon_storage = lambda explicit_sqlite_path=None: True
+
+    def fake_initialize_postgres_storage():
+        calls["postgres_init"] += 1
+
+    postgres_rcon_storage.initialize_postgres_rcon_storage = fake_initialize_postgres_storage
+
+    try:
+        initialize_player_search_index_storage()
+    finally:
+        player_search_stats.initialize_rcon_materialized_storage = original_initialize_materialized
+        player_search_stats.use_postgres_rcon_storage = original_use_postgres_storage
+        postgres_rcon_storage.initialize_postgres_rcon_storage = original_initialize_postgres_storage
+
+    require(
+        calls["postgres_init"] == 1,
+        "Player search index initialization should delegate to initialize_postgres_rcon_storage exactly once.",
+    )
+
+
+def validate_player_search_index_cli_defaults():
+    original_refresh_player_search_index = player_search_stats.refresh_player_search_index
+    captured = {}
+
+    def fake_refresh_player_search_index(**kwargs):
+        captured.update(kwargs)
+        return {
+            "status": "ok",
+            "generated_at": datetime(2026, 6, 9, 8, 0, 0, tzinfo=timezone.utc),
+            "year": 2026,
+            "source": "rcon-materialized-admin-log",
+            "server_ids": ["all-servers", "comunidad-hispana-01", "comunidad-hispana-02"],
+            "total_rows": 3,
+            "results": [{"server_id": "all-servers", "row_count": 3}],
+        }
+
+    player_search_stats.refresh_player_search_index = fake_refresh_player_search_index
+    try:
+        stdout_buffer = StringIO()
+        with redirect_stdout(stdout_buffer):
+            exit_code = player_search_stats._main(["refresh-player-search-index"])
+        require(exit_code == 0, "Player search index CLI should exit 0 for a valid command.")
+        require(
+            captured.get("db_path") is None,
+            "Player search index CLI should use PostgreSQL-compatible db_path=None by default.",
+        )
+        serialized_default_payload = json.loads(stdout_buffer.getvalue())
+        require(
+            serialized_default_payload.get("data", {}).get("generated_at") == "2026-06-09T08:00:00Z",
+            "Player search index CLI should serialize datetime values as ISO strings.",
+        )
+
+        captured.clear()
+        stdout_buffer = StringIO()
+        with redirect_stdout(stdout_buffer):
+            exit_code = player_search_stats._main([
+                "refresh-player-search-index",
+                "--sqlite-path", "backend/data/hll_vietnam_dev.sqlite3",
+            ])
+        require(exit_code == 0, "Player search index CLI with --sqlite-path should exit 0.")
+        require(
+            captured.get("db_path") == Path("backend/data/hll_vietnam_dev.sqlite3"),
+            "Player search index CLI should pass the explicit --sqlite-path override through to refresh_player_search_index.",
+        )
+    finally:
+        player_search_stats.refresh_player_search_index = original_refresh_player_search_index
+
+
+def build_player_search_fixture():
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S%f")
+    db_path = Path(f"backend/data/hll_vietnam_player_search_validation_{stamp}.sqlite3")
+    if db_path.exists():
+        try:
+            db_path.unlink()
+        except PermissionError:
+            pass
+    initialize_player_search_index_storage(db_path=db_path)
+    connection = sqlite3.connect(db_path)
+    connection.row_factory = sqlite3.Row
+    with connection:
+        connection.execute(
+            """
+            INSERT INTO rcon_materialized_matches (
+                target_key, external_server_id, match_key, map_name, map_pretty_name, game_mode,
+                started_server_time, ended_server_time, started_at, ended_at,
+                allied_score, axis_score, winner, confidence_mode, source_basis
+            ) VALUES
+                ('comunidad-hispana-01', 'comunidad-hispana-01', 'm1', 'stmarie', 'St. Marie Du Mont', 'warfare', 1, 2, '2026-03-01T18:00:00Z', '2026-03-01T19:00:00Z', 5, 3, 'allied', 'exact', ?),
+                ('comunidad-hispana-02', 'comunidad-hispana-02', 'm2', 'foy', 'Foy', 'warfare', 3, 4, '2026-04-01T18:00:00Z', '2026-04-01T19:00:00Z', 2, 5, 'axis', 'exact', ?),
+                ('comunidad-hispana-01', 'comunidad-hispana-01', 'm3', 'kursk', 'Kursk', 'warfare', 5, 6, '2025-12-01T18:00:00Z', '2025-12-01T19:00:00Z', 1, 0, 'allied', 'exact', ?)
+            """,
+            (MATCH_RESULT_SOURCE, MATCH_RESULT_SOURCE, MATCH_RESULT_SOURCE),
+        )
+        connection.execute(
+            """
+            INSERT INTO rcon_match_player_stats (
+                target_key, match_key, player_id, player_name, team,
+                kills, deaths, teamkills, deaths_by_teamkill,
+                weapons_json, death_by_weapons_json, most_killed_json, death_by_json,
+                first_seen_server_time, last_seen_server_time
+            ) VALUES
+                ('comunidad-hispana-01', 'm1', 'player-rambo', 'Rámbó', 'allied', 12, 4, 1, 0, '{}', '{}', '{}', '{}', 1, 2),
+                ('comunidad-hispana-02', 'm2', 'player-rambo', 'Rambo', 'axis', 8, 6, 0, 0, '{}', '{}', '{}', '{}', 3, 4),
+                ('comunidad-hispana-01', 'm3', 'player-rambo', 'Old Rambo', 'allied', 99, 1, 0, 0, '{}', '{}', '{}', '{}', 5, 6),
+                ('comunidad-hispana-01', 'm1', 'player-ghost', 'Ghost', 'axis', 3, 9, 0, 0, '{}', '{}', '{}', '{}', 1, 2)
+            """
+        )
+    connection.close()
+    return db_path
+
+
+def validate_player_search_index_refresh_and_search():
+    db_path = build_player_search_fixture()
+    try:
+        payload = refresh_player_search_index(
+            db_path=db_path,
+            now=datetime(2026, 6, 9, 8, 0, 0, tzinfo=timezone.utc),
+        )
+        require(payload.get("status") == "ok", "Player search index refresh should return ok.")
+        require(payload.get("year") == 2026, "Player search index refresh should use the current UTC year.")
+        require_int(payload.get("total_rows"), "Player search index refresh should report numeric total_rows.")
+
+        connection = sqlite3.connect(db_path)
+        connection.row_factory = sqlite3.Row
+        rows = connection.execute(
+            """
+            SELECT server_id, player_id, player_name, normalized_player_name,
+                   matches_current_year, kills_current_year, deaths_current_year,
+                   teamkills_current_year, servers_seen
+            FROM player_search_index
+            ORDER BY server_id ASC, player_id ASC
+            """
+        ).fetchall()
+        connection.close()
+        require(len(rows) >= 4, "Player search index refresh should materialize rows for all and per-server scopes.")
+        all_scope_row = next(
+            (
+                dict(row)
+                for row in rows
+                if row["server_id"] == "all-servers" and row["player_id"] == "player-rambo"
+            ),
+            None,
+        )
+        require(all_scope_row is not None, "Player search index should contain an all-servers row for player-rambo.")
+        require(
+            all_scope_row["player_name"] == "Rambo",
+            "Player search index should preserve the latest current-year player display name.",
+        )
+        require(
+            all_scope_row["normalized_player_name"] == "rambo",
+            "Player search index should persist an accent-insensitive normalized player name.",
+        )
+        require(
+            int(all_scope_row["matches_current_year"] or 0) == 2,
+            "Player search index should only count current-year matches.",
+        )
+        require(
+            int(all_scope_row["kills_current_year"] or 0) == 20,
+            "Player search index should aggregate current-year kills.",
+        )
+        require(
+            json.loads(all_scope_row["servers_seen"]) == ["comunidad-hispana-01", "comunidad-hispana-02"],
+            "Player search index should preserve the list of servers seen in scope order.",
+        )
+
+        read_model_result = search_rcon_materialized_players(
+            query="Rambo",
+            server_id="all",
+            limit=10,
+            db_path=db_path,
+        )
+        require(
+            (read_model_result.get("source") or {}).get("read_model") == "player-search-index",
+            "Player search should prefer player_search_index when populated.",
+        )
+        require(
+            (read_model_result.get("source") or {}).get("fallback_used") is False,
+            "Player search should not report fallback when player_search_index is used.",
+        )
+        items = read_model_result.get("items") or []
+        require(len(items) >= 1, "Player search read model should return at least one item for Rambo.")
+        require(
+            items[0].get("player_id") == "player-rambo",
+            "Player search read model should return player-rambo first for a direct-name query.",
+        )
+        require(
+            items[0].get("matches_considered") == 2,
+            "Player search read model should preserve the current-year match count in the public contract.",
+        )
+
+        server_scoped_result = search_rcon_materialized_players(
+            query="Rambo",
+            server_id="comunidad-hispana-01",
+            limit=10,
+            db_path=db_path,
+        )
+        server_items = server_scoped_result.get("items") or []
+        require(
+            len(server_items) >= 1 and server_items[0].get("matches_considered") == 1,
+            "Server-scoped player search should use the server-specific index row when available.",
+        )
+    finally:
+        if db_path.exists():
+            try:
+                db_path.unlink()
+            except PermissionError:
+                pass
+
+
+def validate_player_search_index_fallbacks():
+    db_path = build_player_search_fixture()
+    try:
+        fallback_result = search_rcon_materialized_players(
+            query="Rambo",
+            server_id="all",
+            limit=10,
+            db_path=db_path,
+        )
+        require(
+            (fallback_result.get("source") or {}).get("fallback_used") is True,
+            "Player search should fall back to runtime when player_search_index is empty.",
+        )
+        require(
+            (fallback_result.get("source") or {}).get("fallback_reason") == "player-search-index-empty",
+            "Player search should expose an explicit empty-index fallback reason.",
+        )
+
+        original_search_player_search_index = player_search_stats._search_player_search_index
+
+        def fake_search_player_search_index(**kwargs):
+            return None, "player-search-index-unavailable"
+
+        player_search_stats._search_player_search_index = fake_search_player_search_index
+        try:
+            unavailable_result = search_rcon_materialized_players(
+                query="Rambo",
+                server_id="all",
+                limit=10,
+                db_path=db_path,
+            )
+        finally:
+            player_search_stats._search_player_search_index = original_search_player_search_index
+
+        require(
+            (unavailable_result.get("source") or {}).get("fallback_used") is True,
+            "Player search should preserve runtime fallback when the read model is unavailable.",
+        )
+        require(
+            (unavailable_result.get("source") or {}).get("fallback_reason") == "player-search-index-unavailable",
+            "Player search should expose an explicit unavailable-index fallback reason.",
+        )
+    finally:
+        if db_path.exists():
+            try:
+                db_path.unlink()
+            except PermissionError:
+                pass
+
+
 def cleanup_snapshot_fixture(db_path):
     connection = sqlite3.connect(db_path)
     with connection:
@@ -584,6 +866,10 @@ validate_ranking_snapshot_cli_defaults()
 validate_ranking_snapshot_postgres_selection()
 validate_ranking_snapshot_bulk_refresh()
 validate_ranking_snapshot_bulk_partial_failure()
+validate_postgres_player_search_index_schema_path()
+validate_player_search_index_cli_defaults()
+validate_player_search_index_refresh_and_search()
+validate_player_search_index_fallbacks()
 
 kd_metric_sql, _, _ = ranking_leaderboards._resolve_metric_sql("kd_ratio")
 require(
@@ -611,6 +897,8 @@ search_data = search_payload.get("data") or {}
 require(search_payload.get("status") == "ok", "Stats player search should return ok status.")
 require(search_data.get("query") == "regression-check", "Stats player search should preserve query.")
 require(search_data.get("server_id"), "Stats player search should include server_id.")
+require(isinstance(search_data.get("source"), dict), "Stats player search should expose source metadata.")
+require((search_data.get("source") or {}).get("read_model") in {"player-search-index", "rcon-materialized-admin-log-player-stats"}, "Stats player search should expose a recognized read model.")
 require(isinstance(search_data.get("items"), list), "Stats player search items must be a list.")
 
 for item in search_data["items"]:

@@ -258,6 +258,23 @@ CREATE TABLE IF NOT EXISTS ranking_snapshot_items (
     UNIQUE(snapshot_id, player_id)
 );
 
+CREATE TABLE IF NOT EXISTS player_search_index (
+    id BIGSERIAL PRIMARY KEY,
+    server_id TEXT NOT NULL,
+    player_id TEXT NOT NULL,
+    player_name TEXT NOT NULL,
+    normalized_player_name TEXT NOT NULL,
+    first_seen_at TEXT,
+    last_seen_at TEXT,
+    servers_seen TEXT NOT NULL DEFAULT '[]',
+    matches_current_year INTEGER NOT NULL DEFAULT 0,
+    kills_current_year INTEGER NOT NULL DEFAULT 0,
+    deaths_current_year INTEGER NOT NULL DEFAULT 0,
+    teamkills_current_year INTEGER NOT NULL DEFAULT 0,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(server_id, player_id)
+);
+
 CREATE TABLE IF NOT EXISTS rcon_scoreboard_match_candidates (
     id BIGSERIAL PRIMARY KEY,
     server_slug TEXT NOT NULL,
@@ -322,6 +339,12 @@ CREATE INDEX IF NOT EXISTS idx_ranking_snapshot_items_snapshot
 ON ranking_snapshot_items(snapshot_id, ranking_position);
 CREATE INDEX IF NOT EXISTS idx_ranking_snapshot_items_player
 ON ranking_snapshot_items(snapshot_id, player_id);
+CREATE INDEX IF NOT EXISTS idx_player_search_index_name
+ON player_search_index(server_id, normalized_player_name);
+CREATE INDEX IF NOT EXISTS idx_player_search_index_last_seen
+ON player_search_index(server_id, last_seen_at DESC);
+CREATE INDEX IF NOT EXISTS idx_player_search_index_player
+ON player_search_index(server_id, player_id);
 CREATE INDEX IF NOT EXISTS idx_rcon_scoreboard_candidates_server_end
 ON rcon_scoreboard_match_candidates(server_slug, ended_at DESC, started_at DESC);
 """
