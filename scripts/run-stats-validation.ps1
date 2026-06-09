@@ -123,7 +123,10 @@ from pathlib import Path
 sys.path.insert(0, "backend")
 
 from app.routes import resolve_get_payload
-from app.rcon_historical_leaderboards import initialize_ranking_snapshot_storage
+import app.postgres_rcon_storage as postgres_rcon_storage
+import app.rcon_historical_leaderboards as ranking_leaderboards
+
+initialize_ranking_snapshot_storage = ranking_leaderboards.initialize_ranking_snapshot_storage
 
 
 def require(condition, message):
@@ -233,6 +236,52 @@ def build_snapshot_fixture():
     return db_path
 
 
+def validate_postgres_ranking_snapshot_schema_path():
+    require(
+        "AUTOINCREMENT" not in postgres_rcon_storage.RCON_SCHEMA_SQL,
+        "PostgreSQL schema must not contain AUTOINCREMENT.",
+    )
+    require(
+        "CREATE TABLE IF NOT EXISTS ranking_snapshots" in postgres_rcon_storage.RCON_SCHEMA_SQL,
+        "PostgreSQL schema should define ranking_snapshots.",
+    )
+    require(
+        "CREATE TABLE IF NOT EXISTS ranking_snapshot_items" in postgres_rcon_storage.RCON_SCHEMA_SQL,
+        "PostgreSQL schema should define ranking_snapshot_items.",
+    )
+    require(
+        "BIGSERIAL PRIMARY KEY" in postgres_rcon_storage.RCON_SCHEMA_SQL,
+        "PostgreSQL snapshot schema should use BIGSERIAL primary keys.",
+    )
+
+    original_initialize_materialized = ranking_leaderboards.initialize_rcon_materialized_storage
+    original_use_postgres_storage = ranking_leaderboards.use_postgres_rcon_storage
+    original_initialize_postgres_storage = postgres_rcon_storage.initialize_postgres_rcon_storage
+    calls = {"postgres_init": 0}
+
+    ranking_leaderboards.initialize_rcon_materialized_storage = (
+        lambda db_path=None: Path("backend/data/hll_vietnam_dev.sqlite3")
+    )
+    ranking_leaderboards.use_postgres_rcon_storage = lambda explicit_sqlite_path=None: True
+
+    def fake_initialize_postgres_storage():
+        calls["postgres_init"] += 1
+
+    postgres_rcon_storage.initialize_postgres_rcon_storage = fake_initialize_postgres_storage
+
+    try:
+        initialize_ranking_snapshot_storage()
+    finally:
+        ranking_leaderboards.initialize_rcon_materialized_storage = original_initialize_materialized
+        ranking_leaderboards.use_postgres_rcon_storage = original_use_postgres_storage
+        postgres_rcon_storage.initialize_postgres_rcon_storage = original_initialize_postgres_storage
+
+    require(
+        calls["postgres_init"] == 1,
+        "PostgreSQL ranking snapshot initialization should delegate to initialize_postgres_rcon_storage exactly once.",
+    )
+
+
 def cleanup_snapshot_fixture(db_path):
     connection = sqlite3.connect(db_path)
     with connection:
@@ -255,6 +304,8 @@ def cleanup_snapshot_fixture(db_path):
 health_status, health_payload = read_payload("/health")
 require(health_status == 200, "Route resolver /health should return 200.")
 require(health_payload.get("status") == "ok", "/health payload should be ok.")
+
+validate_postgres_ranking_snapshot_schema_path()
 
 search_status, search_payload = read_payload("/api/stats/players/search?q=regression-check&limit=5")
 require(search_status == 200, "Stats player search should return 200 for a valid query.")
@@ -425,6 +476,15 @@ require("generated_at" in annual_ranking_data, "Global ranking annual should exp
 require("window_start" in annual_ranking_data, "Global ranking annual should expose window_start.")
 require("window_end" in annual_ranking_data, "Global ranking annual should expose window_end.")
 
+annual_2026_status, annual_2026_payload = read_payload(
+    "/api/ranking?timeframe=annual&year=2026&server_id=all&metric=kills&limit=20"
+)
+require(annual_2026_status == 200, "Global ranking annual 2026 route should return 200.")
+require(
+    ((annual_2026_payload.get("data") or {}).get("snapshot_status") in {"ready", "missing"}),
+    "Global ranking annual 2026 should expose ready/missing snapshot status.",
+)
+
 for ranking_payload in [
     weekly_ranking_payload,
     weekly_deaths_payload,
@@ -528,6 +588,7 @@ print(json.dumps({
         "stats-player-profile",
         "stats-annual-ranking",
         "global-ranking",
+        "postgres-ranking-schema-path",
         "ranking-snapshot-ready",
         "ranking-snapshot-missing",
     ],

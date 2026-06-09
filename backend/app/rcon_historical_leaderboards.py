@@ -29,7 +29,7 @@ LeaderboardMetric = Literal[
     "support",
 ]
 
-RANKING_SNAPSHOT_SCHEMA_SQL = """
+RANKING_SNAPSHOT_SQLITE_SCHEMA_SQL = """
 CREATE TABLE IF NOT EXISTS ranking_snapshots (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     timeframe TEXT NOT NULL,
@@ -82,16 +82,14 @@ def initialize_ranking_snapshot_storage(*, db_path: Path | None = None) -> Path:
     """Create ranking snapshot tables used by weekly/monthly public ranking reads."""
     resolved_path = initialize_rcon_materialized_storage(db_path=db_path)
     if use_postgres_rcon_storage(explicit_sqlite_path=db_path):
-        from .postgres_rcon_storage import connect_postgres
+        from .postgres_rcon_storage import initialize_postgres_rcon_storage
 
-        with connect_postgres() as connection:
-            with connection.cursor() as cursor:
-                cursor.execute(RANKING_SNAPSHOT_SCHEMA_SQL)
+        initialize_postgres_rcon_storage()
         return resolved_path
 
     with closing(connect_sqlite_writer(resolved_path)) as connection:
         with connection:
-            connection.executescript(RANKING_SNAPSHOT_SCHEMA_SQL)
+            connection.executescript(RANKING_SNAPSHOT_SQLITE_SCHEMA_SQL)
     return resolved_path
 
 
