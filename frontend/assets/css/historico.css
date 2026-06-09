@@ -7,8 +7,8 @@
 }
 
 .historical-hero__content {
-  padding-top: 44px;
-  padding-bottom: 46px;
+  padding-top: 58px;
+  padding-bottom: 64px;
 }
 
 .historical-hero__topline {
@@ -21,7 +21,7 @@
 
 .historical-hero__copy {
   display: grid;
-  gap: 24px;
+  gap: 18px;
   min-width: 0;
 }
 
@@ -34,7 +34,7 @@
 
 .historical-hero__layout--registry {
   grid-template-columns: minmax(220px, 330px) minmax(0, 1fr);
-  column-gap: clamp(72px, 7vw, 140px);
+  column-gap: 36px;
 }
 
 .historical-hero__layout > * {
@@ -42,8 +42,8 @@
 }
 
 .historical-logo-frame {
-  width: min(300px, 100%);
-  min-height: 220px;
+  width: min(340px, 100%);
+  min-height: 248px;
 }
 
 .historical-hero__title {
@@ -65,6 +65,11 @@
 
 /* Registry/historico hero: logo left, real flexible spacer, copy anchored right. */
 @media (min-width: 1121px) {
+  .hero--public-page.historical-hero .historical-hero__content {
+    padding-block: 54px 60px;
+    padding-inline: clamp(64px, 5.5vw, 104px);
+  }
+
   .historical-hero__layout--registry {
     width: 100%;
     max-width: 1420px;
@@ -113,6 +118,10 @@
 }
 
 @media (min-width: 1121px) and (max-width: 1380px) {
+  .hero--public-page.historical-hero .historical-hero__content {
+    padding-inline: clamp(44px, 4vw, 64px);
+  }
+
   .historical-hero__layout--registry {
     grid-template-columns: minmax(320px, 390px) minmax(28px, 1fr) minmax(560px, 720px);
     column-gap: clamp(20px, 2.5vw, 40px);

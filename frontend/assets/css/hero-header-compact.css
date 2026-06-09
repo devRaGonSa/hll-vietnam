@@ -1,10 +1,10 @@
 @media (min-width: 1121px) {
-  .hero:not(.historical-hero) .hero__content {
+  .hero--public-page:not(.historical-hero) .hero__content {
     padding-block: 54px 60px;
     padding-inline: clamp(64px, 5.5vw, 104px);
   }
 
-  .hero:not(.historical-hero) .hero__brand {
+  .hero--public-page:not(.historical-hero) .hero__brand {
     width: 100%;
     max-width: 1420px;
     margin: 0 auto;
@@ -14,7 +14,7 @@
     align-items: center;
   }
 
-  .hero:not(.historical-hero) .logo-frame {
+  .hero--public-page:not(.historical-hero) .logo-frame {
     grid-column: 1;
     justify-self: start;
     width: min(470px, 100%);
@@ -22,11 +22,11 @@
     padding: 30px 34px;
   }
 
-  .hero:not(.historical-hero) .logo-frame__image {
+  .hero--public-page:not(.historical-hero) .logo-frame__image {
     max-height: 340px;
   }
 
-  .hero:not(.historical-hero) .hero__copy {
+  .hero--public-page:not(.historical-hero) .hero__copy {
     grid-column: 3;
     justify-self: end;
     width: 100%;
@@ -37,41 +37,41 @@
     transform: none;
   }
 
-  .hero:not(.historical-hero) .hero__title {
+  .hero--public-page:not(.historical-hero) .hero__title {
     max-width: none;
     font-size: clamp(4.2rem, 5.2vw, 6.35rem);
     line-height: 1.02;
   }
 
-  .hero:not(.historical-hero) .hero__title-accent {
+  .hero--public-page:not(.historical-hero) .hero__title-accent {
     display: inline;
   }
 
-  .hero:not(.historical-hero) .hero__text {
+  .hero--public-page:not(.historical-hero) .hero__text {
     max-width: 68ch;
   }
 }
 
 @media (min-width: 1121px) and (max-width: 1380px) {
-  .hero:not(.historical-hero) .hero__content {
+  .hero--public-page:not(.historical-hero) .hero__content {
     padding-inline: clamp(44px, 4vw, 64px);
   }
 
-  .hero:not(.historical-hero) .hero__brand {
+  .hero--public-page:not(.historical-hero) .hero__brand {
     grid-template-columns: minmax(320px, 390px) minmax(28px, 1fr) minmax(560px, 720px);
     column-gap: clamp(20px, 2.5vw, 40px);
   }
 
-  .hero:not(.historical-hero) .logo-frame {
+  .hero--public-page:not(.historical-hero) .logo-frame {
     width: min(390px, 100%);
     min-height: 316px;
   }
 
-  .hero:not(.historical-hero) .logo-frame__image {
+  .hero--public-page:not(.historical-hero) .logo-frame__image {
     max-height: 298px;
   }
 
-  .hero:not(.historical-hero) .hero__copy {
+  .hero--public-page:not(.historical-hero) .hero__copy {
     grid-column: 3;
     justify-self: end;
     width: 100%;
@@ -79,13 +79,13 @@
     transform: none;
   }
 
-  .hero:not(.historical-hero) .hero__title {
+  .hero--public-page:not(.historical-hero) .hero__title {
     font-size: clamp(3.7rem, 5.35vw, 5.15rem);
   }
 }
 
 @media (max-width: 1120px) {
-  .hero:not(.historical-hero) .hero__copy {
+  .hero--public-page:not(.historical-hero) .hero__copy {
     grid-column: auto;
     transform: none;
   }

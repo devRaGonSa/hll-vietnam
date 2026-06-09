@@ -112,7 +112,9 @@ a {
   color: var(--text-soft);
   font-size: 0.82rem;
   font-weight: 800;
-  letter-spacing: 0.12em;
+  letter-spacing: 0.1em;
+  line-height: 1.2;
+  text-align: center;
   text-transform: uppercase;
   transition:
     transform 160ms ease,
@@ -904,12 +906,25 @@ h2 {
   padding-inline: 18px;
 }
 
+.clan-card--bxb .clan-card__brand {
+  grid-template-columns: minmax(112px, 138px) minmax(0, 1fr);
+}
+
+.clan-card__logo--bxb {
+  min-height: 108px;
+  padding: 10px;
+}
+
 .clan-card__logo img {
   width: auto;
   height: auto;
   max-width: 100%;
   max-height: 84px;
   object-fit: contain;
+}
+
+.clan-card__logo--bxb img {
+  max-height: 100px;
 }
 
 .clan-card__logo-placeholder {
@@ -970,11 +985,6 @@ h2 {
 
 .stats__hero-actions {
   margin-top: 8px;
-}
-
-.stats-hero .hero__brand,
-.ranking-hero .hero__brand {
-  align-items: center;
 }
 
 .stats-search-form {
@@ -1098,26 +1108,104 @@ h2 {
 
 .stats-annual-table-wrap {
   display: grid;
-  gap: 10px;
+  gap: 16px;
 }
 
 .stats-annual-meta {
   display: grid;
-  gap: 4px;
-  margin: 0 0 8px;
+  gap: 12px;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 180px), 1fr));
+  margin: 0;
 }
 
-.stats-annual-item {
-  padding: 10px 12px;
-  border: 1px solid rgba(159, 168, 141, 0.22);
-  border-radius: 14px;
-  margin-bottom: 8px;
+.stats-annual-card {
+  border: 1px solid rgba(159, 168, 141, 0.2);
+  border-radius: 18px;
+  padding: 18px;
   background:
-    linear-gradient(180deg, rgba(28, 34, 25, 0.82), rgba(12, 15, 11, 0.92));
+    linear-gradient(180deg, rgba(28, 34, 25, 0.88), rgba(12, 15, 11, 0.96));
 }
 
-.stats-annual-item p {
-  margin: 0 0 6px;
+.stats-annual-meta-item {
+  margin: 0;
+  padding: 14px 16px;
+  border: 1px solid rgba(159, 168, 141, 0.18);
+  border-radius: 16px;
+  background: rgba(15, 18, 13, 0.62);
+}
+
+.stats-annual-meta-item p,
+.stats-annual-meta-item strong {
+  margin: 0;
+}
+
+.stats-annual-meta-item p {
+  margin-bottom: 8px;
+  color: var(--muted);
+  font-size: 0.74rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.stats-annual-table-shell {
+  overflow-x: auto;
+  border: 1px solid rgba(159, 168, 141, 0.18);
+  border-radius: 18px;
+  background: linear-gradient(180deg, rgba(19, 24, 16, 0.88), rgba(10, 13, 9, 0.96));
+}
+
+.stats-annual-table {
+  width: 100%;
+  min-width: 860px;
+  border-collapse: collapse;
+}
+
+.stats-annual-table th,
+.stats-annual-table td {
+  padding: 14px 16px;
+  text-align: left;
+  border-bottom: 1px solid rgba(159, 168, 141, 0.12);
+}
+
+.stats-annual-table thead th {
+  color: var(--accent-strong);
+  font-size: 0.76rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  background: rgba(14, 18, 12, 0.96);
+}
+
+.stats-annual-table tbody tr:hover {
+  background: rgba(183, 201, 125, 0.05);
+}
+
+.stats-annual-table tbody tr:last-child td {
+  border-bottom: 0;
+}
+
+.stats-annual-rank {
+  color: var(--accent-warm);
+  font-weight: 700;
+}
+
+.stats-annual-player {
+  display: grid;
+  gap: 4px;
+}
+
+.stats-annual-player strong {
+  font-size: 1rem;
+  line-height: 1.35;
+}
+
+.stats-annual-player__id {
+  color: var(--muted);
+  font-size: 0.8rem;
+}
+
+.stats-annual-metric {
+  color: var(--accent-warm);
+  font-weight: 700;
 }
 
 .stats-annual-sub {
@@ -1499,8 +1587,8 @@ h2 {
   .public-nav__link {
     min-height: 46px;
     padding-inline: 12px;
-    font-size: 0.74rem;
-    letter-spacing: 0.08em;
+    font-size: 0.72rem;
+    letter-spacing: 0.06em;
   }
 
   .stats-search-form__fields {
@@ -1522,6 +1610,11 @@ h2 {
 
   .ranking-table th,
   .ranking-table td {
+    padding: 12px 10px;
+  }
+
+  .stats-annual-table th,
+  .stats-annual-table td {
     padding: 12px 10px;
   }
 

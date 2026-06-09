@@ -33,7 +33,7 @@ const COMMUNITY_CLANS = Object.freeze([
     logoAlt: "Logo de La 129",
     logoClassName: "clan-card__logo--wide",
     discordUrl: "",
-    discordLabel: "Proximamente",
+    discordLabel: "Pr\u00f3ximamente",
   },
   {
     name: "250 Hispania",
@@ -65,9 +65,10 @@ const COMMUNITY_CLANS = Object.freeze([
       "Clan activo de la comunidad.",
     logoSrc: "./assets/img/clans/bxb.png",
     logoAlt: "Logo de BxB",
-    logoClassName: "",
+    logoClassName: "clan-card__logo--bxb",
+    cardClassName: "clan-card--bxb",
     discordUrl: "",
-    discordLabel: "Proximamente",
+    discordLabel: "Pr\u00f3ximamente",
   },
   {
     name: "7dv",
@@ -209,7 +210,7 @@ async function hydrateServers(
 
     if (serversData.items.length === 0) {
       serversList.innerHTML =
-        '<p class="servers-empty">Informacion de servidores disponible mas adelante.</p>';
+        '<p class="servers-empty">Informaci\u00f3n de servidores disponible m\u00e1s adelante.</p>';
       return;
     }
 
@@ -283,7 +284,7 @@ function renderServerStatsCard(server) {
     { label: "Mapa", value: currentMap, valueClassName: "server-card__quickfact-value--map" },
   ];
   if (region) {
-    quickFactItems.push({ label: "Region", value: region });
+    quickFactItems.push({ label: "Regi\u00f3n", value: region });
   }
   const quickFacts = renderQuickFacts(quickFactItems);
 
@@ -345,7 +346,7 @@ function renderServerAction(server) {
   return `
     <div class="server-card__actions">
       <a class="server-action-link" href="${escapeHtml(actions.historicalUrl)}">
-        Historico
+        Hist\u00f3rico
       </a>
       <a class="server-action-link" href="${escapeHtml(actions.currentMatchUrl)}">
         Partida actual
@@ -367,9 +368,10 @@ function hydrateCommunityClans(listNode) {
 function renderCommunityClanCard(clan) {
   const logoMarkup = renderClanLogo(clan);
   const discordMarkup = renderClanDiscordLink(clan);
+  const cardClassName = clan.cardClassName ? ` ${escapeHtml(clan.cardClassName)}` : "";
 
   return `
-    <article class="clan-card">
+    <article class="clan-card${cardClassName}">
       <div class="clan-card__brand">
         ${logoMarkup}
         <div class="clan-card__copy">
@@ -541,7 +543,7 @@ function deriveSnapshotState(serversData) {
   return {
     label: isFresh
       ? `Actualizado ${timestampLabel}`
-      : `Ultimo snapshot ${timestampLabel}`,
+      : `\u00daltimo snapshot ${timestampLabel}`,
     isFresh,
   };
 }

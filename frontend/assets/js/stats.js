@@ -5,7 +5,6 @@
   const searchStateNode = document.getElementById("stats-search-state");
   const searchHelpNode = document.getElementById("stats-search-help");
   const resultListNode = document.getElementById("stats-result-list");
-  const backendStateNode = document.getElementById("stats-backend-state");
   const profilePanel = document.getElementById("stats-profile-panel");
   const profileTitle = document.getElementById("stats-profile-title");
   const profileStateNode = document.getElementById("stats-profile-state");
@@ -25,9 +24,6 @@
   const annualServerId = "all";
 
   const messages = {
-    backendChecking: "Comprobando disponibilidad del backend",
-    backendOnline: "Backend operativo",
-    backendUnavailable: "Backend no disponible. Reintenta en unos segundos.",
     backendUnavailableForSearch:
       "Backend no disponible. No se pueden buscar jugadores ni cargar su perfil.",
     backendUnavailableForAnnual:
@@ -48,14 +44,14 @@
     profileError: "No fue posible cargar las estad\u00edsticas del jugador.",
     annualLoading: "Cargando ranking anual...",
     annualMissing:
-      "No hay snapshot generado para el a\u00f1o solicitado. Mostrar\u00e1 estado pending hasta que exista.",
+      "Todavia no hay ranking anual publicado para el a\u00f1o solicitado.",
     annualReadyEmpty:
-      "Ranking anual listo, pero sin datos para el a\u00f1o y servidor seleccionados.",
+      "El ranking anual ya esta disponible, pero no muestra filas para ese filtro.",
     annualUnsupportedMetric:
       "La m\u00e9trica anual solicitada no est\u00e1 soportada en V1.",
     annualMetricInvalid:
       "Par\u00e1metro de ranking anual inv\u00e1lido. Usa metric=kills en V1.",
-    annualReadyPrefix: "Ranking anual listo para",
+    annualReadyPrefix: "Ranking anual disponible para",
     weeklyPlaceholder:
       "Sin datos semanales. El ranking semanal se actualiza al cargar un jugador.",
     monthlyPlaceholder:
@@ -82,7 +78,6 @@
       "El ranking anual se consulta por separado con el a\u00f1o indicado.";
   }
 
-  setBackendState(messages.backendChecking, false);
   if (annualYearInput) {
     annualYearInput.value = String(annualDefaultYear);
   }
@@ -108,18 +103,8 @@
     });
   }
 
-  function setBackendState(label, isOnline) {
-    isBackendOnline = isOnline;
-    if (!backendStateNode) {
-      return;
-    }
-    backendStateNode.textContent = label;
-    backendStateNode.classList.toggle("status-chip--ok", isOnline);
-    backendStateNode.classList.toggle("status-chip--fallback", !isOnline);
-  }
-
   function markAsBackendUnavailable() {
-    setBackendState(messages.backendUnavailable, false);
+    isBackendOnline = false;
     if (searchStateNode) {
       searchStateNode.textContent = messages.backendUnavailableForSearch;
       searchStateNode.className = "stats-state stats-state--error";
@@ -173,10 +158,10 @@
         throw new Error("Unexpected health payload");
       }
 
-      setBackendState(messages.backendOnline, true);
+      isBackendOnline = true;
       setAnnualState(
         "neutral",
-        "Backend disponible. Selecciona un a\u00f1o para cargar el ranking anual (kills).",
+        "Backend disponible. Selecciona un a\u00f1o para cargar el ranking anual.",
       );
       void loadAnnualRanking();
     } catch (error) {
@@ -345,17 +330,33 @@
 
     setAnnualState(
       "neutral",
-      `${messages.annualReadyPrefix} ${serverId}, a\u00f1o ${year}, m\u00e9trica ${metric}`,
+      `${messages.annualReadyPrefix} ${serverId}, a\u00f1o ${year}.`,
     );
 
     annualContentNode.innerHTML = `
-      <article class="stats-summary-card">
+      <article class="stats-annual-card">
         <p class="stats-summary-title">Top ${limit} anual</p>
         <div class="stats-annual-meta">
-          <p><strong>Servidor:</strong> ${escapeHtml(serverId)}</p>
-          <p><strong>M\u00e9trica:</strong> ${escapeHtml(metric)}</p>
-          <p><strong>Partidas fuente:</strong> ${safeInt(sourceMatches, 0)}</p>
-          <p><strong>Actualizado:</strong> ${escapeHtml(generatedAt || "No disponible")}</p>
+          <article class="stats-annual-meta-item">
+            <p>Servidor</p>
+            <strong>${escapeHtml(serverId)}</strong>
+          </article>
+          <article class="stats-annual-meta-item">
+            <p>A\u00f1o</p>
+            <strong>${year}</strong>
+          </article>
+          <article class="stats-annual-meta-item">
+            <p>Lectura</p>
+            <strong>${escapeHtml(metric)}</strong>
+          </article>
+          <article class="stats-annual-meta-item">
+            <p>Partidas base</p>
+            <strong>${safeInt(sourceMatches, 0)}</strong>
+          </article>
+          <article class="stats-annual-meta-item">
+            <p>Actualizado</p>
+            <strong>${escapeHtml(generatedAt || "No disponible")}</strong>
+          </article>
         </div>
         ${renderAnnualRows(items)}
       </article>
@@ -363,27 +364,54 @@
   }
 
   function renderAnnualRows(items) {
-    return items
+    const rowsMarkup = items
       .map((item) => {
         const rank = safeInt(item.ranking_position, 0);
         const playerId = escapeHtml(String(item.player_id || ""));
         const playerName = escapeHtml(String(item.player_name || "Jugador sin nombre"));
         const metricValue = safeInt(item.metric_value, 0);
         const matches = safeInt(item.matches_considered, 0);
-        const kills = safeInt(item.kills, 0);
         const deaths = safeInt(item.deaths, 0);
         const teamkills = safeInt(item.teamkills, 0);
         const kd = safeDecimal(item.kd_ratio, 2, "0.00");
 
         return `
-          <article class="stats-annual-item">
-            <p><strong>#${rank}</strong> ${playerName} <span class="stats-annual-sub">(ID: ${playerId})</span></p>
-            <p><strong>Valor:</strong> ${metricValue} - <strong>Partidas:</strong> ${matches}</p>
-            <p><strong>Kills:</strong> ${kills} - <strong>Deaths:</strong> ${deaths} - <strong>Teamkills:</strong> ${teamkills} - <strong>K/D:</strong> ${kd}</p>
-          </article>
+          <tr>
+            <td class="stats-annual-rank">#${rank}</td>
+            <td>
+              <div class="stats-annual-player">
+                <strong>${playerName}</strong>
+                <span class="stats-annual-player__id">ID ${playerId}</span>
+              </div>
+            </td>
+            <td class="stats-annual-metric">${metricValue}</td>
+            <td>${matches}</td>
+            <td>${deaths}</td>
+            <td>${teamkills}</td>
+            <td>${kd}</td>
+          </tr>
         `;
       })
       .join("");
+
+    return `
+      <div class="stats-annual-table-shell">
+        <table class="stats-annual-table">
+          <thead>
+            <tr>
+              <th>Posici\u00f3n</th>
+              <th>Jugador</th>
+              <th>Valor / Kills</th>
+              <th>Partidas</th>
+              <th>Muertes</th>
+              <th>Teamkills</th>
+              <th>K/D</th>
+            </tr>
+          </thead>
+          <tbody>${rowsMarkup}</tbody>
+        </table>
+      </div>
+    `;
   }
 
   function renderResultItem(item) {
@@ -508,7 +536,6 @@
             );
       }
 
-      setBackendState(messages.backendOnline, true);
       isBackendOnline = true;
     } catch (error) {
       console.warn("Player profile failed", error);

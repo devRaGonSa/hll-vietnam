@@ -7,7 +7,6 @@
   const limitSelect = document.getElementById("ranking-limit");
   const yearWrap = document.getElementById("ranking-year-wrap");
   const yearInput = document.getElementById("ranking-year");
-  const backendStateNode = document.getElementById("ranking-backend-state");
   const stateNode = document.getElementById("ranking-state");
   const titleNode = document.getElementById("ranking-title");
   const metaNode = document.getElementById("ranking-meta");
@@ -48,7 +47,6 @@
   applyInitialUrlState();
   toggleYearField();
   syncMetricState();
-  setBackendState("Comprobando disponibilidad del backend", false);
   setRankingState("neutral", "Esperando filtros para cargar el ranking global.");
   clearRankingSurface();
   refreshBackendHealth();
@@ -88,16 +86,6 @@
       updateUrlState();
       void loadRanking();
     });
-  }
-
-  function setBackendState(label, online) {
-    isBackendOnline = online;
-    if (!backendStateNode) {
-      return;
-    }
-    backendStateNode.textContent = label;
-    backendStateNode.classList.toggle("status-chip--ok", online);
-    backendStateNode.classList.toggle("status-chip--fallback", !online);
   }
 
   function setRankingState(state, message) {
@@ -192,7 +180,7 @@
     }
 
     setFilterNote(
-      "Ranking compara top globales. Para buscar un jugador concreto usa Stats.",
+      "Ranking compara top globales. Para buscar un jugador concreto usa Estadísticas.",
       "neutral",
     );
   }
@@ -245,7 +233,7 @@
       if (!payload || payload.status !== "ok") {
         throw new Error("Unexpected health payload");
       }
-      setBackendState("Backend operativo", true);
+      isBackendOnline = true;
       if (!String(stateNode?.textContent || "").includes("limite del URL")) {
         setRankingState(
           "neutral",
@@ -255,7 +243,7 @@
       void loadRanking();
     } catch (error) {
       console.warn("Ranking health check failed", error);
-      setBackendState("Backend no disponible", false);
+      isBackendOnline = false;
       setRankingState("error", "Backend no disponible. El ranking queda en estado offline.");
       renderEmptyState(
         "No fue posible contactar el backend. Cuando vuelva a estar disponible podras consultar semanal, mensual o anual.",
@@ -319,7 +307,7 @@
       renderRanking(payload.data || {});
     } catch (error) {
       console.warn("Ranking request failed", error);
-      setBackendState("Backend no disponible", false);
+      isBackendOnline = false;
       setRankingState("error", "Error controlado al cargar el ranking.");
       renderEmptyState(
         "La lectura del ranking fall\u00f3 en este intento. Revisa el backend o actualiza la p\u00e1gina.",
