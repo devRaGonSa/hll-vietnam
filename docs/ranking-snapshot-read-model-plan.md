@@ -253,11 +253,23 @@ Manual generator entrypoint:
 python -m app.rcon_historical_leaderboards generate-ranking-snapshot --timeframe weekly --server-key all --metric kills --limit 20
 ```
 
+Operational default:
+- when `HLL_BACKEND_DATABASE_URL` is configured, the CLI uses PostgreSQL by default
+- SQLite is no longer the default operational target for snapshot generation
+- local SQLite generation remains available only through an explicit override such as:
+
+```bash
+python -m app.rcon_historical_leaderboards generate-ranking-snapshot --timeframe weekly --server-key all --metric kills --limit 20 --sqlite-path backend/data/hll_vietnam_dev.sqlite3
+```
+
 Docker form:
 
 ```bash
 docker compose exec backend python -m app.rcon_historical_leaderboards generate-ranking-snapshot --timeframe weekly --server-key all --metric kills --limit 20
 ```
+
+Operational expectation:
+- the recommended Docker command should generate weekly/monthly snapshots in PostgreSQL, matching the `/api/ranking` production read path
 
 Supported manual parameters:
 - `timeframe`: `weekly`, `monthly`

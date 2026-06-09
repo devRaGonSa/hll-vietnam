@@ -10,8 +10,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Literal
 
-from .config import get_storage_path, use_postgres_rcon_storage
-from .config import get_historical_weekly_fallback_min_matches
+from .config import get_historical_weekly_fallback_min_matches, use_postgres_rcon_storage
 from .historical_storage import ALL_SERVERS_SLUG
 from .rcon_admin_log_materialization import (
     MATCH_RESULT_SOURCE,
@@ -1257,6 +1256,12 @@ def _main(argv: list[str] | None = None) -> int:
     )
     generate_parser.add_argument("--limit", type=int, default=20)
     generate_parser.add_argument(
+        "--sqlite-path",
+        type=Path,
+        default=None,
+        help="explicit local SQLite override; default operational mode uses PostgreSQL when configured",
+    )
+    generate_parser.add_argument(
         "--no-replace-existing",
         action="store_false",
         dest="replace_existing",
@@ -1272,7 +1277,7 @@ def _main(argv: list[str] | None = None) -> int:
             metric=args.metric,
             limit=args.limit,
             replace_existing=args.replace_existing,
-            db_path=get_storage_path(),
+            db_path=args.sqlite_path,
         )
         print(json.dumps({"status": "ok", "data": payload}, ensure_ascii=True, indent=2))
         return 0

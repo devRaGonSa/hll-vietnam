@@ -117,12 +117,15 @@ import json
 import os
 import sqlite3
 import sys
+from contextlib import contextmanager, redirect_stdout
 from datetime import datetime, timezone
+from io import StringIO
 from pathlib import Path
 
 sys.path.insert(0, "backend")
 
 from app.routes import resolve_get_payload
+from app.config import use_postgres_rcon_storage
 import app.postgres_rcon_storage as postgres_rcon_storage
 import app.rcon_historical_leaderboards as ranking_leaderboards
 
@@ -284,6 +287,90 @@ def validate_postgres_ranking_snapshot_schema_path():
     )
 
 
+def validate_ranking_snapshot_cli_defaults():
+    original_generate_ranking_snapshot = ranking_leaderboards.generate_ranking_snapshot
+    captured = {}
+
+    def fake_generate_ranking_snapshot(**kwargs):
+        captured.update(kwargs)
+        return {"status": "ok", "snapshot": None, "items": []}
+
+    ranking_leaderboards.generate_ranking_snapshot = fake_generate_ranking_snapshot
+
+    try:
+        stdout_buffer = StringIO()
+        with redirect_stdout(stdout_buffer):
+            exit_code = ranking_leaderboards._main([
+                "generate-ranking-snapshot",
+                "--timeframe", "weekly",
+                "--server-key", "all",
+                "--metric", "kills",
+                "--limit", "20",
+            ])
+        require(exit_code == 0, "Ranking snapshot CLI should exit 0 for a valid command.")
+        require(
+            captured.get("db_path") is None,
+            "Ranking snapshot CLI should use PostgreSQL-compatible db_path=None by default.",
+        )
+
+        captured.clear()
+        with redirect_stdout(stdout_buffer):
+            exit_code = ranking_leaderboards._main([
+                "generate-ranking-snapshot",
+                "--timeframe", "weekly",
+                "--server-key", "all",
+                "--metric", "kills",
+                "--limit", "20",
+                "--sqlite-path", "backend/data/hll_vietnam_dev.sqlite3",
+            ])
+        require(exit_code == 0, "Ranking snapshot CLI with --sqlite-path should exit 0.")
+        require(
+            captured.get("db_path") == Path("backend/data/hll_vietnam_dev.sqlite3"),
+            "Ranking snapshot CLI should pass the explicit --sqlite-path override through to generate_ranking_snapshot.",
+        )
+    finally:
+        ranking_leaderboards.generate_ranking_snapshot = original_generate_ranking_snapshot
+
+
+def validate_ranking_snapshot_postgres_selection():
+    original_database_url = os.environ.get("HLL_BACKEND_DATABASE_URL")
+    original_connect_postgres_compat = postgres_rcon_storage.connect_postgres_compat
+    calls = {"postgres_connect": 0}
+
+    @contextmanager
+    def fake_connect_postgres_compat():
+        calls["postgres_connect"] += 1
+        yield object()
+
+    os.environ["HLL_BACKEND_DATABASE_URL"] = "postgresql://validation-user:validation-pass@127.0.0.1:5432/hll_validation"
+    postgres_rcon_storage.connect_postgres_compat = fake_connect_postgres_compat
+
+    try:
+        require(
+            use_postgres_rcon_storage(explicit_sqlite_path=None) is True,
+            "PostgreSQL storage should be selected when DATABASE_URL is configured and no explicit SQLite path is provided.",
+        )
+        require(
+            use_postgres_rcon_storage(explicit_sqlite_path=Path("backend/data/hll_vietnam_dev.sqlite3")) is False,
+            "Explicit SQLite paths should still disable PostgreSQL storage selection.",
+        )
+        with ranking_leaderboards._connect_write_scope(
+            Path("backend/data/hll_vietnam_dev.sqlite3"),
+            db_path=None,
+        ) as _connection:
+            pass
+        require(
+            calls["postgres_connect"] == 1,
+            "Ranking snapshot write scope should use PostgreSQL when db_path=None and DATABASE_URL is configured.",
+        )
+    finally:
+        if original_database_url is None:
+            os.environ.pop("HLL_BACKEND_DATABASE_URL", None)
+        else:
+            os.environ["HLL_BACKEND_DATABASE_URL"] = original_database_url
+        postgres_rcon_storage.connect_postgres_compat = original_connect_postgres_compat
+
+
 def cleanup_snapshot_fixture(db_path):
     connection = sqlite3.connect(db_path)
     with connection:
@@ -325,6 +412,8 @@ require(health_status == 200, "Route resolver /health should return 200.")
 require(health_payload.get("status") == "ok", "/health payload should be ok.")
 
 validate_postgres_ranking_snapshot_schema_path()
+validate_ranking_snapshot_cli_defaults()
+validate_ranking_snapshot_postgres_selection()
 
 kd_metric_sql, _, _ = ranking_leaderboards._resolve_metric_sql("kd_ratio")
 require(
@@ -694,8 +783,10 @@ print(json.dumps({
         "stats-player-profile",
         "stats-annual-ranking",
         "global-ranking",
-        "postgres-ranking-derived-metric-sql",
+    "postgres-ranking-derived-metric-sql",
     "postgres-ranking-schema-path",
+    "ranking-snapshot-cli-postgres-default",
+    "ranking-snapshot-postgres-selection",
     "ranking-snapshot-generator",
     "ranking-snapshot-ready",
     "ranking-snapshot-missing",
