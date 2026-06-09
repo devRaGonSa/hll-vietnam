@@ -1,7 +1,7 @@
 ---
 id: TASK-184-define-ranking-metric-expansion-contract
 title: Define ranking metric expansion contract
-status: pending
+status: done
 type: documentation
 team: Analista
 supporting_teams:
@@ -102,17 +102,73 @@ Before completing the task ensure:
 
 ## Outcome
 
-Document:
+Supported Ranking V1.1 metrics documented in `docs/global-ranking-page-plan.md`:
 
-- supported Ranking V1.1 metrics
-- formula for each metric
-- ordering and tie-break expectations
-- supported timeframes by metric
-- annual snapshot limitations and safety rules
-- expected payload adjustments, if any
-- controlled error behavior for unsupported metrics
-- validation performed
-- explicit note that no automated tests apply if this remains documentation-only
+- `kills`
+- `deaths`
+- `teamkills`
+- `matches_considered`
+- `kd_ratio`
+- `kills_per_match`
+
+Formula and aggregation rules documented:
+
+- `kills = SUM(kills)`
+- `deaths = SUM(deaths)`
+- `teamkills = SUM(teamkills)`
+- `matches_considered = COUNT(DISTINCT match_key)`
+- `kd_ratio = SUM(kills) / SUM(deaths)`
+- `kills_per_match = SUM(kills) / COUNT(DISTINCT match_key)`
+
+Safety rules documented:
+
+- `deaths=0` returns finite display-safe `kd_ratio` using kills as the fallback value
+- `matches_considered=0` returns `kills_per_match = 0`
+
+Ordering and tie-break expectations documented:
+
+- totals metrics sort by active metric desc, then stable tie-break fields
+- `matches_considered` ties break on `kills` desc, then `player_name` asc
+- ratio metrics tie-break on `kills` desc, `matches_considered` desc, `player_name` asc
+
+Supported timeframes by metric documented:
+
+- weekly: all V1.1 metrics through the materialized RCON runtime leaderboard
+- monthly: all V1.1 metrics through the materialized RCON runtime leaderboard
+- annual: snapshot-safe path only; `kills` required, extra metrics only if an explicit snapshot-backed read path exists
+
+Annual snapshot limitations and safety rules documented:
+
+- no runtime annual recomputation on public requests
+- unsupported annual metrics must return controlled `400`
+- until extra annual snapshots exist, annual remains effectively `kills`-only
+
+Expected payload adjustments documented:
+
+- `metric_value` remains the active display/sort field
+- weekly/monthly payloads may include rounded ratio fields and `kills_per_match`
+- annual payload shape remains stable and only expands when snapshot-backed safely
+
+Controlled error behavior documented:
+
+- unsupported metric, unsupported timeframe and unsupported annual metric must fail with controlled request-validation errors
+- backend must not silently downgrade unsupported requests to `kills`
+
+Validation performed:
+
+- reviewed `docs/global-ranking-page-plan.md`
+- reviewed `docs/stats-section-functional-plan.md`
+- reviewed `docs/annual-ranking-snapshot-runbook.md`
+- reviewed `backend/app/rcon_historical_leaderboards.py`
+- reviewed `backend/app/rcon_annual_rankings.py`
+- reviewed `backend/app/routes.py`
+- reviewed `backend/app/payloads.py`
+- reviewed `ai/tasks/done/TASK-183-review-global-ranking-implementation.md`
+- confirmed `git diff --name-only` scope stays documentation-only for this task
+
+Automated tests:
+
+- No automated tests apply because this task remained documentation-only.
 
 ## Change Budget
 

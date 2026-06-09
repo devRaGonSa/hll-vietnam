@@ -22,9 +22,9 @@
               <span class="hero__title-accent">Global</span>
             </h1>
             <p class="hero__text">
-              Consulta los lideres publicos por kills con lectura RCON-first, cambia
-              periodo y servidor sin salir de la pagina, y usa Stats solo cuando
-              necesites revisar el rendimiento de un jugador concreto.
+              Consulta los lideres publicos por metrica con lectura RCON-first,
+              cambia periodo y servidor sin salir de la pagina, y deja Stats para
+              revisar el rendimiento de un jugador concreto.
             </p>
             <p class="status-chip status-chip--fallback" id="ranking-backend-state">
               Comprobando disponibilidad del backend
@@ -76,15 +76,22 @@
                 <label class="stats-search-form__label" for="ranking-metric">
                   Metrica
                   <select class="ranking-select" id="ranking-metric" name="metric">
-                    <option value="kills">Kills</option>
+                    <option value="kills">Kills totales</option>
+                    <option value="deaths">Deaths</option>
+                    <option value="teamkills">Teamkills</option>
+                    <option value="matches_considered">Partidas jugadas</option>
+                    <option value="kd_ratio">K/D</option>
+                    <option value="kills_per_match">Kills por partida</option>
                   </select>
                 </label>
                 <label class="stats-search-form__label" for="ranking-limit">
                   Limite
                   <select class="ranking-select" id="ranking-limit" name="limit">
+                    <option value="5">Top 5</option>
                     <option value="10">Top 10</option>
                     <option value="20" selected>Top 20</option>
-                    <option value="30">Top 30</option>
+                    <option value="50">Top 50</option>
+                    <option value="100">Top 100</option>
                   </select>
                 </label>
                 <label class="stats-search-form__label" for="ranking-year" id="ranking-year-wrap" hidden>
@@ -101,6 +108,9 @@
                   />
                 </label>
               </div>
+              <p class="ranking-form__note" id="ranking-filter-note">
+                Ranking compara top globales. Para buscar un jugador concreto usa Stats.
+              </p>
               <div class="hero__actions ranking-form__actions">
                 <button class="discord-button" type="submit">Actualizar ranking</button>
                 <a class="secondary-button secondary-button--compact" href="./stats.html">
@@ -127,11 +137,13 @@
                   <tr>
                     <th>Pos.</th>
                     <th>Jugador</th>
+                    <th id="ranking-metric-heading">Valor activo</th>
                     <th>Kills</th>
-                    <th>Partidas</th>
                     <th>Deaths</th>
                     <th>Teamkills</th>
+                    <th>Partidas</th>
                     <th>K/D</th>
+                    <th>Kills/partida</th>
                   </tr>
                 </thead>
                 <tbody id="ranking-table-body"></tbody>

@@ -13,16 +13,41 @@ document.addEventListener("DOMContentLoaded", () => {
   const metaNode = document.getElementById("ranking-meta");
   const tableNode = document.getElementById("ranking-table");
   const tableBodyNode = document.getElementById("ranking-table-body");
+  const metricHeadingNode = document.getElementById("ranking-metric-heading");
   const emptyNode = document.getElementById("ranking-empty");
+  const filterNoteNode = document.getElementById("ranking-filter-note");
 
   const currentYear = new Date().getUTCFullYear();
+  const annualMetric = "kills";
+  const defaultMetric = "kills";
+  const defaultLimit = "20";
+  const defaultTimeframe = "weekly";
+  const defaultServerId = "all";
+  const supportedMetrics = [
+    "kills",
+    "deaths",
+    "teamkills",
+    "matches_considered",
+    "kd_ratio",
+    "kills_per_match",
+  ];
+  const supportedTimeframes = ["weekly", "monthly", "annual"];
+  const supportedServerIds = [
+    "all",
+    "comunidad-hispana-01",
+    "comunidad-hispana-02",
+  ];
+  const supportedLimits = ["5", "10", "20", "50", "100"];
+
   let isBackendOnline = false;
 
   if (yearInput) {
     yearInput.value = String(currentYear);
   }
 
+  applyInitialUrlState();
   toggleYearField();
+  syncMetricState();
   setBackendState("Comprobando disponibilidad del backend", false);
   setRankingState("neutral", "Esperando filtros para cargar el ranking global.");
   clearRankingSurface();
@@ -31,6 +56,8 @@ document.addEventListener("DOMContentLoaded", () => {
   if (timeframeSelect) {
     timeframeSelect.addEventListener("change", () => {
       toggleYearField();
+      syncMetricState();
+      updateUrlState();
       void loadRanking();
     });
   }
@@ -40,13 +67,25 @@ document.addEventListener("DOMContentLoaded", () => {
       return;
     }
     node.addEventListener("change", () => {
+      syncMetricState();
+      updateUrlState();
       void loadRanking();
     });
   });
 
+  if (yearInput) {
+    yearInput.addEventListener("change", () => {
+      updateUrlState();
+      if (String(timeframeSelect?.value || defaultTimeframe) === "annual") {
+        void loadRanking();
+      }
+    });
+  }
+
   if (form) {
     form.addEventListener("submit", (event) => {
       event.preventDefault();
+      updateUrlState();
       void loadRanking();
     });
   }
@@ -69,6 +108,57 @@ document.addEventListener("DOMContentLoaded", () => {
     stateNode.className = `stats-state stats-state--${state}`;
   }
 
+  function setFilterNote(message, tone = "neutral") {
+    if (!filterNoteNode) {
+      return;
+    }
+    filterNoteNode.textContent = message;
+    filterNoteNode.className = `ranking-form__note ranking-form__note--${tone}`;
+  }
+
+  function applyInitialUrlState() {
+    const params = new URLSearchParams(window.location.search);
+    const timeframe = params.get("timeframe");
+    const serverId = params.get("server_id") || params.get("server");
+    const metric = params.get("metric");
+    const limit = params.get("limit");
+    const year = params.get("year");
+
+    if (timeframeSelect) {
+      timeframeSelect.value = supportedTimeframes.includes(timeframe || "")
+        ? String(timeframe)
+        : defaultTimeframe;
+    }
+    if (serverSelect) {
+      serverSelect.value = supportedServerIds.includes(serverId || "")
+        ? String(serverId)
+        : defaultServerId;
+    }
+    if (metricSelect) {
+      metricSelect.value = supportedMetrics.includes(metric || "")
+        ? String(metric)
+        : defaultMetric;
+    }
+    if (limitSelect) {
+      limitSelect.value = supportedLimits.includes(limit || "")
+        ? String(limit)
+        : defaultLimit;
+    }
+    if (yearInput && year) {
+      const normalizedYear = Number.parseInt(year, 10);
+      if (Number.isFinite(normalizedYear) && normalizedYear > 0) {
+        yearInput.value = String(normalizedYear);
+      }
+    }
+
+    if (params.has("limit") && !supportedLimits.includes(limit || "")) {
+      setRankingState(
+        "warning",
+        "El limite del URL no es valido para esta interfaz. Se restauro el valor permitido por defecto.",
+      );
+    }
+  }
+
   function toggleYearField() {
     const isAnnual = timeframeSelect?.value === "annual";
     if (yearWrap) {
@@ -77,6 +167,47 @@ document.addEventListener("DOMContentLoaded", () => {
     if (yearInput) {
       yearInput.disabled = !isAnnual;
     }
+  }
+
+  function syncMetricState() {
+    const isAnnual = timeframeSelect?.value === "annual";
+    if (!metricSelect) {
+      return;
+    }
+
+    Array.from(metricSelect.options).forEach((option) => {
+      option.disabled = isAnnual && option.value !== annualMetric;
+    });
+
+    if (isAnnual && metricSelect.value !== annualMetric) {
+      metricSelect.value = annualMetric;
+    }
+
+    if (isAnnual) {
+      setFilterNote(
+        "El ranking anual sigue limitado a kills porque solo esa metrica tiene lectura snapshot segura.",
+        "warning",
+      );
+      return;
+    }
+
+    setFilterNote(
+      "Ranking compara top globales. Para buscar un jugador concreto usa Stats.",
+      "neutral",
+    );
+  }
+
+  function updateUrlState() {
+    const searchParams = new URLSearchParams({
+      timeframe: String(timeframeSelect?.value || defaultTimeframe),
+      server_id: String(serverSelect?.value || defaultServerId),
+      metric: String(metricSelect?.value || defaultMetric),
+      limit: String(limitSelect?.value || defaultLimit),
+    });
+    if (searchParams.get("timeframe") === "annual") {
+      searchParams.set("year", String(yearInput?.value || currentYear));
+    }
+    window.history.replaceState({}, "", `?${searchParams.toString()}`);
   }
 
   function clearRankingSurface() {
@@ -115,7 +246,12 @@ document.addEventListener("DOMContentLoaded", () => {
         throw new Error("Unexpected health payload");
       }
       setBackendState("Backend operativo", true);
-      setRankingState("neutral", "Backend disponible. Ajusta filtros o usa la lectura inicial.");
+      if (!String(stateNode?.textContent || "").includes("limite del URL")) {
+        setRankingState(
+          "neutral",
+          "Backend disponible. Ajusta filtros o usa la lectura inicial.",
+        );
+      }
       void loadRanking();
     } catch (error) {
       console.warn("Ranking health check failed", error);
@@ -128,10 +264,10 @@ document.addEventListener("DOMContentLoaded", () => {
   }
 
   async function loadRanking() {
-    const timeframe = String(timeframeSelect?.value || "weekly");
-    const serverId = String(serverSelect?.value || "all");
-    const metric = String(metricSelect?.value || "kills");
-    const limit = String(limitSelect?.value || "20");
+    const timeframe = String(timeframeSelect?.value || defaultTimeframe);
+    const serverId = String(serverSelect?.value || defaultServerId);
+    const metric = String(metricSelect?.value || defaultMetric);
+    const limit = String(limitSelect?.value || defaultLimit);
 
     if (!isBackendOnline) {
       setRankingState("error", "Backend no disponible. El ranking queda en estado offline.");
@@ -168,7 +304,9 @@ document.addEventListener("DOMContentLoaded", () => {
       const response = await fetch(`${backendBaseUrl}/api/ranking?${searchParams.toString()}`);
       if (!response.ok) {
         const errorPayload = await safeParseJson(response);
-        const errorMessage = String(errorPayload?.message || errorPayload?.detail || "").toLowerCase();
+        const errorMessage = String(
+          errorPayload?.message || errorPayload?.detail || "",
+        ).toLowerCase();
         handleRequestError(response.status, errorMessage, timeframe);
         return;
       }
@@ -191,10 +329,28 @@ document.addEventListener("DOMContentLoaded", () => {
 
   function handleRequestError(statusCode, errorMessage, timeframe) {
     const normalizedMessage = String(errorMessage || "");
-    if (statusCode === 400 && normalizedMessage.includes("metric")) {
-      setRankingState("warning", "La metrica solicitada no esta soportada en V1.");
+    if (statusCode === 400 && normalizedMessage.includes("limit")) {
+      setRankingState("warning", "El limite solicitado no es valido.");
       renderEmptyState(
-        "Solo la metrica kills esta disponible en esta primera version del ranking global.",
+        "Usa un limite permitido por la interfaz o por el backend. Esta vista admite Top 5, 10, 20, 50 y 100.",
+      );
+      return;
+    }
+    if (
+      statusCode === 400 &&
+      normalizedMessage.includes("metric") &&
+      normalizedMessage.includes("annual")
+    ) {
+      setRankingState("warning", "El ranking anual solo admite kills por ahora.");
+      renderEmptyState(
+        "Las metricas extra estan disponibles en semanal y mensual. El ranking anual sigue limitado a kills mientras no existan snapshots seguros adicionales.",
+      );
+      return;
+    }
+    if (statusCode === 400 && normalizedMessage.includes("metric")) {
+      setRankingState("warning", "La metrica solicitada no esta soportada.");
+      renderEmptyState(
+        "Usa kills, deaths, teamkills, partidas jugadas, K/D o kills por partida.",
       );
       return;
     }
@@ -208,11 +364,12 @@ document.addEventListener("DOMContentLoaded", () => {
       renderEmptyState("Usa una ventana semanal, mensual o anual.");
       return;
     }
-    if (timeframe === "annual") {
-      setRankingState("error", "Error controlado al cargar el ranking anual.");
-    } else {
-      setRankingState("error", "Error controlado al cargar el ranking.");
-    }
+    setRankingState(
+      "error",
+      timeframe === "annual"
+        ? "Error controlado al cargar el ranking anual."
+        : "Error controlado al cargar el ranking.",
+    );
     renderEmptyState(
       "La consulta devolvio un error controlado. Ajusta los filtros y vuelve a intentarlo.",
     );
@@ -220,16 +377,20 @@ document.addEventListener("DOMContentLoaded", () => {
 
   function renderRanking(data) {
     const items = Array.isArray(data.items) ? data.items : [];
-    const timeframe = String(data.timeframe || "weekly");
-    const serverId = String(data.server_id || "all");
-    const metric = String(data.metric || "kills");
+    const timeframe = String(data.timeframe || defaultTimeframe);
+    const serverId = String(data.server_id || defaultServerId);
+    const metric = String(data.metric || defaultMetric);
     const snapshotStatus = String(data.snapshot_status || "").toLowerCase();
 
     if (titleNode) {
       titleNode.textContent =
-        timeframe === "annual" ? "Top anual activo" : "Tabla activa del alcance seleccionado";
+        timeframe === "annual"
+          ? `Top anual por ${labelForMetric(metric)}`
+          : `Tabla activa por ${labelForMetric(metric)}`;
     }
-
+    if (metricHeadingNode) {
+      metricHeadingNode.textContent = labelForMetric(metric);
+    }
     if (metaNode) {
       metaNode.innerHTML = buildMetaMarkup(data);
     }
@@ -259,11 +420,11 @@ document.addEventListener("DOMContentLoaded", () => {
 
     setRankingState(
       "ready",
-      `Ranking ${labelForTimeframe(timeframe)} listo para ${labelForServer(serverId)} por ${metric}.`,
+      `${labelForMetric(metric)} listo en ${labelForTimeframe(timeframe)} para ${labelForServer(serverId)}.`,
     );
 
     if (tableBodyNode) {
-      tableBodyNode.innerHTML = items.map(renderRow).join("");
+      tableBodyNode.innerHTML = items.map((item) => renderRow(item, metric)).join("");
     }
     if (tableNode) {
       tableNode.hidden = false;
@@ -275,23 +436,38 @@ document.addEventListener("DOMContentLoaded", () => {
 
   function buildMetaMarkup(data) {
     const source = data.source && typeof data.source === "object" ? data.source : {};
-    const parts = [
-      `<article class="ranking-meta-card"><p>Servidor</p><strong>${escapeHtml(labelForServer(data.server_id))}</strong></article>`,
-      `<article class="ranking-meta-card"><p>Ventana</p><strong>${escapeHtml(labelForWindow(data))}</strong></article>`,
-      `<article class="ranking-meta-card"><p>Fuente</p><strong>${escapeHtml(String(source.read_model || "No disponible"))}</strong></article>`,
-      `<article class="ranking-meta-card"><p>Actualizado</p><strong>${escapeHtml(formatDateTime(source.generated_at))}</strong></article>`,
+    const timeframe = String(data.timeframe || defaultTimeframe);
+    const metric = String(data.metric || defaultMetric);
+    const cards = [
+      { label: "Periodo activo", value: labelForTimeframe(timeframe), active: true },
+      { label: "Servidor activo", value: labelForServer(data.server_id), active: true },
+      { label: "Metrica activa", value: labelForMetric(metric), active: true },
+      { label: "Limite", value: `Top ${safeInt(data.limit, safeInt(defaultLimit, 20))}` },
+      { label: "Ventana", value: labelForWindow(data) },
+      { label: "Fuente", value: String(source.read_model || "No disponible") },
+      { label: "Actualizado", value: formatDateTime(source.generated_at) },
     ];
 
-    if (String(data.timeframe || "") === "annual") {
-      parts.push(
-        `<article class="ranking-meta-card"><p>Snapshot</p><strong>${escapeHtml(String(data.snapshot_status || "missing"))}</strong></article>`,
-      );
+    if (timeframe === "annual") {
+      cards.push({
+        label: "Snapshot",
+        value: String(data.snapshot_status || "missing"),
+      });
     }
 
-    return parts.join("");
+    return cards
+      .map(
+        (card) => `
+          <article class="ranking-meta-card${card.active ? " ranking-meta-card--active" : ""}">
+            <p>${escapeHtml(card.label)}</p>
+            <strong>${escapeHtml(String(card.value || "No disponible"))}</strong>
+          </article>
+        `,
+      )
+      .join("");
   }
 
-  function renderRow(item) {
+  function renderRow(item, metric) {
     return `
       <tr>
         <td>#${safeInt(item.ranking_position, 0)}</td>
@@ -301,11 +477,13 @@ document.addEventListener("DOMContentLoaded", () => {
             <span>${escapeHtml(String(item.player_id || "Sin ID"))}</span>
           </div>
         </td>
-        <td>${safeInt(item.metric_value, 0)}</td>
-        <td>${safeInt(item.matches_considered, 0)}</td>
+        <td class="ranking-table__metric">${formatMetricValue(item.metric_value, metric)}</td>
+        <td>${safeInt(item.kills, 0)}</td>
         <td>${safeInt(item.deaths, 0)}</td>
         <td>${safeInt(item.teamkills, 0)}</td>
+        <td>${safeInt(item.matches_considered, 0)}</td>
         <td>${safeDecimal(item.kd_ratio, 2, "0.00")}</td>
+        <td>${safeDecimal(item.kills_per_match, 2, "0.00")}</td>
       </tr>
     `;
   }
@@ -337,12 +515,31 @@ document.addEventListener("DOMContentLoaded", () => {
     return "semanal";
   }
 
+  function labelForMetric(metric) {
+    const labels = {
+      kills: "Kills",
+      deaths: "Deaths",
+      teamkills: "Teamkills",
+      matches_considered: "Partidas jugadas",
+      kd_ratio: "K/D",
+      kills_per_match: "Kills por partida",
+    };
+    return labels[metric] || "Kills";
+  }
+
+  function formatMetricValue(value, metric) {
+    if (metric === "kd_ratio" || metric === "kills_per_match") {
+      return safeDecimal(value, 2, "0.00");
+    }
+    return safeInt(value, 0).toLocaleString("es-ES");
+  }
+
   function safeInt(value, fallback) {
     const parsed = Number(value);
     if (!Number.isFinite(parsed)) {
       return fallback;
     }
-    return parsed;
+    return Math.trunc(parsed);
   }
 
   function safeDecimal(value, maximumFractionDigits, fallback) {

@@ -205,7 +205,9 @@ def _normalize_server_key(server_key: str | None) -> str:
 def _normalize_metric(metric: str) -> str:
     normalized = str(metric or "kills").strip().lower()
     if normalized != "kills":
-        raise ValueError("Only metric 'kills' is supported for annual ranking endpoints.")
+        raise ValueError(
+            f"Metric '{normalized}' is not supported for annual ranking snapshots."
+        )
     return normalized
 
 

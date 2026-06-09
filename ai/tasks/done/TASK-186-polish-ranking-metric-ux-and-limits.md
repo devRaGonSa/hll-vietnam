@@ -1,7 +1,7 @@
 ---
 id: TASK-186-polish-ranking-metric-ux-and-limits
 title: Polish ranking metric UX and limits
-status: pending
+status: done
 type: frontend
 team: Frontend Senior
 supporting_teams:
@@ -101,14 +101,88 @@ Before completing the task ensure:
 
 ## Outcome
 
-Document:
+Metrics exposed in Ranking UI:
 
-- metrics exposed in UI
-- annual behavior in the UX
-- UI limit choices
-- error states covered
-- validations executed
-- recommended follow-ups, if any
+- `kills`
+- `deaths`
+- `teamkills`
+- `matches_considered`
+- `kd_ratio`
+- `kills_per_match`
+
+Frontend UX changes delivered:
+
+- `frontend/ranking.html` now exposes the expanded metric selector and wider limit options.
+- the ranking table now highlights the active metric dynamically while still showing the core supporting stats (`kills`, `deaths`, `teamkills`, `matches_considered`, `kd_ratio`, `kills_per_match`)
+- the metadata strip now shows the active timeframe, active server, active metric, limit, window and source more explicitly
+- `frontend/assets/js/ranking.js` now restores filter state from URL parameters and keeps the URL synced as filters change
+- `frontend/stats.html` now includes a minimal direct link back to `Ranking`
+
+Annual behavior in the UX:
+
+- annual keeps `kills` as the only selectable active metric
+- when the user switches to annual, non-snapshot-safe metrics are disabled in the selector
+- the page shows an explicit note that annual remains `kills`-only until additional safe snapshots exist
+- annual unsupported-metric and missing-snapshot states remain clearly differentiated
+
+UI limit choices:
+
+- `Top 5`
+- `Top 10`
+- `Top 20`
+- `Top 50`
+- `Top 100`
+
+Error and state coverage improved:
+
+- dedicated invalid-limit message for manual URL or parameter manipulation
+- dedicated annual kills-only warning
+- preserved unsupported metric message
+- preserved unsupported timeframe message
+- preserved backend offline fallback path
+- preserved annual snapshot missing state
+- preserved empty-ready states
+
+Validation updates:
+
+- `scripts/run-stats-validation.ps1` now asserts the new Ranking metric options, annual kills-only guidance, URL-state handling and the Stats-to-Ranking link
+
+Validations executed:
+
+- `node --check frontend/assets/js/ranking.js`
+- `node --check frontend/assets/js/stats.js`
+- `powershell -ExecutionPolicy Bypass -File scripts/run-stats-validation.ps1`
+- `powershell -ExecutionPolicy Bypass -File scripts/run-integration-tests.ps1`
+- temporary static serving with `python -m http.server 8081`
+- confirmed HTTP `200` for:
+  - `ranking.html`
+  - `assets/js/ranking.js`
+  - `stats.html`
+  - `index.html`
+
+Validation notes:
+
+- local backend HTTP validation at `http://127.0.0.1:8000` was unavailable during the run
+- offline fallback behavior was therefore validated through the existing frontend logic plus route-contract checks from the shared validation script
+
+Scope notes:
+
+- task-owned frontend changes stayed within:
+  - `frontend/ranking.html`
+  - `frontend/assets/js/ranking.js`
+  - `frontend/assets/css/styles.css`
+  - `frontend/stats.html`
+  - `scripts/run-stats-validation.ps1`
+- `git diff --name-only` also shows previous-task backend/docs changes and an unrelated existing workspace change:
+  - moved task files from `TASK-184` / `TASK-185` / `TASK-186`
+  - `backend/app/*` and `docs/global-ranking-page-plan.md` from prior tasks in this run
+  - `frontend/assets/img/weapons/black/gewehr_black.svg`
+- those files were not modified as part of this frontend task.
+
+Recommended follow-ups:
+
+- if a live backend session becomes available, run an explicit browser-side validation pass for every supported metric against real responses
+- if annual extra metrics are introduced later, keep the current UX branch but switch from disabled options to active snapshot-backed support only when backend snapshots exist.
 
 ## Change Budget
 

@@ -42,6 +42,56 @@ The first Ranking page supports:
 - filter changes without manual page reload where feasible
 - clear differentiation between `ready`, `missing`, `empty`, `offline` and request-error states
 
+## V1.1 Metric Expansion Contract
+
+V1.1 expands `Ranking global` only within the existing RCON-first read paths and annual snapshot boundary.
+
+Supported metrics:
+
+- `kills`
+- `deaths`
+- `teamkills`
+- `matches_considered`
+- `kd_ratio`
+- `kills_per_match`
+
+Calculation rules:
+
+- `kills`: `SUM(kills)`
+- `deaths`: `SUM(deaths)`
+- `teamkills`: `SUM(teamkills)`
+- `matches_considered`: `COUNT(DISTINCT match_key)` across closed matches in the selected window
+- `kd_ratio`: `SUM(kills) / SUM(deaths)`
+- `kills_per_match`: `SUM(kills) / COUNT(DISTINCT match_key)`
+
+Safe division rules:
+
+- if `deaths = 0`, `kd_ratio` returns `kills` as a finite display-safe value rather than dividing by zero
+- if `matches_considered = 0`, `kills_per_match` returns `0`
+- backend should return rounded display-safe decimal values for ratio metrics
+
+Ordering and tie-break rules:
+
+- `kills`: order by `kills` desc, `matches_considered` desc, `player_name` asc
+- `deaths`: order by `deaths` desc, `matches_considered` desc, `player_name` asc
+- `teamkills`: order by `teamkills` desc, `matches_considered` desc, `player_name` asc
+- `matches_considered`: order by `matches_considered` desc, `kills` desc, `player_name` asc
+- `kd_ratio`: order by `kd_ratio` desc, `kills` desc, `matches_considered` desc, `player_name` asc
+- `kills_per_match`: order by `kills_per_match` desc, `kills` desc, `matches_considered` desc, `player_name` asc
+
+Timeframe support:
+
+- `weekly`: supports all V1.1 metrics through the existing materialized RCON runtime read model
+- `monthly`: supports all V1.1 metrics through the existing materialized RCON runtime read model
+- `annual`: remains snapshot-safe first; `kills` is required support and extra annual metrics are allowed only when a precomputed annual snapshot already exists for that metric
+
+Annual safety boundary:
+
+- annual requests must remain snapshot-backed
+- annual requests must not trigger full-year recomputation in the public request path
+- if an annual metric does not have a safe snapshot-backed read path, backend must return controlled `400` instead of degrading to runtime aggregation
+- until extra annual snapshots are explicitly implemented, annual support is effectively `kills`-only
+
 ## V1 Non-goals
 
 - Elo/MMR
@@ -73,6 +123,7 @@ The first Ranking page supports:
 - Reader: existing weekly/monthly selection logic in `select_leaderboard_window(...)`.
 - Ordering: metric desc, `matches_considered` desc, `player_name` asc.
 - V1 metric commitment: `kills`.
+- V1.1 metric support: `kills`, `deaths`, `teamkills`, `matches_considered`, `kd_ratio`, `kills_per_match`.
 
 ### Annual
 
@@ -80,13 +131,15 @@ The first Ranking page supports:
 - Reader: existing annual snapshot loader.
 - No annual recomputation during public requests.
 - Missing annual data must surface as a controlled `snapshot_status="missing"` state.
+- V1 required annual metric: `kills`.
+- Extra annual metrics are out of scope until their snapshot generation and read path are explicitly implemented.
 
 ## API Contract Direction
 
 ### Dedicated Ranking endpoint
 
 ```http
-GET /api/ranking?timeframe=weekly|monthly|annual&server_id=<server-or-all>&metric=kills&limit=20&year=<year-when-annual>
+GET /api/ranking?timeframe=weekly|monthly|annual&server_id=<server-or-all>&metric=<metric>&limit=20&year=<year-when-annual>
 ```
 
 Purpose:
@@ -104,10 +157,13 @@ Query rules:
 Validation rules:
 
 - allowed `timeframe`: `weekly`, `monthly`, `annual`
-- V1 allowed `metric`: `kills`
+- V1.1 allowed `metric` for weekly/monthly: `kills`, `deaths`, `teamkills`, `matches_considered`, `kd_ratio`, `kills_per_match`
+- allowed `annual` metric by default: `kills`
+- annual extra metrics require an explicit snapshot-backed implementation; otherwise return `400`
 - allowed `limit`: `1..100`
 - `year` must be a positive integer when annual is requested
 - annual requests ignore weekly/monthly runtime window policy and read snapshots only
+- unsupported metric, unsupported timeframe or unsupported annual metric must return a controlled request-validation error and must not silently downgrade to `kills`
 
 ## Response Contract
 
@@ -118,7 +174,7 @@ Validation rules:
     "page_kind": "global-ranking",
     "timeframe": "monthly",
     "server_id": "all",
-    "metric": "kills",
+    "metric": "kills_per_match",
     "limit": 20,
     "requested_limit": 20,
     "window_start": "2026-06-01T00:00:00Z",
@@ -137,12 +193,13 @@ Validation rules:
         "ranking_position": 1,
         "player_id": "76561198000000000",
         "player_name": "Rambo",
-        "metric_value": 421,
+        "metric_value": 30.07,
         "matches_considered": 14,
         "kills": 421,
         "deaths": 280,
         "teamkills": 3,
-        "kd_ratio": 1.5
+        "kd_ratio": 1.5,
+        "kills_per_match": 30.07
       }
     ]
   }
@@ -155,7 +212,7 @@ Common top-level fields:
 
 - `timeframe`: `weekly`, `monthly`, `annual`
 - `server_id`: `all` or one supported active server id
-- `metric`: `kills` in V1
+- `metric`: requested supported metric
 - `limit`: effective served limit
 - `requested_limit`: requested client limit
 - `snapshot_status`: always present for frontend state handling
@@ -172,6 +229,13 @@ Required item fields:
 - `deaths`
 - `teamkills`
 - `kd_ratio`
+- `kills_per_match`
+
+Conditional item rules:
+
+- `metric_value` may be integer or rounded decimal depending on the requested metric
+- `kills_per_match` should be present when that metric is supported in the response contract
+- `matches_considered` remains required because it is both a displayed field and a common tie-break input
 
 Weekly/monthly-only metadata:
 
@@ -207,6 +271,8 @@ Annual-only metadata:
 - Read only from annual snapshots.
 - `snapshot_status="ready"` with `items=[]` is a valid empty-ready state.
 - `snapshot_status="missing"` is not a backend crash and must be rendered distinctly.
+- Annual must not pretend support for metrics that do not have precomputed snapshots.
+- If client requests an unsupported annual metric, backend should return `400` rather than an empty-ready payload.
 
 ## UI State Contract
 
@@ -226,6 +292,7 @@ Expected rendering behavior:
 - no data keeps filters visible and explains that there are no rows for the active scope
 - annual snapshot missing explains that the annual snapshot has not been generated yet
 - unsupported metric does not silently downgrade to another metric
+- unsupported annual metric explains that the metric is not available for annual snapshots yet
 - controlled error does not break page navigation or filter controls
 
 ## Backend Behavior Requirements
@@ -235,6 +302,24 @@ Expected rendering behavior:
 - Do not expand annual generation logic inside request handling.
 - Keep server scope limited to active supported scopes: `all`, `comunidad-hispana-01`, `comunidad-hispana-02`.
 - Do not surface Comunidad Hispana #03 in defaults, options or backend read scope.
+- Do not add large new tables or a second ranking architecture for V1.1 metric expansion.
+
+## Payload Adjustment Notes
+
+- The existing `metric_value` field remains the primary sortable/display value for the active metric.
+- Weekly and monthly responses should keep the existing totals payload and may add `kills_per_match` when the backend serves that metric.
+- Annual responses should keep the same payload shape and only expand metrics when the snapshot schema already stores the required values safely.
+- Client code should continue to rely on explicit `metric` and `snapshot_status` fields rather than inferring support from item contents alone.
+
+## V1.1 Non-goals
+
+- Elo/MMR
+- public scoreboard as primary ranking source
+- annual runtime full-year recomputation
+- large new tables
+- advanced charts
+- authentication
+- Comunidad Hispana #03
 
 ## Frontend Integration Guidance
 

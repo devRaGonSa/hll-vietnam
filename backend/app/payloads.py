@@ -500,20 +500,37 @@ def _normalize_global_ranking_items(items: object) -> list[dict[str, object]]:
     for item in items if isinstance(items, list) else []:
         if not isinstance(item, dict):
             continue
+        matches_considered = int(item.get("matches_considered") or 0)
+        kills = int(item.get("kills") or 0)
         normalized_items.append(
             {
                 "ranking_position": int(item.get("ranking_position") or 0),
                 "player_id": item.get("player_id"),
                 "player_name": item.get("player_name"),
-                "metric_value": int(item.get("metric_value") or 0),
-                "matches_considered": int(item.get("matches_considered") or 0),
-                "kills": int(item.get("kills") or 0),
+                "metric_value": _coerce_public_metric_value(item.get("metric_value")),
+                "matches_considered": matches_considered,
+                "kills": kills,
                 "deaths": int(item.get("deaths") or 0),
                 "teamkills": int(item.get("teamkills") or 0),
                 "kd_ratio": float(item.get("kd_ratio") or 0.0),
+                "kills_per_match": float(
+                    item.get("kills_per_match")
+                    if item.get("kills_per_match") is not None
+                    else round(kills / matches_considered, 2) if matches_considered else 0.0
+                ),
             }
         )
     return normalized_items
+
+
+def _coerce_public_metric_value(value: object) -> int | float:
+    try:
+        numeric = float(value or 0)
+    except (TypeError, ValueError):
+        return 0
+    if numeric.is_integer():
+        return int(numeric)
+    return round(numeric, 2)
 
 
 def _source_when_present(*values: object, source: str) -> str | None:
@@ -735,12 +752,25 @@ def build_annual_ranking_snapshot_payload(
                     "ranking_position": int(item.get("ranking_position") or 0),
                     "player_id": item.get("player_id"),
                     "player_name": item.get("player_name"),
-                    "metric_value": int(item.get("metric_value") or 0),
+                    "metric_value": _coerce_public_metric_value(item.get("metric_value")),
                     "matches_considered": int(item.get("matches_considered") or 0),
                     "kills": int(item.get("kills") or 0),
                     "deaths": int(item.get("deaths") or 0),
                     "teamkills": int(item.get("teamkills") or 0),
                     "kd_ratio": float(item.get("kd_ratio") or 0.0),
+                    "kills_per_match": (
+                        float(item.get("kills_per_match"))
+                        if item.get("kills_per_match") is not None
+                        else (
+                            round(
+                                int(item.get("kills") or 0)
+                                / int(item.get("matches_considered") or 0),
+                                2,
+                            )
+                            if int(item.get("matches_considered") or 0) > 0
+                            else 0.0
+                        )
+                    ),
                 }
                 for item in items
                 if isinstance(item, dict)

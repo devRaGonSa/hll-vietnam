@@ -1,7 +1,7 @@
 ---
 id: TASK-185-add-ranking-extra-metrics-backend-support
 title: Add ranking extra metrics backend support
-status: pending
+status: done
 type: backend
 team: Backend Senior
 supporting_teams:
@@ -105,14 +105,72 @@ Before completing the task ensure:
 
 ## Outcome
 
-Document:
+Metrics added for `GET /api/ranking` weekly/monthly reads:
 
-- metrics added
-- formulas applied in backend ranking logic
-- annual metric behavior and limitations
-- validations executed
-- known limitations
-- recommended next task: expose the new metrics safely in Ranking frontend UX
+- `kills`
+- `deaths`
+- `teamkills`
+- `matches_considered`
+- `kd_ratio`
+- `kills_per_match`
+
+Backend formulas and ordering applied:
+
+- `kills = SUM(kills)` ordered by `kills` desc, `matches_considered` desc, `player_name` asc
+- `deaths = SUM(deaths)` ordered by `deaths` desc, `matches_considered` desc, `player_name` asc
+- `teamkills = SUM(teamkills)` ordered by `teamkills` desc, `matches_considered` desc, `player_name` asc
+- `matches_considered = COUNT(DISTINCT match_key)` ordered by `matches_considered` desc, `kills` desc, `player_name` asc
+- `kd_ratio = SUM(kills) / SUM(deaths)` with `deaths=0 -> kills`, ordered by `kd_ratio` desc, `kills` desc, `matches_considered` desc, `player_name` asc
+- `kills_per_match = SUM(kills) / COUNT(DISTINCT match_key)` with `matches_considered=0 -> 0`, ordered by `kills_per_match` desc, `kills` desc, `matches_considered` desc, `player_name` asc
+
+Implementation summary:
+
+- `backend/app/rcon_historical_leaderboards.py` now supports the V1.1 ranking metrics while preserving the existing materialized RCON read model.
+- `backend/app/routes.py` now validates the expanded public Ranking metric set without changing the endpoint shape.
+- `backend/app/payloads.py` now preserves decimal `metric_value` when needed and exposes `kills_per_match` in normalized ranking items.
+- `backend/app/rcon_annual_rankings.py` remains snapshot-safe and returns a controlled annual-specific `400` for unsupported annual metrics.
+- `scripts/run-stats-validation.ps1` now covers the new happy paths and annual guardrail failures.
+
+Annual metric behavior and limitations:
+
+- annual remains snapshot-backed only
+- `metric=kills` remains supported
+- extra annual metrics currently return controlled `400`
+- no runtime full-year recomputation was introduced
+
+Validations executed:
+
+- `python -m compileall backend/app/routes.py backend/app/payloads.py backend/app/rcon_historical_leaderboards.py backend/app/rcon_annual_rankings.py`
+- `powershell -ExecutionPolicy Bypass -File scripts/run-stats-validation.ps1`
+- `powershell -ExecutionPolicy Bypass -File scripts/run-integration-tests.ps1`
+
+Validation notes:
+
+- live backend HTTP validation at `http://127.0.0.1:8000` was not available during execution
+- route-contract validation still passed through local Python imports
+
+Scope notes:
+
+- task-owned modifications stayed within:
+  - `backend/app/rcon_historical_leaderboards.py`
+  - `backend/app/routes.py`
+  - `backend/app/payloads.py`
+  - `backend/app/rcon_annual_rankings.py`
+  - `scripts/run-stats-validation.ps1`
+- `git diff --name-only` also showed pre-existing or previous-task changes outside this task:
+  - moved task files from `TASK-184` / `TASK-185`
+  - `docs/global-ranking-page-plan.md` from `TASK-184`
+  - unrelated existing workspace change `frontend/assets/img/weapons/black/gewehr_black.svg`
+- those files were not modified as part of this backend task.
+
+Known limitations:
+
+- annual extra metrics are intentionally blocked until an explicit snapshot-backed implementation exists
+- ranking item decimals are validated through route-contract checks, not through a running backend HTTP instance in this run
+
+Recommended next task:
+
+- expose the new metrics safely in the Ranking frontend UX.
 
 ## Change Budget
 

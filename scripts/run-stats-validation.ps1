@@ -49,9 +49,13 @@ function Assert-LastExitCode {
 
 Assert-FileExists "frontend/stats.html" "Missing frontend/stats.html"
 Assert-FileExists "frontend/assets/js/stats.js" "Missing frontend/assets/js/stats.js"
+Assert-FileExists "frontend/ranking.html" "Missing frontend/ranking.html"
+Assert-FileExists "frontend/assets/js/ranking.js" "Missing frontend/assets/js/ranking.js"
 
 $statsHtml = Get-Content -Raw "frontend/stats.html"
 $statsJs = Get-Content -Raw "frontend/assets/js/stats.js"
+$rankingHtml = Get-Content -Raw "frontend/ranking.html"
+$rankingJs = Get-Content -Raw "frontend/assets/js/ranking.js"
 
 Assert-ContainsText $statsHtml 'id="stats-search-form"' `
     "Stats page no longer exposes the player search form."
@@ -71,10 +75,33 @@ Assert-ContainsText $statsHtml 'id="stats-annual-state"' `
     "Stats page no longer exposes annual ranking state node."
 Assert-ContainsText $statsHtml 'id="stats-backend-state"' `
     "Stats page no longer exposes backend state chip."
+Assert-ContainsText $statsHtml 'href="./ranking.html"' `
+    "Stats page should keep a direct link to ranking."
 Assert-ContainsText $statsJs 'getElementById("stats-search-form")' `
     "Stats JS no longer sets up search form lookup."
 Assert-ContainsText $statsJs "loadPlayerProfile(" `
     "Stats JS no longer defines loadPlayerProfile."
+
+Assert-ContainsText $rankingHtml 'id="ranking-form"' `
+    "Ranking page no longer exposes the ranking filter form."
+Assert-ContainsText $rankingHtml 'value="kills_per_match"' `
+    "Ranking page should expose the kills_per_match option."
+Assert-ContainsText $rankingHtml 'value="matches_considered"' `
+    "Ranking page should expose the matches_considered option."
+Assert-ContainsText $rankingHtml 'id="ranking-filter-note"' `
+    "Ranking page should expose the ranking filter guidance note."
+Assert-ContainsText $rankingHtml 'id="ranking-metric-heading"' `
+    "Ranking page should expose the dynamic metric heading."
+Assert-ContainsText $rankingJs "applyInitialUrlState" `
+    "Ranking JS should restore filter state from the URL."
+Assert-ContainsText $rankingJs "history.replaceState" `
+    "Ranking JS should sync filter state into the URL."
+Assert-ContainsText $rankingJs "El ranking anual sigue limitado a kills" `
+    "Ranking JS should explain the annual kills-only constraint."
+Assert-ContainsText $rankingJs "El limite solicitado no es valido." `
+    "Ranking JS should expose a dedicated invalid-limit message."
+Assert-ContainsText $rankingJs "/api/ranking" `
+    "Ranking frontend no longer targets the ranking endpoint."
 
 Assert-ContainsText $statsJs "/api/stats/players/search" `
     "Stats frontend no longer targets the player search endpoint."
@@ -112,6 +139,10 @@ def require_int(value, message):
 
 def require_str(value, message):
     require(isinstance(value, str), message)
+
+
+def require_number(value, message):
+    require(isinstance(value, (int, float)), message)
 
 
 health_status, health_payload = read_payload("/health")
@@ -214,6 +245,36 @@ require(weekly_ranking_data.get("snapshot_status") == "ready", "Global ranking w
 require(isinstance(weekly_ranking_data.get("items"), list), "Global ranking weekly items must be list.")
 require(isinstance(weekly_ranking_data.get("source"), dict), "Global ranking weekly should expose source metadata.")
 
+weekly_deaths_status, weekly_deaths_payload = read_payload(
+    "/api/ranking?timeframe=weekly&server_id=all&metric=deaths&limit=20"
+)
+require(weekly_deaths_status == 200, "Global ranking weekly deaths route should return 200.")
+require((weekly_deaths_payload.get("data") or {}).get("metric") == "deaths", "Global ranking weekly deaths metric should be preserved.")
+
+weekly_teamkills_status, weekly_teamkills_payload = read_payload(
+    "/api/ranking?timeframe=weekly&server_id=all&metric=teamkills&limit=20"
+)
+require(weekly_teamkills_status == 200, "Global ranking weekly teamkills route should return 200.")
+require((weekly_teamkills_payload.get("data") or {}).get("metric") == "teamkills", "Global ranking weekly teamkills metric should be preserved.")
+
+weekly_matches_status, weekly_matches_payload = read_payload(
+    "/api/ranking?timeframe=weekly&server_id=all&metric=matches_considered&limit=20"
+)
+require(weekly_matches_status == 200, "Global ranking weekly matches_considered route should return 200.")
+require((weekly_matches_payload.get("data") or {}).get("metric") == "matches_considered", "Global ranking weekly matches_considered metric should be preserved.")
+
+weekly_kd_status, weekly_kd_payload = read_payload(
+    "/api/ranking?timeframe=weekly&server_id=all&metric=kd_ratio&limit=20"
+)
+require(weekly_kd_status == 200, "Global ranking weekly kd_ratio route should return 200.")
+require((weekly_kd_payload.get("data") or {}).get("metric") == "kd_ratio", "Global ranking weekly kd_ratio metric should be preserved.")
+
+weekly_kpm_status, weekly_kpm_payload = read_payload(
+    "/api/ranking?timeframe=weekly&server_id=all&metric=kills_per_match&limit=20"
+)
+require(weekly_kpm_status == 200, "Global ranking weekly kills_per_match route should return 200.")
+require((weekly_kpm_payload.get("data") or {}).get("metric") == "kills_per_match", "Global ranking weekly kills_per_match metric should be preserved.")
+
 monthly_ranking_status, monthly_ranking_payload = read_payload(
     "/api/ranking?timeframe=monthly&server_id=comunidad-hispana-01&metric=kills&limit=20"
 )
@@ -221,6 +282,18 @@ require(monthly_ranking_status == 200, "Global ranking monthly route should retu
 monthly_ranking_data = monthly_ranking_payload.get("data") or {}
 require(monthly_ranking_data.get("timeframe") == "monthly", "Global ranking monthly timeframe should be preserved.")
 require(monthly_ranking_data.get("server_id") == "comunidad-hispana-01", "Global ranking monthly should preserve server_id.")
+
+monthly_kd_status, monthly_kd_payload = read_payload(
+    "/api/ranking?timeframe=monthly&server_id=comunidad-hispana-01&metric=kd_ratio&limit=20"
+)
+require(monthly_kd_status == 200, "Global ranking monthly kd_ratio route should return 200.")
+require((monthly_kd_payload.get("data") or {}).get("metric") == "kd_ratio", "Global ranking monthly kd_ratio metric should be preserved.")
+
+monthly_kpm_status, monthly_kpm_payload = read_payload(
+    "/api/ranking?timeframe=monthly&server_id=comunidad-hispana-01&metric=kills_per_match&limit=20"
+)
+require(monthly_kpm_status == 200, "Global ranking monthly kills_per_match route should return 200.")
+require((monthly_kpm_payload.get("data") or {}).get("metric") == "kills_per_match", "Global ranking monthly kills_per_match metric should be preserved.")
 
 annual_ranking_status, annual_ranking_payload = read_payload(
     f"/api/ranking?timeframe=annual&year={current_year}&server_id=all&metric=kills&limit=20"
@@ -231,6 +304,29 @@ require(annual_ranking_data.get("timeframe") == "annual", "Global ranking annual
 require(annual_ranking_data.get("metric") == "kills", "Global ranking annual metric should be kills.")
 require(annual_ranking_data.get("snapshot_status") in {"ready", "missing"}, "Global ranking annual snapshot_status should be ready or missing.")
 require(isinstance(annual_ranking_data.get("items"), list), "Global ranking annual items must be list.")
+
+for ranking_payload in [
+    weekly_ranking_payload,
+    weekly_deaths_payload,
+    weekly_teamkills_payload,
+    weekly_matches_payload,
+    weekly_kd_payload,
+    weekly_kpm_payload,
+    monthly_kd_payload,
+    monthly_kpm_payload,
+    annual_ranking_payload,
+]:
+    ranking_data = ranking_payload.get("data") or {}
+    for item in ranking_data.get("items", []):
+        if item is None:
+            continue
+        require_int(item.get("ranking_position"), "Global ranking item ranking_position should be int.")
+        require_str(item.get("player_id"), "Global ranking item should include player_id.")
+        require_str(item.get("player_name"), "Global ranking item should include player_name.")
+        require_number(item.get("metric_value"), "Global ranking item metric_value should be numeric.")
+        require_int(item.get("matches_considered"), "Global ranking item matches_considered should be int.")
+        require_number(item.get("kd_ratio"), "Global ranking item kd_ratio should be numeric.")
+        require_number(item.get("kills_per_match"), "Global ranking item kills_per_match should be numeric.")
 
 low_limit_ranking_status, low_limit_ranking_payload = read_payload(
     "/api/ranking?timeframe=weekly&server_id=all&metric=kills&limit=3"
@@ -244,9 +340,22 @@ high_limit_ranking_status, _ = read_payload(
 require(high_limit_ranking_status == 400, "Global ranking with limit=101 should return 400.")
 
 unsupported_metric_ranking_status, _ = read_payload(
-    "/api/ranking?timeframe=weekly&server_id=all&metric=deaths&limit=20"
+    "/api/ranking?timeframe=weekly&server_id=all&metric=assists&limit=20"
 )
 require(unsupported_metric_ranking_status == 400, "Global ranking with unsupported metric should return 400.")
+
+annual_unsupported_metric_status, annual_unsupported_metric_payload = read_payload(
+    f"/api/ranking?timeframe=annual&year={current_year}&server_id=all&metric=deaths&limit=20"
+)
+require(annual_unsupported_metric_status == 400, "Global ranking annual with unsupported snapshot metric should return 400.")
+require(
+    "annual" in str(
+        annual_unsupported_metric_payload.get("message")
+        or annual_unsupported_metric_payload.get("error")
+        or ""
+    ).lower(),
+    "Annual unsupported metric error should mention annual snapshot support.",
+)
 
 unsupported_timeframe_ranking_status, _ = read_payload(
     "/api/ranking?timeframe=seasonal&server_id=all&metric=kills&limit=20"
@@ -324,6 +433,21 @@ if ($backendAvailable) {
         throw "Live global ranking weekly route should return status=ok."
     }
 
+    $rankingWeeklyDeathsPayload = Invoke-RestMethod -Uri "$backendBaseUrl/api/ranking?timeframe=weekly&server_id=all&metric=deaths&limit=20" -TimeoutSec 5
+    if ($rankingWeeklyDeathsPayload.status -ne "ok") {
+        throw "Live global ranking weekly deaths route should return status=ok."
+    }
+
+    $rankingWeeklyKdPayload = Invoke-RestMethod -Uri "$backendBaseUrl/api/ranking?timeframe=weekly&server_id=all&metric=kd_ratio&limit=20" -TimeoutSec 5
+    if ($rankingWeeklyKdPayload.status -ne "ok") {
+        throw "Live global ranking weekly kd_ratio route should return status=ok."
+    }
+
+    $rankingMonthlyKpmPayload = Invoke-RestMethod -Uri "$backendBaseUrl/api/ranking?timeframe=monthly&server_id=all&metric=kills_per_match&limit=20" -TimeoutSec 5
+    if ($rankingMonthlyKpmPayload.status -ne "ok") {
+        throw "Live global ranking monthly kills_per_match route should return status=ok."
+    }
+
     $rankingAnnualPayload = Invoke-RestMethod -Uri "$backendBaseUrl/api/ranking?timeframe=annual&year=$currentYear&server_id=all&metric=kills&limit=20" -TimeoutSec 5
     if ($rankingAnnualPayload.status -ne "ok") {
         throw "Live global ranking annual route should return status=ok."
@@ -332,7 +456,22 @@ if ($backendAvailable) {
         throw "Live global ranking annual should expose ready/missing snapshot status."
     }
 
-    $rankingUnsupportedMetricStatus = Get-HttpStatusCode -Url "$backendBaseUrl/api/ranking?timeframe=weekly&server_id=all&metric=deaths&limit=20"
+    $rankingSupportedDeathsStatus = Get-HttpStatusCode -Url "$backendBaseUrl/api/ranking?timeframe=weekly&server_id=all&metric=deaths&limit=20"
+    if ($rankingSupportedDeathsStatus -ne 200) {
+        throw "Live global ranking weekly deaths should return HTTP 200."
+    }
+
+    $rankingInvalidMetricStatus = Get-HttpStatusCode -Url "$backendBaseUrl/api/ranking?timeframe=weekly&server_id=all&metric=assists&limit=20"
+    if ($rankingInvalidMetricStatus -ne 400) {
+        throw "Live global ranking with invalid metric should return HTTP 400."
+    }
+
+    $rankingUnsupportedAnnualMetricStatus = Get-HttpStatusCode -Url "$backendBaseUrl/api/ranking?timeframe=annual&year=$currentYear&server_id=all&metric=deaths&limit=20"
+    if ($rankingUnsupportedAnnualMetricStatus -ne 400) {
+        throw "Live global ranking annual with unsupported snapshot metric should return HTTP 400."
+    }
+
+    $rankingUnsupportedMetricStatus = Get-HttpStatusCode -Url "$backendBaseUrl/api/ranking?timeframe=weekly&server_id=all&metric=assists&limit=20"
     if ($rankingUnsupportedMetricStatus -ne 400) {
         throw "Live global ranking with unsupported metric should return HTTP 400."
     }

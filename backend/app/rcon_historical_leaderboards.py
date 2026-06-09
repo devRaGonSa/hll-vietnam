@@ -17,7 +17,16 @@ from .rcon_admin_log_materialization import (
 from .sqlite_utils import connect_sqlite_readonly
 
 LeaderboardTimeframe = Literal["weekly", "monthly"]
-LeaderboardMetric = Literal["kills", "deaths", "matches_over_100_kills", "support"]
+LeaderboardMetric = Literal[
+    "kills",
+    "deaths",
+    "teamkills",
+    "matches_considered",
+    "kd_ratio",
+    "kills_per_match",
+    "matches_over_100_kills",
+    "support",
+]
 
 
 def build_rcon_materialized_leaderboard_snapshot_payload(
@@ -197,12 +206,7 @@ def _fetch_leaderboard_rows(
     window_end: datetime,
 ) -> list[dict[str, object]]:
     scope_sql, scope_params = _build_scope_sql(server_key)
-    metric_sql = {
-        "kills": "SUM(COALESCE(stats.kills, 0))",
-        "deaths": "SUM(COALESCE(stats.deaths, 0))",
-        "matches_over_100_kills": "SUM(CASE WHEN COALESCE(stats.kills, 0) >= 100 THEN 1 ELSE 0 END)",
-    }[metric]
-    having_sql = f"HAVING {metric_sql} > 0"
+    metric_sql, having_sql, order_by_sql = _resolve_metric_sql(metric)
     params: list[object] = [
         _to_iso(window_start),
         _to_iso(window_end),
@@ -230,7 +234,7 @@ def _fetch_leaderboard_rows(
           AND TRIM(COALESCE(stats.player_name, '')) != ''
         GROUP BY stats.player_id, stats.player_name
         {having_sql}
-        ORDER BY metric_value DESC, matches_considered DESC, stats.player_name ASC
+        ORDER BY {order_by_sql}
         LIMIT ?
         """,
         [MATCH_RESULT_SOURCE, *params],
@@ -431,6 +435,9 @@ def _count_matches(
 def _build_item(row: dict[str, object], *, index: int) -> dict[str, object]:
     kills = _coerce_int(row.get("kills"))
     deaths = _coerce_int(row.get("deaths"))
+    matches_considered = _coerce_int(row.get("matches_considered"))
+    kd_ratio = round(kills / deaths, 2) if deaths else float(kills)
+    kills_per_match = round(kills / matches_considered, 2) if matches_considered else 0.0
     return {
         "ranking_position": index,
         "player": {
@@ -439,12 +446,13 @@ def _build_item(row: dict[str, object], *, index: int) -> dict[str, object]:
         },
         "player_id": row.get("player_id"),
         "player_name": row.get("player_name"),
-        "metric_value": _coerce_int(row.get("metric_value")),
-        "matches_considered": _coerce_int(row.get("matches_considered")),
+        "metric_value": _coerce_metric_value(row.get("metric_value")),
+        "matches_considered": matches_considered,
         "kills": kills,
         "deaths": deaths,
         "teamkills": _coerce_int(row.get("teamkills")),
-        "kd_ratio": round(kills / deaths, 2) if deaths else float(kills),
+        "kd_ratio": kd_ratio,
+        "kills_per_match": kills_per_match,
     }
 
 
@@ -554,7 +562,16 @@ def _normalize_timeframe(value: str) -> LeaderboardTimeframe:
 
 def _normalize_metric(value: str) -> LeaderboardMetric:
     normalized = str(value or "kills").strip().lower()
-    if normalized in {"kills", "deaths", "matches_over_100_kills", "support"}:
+    if normalized in {
+        "kills",
+        "deaths",
+        "teamkills",
+        "matches_considered",
+        "kd_ratio",
+        "kills_per_match",
+        "matches_over_100_kills",
+        "support",
+    }:
         return normalized  # type: ignore[return-value]
     return "kills"
 
@@ -565,6 +582,10 @@ def _build_title(*, metric: str, timeframe: str, server_id: str | None) -> str:
     metric_label = {
         "kills": "Top kills",
         "deaths": "Top muertes",
+        "teamkills": "Top teamkills",
+        "matches_considered": "Top partidas jugadas",
+        "kd_ratio": "Top K/D",
+        "kills_per_match": "Top kills por partida",
         "matches_over_100_kills": "Partidas 100+ kills",
         "support": "Top soporte",
     }.get(metric, "Top kills")
@@ -576,6 +597,69 @@ def _coerce_int(value: object) -> int:
         return int(value or 0)
     except (TypeError, ValueError):
         return 0
+
+
+def _coerce_metric_value(value: object) -> int | float:
+    numeric = _coerce_float(value)
+    if numeric.is_integer():
+        return int(numeric)
+    return round(numeric, 2)
+
+
+def _coerce_float(value: object) -> float:
+    try:
+        return float(value or 0)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _resolve_metric_sql(metric: str) -> tuple[str, str, str]:
+    metric_sql_by_metric = {
+        "kills": "SUM(COALESCE(stats.kills, 0))",
+        "deaths": "SUM(COALESCE(stats.deaths, 0))",
+        "teamkills": "SUM(COALESCE(stats.teamkills, 0))",
+        "matches_considered": "COUNT(DISTINCT stats.match_key)",
+        "kd_ratio": (
+            "CASE "
+            "WHEN SUM(COALESCE(stats.deaths, 0)) > 0 "
+            "THEN ROUND(CAST(SUM(COALESCE(stats.kills, 0)) AS REAL) / SUM(COALESCE(stats.deaths, 0)), 2) "
+            "ELSE CAST(SUM(COALESCE(stats.kills, 0)) AS REAL) "
+            "END"
+        ),
+        "kills_per_match": (
+            "CASE "
+            "WHEN COUNT(DISTINCT stats.match_key) > 0 "
+            "THEN ROUND(CAST(SUM(COALESCE(stats.kills, 0)) AS REAL) / COUNT(DISTINCT stats.match_key), 2) "
+            "ELSE 0.0 "
+            "END"
+        ),
+        "matches_over_100_kills": "SUM(CASE WHEN COALESCE(stats.kills, 0) >= 100 THEN 1 ELSE 0 END)",
+    }
+    having_sql_by_metric = {
+        "kills": "HAVING SUM(COALESCE(stats.kills, 0)) > 0",
+        "deaths": "HAVING SUM(COALESCE(stats.deaths, 0)) > 0",
+        "teamkills": "HAVING SUM(COALESCE(stats.teamkills, 0)) > 0",
+        "matches_considered": "HAVING COUNT(DISTINCT stats.match_key) > 0",
+        "kd_ratio": "HAVING SUM(COALESCE(stats.kills, 0)) > 0",
+        "kills_per_match": "HAVING COUNT(DISTINCT stats.match_key) > 0 AND SUM(COALESCE(stats.kills, 0)) > 0",
+        "matches_over_100_kills": "HAVING SUM(CASE WHEN COALESCE(stats.kills, 0) >= 100 THEN 1 ELSE 0 END) > 0",
+    }
+    order_by_sql_by_metric = {
+        "kills": "metric_value DESC, matches_considered DESC, stats.player_name ASC",
+        "deaths": "metric_value DESC, matches_considered DESC, stats.player_name ASC",
+        "teamkills": "metric_value DESC, matches_considered DESC, stats.player_name ASC",
+        "matches_considered": "metric_value DESC, kills DESC, stats.player_name ASC",
+        "kd_ratio": "metric_value DESC, kills DESC, matches_considered DESC, stats.player_name ASC",
+        "kills_per_match": "metric_value DESC, kills DESC, matches_considered DESC, stats.player_name ASC",
+        "matches_over_100_kills": "metric_value DESC, matches_considered DESC, stats.player_name ASC",
+    }
+    if metric == "support":
+        raise ValueError("support is handled separately")
+    return (
+        metric_sql_by_metric[metric],
+        having_sql_by_metric[metric],
+        order_by_sql_by_metric[metric],
+    )
 
 
 def _parse_datetime(value: object) -> datetime | None:

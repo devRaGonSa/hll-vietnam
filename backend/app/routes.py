@@ -49,6 +49,15 @@ from .payloads import (
 from .rcon_historical_leaderboards import build_rcon_materialized_leaderboard_snapshot_payload
 from .scoreboard_origins import get_trusted_public_scoreboard_origin
 
+RANKING_METRICS = {
+    "kills",
+    "deaths",
+    "teamkills",
+    "matches_considered",
+    "kd_ratio",
+    "kills_per_match",
+}
+
 
 GET_ROUTES = {
     "/health": build_health_payload,
@@ -118,7 +127,7 @@ def resolve_get_payload(path: str) -> tuple[HTTPStatus | None, dict[str, object]
         if timeframe not in {"weekly", "monthly", "annual"}:
             return HTTPStatus.BAD_REQUEST, build_error_payload("Invalid timeframe parameter")
         metric = params.get("metric", ["kills"])[0]
-        if metric != "kills":
+        if metric not in RANKING_METRICS:
             return HTTPStatus.BAD_REQUEST, build_error_payload("Invalid metric parameter")
         limit = _parse_limit(parsed.query)
         if limit is None:
