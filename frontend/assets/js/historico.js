@@ -613,14 +613,21 @@ function hydrateWeeklyLeaderboard(
 
   bodyNode.innerHTML = items
     .map(
-      (item) => `
+      (item) => {
+        const kills = resolveHistoricalKills(item, metricConfig);
+        const matches = Number(item.matches_considered);
+        const kpm = formatHistoricalKpm(item?.kills_per_match, kills, matches);
+
+        return `
         <tr>
           <td class="historical-table__position">#${escapeHtml(item.ranking_position)}</td>
           <td>${escapeHtml(item.player?.name || "Jugador no identificado")}</td>
           <td>${escapeHtml(formatNumber(item.metric_value))}</td>
           <td>${escapeHtml(formatNumber(item.matches_considered))}</td>
+          <td>${escapeHtml(kpm)}</td>
         </tr>
-      `,
+      `;
+      },
     )
     .join("");
   stateNode.hidden = true;
@@ -1665,6 +1672,37 @@ function formatTopMaps(topMaps) {
   return topMaps
     .map((item) => `${item.map_name} (${formatNumber(item.matches_count)})`)
     .join(" / ");
+}
+
+function resolveHistoricalKills(item, metricConfig) {
+  const directKills = Number(item?.kills);
+  if (Number.isFinite(directKills)) {
+    return directKills;
+  }
+
+  if (metricConfig?.key === "kills") {
+    const metricValue = Number(item?.metric_value);
+    if (Number.isFinite(metricValue)) {
+      return metricValue;
+    }
+  }
+
+  return Number.NaN;
+}
+
+function formatHistoricalKpm(rawKillsPerMatch, rawKills, rawMatches) {
+  const directValue = Number(rawKillsPerMatch);
+  if (Number.isFinite(directValue)) {
+    return formatDecimal(directValue, 2);
+  }
+
+  const kills = Number(rawKills);
+  const matches = Number(rawMatches);
+  if (!Number.isFinite(kills) || !Number.isFinite(matches) || matches <= 0) {
+    return "-";
+  }
+
+  return formatDecimal(kills / matches, 2);
 }
 
 function formatDateOnly(timestamp) {

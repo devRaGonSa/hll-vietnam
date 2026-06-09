@@ -13,6 +13,7 @@
   const tableNode = document.getElementById("ranking-table");
   const tableBodyNode = document.getElementById("ranking-table-body");
   const metricHeadingNode = document.getElementById("ranking-metric-heading");
+  const kpmHeadingNode = document.getElementById("ranking-kpm-heading");
   const emptyNode = document.getElementById("ranking-empty");
   const filterNoteNode = document.getElementById("ranking-filter-note");
 
@@ -338,7 +339,7 @@
     if (statusCode === 400 && normalizedMessage.includes("metric")) {
       setRankingState("warning", "La m\u00e9trica solicitada no est\u00e1 soportada.");
       renderEmptyState(
-        "Usa kills, deaths, teamkills, partidas jugadas, K/D o kills por partida.",
+        "Usa kills, deaths, teamkills, partidas jugadas, K/D o KPM.",
       );
       return;
     }
@@ -414,6 +415,7 @@
     if (tableBodyNode) {
       tableBodyNode.innerHTML = items.map((item) => renderRow(item, metric)).join("");
     }
+    syncKpmColumn(metric);
     if (tableNode) {
       tableNode.hidden = false;
     }
@@ -455,6 +457,9 @@
   }
 
   function renderRow(item, metric) {
+    const kpm = formatKpm(item.kills_per_match, item.kills, item.matches_considered);
+    const hideKpmColumn = metric === "kills_per_match";
+
     return `
       <tr>
         <td>#${safeInt(item.ranking_position, 0)}</td>
@@ -470,9 +475,26 @@
         <td>${safeInt(item.teamkills, 0)}</td>
         <td>${safeInt(item.matches_considered, 0)}</td>
         <td>${safeDecimal(item.kd_ratio, 2, "0.00")}</td>
-        <td>${safeDecimal(item.kills_per_match, 2, "0.00")}</td>
+        ${hideKpmColumn ? "" : `<td>${kpm}</td>`}
       </tr>
     `;
+  }
+
+  function syncKpmColumn(metric) {
+    if (!tableNode || !kpmHeadingNode) {
+      return;
+    }
+
+    const kpmColumnIndex = kpmHeadingNode.cellIndex + 1;
+    const hideKpmColumn = metric === "kills_per_match";
+    kpmHeadingNode.hidden = hideKpmColumn;
+
+    tableNode.querySelectorAll("tbody tr").forEach((row) => {
+      const cell = row.children[kpmColumnIndex - 1];
+      if (cell) {
+        cell.hidden = hideKpmColumn;
+      }
+    });
   }
 
   function labelForWindow(data) {
@@ -509,7 +531,7 @@
       teamkills: "Teamkills",
       matches_considered: "Partidas jugadas",
       kd_ratio: "K/D",
-      kills_per_match: "Kills por partida",
+      kills_per_match: "KPM",
     };
     return labels[metric] || "Kills";
   }
@@ -538,6 +560,21 @@
       minimumFractionDigits: maximumFractionDigits,
       maximumFractionDigits,
     });
+  }
+
+  function formatKpm(rawKillsPerMatch, rawKills, rawMatches) {
+    const directValue = Number(rawKillsPerMatch);
+    if (Number.isFinite(directValue)) {
+      return safeDecimal(directValue, 2, "0.00");
+    }
+
+    const kills = Number(rawKills);
+    const matches = Number(rawMatches);
+    if (!Number.isFinite(kills) || !Number.isFinite(matches) || matches <= 0) {
+      return "-";
+    }
+
+    return safeDecimal(kills / matches, 2, "0.00");
   }
 
   function safeParseJson(response) {

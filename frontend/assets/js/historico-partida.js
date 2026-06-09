@@ -40,6 +40,25 @@ document.addEventListener("DOMContentLoaded", () => {
   void loadMatchDetail({ backendBaseUrl, serverSlug, matchId, nodes });
 });
 
+const EXTERNAL_PROFILE_BRANDS = Object.freeze({
+  hellor: Object.freeze({
+    label: "Hellor",
+    logoSrc: "./assets/img/brands/hllor.webp",
+  }),
+  hll_records: Object.freeze({
+    label: "HLL Records",
+    logoSrc: "./assets/img/brands/hllrecords.png",
+  }),
+  helo: Object.freeze({
+    label: "Helo",
+    logoSrc: "./assets/img/brands/helo-system.png",
+  }),
+  steam: Object.freeze({
+    label: "Steam",
+    logoSrc: "",
+  }),
+});
+
 async function loadMatchDetail({ backendBaseUrl, serverSlug, matchId, nodes }) {
   try {
     const payload = await fetchJson(
@@ -513,13 +532,17 @@ function renderPlayerStatsPanel(player, item, context) {
 
 function renderExternalProfilesSection(player) {
   const links = [
-    ["steam", "Steam"],
-    ["hellor", "Hellor"],
-    ["hll_records", "HLL Records"],
-    ["helo", "Helo"],
+    "steam",
+    "hellor",
+    "hll_records",
+    "helo",
   ]
-    .map(([key, label]) => [label, player.external_profile_links?.[key]])
-    .filter(([, href]) => typeof href === "string" && href.trim());
+    .map((key) => ({
+      key,
+      brand: EXTERNAL_PROFILE_BRANDS[key] || { label: key, logoSrc: "" },
+      href: player.external_profile_links?.[key],
+    }))
+    .filter((entry) => typeof entry.href === "string" && entry.href.trim());
 
   return `
     <article class="historical-player-stats-panel__section historical-player-stats-panel__profiles">
@@ -530,9 +553,14 @@ function renderExternalProfilesSection(player) {
             <div class="historical-player-profile-links">
               ${links
                 .map(
-                  ([label, href]) => `
+                  ({ brand, href }) => `
                     <a href="${escapeHtml(href)}" target="_blank" rel="noopener noreferrer">
-                      ${escapeHtml(label)}
+                      ${
+                        brand.logoSrc
+                          ? `<img class="historical-player-profile-link__brand" src="${escapeHtml(brand.logoSrc)}" alt="" aria-hidden="true" decoding="async" loading="lazy" />`
+                          : ""
+                      }
+                      <span>${escapeHtml(brand.label)}</span>
                     </a>
                   `,
                 )

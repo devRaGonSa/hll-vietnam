@@ -2,6 +2,7 @@
   const backendBaseUrl = document.body.dataset.backendBaseUrl || "http://127.0.0.1:8000";
   const searchForm = document.getElementById("stats-search-form");
   const searchInput = document.getElementById("stats-search-input");
+  const searchSubmitButton = document.getElementById("stats-search-submit");
   const searchStateNode = document.getElementById("stats-search-state");
   const searchHelpNode = document.getElementById("stats-search-help");
   const resultListNode = document.getElementById("stats-result-list");
@@ -12,12 +13,11 @@
   const summaryGrid = document.getElementById("stats-summary-grid");
   const weeklySummaryNode = document.getElementById("stats-weekly-summary");
   const monthlySummaryNode = document.getElementById("stats-monthly-summary");
-  const annualForm = document.getElementById("stats-annual-form");
-  const annualYearInput = document.getElementById("stats-annual-year");
   const annualStateNode = document.getElementById("stats-annual-state");
   const annualContentNode = document.getElementById("stats-annual-content");
 
-  const annualDefaultYear = new Date().getUTCFullYear();
+  const annualDefaultYear = 2026;
+  const minimumSearchQueryLength = 4;
   const annualMetric = "kills";
   const annualMetricSupportedOnly = "kills";
   const annualLimit = 20;
@@ -28,7 +28,7 @@
       "Backend no disponible. No se pueden buscar jugadores ni cargar su perfil.",
     backendUnavailableForAnnual:
       "Backend no disponible. No se puede consultar el ranking anual.",
-    searchNoInput: "Escribe un nombre o ID para buscar.",
+    searchNoInput: "Introduce al menos 4 caracteres para buscar un jugador.",
     searchLoading: "Buscando jugadores...",
     searchEmpty: "Sin resultados. Prueba con otro texto o ID.",
     searchError:
@@ -37,7 +37,7 @@
     searchReadySuffix:
       " jugador(es). Selecciona uno para ver sus estad\u00edsticas.",
     searchShortQueryHelp:
-      "Usa al menos 1 car\u00e1cter para iniciar la b\u00fasqueda.",
+      "Introduce al menos 4 caracteres para buscar un jugador.",
     profileLoading: "Cargando estad\u00edsticas personales...",
     profileNoStats:
       "Jugador sin estad\u00edsticas suficientes para mostrar datos personales.",
@@ -74,29 +74,24 @@
 
   if (searchHelpNode) {
     searchHelpNode.textContent =
-      "Usa el buscador para encontrar un jugador. Al seleccionar uno ver\u00e1s resumen semanal y mensual. " +
-      "El ranking anual se consulta por separado con el a\u00f1o indicado.";
+      "Usa al menos 4 caracteres para encontrar un jugador. Al seleccionar uno ver\u00e1s resumen semanal y mensual. " +
+      "El ranking anual visible corresponde a la temporada 2026.";
   }
 
-  if (annualYearInput) {
-    annualYearInput.value = String(annualDefaultYear);
-  }
   clearProfilePanel(false);
+  syncSearchFormState();
   refreshBackendHealth();
 
-  if (annualForm && annualYearInput) {
-    annualForm.addEventListener("submit", (event) => {
-      event.preventDefault();
-      void loadAnnualRanking();
-    });
-  }
-
   if (searchForm && searchInput) {
+    searchInput.addEventListener("input", () => {
+      syncSearchFormState();
+    });
+
     searchForm.addEventListener("submit", (event) => {
       event.preventDefault();
       const query = (searchInput.value || "").trim();
-      if (!query) {
-        setSearchState("error", messages.searchNoInput);
+      if (!isValidSearchQuery(query)) {
+        syncSearchFormState();
         return;
       }
       void searchPlayers(query);
@@ -161,7 +156,7 @@
       isBackendOnline = true;
       setAnnualState(
         "neutral",
-        "Backend disponible. Selecciona un a\u00f1o para cargar el ranking anual.",
+        "Backend disponible. Cargando ranking anual 2026.",
       );
       void loadAnnualRanking();
     } catch (error) {
@@ -174,7 +169,7 @@
     if (!resultListNode) {
       return;
     }
-    if (!query) {
+    if (!isValidSearchQuery(query)) {
       setSearchState("error", messages.searchShortQueryHelp);
       return;
     }
@@ -227,7 +222,7 @@
   }
 
   async function loadAnnualRanking() {
-    if (!annualForm || !annualYearInput || !annualContentNode) {
+    if (!annualContentNode) {
       return;
     }
     if (!isBackendOnline) {
@@ -235,11 +230,7 @@
       return;
     }
 
-    const year = resolveAnnualYear();
-    if (year === null) {
-      setAnnualState("error", "El a\u00f1o ingresado no es v\u00e1lido.");
-      return;
-    }
+    const year = annualDefaultYear;
 
     setAnnualState("loading", messages.annualLoading);
     annualContentNode.innerHTML = "";
@@ -294,14 +285,6 @@
       normalized.includes("unsupported") &&
       annualMetric.toLowerCase() === annualMetricSupportedOnly
     );
-  }
-
-  function resolveAnnualYear() {
-    const normalized = Number.parseInt(String(annualYearInput?.value || "").trim(), 10);
-    if (!Number.isFinite(normalized) || normalized <= 0) {
-      return null;
-    }
-    return normalized;
   }
 
   function renderAnnualRanking(data) {
@@ -369,8 +352,9 @@
         const rank = safeInt(item.ranking_position, 0);
         const playerId = escapeHtml(String(item.player_id || ""));
         const playerName = escapeHtml(String(item.player_name || "Jugador sin nombre"));
-        const metricValue = safeInt(item.metric_value, 0);
+        const kills = safeInt(firstFiniteValue(item.kills, item.metric_value), 0);
         const matches = safeInt(item.matches_considered, 0);
+        const kpm = formatKpm(item.kills_per_match, kills, matches);
         const deaths = safeInt(item.deaths, 0);
         const teamkills = safeInt(item.teamkills, 0);
         const kd = safeDecimal(item.kd_ratio, 2, "0.00");
@@ -384,8 +368,9 @@
                 <span class="stats-annual-player__id">ID ${playerId}</span>
               </div>
             </td>
-            <td class="stats-annual-metric">${metricValue}</td>
+            <td class="stats-annual-metric">${kills}</td>
             <td>${matches}</td>
+            <td>${kpm}</td>
             <td>${deaths}</td>
             <td>${teamkills}</td>
             <td>${kd}</td>
@@ -401,8 +386,9 @@
             <tr>
               <th>Posici\u00f3n</th>
               <th>Jugador</th>
-              <th>Valor / Kills</th>
+              <th>Kills</th>
               <th>Partidas</th>
+              <th>KPM</th>
               <th>Muertes</th>
               <th>Teamkills</th>
               <th>K/D</th>
@@ -891,6 +877,31 @@
     return Number.isFinite(parsed) ? parsed : Number.NaN;
   }
 
+  function firstFiniteValue(...values) {
+    for (const value of values) {
+      const parsed = Number(value);
+      if (Number.isFinite(parsed)) {
+        return parsed;
+      }
+    }
+    return Number.NaN;
+  }
+
+  function formatKpm(rawKillsPerMatch, rawKills, rawMatches) {
+    const directValue = safeParseNumber(rawKillsPerMatch);
+    if (Number.isFinite(directValue)) {
+      return safeDecimal(directValue, 2, "0.00");
+    }
+
+    const kills = safeParseNumber(rawKills);
+    const matches = safeParseNumber(rawMatches);
+    if (!Number.isFinite(kills) || !Number.isFinite(matches) || matches <= 0) {
+      return "-";
+    }
+
+    return safeDecimal(kills / matches, 2, "0.00");
+  }
+
   function safeParseJson(response) {
     if (!response) {
       return null;
@@ -918,6 +929,35 @@
 
   function normalizeArray(items) {
     return Array.isArray(items) ? items : [];
+  }
+
+  function isValidSearchQuery(query) {
+    return String(query || "").trim().length >= minimumSearchQueryLength;
+  }
+
+  function syncSearchFormState() {
+    const query = String(searchInput?.value || "").trim();
+    const isValid = isValidSearchQuery(query);
+
+    if (searchSubmitButton) {
+      searchSubmitButton.disabled = !isValid;
+    }
+
+    if (!searchStateNode) {
+      return;
+    }
+
+    if (!query) {
+      setSearchState(
+        "neutral",
+        "Estado inicial: introduce al menos 4 caracteres para buscar un jugador.",
+      );
+      return;
+    }
+
+    if (!isValid) {
+      setSearchState("warning", messages.searchShortQueryHelp);
+    }
   }
 
   function escapeHtml(value) {

@@ -62,7 +62,7 @@
               <h2>Buscar por nombre o ID</h2>
             </div>
             <p class="panel__intro panel__intro--tight" id="stats-search-help">
-              Usa al menos 1 car&aacute;cter para buscar. Al seleccionar un jugador se cargar&aacute;n sus
+              Usa al menos 4 caracteres para buscar. Al seleccionar un jugador se cargar&aacute;n sus
               stats y ranking semanal y mensual. El ranking anual se consulta por separado.
             </p>
             <form class="stats-search-form" id="stats-search-form">
@@ -79,7 +79,13 @@
                   autocomplete="off"
                   aria-label="Texto de b&uacute;squeda de jugadores"
                 />
-                <button class="discord-button" type="submit" aria-label="Buscar jugador por nombre o ID">
+                <button
+                  class="discord-button"
+                  id="stats-search-submit"
+                  type="submit"
+                  aria-label="Buscar jugador por nombre o ID"
+                  disabled
+                >
                   Buscar jugador
                 </button>
               </div>
@@ -123,30 +129,17 @@
           <div class="panel__shell">
             <div class="panel__header">
               <p class="eyebrow eyebrow--section">Ranking anual</p>
-              <h2>Top 20 anual</h2>
+              <h2>Top 20 temporada 2026</h2>
             </div>
             <p class="panel__intro panel__intro--tight">
               El ranking anual usa un corte ya preparado de la temporada para cargar el Top 20 sin recalcular toda la campa&ntilde;a en cada consulta.
             </p>
-            <form class="stats-annual-form" id="stats-annual-form">
-              <label class="stats-search-form__label" for="stats-annual-year">A&ntilde;o</label>
-              <div class="stats-search-form__fields">
-                <input
-                  class="stats-search-input"
-                  id="stats-annual-year"
-                  type="number"
-                  min="2019"
-                  value=""
-                  aria-label="A&ntilde;o del ranking anual"
-                  aria-describedby="stats-annual-state"
-                />
-                <button class="discord-button" type="submit" aria-label="Cargar ranking anual">
-                  Cargar ranking anual
-                </button>
-              </div>
-            </form>
+            <div class="stats-annual-season" aria-label="Temporada fija del ranking anual">
+              <span class="stats-annual-season__label">Temporada</span>
+              <strong class="stats-annual-season__value">2026</strong>
+            </div>
             <p class="stats-state stats-state--neutral" id="stats-annual-state" role="status" aria-live="polite">
-              Esperando a&ntilde;o para cargar el ranking anual (Top 20 por kills).
+              Preparando ranking anual 2026 (Top 20 por kills).
             </p>
             <div class="stats-annual-table-wrap" id="stats-annual-content" aria-live="polite"></div>
           </div>
