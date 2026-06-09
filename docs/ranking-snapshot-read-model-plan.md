@@ -295,10 +295,12 @@ Current implementation note:
 - the periodic historical runner in `backend/app/historical_runner.py` invokes that bulk refresh as part of the normal backend refresh cycle
 - current cycle order is:
   - existing RCON ingestion/materialization cycle
+  - legacy `historical_snapshot_result`
   - `player_search_index`
   - `player_period_stats`
   - `ranking_snapshots`
 - per-combination failures should be reported without aborting the entire matrix refresh
+- a legacy historical snapshot failure can leave the full cycle in `partial`, but the runner should still attempt the operational PostgreSQL refreshes and report `ranking_snapshot_result`
 
 ## Recommended Combinations
 
@@ -329,6 +331,8 @@ Operational guidance:
 - regenerate after metric SQL changes that affect ranking totals or ordering
 - when using the periodic backend runner, keep ranking refresh attached to the same recurring cycle rather than a separate scheduler unless operational load proves otherwise
 - the runner inherits its cadence from `HLL_HISTORICAL_REFRESH_INTERVAL_SECONDS`
+- if the runner reports `partial`, review `historical_snapshot_result` and backend logs before assuming `ranking_snapshots` was skipped
+- confirm `ranking_snapshots.generated_at` or the latest `updated_at`/window timestamp advanced in PostgreSQL even when a legacy snapshot error was logged
 - fallback runtime remains preserved for `/api/ranking` if a requested snapshot is missing or unavailable
 
 ## Ready Vs Fallback

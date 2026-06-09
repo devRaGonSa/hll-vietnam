@@ -1310,6 +1310,14 @@ def validate_historical_runner_read_model_refresh_cycle():
             "Historical runner should refresh player_search_index, then player_period_stats, then ranking_snapshots.",
         )
         require(
+            (result.get("historical_snapshot_result") or {}).get("status") == "ok",
+            "Historical runner should report historical_snapshot_result separately.",
+        )
+        require(
+            (result.get("snapshot_result") or {}).get("status") == "ok",
+            "Historical runner should preserve snapshot_result compatibility.",
+        )
+        require(
             (result.get("player_search_index_result") or {}).get("status") == "ok",
             "Historical runner should report player_search_index_result separately.",
         )
@@ -1381,6 +1389,61 @@ def validate_historical_runner_read_model_refresh_cycle():
                 if isinstance(log, dict)
             ),
             "Historical runner should emit a dedicated failure log for player_search_index refresh failures.",
+        )
+
+        call_order.clear()
+        captured_logs.clear()
+        historical_runner.refresh_player_search_index = fake_refresh_player_search_index
+        historical_runner.generate_historical_snapshots = lambda **kwargs: (_ for _ in ()).throw(
+            RuntimeError("legacy snapshot failure")
+        )
+        result = historical_runner._run_refresh_with_retries(
+            max_retries=0,
+            retry_delay_seconds=0,
+            server_slug=None,
+            max_pages=None,
+            page_size=None,
+            run_number=1,
+        )
+        require(
+            result.get("status") == "partial",
+            "Historical runner should return partial when legacy historical snapshot refresh fails but operational read-model refreshes continue.",
+        )
+        require(
+            call_order == ["player-search-index", "player-period-stats", "ranking-snapshots"],
+            "Historical runner should still attempt operational read-model refreshes after a legacy historical snapshot failure.",
+        )
+        require(
+            (result.get("historical_snapshot_result") or {}).get("status") == "error",
+            "Historical runner should expose the legacy historical snapshot failure in historical_snapshot_result.",
+        )
+        require(
+            (result.get("snapshot_result") or {}).get("status") == "error",
+            "Historical runner should preserve snapshot_result compatibility for the legacy failure path.",
+        )
+        require(
+            (result.get("historical_snapshot_result") or {}).get("error_type") == "RuntimeError",
+            "Historical runner should preserve the legacy snapshot error type.",
+        )
+        require(
+            (result.get("player_search_index_result") or {}).get("status") == "ok",
+            "Historical runner should still refresh player_search_index after a legacy snapshot failure.",
+        )
+        require(
+            (result.get("player_period_stats_result") or {}).get("status") == "ok",
+            "Historical runner should still refresh player_period_stats after a legacy snapshot failure.",
+        )
+        require(
+            (result.get("ranking_snapshot_result") or {}).get("status") == "ok",
+            "Historical runner should still refresh ranking snapshots after a legacy snapshot failure.",
+        )
+        require(
+            any(
+                log.get("event") == "historical-snapshot-refresh-failed"
+                for log in captured_logs
+                if isinstance(log, dict)
+            ),
+            "Historical runner should emit a dedicated failure log for legacy historical snapshot refresh failures.",
         )
     finally:
         historical_runner.backend_writer_lock = original_backend_writer_lock

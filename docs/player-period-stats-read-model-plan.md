@@ -107,6 +107,8 @@ Automatic runner refresh:
 - `backend/app/historical_runner.py` refreshes `player_period_stats` automatically
 - it inherits the periodic cadence of the historical runner via `HLL_HISTORICAL_REFRESH_INTERVAL_SECONDS`
 - the runner executes this step after `player_search_index` and before `ranking_snapshots`
+- the runner still attempts this step even if the legacy historical snapshot block fails earlier in the same cycle
+- the overall runner result may end as `partial` when that legacy block fails but operational PostgreSQL refreshes continue
 - the public profile path keeps runtime fallback preserved if the read model is empty, incomplete or unavailable
 
 Emergency manual command:
@@ -160,6 +162,10 @@ Indexes kept for the public profile flow:
 
 Recommended checks after refresh:
 
+- confirm the historical runner output reports either `status=ok` or `status=partial`
+- confirm `historical_snapshot_result`, `player_search_index_result`, `player_period_stats_result` and `ranking_snapshot_result` are present in the cycle payload
+- if the cycle is `partial`, inspect `historical_snapshot_result.error_type`, `historical_snapshot_result.error` and the runner logs for the legacy failure
+- confirm `player_period_stats.updated_at` advanced even when a legacy snapshot error was reported
 - confirm the historical runner output reports `player_period_stats_result`
 - if an emergency rebuild is needed, run `python -m app.rcon_historical_player_stats refresh-player-period-stats`
 - confirm the command reports rows for:

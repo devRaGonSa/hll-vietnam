@@ -127,7 +127,7 @@ def _run_refresh_with_retries(
                         page_size=page_size,
                         rebuild_snapshots=False,
                     )
-                    snapshot_result = generate_historical_snapshots(
+                    historical_snapshot_result = refresh_periodic_historical_snapshots(
                         server_slug=server_slug,
                         run_number=run_number,
                     )
@@ -141,12 +141,12 @@ def _run_refresh_with_retries(
                         "reason": "rcon-primary-cycle-no-classic-fallback-needed",
                     }
                     if should_generate_snapshots:
-                        snapshot_result = generate_historical_snapshots(
+                        historical_snapshot_result = refresh_periodic_historical_snapshots(
                             server_slug=server_slug,
                             run_number=run_number,
                         )
-                        snapshot_result = {
-                            **snapshot_result,
+                        historical_snapshot_result = {
+                            **historical_snapshot_result,
                             "generation_policy": "rcon-primary-useful-cycle",
                             "reason": "rcon-primary-cycle-produced-new-useful-coverage",
                         }
@@ -168,7 +168,7 @@ def _run_refresh_with_retries(
                                 **elo_policy,
                             }
                     else:
-                        snapshot_result = {
+                        historical_snapshot_result = {
                             "status": "skipped",
                             "reason": "rcon-primary-cycle-had-no-new-useful-data",
                             "generation_policy": "rcon-primary-no-new-useful-data",
@@ -197,7 +197,7 @@ def _run_refresh_with_retries(
             return {
                 "status": _resolve_refresh_cycle_status(
                     refresh_result=refresh_result,
-                    snapshot_result=snapshot_result,
+                    historical_snapshot_result=historical_snapshot_result,
                     player_search_index_result=player_search_index_result,
                     player_period_stats_result=player_period_stats_result,
                     ranking_snapshot_result=ranking_snapshot_result,
@@ -210,7 +210,8 @@ def _run_refresh_with_retries(
                 "classic_fallback_used": should_run_classic_fallback,
                 "classic_fallback_reason": classic_fallback_reason,
                 "refresh_result": refresh_result,
-                "snapshot_result": snapshot_result,
+                "historical_snapshot_result": historical_snapshot_result,
+                "snapshot_result": historical_snapshot_result,
                 "player_search_index_result": player_search_index_result,
                 "player_period_stats_result": player_period_stats_result,
                 "ranking_snapshot_result": ranking_snapshot_result,
@@ -277,6 +278,34 @@ def generate_historical_snapshots(
         "refresh_interval_seconds": get_historical_refresh_interval_seconds(),
         "includes_monthly_mvp_v2": True,
     }
+
+
+def refresh_periodic_historical_snapshots(
+    *,
+    server_slug: str | None = None,
+    run_number: int = 1,
+) -> dict[str, Any]:
+    """Refresh legacy historical snapshots without aborting operational read-model refreshes."""
+    try:
+        return generate_historical_snapshots(
+            server_slug=server_slug,
+            run_number=run_number,
+        )
+    except Exception as exc:  # noqa: BLE001 - legacy failures must remain visible but isolated
+        failure_result = {
+            "status": "error",
+            "error_type": type(exc).__name__,
+            "error": str(exc),
+            "traceback": traceback.format_exc(),
+            "run_number": run_number,
+            "refresh_interval_seconds": get_historical_refresh_interval_seconds(),
+            "server_slug": server_slug,
+            "generation_policy": "periodic-historical-refresh-cycle",
+            "snapshot_scope": _describe_snapshot_scope(server_slug),
+            "legacy_block": "historical-snapshots",
+        }
+        _emit_json_log({"event": "historical-snapshot-refresh-failed", **failure_result})
+        return failure_result
 
 
 def refresh_periodic_ranking_snapshots(

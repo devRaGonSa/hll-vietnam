@@ -121,6 +121,107 @@ class HistoricalSnapshotRefreshTests(unittest.TestCase):
         self.assertIn('"status": "ok"', stream.getvalue())
         self.assertIn('"captured_at": "2026-05-22 00:00:00+00:00"', stream.getvalue())
 
+    def test_runner_continues_when_legacy_snapshot_refresh_fails(self) -> None:
+        with (
+            patch("app.historical_runner.backend_writer_lock", return_value=nullcontext()),
+            patch("app.historical_runner._run_primary_rcon_capture", return_value={"status": "ok", "targets": []}),
+            patch(
+                "app.historical_runner._resolve_classic_fallback_policy",
+                return_value=(False, "validation-rcon-primary-cycle"),
+            ),
+            patch("app.historical_runner._rcon_capture_has_new_useful_data", return_value=True),
+            patch(
+                "app.historical_runner.generate_historical_snapshots",
+                side_effect=RuntimeError("legacy snapshot failure"),
+            ),
+            patch(
+                "app.historical_runner._build_elo_mmr_rebuild_policy",
+                return_value={
+                    "due": False,
+                    "policy": "validation-policy",
+                    "last_generated_at": None,
+                    "samples_since_last_rebuild": 1,
+                    "minutes_since_last_rebuild": None,
+                    "rebuild_interval_minutes": 60,
+                    "min_new_samples": 10,
+                },
+            ),
+            patch("app.historical_runner.refresh_player_search_index", return_value={"status": "ok"}) as search_refresh,
+            patch("app.historical_runner.refresh_player_period_stats", return_value={"status": "ok"}) as period_refresh,
+            patch("app.historical_runner.refresh_ranking_snapshots", return_value={"status": "ok"}) as ranking_refresh,
+            patch(
+                "app.historical_runner._maybe_run_database_maintenance",
+                return_value={"status": "skipped", "reason": "disabled"},
+            ),
+        ):
+            result = _run_refresh_with_retries(
+                max_retries=0,
+                retry_delay_seconds=0,
+                server_slug=None,
+                max_pages=None,
+                page_size=None,
+                run_number=1,
+            )
+
+        self.assertEqual(result["status"], "partial")
+        self.assertEqual(result["historical_snapshot_result"]["status"], "error")
+        self.assertEqual(result["snapshot_result"]["status"], "error")
+        self.assertEqual(
+            result["historical_snapshot_result"]["error"],
+            "legacy snapshot failure",
+        )
+        search_refresh.assert_called_once()
+        period_refresh.assert_called_once()
+        ranking_refresh.assert_called_once()
+
+    def test_runner_returns_ok_when_legacy_snapshot_and_read_models_succeed(self) -> None:
+        with (
+            patch("app.historical_runner.backend_writer_lock", return_value=nullcontext()),
+            patch("app.historical_runner._run_primary_rcon_capture", return_value={"status": "ok", "targets": []}),
+            patch(
+                "app.historical_runner._resolve_classic_fallback_policy",
+                return_value=(False, "validation-rcon-primary-cycle"),
+            ),
+            patch("app.historical_runner._rcon_capture_has_new_useful_data", return_value=True),
+            patch(
+                "app.historical_runner.generate_historical_snapshots",
+                return_value={"status": "ok", "generated_at": "2026-06-09T08:00:00Z"},
+            ),
+            patch(
+                "app.historical_runner._build_elo_mmr_rebuild_policy",
+                return_value={
+                    "due": False,
+                    "policy": "validation-policy",
+                    "last_generated_at": None,
+                    "samples_since_last_rebuild": 1,
+                    "minutes_since_last_rebuild": None,
+                    "rebuild_interval_minutes": 60,
+                    "min_new_samples": 10,
+                },
+            ),
+            patch("app.historical_runner.refresh_player_search_index", return_value={"status": "ok"}),
+            patch("app.historical_runner.refresh_player_period_stats", return_value={"status": "ok"}),
+            patch("app.historical_runner.refresh_ranking_snapshots", return_value={"status": "ok"}),
+            patch(
+                "app.historical_runner._maybe_run_database_maintenance",
+                return_value={"status": "skipped", "reason": "disabled"},
+            ),
+        ):
+            result = _run_refresh_with_retries(
+                max_retries=0,
+                retry_delay_seconds=0,
+                server_slug=None,
+                max_pages=None,
+                page_size=None,
+                run_number=1,
+            )
+
+        self.assertEqual(result["status"], "ok")
+        self.assertEqual(result["historical_snapshot_result"]["status"], "ok")
+        self.assertIn("player_search_index_result", result)
+        self.assertIn("player_period_stats_result", result)
+        self.assertIn("ranking_snapshot_result", result)
+
 
 if __name__ == "__main__":
     unittest.main()
