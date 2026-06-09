@@ -292,7 +292,12 @@ Supported manual parameters:
 Current implementation note:
 - `generate-ranking-snapshot` remains unitary per command invocation for explicit manual control
 - `refresh-ranking-snapshots --limit 30` generates the full weekly/monthly public matrix in one run
-- the periodic historical runner in `backend/app/historical_runner.py` should invoke that bulk refresh as part of the normal backend refresh cycle
+- the periodic historical runner in `backend/app/historical_runner.py` invokes that bulk refresh as part of the normal backend refresh cycle
+- current cycle order is:
+  - existing RCON ingestion/materialization cycle
+  - `player_search_index`
+  - `player_period_stats`
+  - `ranking_snapshots`
 - per-combination failures should be reported without aborting the entire matrix refresh
 
 ## Recommended Combinations
@@ -323,6 +328,8 @@ Operational guidance:
 - regenerate after manual backfill
 - regenerate after metric SQL changes that affect ranking totals or ordering
 - when using the periodic backend runner, keep ranking refresh attached to the same recurring cycle rather than a separate scheduler unless operational load proves otherwise
+- the runner inherits its cadence from `HLL_HISTORICAL_REFRESH_INTERVAL_SECONDS`
+- fallback runtime remains preserved for `/api/ranking` if a requested snapshot is missing or unavailable
 
 ## Ready Vs Fallback
 

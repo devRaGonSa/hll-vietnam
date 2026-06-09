@@ -127,6 +127,7 @@ sys.path.insert(0, "backend")
 from app.routes import resolve_get_payload
 from app.config import use_postgres_rcon_storage
 import app.postgres_rcon_storage as postgres_rcon_storage
+import app.historical_runner as historical_runner
 import app.rcon_historical_leaderboards as ranking_leaderboards
 import app.rcon_historical_player_stats as player_search_stats
 
@@ -1217,6 +1218,186 @@ def validate_player_period_stats_fallbacks():
                 pass
 
 
+def validate_historical_runner_read_model_refresh_cycle():
+    original_backend_writer_lock = historical_runner.backend_writer_lock
+    original_build_writer_lock_holder = historical_runner.build_writer_lock_holder
+    original_run_primary_rcon_capture = historical_runner._run_primary_rcon_capture
+    original_resolve_classic_fallback_policy = historical_runner._resolve_classic_fallback_policy
+    original_rcon_capture_has_new_useful_data = historical_runner._rcon_capture_has_new_useful_data
+    original_generate_historical_snapshots = historical_runner.generate_historical_snapshots
+    original_build_elo_mmr_rebuild_policy = historical_runner._build_elo_mmr_rebuild_policy
+    original_rebuild_elo_mmr_models = historical_runner.rebuild_elo_mmr_models
+    original_refresh_player_search_index = historical_runner.refresh_player_search_index
+    original_refresh_player_period_stats = historical_runner.refresh_player_period_stats
+    original_refresh_ranking_snapshots = historical_runner.refresh_ranking_snapshots
+    original_maybe_run_database_maintenance = historical_runner._maybe_run_database_maintenance
+    original_emit_json_log = historical_runner._emit_json_log
+
+    @contextmanager
+    def fake_backend_writer_lock(holder):
+        yield
+
+    captured_logs = []
+    call_order = []
+
+    historical_runner.backend_writer_lock = fake_backend_writer_lock
+    historical_runner.build_writer_lock_holder = lambda label: label
+    historical_runner._run_primary_rcon_capture = lambda: {
+        "status": "ok",
+        "targets": [{"target_key": "comunidad-hispana-01", "sample_inserted": True}],
+        "totals": {
+            "samples_inserted": 1,
+            "admin_log_events_inserted": 0,
+            "materialized_matches_inserted": 0,
+        },
+    }
+    historical_runner._resolve_classic_fallback_policy = lambda **kwargs: (
+        False,
+        "validation-rcon-primary-cycle",
+    )
+    historical_runner._rcon_capture_has_new_useful_data = lambda payload: True
+    historical_runner.generate_historical_snapshots = lambda **kwargs: {
+        "status": "ok",
+        "generated_at": "2026-06-09T08:00:00Z",
+    }
+    historical_runner._build_elo_mmr_rebuild_policy = lambda **kwargs: {
+        "due": False,
+        "policy": "validation-policy",
+        "last_generated_at": None,
+        "samples_since_last_rebuild": 1,
+        "minutes_since_last_rebuild": None,
+        "rebuild_interval_minutes": 60,
+        "min_new_samples": 10,
+    }
+    historical_runner.rebuild_elo_mmr_models = lambda: {"status": "ok"}
+    historical_runner._maybe_run_database_maintenance = lambda: {
+        "status": "skipped",
+        "reason": "validation-disabled",
+    }
+    historical_runner._emit_json_log = lambda payload: captured_logs.append(payload)
+
+    def fake_refresh_player_search_index(**kwargs):
+        call_order.append("player-search-index")
+        return {"status": "ok", "total_rows": 3}
+
+    def fake_refresh_player_period_stats(**kwargs):
+        call_order.append("player-period-stats")
+        return {"status": "ok", "total_rows": 9}
+
+    def fake_refresh_ranking_snapshots(**kwargs):
+        call_order.append("ranking-snapshots")
+        return {
+            "status": "ok",
+            "totals": {"succeeded": 36, "failed": 0, "skipped_regeneration": 0},
+        }
+
+    historical_runner.refresh_player_search_index = fake_refresh_player_search_index
+    historical_runner.refresh_player_period_stats = fake_refresh_player_period_stats
+    historical_runner.refresh_ranking_snapshots = fake_refresh_ranking_snapshots
+
+    try:
+        result = historical_runner._run_refresh_with_retries(
+            max_retries=0,
+            retry_delay_seconds=0,
+            server_slug=None,
+            max_pages=None,
+            page_size=None,
+            run_number=1,
+        )
+        require(result.get("status") == "ok", "Historical runner should return ok when all periodic refresh steps succeed.")
+        require(
+            call_order == ["player-search-index", "player-period-stats", "ranking-snapshots"],
+            "Historical runner should refresh player_search_index, then player_period_stats, then ranking_snapshots.",
+        )
+        require(
+            (result.get("player_search_index_result") or {}).get("status") == "ok",
+            "Historical runner should report player_search_index_result separately.",
+        )
+        require(
+            (result.get("player_period_stats_result") or {}).get("status") == "ok",
+            "Historical runner should report player_period_stats_result separately.",
+        )
+        require(
+            (result.get("ranking_snapshot_result") or {}).get("status") == "ok",
+            "Historical runner should keep reporting ranking_snapshot_result separately.",
+        )
+        require(
+            any(
+                log.get("event") == "player-search-index-refresh-started"
+                for log in captured_logs
+                if isinstance(log, dict)
+            ),
+            "Historical runner should log the player_search_index refresh start event.",
+        )
+        require(
+            any(
+                log.get("event") == "player-period-stats-refresh-started"
+                for log in captured_logs
+                if isinstance(log, dict)
+            ),
+            "Historical runner should log the player_period_stats refresh start event.",
+        )
+
+        call_order.clear()
+        captured_logs.clear()
+
+        def fake_refresh_player_search_index_failure(**kwargs):
+            call_order.append("player-search-index")
+            raise RuntimeError("forced player search refresh failure")
+
+        historical_runner.refresh_player_search_index = fake_refresh_player_search_index_failure
+        result = historical_runner._run_refresh_with_retries(
+            max_retries=0,
+            retry_delay_seconds=0,
+            server_slug=None,
+            max_pages=None,
+            page_size=None,
+            run_number=1,
+        )
+        require(
+            result.get("status") == "partial",
+            "Historical runner should return partial when one read-model refresh fails but the cycle continues.",
+        )
+        require(
+            call_order == ["player-search-index", "player-period-stats", "ranking-snapshots"],
+            "Historical runner should still attempt the remaining refresh steps after a player search read-model failure.",
+        )
+        require(
+            (result.get("player_search_index_result") or {}).get("status") == "error",
+            "Historical runner should expose the player_search_index refresh failure explicitly.",
+        )
+        require(
+            (result.get("player_period_stats_result") or {}).get("status") == "ok",
+            "Historical runner should continue refreshing player_period_stats after a player_search_index failure.",
+        )
+        require(
+            (result.get("ranking_snapshot_result") or {}).get("status") == "ok",
+            "Historical runner should continue refreshing ranking snapshots after a player_search_index failure.",
+        )
+        require(
+            any(
+                log.get("event") == "player-search-index-refresh-failed"
+                for log in captured_logs
+                if isinstance(log, dict)
+            ),
+            "Historical runner should emit a dedicated failure log for player_search_index refresh failures.",
+        )
+    finally:
+        historical_runner.backend_writer_lock = original_backend_writer_lock
+        historical_runner.build_writer_lock_holder = original_build_writer_lock_holder
+        historical_runner._run_primary_rcon_capture = original_run_primary_rcon_capture
+        historical_runner._resolve_classic_fallback_policy = original_resolve_classic_fallback_policy
+        historical_runner._rcon_capture_has_new_useful_data = original_rcon_capture_has_new_useful_data
+        historical_runner.generate_historical_snapshots = original_generate_historical_snapshots
+        historical_runner._build_elo_mmr_rebuild_policy = original_build_elo_mmr_rebuild_policy
+        historical_runner.rebuild_elo_mmr_models = original_rebuild_elo_mmr_models
+        historical_runner.refresh_player_search_index = original_refresh_player_search_index
+        historical_runner.refresh_player_period_stats = original_refresh_player_period_stats
+        historical_runner.refresh_ranking_snapshots = original_refresh_ranking_snapshots
+        historical_runner._maybe_run_database_maintenance = original_maybe_run_database_maintenance
+        historical_runner._emit_json_log = original_emit_json_log
+
+
 def cleanup_snapshot_fixture(db_path):
     connection = sqlite3.connect(db_path)
     with connection:
@@ -1271,6 +1452,7 @@ validate_player_period_stats_cli_defaults()
 validate_fetch_player_stats_sql_contract()
 validate_player_period_stats_refresh_and_read_model()
 validate_player_period_stats_fallbacks()
+validate_historical_runner_read_model_refresh_cycle()
 
 kd_metric_sql, _, _ = ranking_leaderboards._resolve_metric_sql("kd_ratio")
 require(
@@ -1654,6 +1836,7 @@ print(json.dumps({
         "ranking-snapshot-missing",
         "player-search-index",
         "player-period-stats",
+        "historical-runner-player-read-model-refresh",
     ],
     "annual_snapshot_status": annual_data.get("snapshot_status"),
     "global_ranking_annual_snapshot_status": annual_ranking_data.get("snapshot_status"),

@@ -71,6 +71,19 @@ Refresh policy:
 - keep the latest current-year player name
 - store accent-insensitive normalized names in Python
 
+Automatic runner refresh:
+
+- `backend/app/historical_runner.py` refreshes `player_search_index` automatically
+- it inherits the periodic cadence of the historical runner via `HLL_HISTORICAL_REFRESH_INTERVAL_SECONDS`
+- the runner executes this step after the existing RCON ingestion/materialization cycle
+- the runner keeps runtime fallback preserved for the public endpoint
+
+Emergency manual command:
+
+```bash
+python -m app.rcon_historical_player_stats refresh-player-search-index
+```
+
 ## Public Read Path
 
 Priority for `/api/stats/players/search`:
@@ -113,13 +126,15 @@ Search tolerance is implemented with:
 - this read model is focused on player search only, not personal profile totals
 - counts are current-year only by design
 - historical players with no activity in the current UTC year are not intentionally prioritized in this first model
-- profile and personal stats still use runtime aggregation over materialized tables
+- the runner refreshes all supported public scopes on each cycle even when a manual runner execution is limited with `--server`
+- profile and personal stats use their own dedicated read model and still preserve runtime fallback when needed
 
 ## Production Validation
 
 Recommended checks after refresh:
 
-- run `python -m app.rcon_historical_player_stats refresh-player-search-index`
+- confirm the historical runner output reports `player_search_index_result`
+- if an emergency rebuild is needed, run `python -m app.rcon_historical_player_stats refresh-player-search-index`
 - confirm the command reports rows for `all-servers`, `comunidad-hispana-01` and `comunidad-hispana-02`
 - call `/api/stats/players/search?q=<known-player>&limit=5`
 - verify response metadata reports `read_model=player-search-index`

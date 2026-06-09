@@ -30,6 +30,10 @@ from .historical_snapshots import (
     generate_and_persist_priority_historical_snapshots,
 )
 from .rcon_historical_leaderboards import refresh_ranking_snapshots
+from .rcon_historical_player_stats import (
+    refresh_player_period_stats,
+    refresh_player_search_index,
+)
 from .rcon_historical_storage import count_rcon_historical_samples_since
 from .rcon_historical_worker import run_rcon_historical_capture
 from .writer_lock import backend_writer_lock, build_writer_lock_holder
@@ -177,13 +181,29 @@ def _run_refresh_with_retries(
                                 rcon_capture_result=rcon_capture_result
                             ),
                         }
+                player_search_index_result = refresh_periodic_player_search_index(
+                    server_slug=server_slug,
+                    run_number=run_number,
+                )
+                player_period_stats_result = refresh_periodic_player_period_stats(
+                    server_slug=server_slug,
+                    run_number=run_number,
+                )
                 ranking_snapshot_result = refresh_periodic_ranking_snapshots(
                     server_slug=server_slug,
                     run_number=run_number,
                 )
                 maintenance_result = _maybe_run_database_maintenance()
             return {
-                "status": "ok",
+                "status": _resolve_refresh_cycle_status(
+                    refresh_result=refresh_result,
+                    snapshot_result=snapshot_result,
+                    player_search_index_result=player_search_index_result,
+                    player_period_stats_result=player_period_stats_result,
+                    ranking_snapshot_result=ranking_snapshot_result,
+                    elo_mmr_result=elo_mmr_result,
+                    database_maintenance_result=maintenance_result,
+                ),
                 "attempts_used": attempt,
                 "max_retries": max_retries,
                 "rcon_capture_result": rcon_capture_result,
@@ -191,6 +211,8 @@ def _run_refresh_with_retries(
                 "classic_fallback_reason": classic_fallback_reason,
                 "refresh_result": refresh_result,
                 "snapshot_result": snapshot_result,
+                "player_search_index_result": player_search_index_result,
+                "player_period_stats_result": player_period_stats_result,
                 "ranking_snapshot_result": ranking_snapshot_result,
                 "elo_mmr_result": elo_mmr_result,
                 "database_maintenance_result": maintenance_result,
@@ -284,6 +306,102 @@ def refresh_periodic_ranking_snapshots(
             "monthly": "15-30-minutes",
         },
     }
+
+
+def refresh_periodic_player_search_index(
+    *,
+    server_slug: str | None = None,
+    run_number: int = 1,
+) -> dict[str, Any]:
+    """Refresh the player search read model without aborting the remaining cycle on failure."""
+    _emit_json_log(
+        {
+            "event": "player-search-index-refresh-started",
+            "run_number": run_number,
+            "server_slug": server_slug,
+            "refresh_scope": "supported-public-player-search-scopes",
+        }
+    )
+    try:
+        result = refresh_player_search_index()
+    except Exception as exc:  # noqa: BLE001 - one read-model failure must stay visible
+        failure_result = {
+            "status": "error",
+            "error_type": type(exc).__name__,
+            "error": str(exc),
+            "run_number": run_number,
+            "refresh_interval_seconds": get_historical_refresh_interval_seconds(),
+            "server_slug": server_slug,
+            "generation_policy": "periodic-historical-refresh-cycle",
+            "scope_policy": "always-refresh-supported-public-player-search-scopes",
+        }
+        _emit_json_log({"event": "player-search-index-refresh-failed", **failure_result})
+        return failure_result
+    return {
+        **result,
+        "run_number": run_number,
+        "refresh_interval_seconds": get_historical_refresh_interval_seconds(),
+        "server_slug": server_slug,
+        "generation_policy": "periodic-historical-refresh-cycle",
+        "scope_policy": "always-refresh-supported-public-player-search-scopes",
+    }
+
+
+def refresh_periodic_player_period_stats(
+    *,
+    server_slug: str | None = None,
+    run_number: int = 1,
+) -> dict[str, Any]:
+    """Refresh the player period stats read model without aborting the remaining cycle on failure."""
+    _emit_json_log(
+        {
+            "event": "player-period-stats-refresh-started",
+            "run_number": run_number,
+            "server_slug": server_slug,
+            "refresh_scope": "supported-public-player-period-scopes",
+        }
+    )
+    try:
+        result = refresh_player_period_stats()
+    except Exception as exc:  # noqa: BLE001 - one read-model failure must stay visible
+        failure_result = {
+            "status": "error",
+            "error_type": type(exc).__name__,
+            "error": str(exc),
+            "run_number": run_number,
+            "refresh_interval_seconds": get_historical_refresh_interval_seconds(),
+            "server_slug": server_slug,
+            "generation_policy": "periodic-historical-refresh-cycle",
+            "scope_policy": "always-refresh-supported-public-player-period-scopes",
+        }
+        _emit_json_log({"event": "player-period-stats-refresh-failed", **failure_result})
+        return failure_result
+    return {
+        **result,
+        "run_number": run_number,
+        "refresh_interval_seconds": get_historical_refresh_interval_seconds(),
+        "server_slug": server_slug,
+        "generation_policy": "periodic-historical-refresh-cycle",
+        "scope_policy": "always-refresh-supported-public-player-period-scopes",
+    }
+
+
+def _resolve_refresh_cycle_status(**results: dict[str, Any]) -> str:
+    statuses = [
+        str(result.get("status") or "").strip().lower()
+        for result in results.values()
+        if isinstance(result, dict) and result.get("status") is not None
+    ]
+    if not statuses:
+        return "ok"
+    if any(status == "error" for status in statuses):
+        ok_like_statuses = {"ok", "skipped"}
+        if all(status not in ok_like_statuses for status in statuses):
+            return "error"
+        return "partial"
+    if any(status == "partial" for status in statuses):
+        return "partial"
+    return "ok"
 
 
 def _emit_json_log(payload: dict[str, Any]) -> None:

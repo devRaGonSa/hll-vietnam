@@ -102,6 +102,19 @@ Refresh policy:
 - keep the latest player name seen inside the selected period window
 - persist ranking position by kills inside each generated period window
 
+Automatic runner refresh:
+
+- `backend/app/historical_runner.py` refreshes `player_period_stats` automatically
+- it inherits the periodic cadence of the historical runner via `HLL_HISTORICAL_REFRESH_INTERVAL_SECONDS`
+- the runner executes this step after `player_search_index` and before `ranking_snapshots`
+- the public profile path keeps runtime fallback preserved if the read model is empty, incomplete or unavailable
+
+Emergency manual command:
+
+```bash
+python -m app.rcon_historical_player_stats refresh-player-period-stats
+```
+
 ## Public Read Path
 
 Priority for `/api/stats/players/{player_id}`:
@@ -147,7 +160,8 @@ Indexes kept for the public profile flow:
 
 Recommended checks after refresh:
 
-- run `python -m app.rcon_historical_player_stats refresh-player-period-stats`
+- confirm the historical runner output reports `player_period_stats_result`
+- if an emergency rebuild is needed, run `python -m app.rcon_historical_player_stats refresh-player-period-stats`
 - confirm the command reports rows for:
   - `all-servers`
   - `comunidad-hispana-01`
@@ -162,7 +176,7 @@ Recommended checks after refresh:
 
 ## Current Limitations
 
-- periodic refresh is still manual; there is no scheduled operational refresh yet
 - the public route still exposes weekly/monthly only; yearly is prepared internally for future use
-- runtime fallback remains necessary until production refresh automation is in place
+- the runner refreshes all supported public scopes and periods on each cycle even when a manual runner execution is limited with `--server`
+- runtime fallback remains necessary as a safety net even with periodic automation in place
 - canonical historical truth remains in materialized RCON tables, not in the read model
