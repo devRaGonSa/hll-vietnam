@@ -935,9 +935,11 @@ def build_player_period_stats_fixture():
                 ('comunidad-hispana-02', 'comunidad-hispana-02', 's2w1', 'hurtgen', 'Hurtgen Forest', 'warfare', 201, 202, '2026-06-08T20:00:00Z', '2026-06-08T21:00:00Z', 5, 0, 'allied', 'exact', ?),
                 ('comunidad-hispana-02', 'comunidad-hispana-02', 's2w2', 'kharkov', 'Kharkov', 'warfare', 203, 204, '2026-06-09T20:00:00Z', '2026-06-09T21:00:00Z', 3, 2, 'allied', 'exact', ?),
                 ('comunidad-hispana-02', 'comunidad-hispana-02', 's2w3', 'driel', 'Driel', 'warfare', 205, 206, '2026-06-10T20:00:00Z', '2026-06-10T21:00:00Z', 2, 1, 'allied', 'exact', ?),
+                ('comunidad-hispana-01', 'comunidad-hispana-01', 's1y1', 'utah', 'Utah Beach', 'warfare', 401, 402, '2026-01-15T18:00:00Z', '2026-01-15T19:00:00Z', 5, 1, 'allied', 'exact', ?),
                 ('comunidad-hispana-01', 'comunidad-hispana-01', 'old-year', 'omaha', 'Omaha Beach', 'warfare', 301, 302, '2025-12-15T18:00:00Z', '2025-12-15T19:00:00Z', 1, 0, 'allied', 'exact', ?)
             """,
             (
+                MATCH_RESULT_SOURCE,
                 MATCH_RESULT_SOURCE,
                 MATCH_RESULT_SOURCE,
                 MATCH_RESULT_SOURCE,
@@ -961,6 +963,7 @@ def build_player_period_stats_fixture():
                 ('comunidad-hispana-02', 's2w1', 'regression-player', 'Regression Hero', 'allied', 4, 2, 0, 0, '{}', '{}', '{}', '{}', 201, 202),
                 ('comunidad-hispana-02', 's2w2', 'regression-player', 'Regression Hero', 'allied', 5, 4, 0, 0, '{}', '{}', '{}', '{}', 203, 204),
                 ('comunidad-hispana-02', 's2w3', 'regression-player', 'Regression Hero', 'allied', 3, 2, 0, 0, '{}', '{}', '{}', '{}', 205, 206),
+                ('comunidad-hispana-01', 's1y1', 'yearly-only-player', 'Yearly Only', 'allied', 8, 3, 0, 0, '{}', '{}', '{}', '{}', 401, 402),
                 ('comunidad-hispana-01', 'old-year', 'regression-player', 'Historic Regression', 'allied', 99, 1, 0, 0, '{}', '{}', '{}', '{}', 301, 302),
                 ('comunidad-hispana-01', 's1w1', 'other-player', 'Other Player', 'axis', 5, 7, 0, 0, '{}', '{}', '{}', '{}', 101, 102),
                 ('comunidad-hispana-01', 's1w2', 'other-player', 'Other Player', 'allied', 3, 6, 0, 0, '{}', '{}', '{}', '{}', 103, 104),
@@ -972,6 +975,42 @@ def build_player_period_stats_fixture():
         )
     connection.close()
     return db_path
+
+
+def validate_fetch_player_stats_sql_contract():
+    captured = {}
+
+    class FakeResult:
+        def fetchone(self):
+            return {
+                "player_name": None,
+                "matches_considered": 0,
+                "kills": 0,
+                "deaths": 0,
+                "teamkills": 0,
+            }
+
+    class FakeConnection:
+        def execute(self, sql, params):
+            captured["sql"] = sql
+            captured["params"] = list(params)
+            return FakeResult()
+
+    result = player_search_stats._fetch_player_stats(
+        connection=FakeConnection(),
+        player_id="regression-player",
+        server_id="comunidad-hispana-01",
+        window={
+            "start": datetime(2026, 6, 8, 0, 0, 0, tzinfo=timezone.utc),
+            "end": datetime(2026, 6, 10, 23, 59, 59, tzinfo=timezone.utc),
+            "kind": "current-week",
+        },
+    )
+
+    sql = captured.get("sql") or ""
+    require("COALESCE(MAX(stats.player_name), stats.player_id)" not in sql, "Runtime player stats SQL must not reference non-aggregated stats.player_id inside COALESCE(MAX(...)).")
+    require("MAX(stats.player_name) AS player_name" in sql, "Runtime player stats SQL should aggregate player_name directly.")
+    require(result.get("player_name") == "regression-player", "Runtime player stats should still fall back to player_id in Python when SQL player_name is null.")
 
 
 def validate_player_period_stats_refresh_and_read_model():
@@ -1115,8 +1154,35 @@ def validate_player_period_stats_fallbacks():
             "Player profile should fall back when one required player period row is missing.",
         )
         require(
-            (missing_row_result.get("source") or {}).get("fallback_reason") == "player-period-stats-player-missing",
-            "Player profile should expose an explicit missing-player-row fallback reason.",
+            (missing_row_result.get("source") or {}).get("fallback_reason") in {"player-period-stats-empty", "player-period-stats-player-missing"},
+            "Player profile should expose a controlled fallback reason when the player period read model is incomplete.",
+        )
+
+        server_specific_missing_read_model_result = get_rcon_materialized_player_stats(
+            player_id="yearly-only-player",
+            server_id="comunidad-hispana-01",
+            timeframe="weekly",
+            db_path=db_path,
+        )
+        require(
+            (server_specific_missing_read_model_result.get("source") or {}).get("fallback_used") is True,
+            "Player profile should fall back when a server-specific weekly row is missing from player_period_stats.",
+        )
+        require(
+            (server_specific_missing_read_model_result.get("source") or {}).get("fallback_reason") in {"player-period-stats-empty", "player-period-stats-player-missing"},
+            "Server-specific missing player-period row should expose a controlled fallback reason.",
+        )
+        require(
+            server_specific_missing_read_model_result.get("matches_considered") == 0,
+            "Server-specific fallback without runtime rows in the requested window should return zero matches instead of throwing.",
+        )
+        require(
+            server_specific_missing_read_model_result.get("kills") == 0,
+            "Server-specific fallback without runtime rows should return zero kills instead of throwing.",
+        )
+        require(
+            server_specific_missing_read_model_result.get("player_name") == "yearly-only-player",
+            "Server-specific fallback without runtime rows should keep the controlled player_name fallback.",
         )
 
         original_read_model = player_search_stats._get_player_period_stats_read_model
@@ -1202,6 +1268,7 @@ validate_player_search_index_refresh_and_search()
 validate_player_search_index_fallbacks()
 validate_postgres_player_period_stats_schema_path()
 validate_player_period_stats_cli_defaults()
+validate_fetch_player_stats_sql_contract()
 validate_player_period_stats_refresh_and_read_model()
 validate_player_period_stats_fallbacks()
 

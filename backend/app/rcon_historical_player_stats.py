@@ -803,7 +803,7 @@ def _fetch_player_stats(
     row = connection.execute(
         f"""
         SELECT
-            COALESCE(MAX(stats.player_name), stats.player_id) AS player_name,
+            MAX(stats.player_name) AS player_name,
             COUNT(DISTINCT stats.match_key) AS matches_considered,
             SUM(COALESCE(stats.kills, 0)) AS kills,
             SUM(COALESCE(stats.deaths, 0)) AS deaths,
