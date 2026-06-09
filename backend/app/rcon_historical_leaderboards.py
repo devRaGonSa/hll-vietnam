@@ -44,6 +44,7 @@ SNAPSHOT_GENERATOR_METRICS = (
     "kd_ratio",
     "kills_per_match",
 )
+DEFAULT_RANKING_SNAPSHOT_REFRESH_LIMIT = 30
 
 RANKING_SNAPSHOT_SQLITE_SCHEMA_SQL = """
 CREATE TABLE IF NOT EXISTS ranking_snapshots (
@@ -216,6 +217,98 @@ def generate_ranking_snapshot(
         "source_matches_count": source_matches_count,
         "ranked_players": len(items),
         "skipped_regeneration": False,
+    }
+
+
+def refresh_ranking_snapshots(
+    *,
+    limit: int = DEFAULT_RANKING_SNAPSHOT_REFRESH_LIMIT,
+    replace_existing: bool = True,
+    now: datetime | None = None,
+    db_path: Path | None = None,
+) -> dict[str, object]:
+    """Generate the full weekly/monthly ranking snapshot matrix with partial-failure reporting."""
+    normalized_limit = _normalize_limit(limit)
+    anchor = _as_utc(now or datetime.now(timezone.utc))
+    combinations = [
+        (timeframe, server_key, metric)
+        for timeframe in SNAPSHOT_GENERATOR_TIMEFRAMES
+        for server_key in SNAPSHOT_GENERATOR_SERVER_KEYS
+        for metric in SNAPSHOT_GENERATOR_METRICS
+    ]
+    results: list[dict[str, object]] = []
+    succeeded = 0
+    failed = 0
+    skipped_regeneration = 0
+
+    for timeframe, server_key, metric in combinations:
+        try:
+            payload = generate_ranking_snapshot(
+                timeframe=timeframe,
+                server_key=server_key,
+                metric=metric,
+                limit=normalized_limit,
+                replace_existing=replace_existing,
+                now=anchor,
+                db_path=db_path,
+            )
+            snapshot = payload.get("snapshot") if isinstance(payload, dict) else {}
+            skipped = bool(payload.get("skipped_regeneration")) if isinstance(payload, dict) else False
+            if skipped:
+                skipped_regeneration += 1
+            succeeded += 1
+            results.append(
+                {
+                    "status": "ok",
+                    "timeframe": timeframe,
+                    "server_key": server_key,
+                    "metric": metric,
+                    "limit": normalized_limit,
+                    "snapshot_id": snapshot.get("id") if isinstance(snapshot, dict) else None,
+                    "snapshot_status": snapshot.get("snapshot_status")
+                    if isinstance(snapshot, dict)
+                    else None,
+                    "window_start": snapshot.get("window_start") if isinstance(snapshot, dict) else None,
+                    "window_end": snapshot.get("window_end") if isinstance(snapshot, dict) else None,
+                    "generated_at": snapshot.get("generated_at") if isinstance(snapshot, dict) else None,
+                    "ranked_players": int(payload.get("ranked_players") or 0),
+                    "source_matches_count": int(payload.get("source_matches_count") or 0),
+                    "skipped_regeneration": skipped,
+                }
+            )
+        except Exception as exc:  # noqa: BLE001 - bulk refresh must report per-combination failures
+            failed += 1
+            results.append(
+                {
+                    "status": "error",
+                    "timeframe": timeframe,
+                    "server_key": server_key,
+                    "metric": metric,
+                    "limit": normalized_limit,
+                    "error_type": type(exc).__name__,
+                    "error": str(exc),
+                }
+            )
+
+    overall_status = "ok"
+    if failed and succeeded:
+        overall_status = "partial"
+    elif failed:
+        overall_status = "error"
+
+    return {
+        "status": overall_status,
+        "generated_at": _to_iso(anchor),
+        "limit": normalized_limit,
+        "replace_existing": replace_existing,
+        "combinations_expected": len(combinations),
+        "totals": {
+            "combinations_expected": len(combinations),
+            "succeeded": succeeded,
+            "failed": failed,
+            "skipped_regeneration": skipped_regeneration,
+        },
+        "results": results,
     }
 
 
@@ -1275,7 +1368,25 @@ def _main(argv: list[str] | None = None) -> int:
         dest="replace_existing",
         help="keep an existing snapshot for the selected exact window and metric scope",
     )
-    parser.set_defaults(command="generate-ranking-snapshot", replace_existing=True)
+    refresh_parser = subparsers.add_parser("refresh-ranking-snapshots")
+    refresh_parser.add_argument(
+        "--limit",
+        type=int,
+        default=DEFAULT_RANKING_SNAPSHOT_REFRESH_LIMIT,
+    )
+    refresh_parser.add_argument(
+        "--sqlite-path",
+        type=Path,
+        default=None,
+        help="explicit local SQLite override; default operational mode uses PostgreSQL when configured",
+    )
+    refresh_parser.add_argument(
+        "--no-replace-existing",
+        action="store_false",
+        dest="replace_existing",
+        help="keep an existing snapshot for the selected exact window and metric scope",
+    )
+    parser.set_defaults(replace_existing=True)
     args = parser.parse_args(argv)
 
     if args.command == "generate-ranking-snapshot":
@@ -1283,6 +1394,22 @@ def _main(argv: list[str] | None = None) -> int:
             timeframe=args.timeframe,
             server_key=args.server_key,
             metric=args.metric,
+            limit=args.limit,
+            replace_existing=args.replace_existing,
+            db_path=args.sqlite_path,
+        )
+        print(
+            json.dumps(
+                {"status": "ok", "data": payload},
+                ensure_ascii=True,
+                indent=2,
+                default=_json_default,
+            )
+        )
+        return 0
+
+    if args.command == "refresh-ranking-snapshots":
+        payload = refresh_ranking_snapshots(
             limit=args.limit,
             replace_existing=args.replace_existing,
             db_path=args.sqlite_path,

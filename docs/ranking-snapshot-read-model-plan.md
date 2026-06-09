@@ -253,6 +253,12 @@ Manual generator entrypoint:
 python -m app.rcon_historical_leaderboards generate-ranking-snapshot --timeframe weekly --server-key all --metric kills --limit 20
 ```
 
+Bulk refresh entrypoint:
+
+```bash
+python -m app.rcon_historical_leaderboards refresh-ranking-snapshots --limit 30
+```
+
 Operational default:
 - when `HLL_BACKEND_DATABASE_URL` is configured, the CLI uses PostgreSQL by default
 - SQLite is no longer the default operational target for snapshot generation
@@ -268,6 +274,12 @@ Docker form:
 docker compose exec backend python -m app.rcon_historical_leaderboards generate-ranking-snapshot --timeframe weekly --server-key all --metric kills --limit 20
 ```
 
+Bulk Docker form:
+
+```bash
+docker compose exec backend python -m app.rcon_historical_leaderboards refresh-ranking-snapshots --limit 30
+```
+
 Operational expectation:
 - the recommended Docker command should generate weekly/monthly snapshots in PostgreSQL, matching the `/api/ranking` production read path
 
@@ -278,9 +290,10 @@ Supported manual parameters:
 - `limit`: positive integer, normally `20`
 
 Current implementation note:
-- V1 generator is unitary per command invocation
-- operators should run one command per required `(timeframe, server-key, metric)` combination
-- broad matrix generation can remain a later operational helper if scheduling needs justify it
+- `generate-ranking-snapshot` remains unitary per command invocation for explicit manual control
+- `refresh-ranking-snapshots --limit 30` generates the full weekly/monthly public matrix in one run
+- the periodic historical runner in `backend/app/historical_runner.py` should invoke that bulk refresh as part of the normal backend refresh cycle
+- per-combination failures should be reported without aborting the entire matrix refresh
 
 ## Recommended Combinations
 
@@ -294,6 +307,10 @@ Minimum production matrix for parity with the public Ranking filters:
 
 That matrix requires `36` snapshot generations for each refresh cycle.
 
+Operational default limit:
+- generate each combination with `limit=30`
+- that stored `limit_size=30` covers the current UI request limits `10`, `20` and `30`
+
 ## Suggested Frequency
 
 Suggested operator cadence:
@@ -305,6 +322,7 @@ Operational guidance:
 - regenerate after materialized RCON/AdminLog data grows
 - regenerate after manual backfill
 - regenerate after metric SQL changes that affect ranking totals or ordering
+- when using the periodic backend runner, keep ranking refresh attached to the same recurring cycle rather than a separate scheduler unless operational load proves otherwise
 
 ## Ready Vs Fallback
 

@@ -29,6 +29,7 @@ from .historical_snapshots import (
     generate_and_persist_historical_snapshots,
     generate_and_persist_priority_historical_snapshots,
 )
+from .rcon_historical_leaderboards import refresh_ranking_snapshots
 from .rcon_historical_storage import count_rcon_historical_samples_since
 from .rcon_historical_worker import run_rcon_historical_capture
 from .writer_lock import backend_writer_lock, build_writer_lock_holder
@@ -176,6 +177,10 @@ def _run_refresh_with_retries(
                                 rcon_capture_result=rcon_capture_result
                             ),
                         }
+                ranking_snapshot_result = refresh_periodic_ranking_snapshots(
+                    server_slug=server_slug,
+                    run_number=run_number,
+                )
                 maintenance_result = _maybe_run_database_maintenance()
             return {
                 "status": "ok",
@@ -186,6 +191,7 @@ def _run_refresh_with_retries(
                 "classic_fallback_reason": classic_fallback_reason,
                 "refresh_result": refresh_result,
                 "snapshot_result": snapshot_result,
+                "ranking_snapshot_result": ranking_snapshot_result,
                 "elo_mmr_result": elo_mmr_result,
                 "database_maintenance_result": maintenance_result,
             }
@@ -248,6 +254,35 @@ def generate_historical_snapshots(
         "prewarm_only": not should_run_full_refresh,
         "refresh_interval_seconds": get_historical_refresh_interval_seconds(),
         "includes_monthly_mvp_v2": True,
+    }
+
+
+def refresh_periodic_ranking_snapshots(
+    *,
+    server_slug: str | None = None,
+    run_number: int = 1,
+) -> dict[str, Any]:
+    """Refresh the public weekly/monthly ranking snapshot matrix for the current cycle."""
+    _emit_json_log(
+        {
+            "event": "ranking-snapshot-refresh-started",
+            "run_number": run_number,
+            "server_slug": server_slug,
+            "snapshot_scope": _describe_snapshot_scope(server_slug),
+            "ranking_snapshot_limit": 30,
+        }
+    )
+    result = refresh_ranking_snapshots(limit=30)
+    return {
+        **result,
+        "run_number": run_number,
+        "refresh_interval_seconds": get_historical_refresh_interval_seconds(),
+        "server_slug": server_slug,
+        "generation_policy": "periodic-historical-refresh-cycle",
+        "recommended_frequency": {
+            "weekly": "5-15-minutes",
+            "monthly": "15-30-minutes",
+        },
     }
 
 

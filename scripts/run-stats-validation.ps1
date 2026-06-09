@@ -132,6 +132,7 @@ import app.rcon_historical_leaderboards as ranking_leaderboards
 initialize_ranking_snapshot_storage = ranking_leaderboards.initialize_ranking_snapshot_storage
 generate_ranking_snapshot = ranking_leaderboards.generate_ranking_snapshot
 get_latest_ranking_snapshot = ranking_leaderboards.get_latest_ranking_snapshot
+refresh_ranking_snapshots = ranking_leaderboards.refresh_ranking_snapshots
 
 
 def require(condition, message):
@@ -289,6 +290,7 @@ def validate_postgres_ranking_snapshot_schema_path():
 
 def validate_ranking_snapshot_cli_defaults():
     original_generate_ranking_snapshot = ranking_leaderboards.generate_ranking_snapshot
+    original_refresh_ranking_snapshots = ranking_leaderboards.refresh_ranking_snapshots
     captured = {}
 
     def fake_generate_ranking_snapshot(**kwargs):
@@ -345,8 +347,157 @@ def validate_ranking_snapshot_cli_defaults():
             captured.get("db_path") == Path("backend/data/hll_vietnam_dev.sqlite3"),
             "Ranking snapshot CLI should pass the explicit --sqlite-path override through to generate_ranking_snapshot.",
         )
+
+        captured.clear()
+
+        def fake_refresh_ranking_snapshots(**kwargs):
+            captured.update(kwargs)
+            return {
+                "status": "ok",
+                "generated_at": datetime(2026, 6, 9, 8, 0, 0, tzinfo=timezone.utc),
+                "combinations_expected": 36,
+                "totals": {"combinations_expected": 36, "succeeded": 36, "failed": 0, "skipped_regeneration": 0},
+                "results": [],
+            }
+
+        ranking_leaderboards.refresh_ranking_snapshots = fake_refresh_ranking_snapshots
+
+        stdout_buffer = StringIO()
+        with redirect_stdout(stdout_buffer):
+            exit_code = ranking_leaderboards._main([
+                "refresh-ranking-snapshots",
+                "--limit", "30",
+            ])
+        require(exit_code == 0, "Ranking snapshot bulk CLI should exit 0 for a valid command.")
+        require(
+            captured.get("db_path") is None,
+            "Ranking snapshot bulk CLI should use PostgreSQL-compatible db_path=None by default.",
+        )
+        require(
+            captured.get("limit") == 30,
+            "Ranking snapshot bulk CLI should preserve the requested limit.",
+        )
+
+        captured.clear()
+        stdout_buffer = StringIO()
+        with redirect_stdout(stdout_buffer):
+            exit_code = ranking_leaderboards._main([
+                "refresh-ranking-snapshots",
+                "--limit", "30",
+                "--sqlite-path", "backend/data/hll_vietnam_dev.sqlite3",
+            ])
+        require(exit_code == 0, "Ranking snapshot bulk CLI with --sqlite-path should exit 0.")
+        require(
+            captured.get("db_path") == Path("backend/data/hll_vietnam_dev.sqlite3"),
+            "Ranking snapshot bulk CLI should pass the explicit --sqlite-path override through to refresh_ranking_snapshots.",
+        )
     finally:
         ranking_leaderboards.generate_ranking_snapshot = original_generate_ranking_snapshot
+        ranking_leaderboards.refresh_ranking_snapshots = original_refresh_ranking_snapshots
+
+
+def validate_ranking_snapshot_bulk_refresh():
+    original_generate_ranking_snapshot = ranking_leaderboards.generate_ranking_snapshot
+    calls = []
+
+    def fake_generate_ranking_snapshot(**kwargs):
+        calls.append(kwargs)
+        return {
+            "status": "ok",
+            "snapshot": {
+                "id": len(calls),
+                "snapshot_status": "ready",
+                "window_start": "2026-06-01T00:00:00Z",
+                "window_end": "2026-06-09T00:00:00Z",
+                "generated_at": "2026-06-09T08:00:00Z",
+            },
+            "source_matches_count": 4,
+            "ranked_players": 3,
+            "skipped_regeneration": False,
+        }
+
+    ranking_leaderboards.generate_ranking_snapshot = fake_generate_ranking_snapshot
+
+    try:
+        payload = refresh_ranking_snapshots(limit=30)
+    finally:
+        ranking_leaderboards.generate_ranking_snapshot = original_generate_ranking_snapshot
+
+    require(payload.get("status") == "ok", "Ranking snapshot bulk refresh should return ok when all combinations succeed.")
+    require(payload.get("combinations_expected") == 36, "Ranking snapshot bulk refresh should expect 36 combinations.")
+    totals = payload.get("totals") or {}
+    require(totals.get("succeeded") == 36, "Ranking snapshot bulk refresh should report 36 successful combinations.")
+    require(totals.get("failed") == 0, "Ranking snapshot bulk refresh should report zero failed combinations when all succeed.")
+    require(len(payload.get("results") or []) == 36, "Ranking snapshot bulk refresh should report 36 result entries.")
+    require(len(calls) == 36, "Ranking snapshot bulk refresh should invoke generate_ranking_snapshot 36 times.")
+
+    seen = {
+        (call.get("timeframe"), call.get("server_key"), call.get("metric"), call.get("limit"))
+        for call in calls
+    }
+    require(len(seen) == 36, "Ranking snapshot bulk refresh should cover 36 unique timeframe/server/metric combinations.")
+    require(
+        ("weekly", "all-servers", "kills", 30) in seen,
+        "Ranking snapshot bulk refresh should include weekly/all/kills with limit 30.",
+    )
+    require(
+        ("monthly", "comunidad-hispana-02", "kills_per_match", 30) in seen,
+        "Ranking snapshot bulk refresh should include monthly/comunidad-hispana-02/kills_per_match with limit 30.",
+    )
+
+
+def validate_ranking_snapshot_bulk_partial_failure():
+    original_generate_ranking_snapshot = ranking_leaderboards.generate_ranking_snapshot
+
+    def fake_generate_ranking_snapshot(**kwargs):
+        if (
+            kwargs.get("timeframe") == "monthly"
+            and kwargs.get("server_key") == "comunidad-hispana-02"
+            and kwargs.get("metric") == "kd_ratio"
+        ):
+            raise RuntimeError("forced bulk refresh validation failure")
+        return {
+            "status": "ok",
+            "snapshot": {
+                "id": 1,
+                "snapshot_status": "ready",
+                "window_start": "2026-06-01T00:00:00Z",
+                "window_end": "2026-06-09T00:00:00Z",
+                "generated_at": "2026-06-09T08:00:00Z",
+            },
+            "source_matches_count": 4,
+            "ranked_players": 3,
+            "skipped_regeneration": False,
+        }
+
+    ranking_leaderboards.generate_ranking_snapshot = fake_generate_ranking_snapshot
+
+    try:
+        payload = refresh_ranking_snapshots(limit=30)
+    finally:
+        ranking_leaderboards.generate_ranking_snapshot = original_generate_ranking_snapshot
+
+    require(payload.get("status") == "partial", "Ranking snapshot bulk refresh should return partial when one combination fails.")
+    totals = payload.get("totals") or {}
+    require(totals.get("succeeded") == 35, "Ranking snapshot bulk refresh should continue after one failure and still report the remaining 35 successes.")
+    require(totals.get("failed") == 1, "Ranking snapshot bulk refresh should report exactly one failed combination in the forced partial-failure test.")
+    error_results = [
+        result
+        for result in (payload.get("results") or [])
+        if isinstance(result, dict) and result.get("status") == "error"
+    ]
+    require(len(error_results) == 1, "Ranking snapshot bulk refresh should surface one explicit error result in the forced partial-failure test.")
+    forced_error = error_results[0]
+    require(
+        forced_error.get("timeframe") == "monthly"
+        and forced_error.get("server_key") == "comunidad-hispana-02"
+        and forced_error.get("metric") == "kd_ratio",
+        "Ranking snapshot bulk refresh should preserve the failing combination coordinates in error reporting.",
+    )
+    require(
+        forced_error.get("error_type") == "RuntimeError",
+        "Ranking snapshot bulk refresh should expose the failing error type.",
+    )
 
 
 def validate_ranking_snapshot_postgres_selection():
@@ -431,6 +582,8 @@ require(health_payload.get("status") == "ok", "/health payload should be ok.")
 validate_postgres_ranking_snapshot_schema_path()
 validate_ranking_snapshot_cli_defaults()
 validate_ranking_snapshot_postgres_selection()
+validate_ranking_snapshot_bulk_refresh()
+validate_ranking_snapshot_bulk_partial_failure()
 
 kd_metric_sql, _, _ = ranking_leaderboards._resolve_metric_sql("kd_ratio")
 require(
@@ -803,7 +956,10 @@ print(json.dumps({
     "postgres-ranking-derived-metric-sql",
     "postgres-ranking-schema-path",
     "ranking-snapshot-cli-postgres-default",
+    "ranking-snapshot-bulk-cli",
     "ranking-snapshot-postgres-selection",
+    "ranking-snapshot-bulk-refresh",
+    "ranking-snapshot-bulk-partial-failure",
     "ranking-snapshot-generator",
     "ranking-snapshot-ready",
     "ranking-snapshot-missing",
