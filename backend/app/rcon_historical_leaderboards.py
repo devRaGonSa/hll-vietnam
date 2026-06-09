@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import argparse
+import json
 import os
 from contextlib import closing
 from datetime import datetime, timedelta, timezone
@@ -28,6 +30,21 @@ LeaderboardMetric = Literal[
     "matches_over_100_kills",
     "support",
 ]
+
+SNAPSHOT_GENERATOR_TIMEFRAMES = ("weekly", "monthly")
+SNAPSHOT_GENERATOR_SERVER_KEYS = (
+    ALL_SERVERS_SLUG,
+    "comunidad-hispana-01",
+    "comunidad-hispana-02",
+)
+SNAPSHOT_GENERATOR_METRICS = (
+    "kills",
+    "deaths",
+    "teamkills",
+    "matches_considered",
+    "kd_ratio",
+    "kills_per_match",
+)
 
 RANKING_SNAPSHOT_SQLITE_SCHEMA_SQL = """
 CREATE TABLE IF NOT EXISTS ranking_snapshots (
@@ -100,6 +117,107 @@ def is_ranking_runtime_fallback_enabled() -> bool:
         "true",
     ).strip().lower()
     return normalized in {"1", "true", "yes", "on"}
+
+
+def generate_ranking_snapshot(
+    *,
+    timeframe: str,
+    server_key: str | None,
+    metric: str,
+    limit: int,
+    replace_existing: bool = True,
+    now: datetime | None = None,
+    db_path: Path | None = None,
+) -> dict[str, object]:
+    """Generate and persist one weekly/monthly ranking snapshot."""
+    normalized_timeframe = _normalize_generator_timeframe(timeframe)
+    normalized_server_key = _normalize_generator_server_key(server_key)
+    normalized_metric = _normalize_generator_metric(metric)
+    normalized_limit = _normalize_limit(limit)
+    anchor = _as_utc(now or datetime.now(timezone.utc))
+
+    resolved_path = initialize_ranking_snapshot_storage(db_path=db_path)
+    connection_scope = _connect_write_scope(resolved_path, db_path=db_path)
+    with connection_scope as connection:
+        window = select_leaderboard_window(
+            connection=connection,
+            server_key=normalized_server_key,
+            timeframe=normalized_timeframe,
+            now=anchor,
+        )
+        window_start = _to_iso(window["start"])
+        window_end = _to_iso(window["end"])
+        existing_snapshot_id = _find_existing_snapshot_for_window(
+            connection=connection,
+            timeframe=normalized_timeframe,
+            server_key=normalized_server_key,
+            metric=normalized_metric,
+            window_start=window_start,
+            window_end=window_end,
+        )
+        if existing_snapshot_id is not None and not replace_existing:
+            snapshot = _get_snapshot_record(connection=connection, snapshot_id=existing_snapshot_id)
+            items = _list_snapshot_items(connection=connection, snapshot_id=existing_snapshot_id)
+            return {
+                "status": "ok",
+                "snapshot": snapshot,
+                "items": items,
+                "source_matches_count": int(snapshot.get("source_matches_count") or 0)
+                if snapshot
+                else 0,
+                "ranked_players": len(items),
+                "skipped_regeneration": True,
+            }
+
+        ranking_rows = _fetch_leaderboard_rows(
+            connection,
+            server_key=normalized_server_key,
+            metric=normalized_metric,
+            limit=normalized_limit,
+            window_start=window["start"],
+            window_end=window["end"],
+        )
+        source_matches_count = _count_matches(
+            connection,
+            server_key=normalized_server_key,
+            start=window["start"],
+            end=window["end"],
+        )
+
+        if existing_snapshot_id is not None:
+            _delete_snapshot(connection=connection, snapshot_id=existing_snapshot_id)
+
+        snapshot_id = _insert_snapshot_record(
+            connection=connection,
+            timeframe=normalized_timeframe,
+            server_key=normalized_server_key,
+            metric=normalized_metric,
+            limit=normalized_limit,
+            source_matches_count=source_matches_count,
+            window_start=window_start,
+            window_end=window_end,
+            generated_at=_to_iso(datetime.now(timezone.utc)),
+            window_kind=str(window["kind"]),
+            window_label=str(window["label"]),
+            item_count=len(ranking_rows),
+        )
+        _insert_snapshot_items(
+            connection=connection,
+            snapshot_id=snapshot_id,
+            rows=ranking_rows,
+            limit=normalized_limit,
+        )
+        snapshot = _get_snapshot_record(connection=connection, snapshot_id=snapshot_id)
+        items = _list_snapshot_items(connection=connection, snapshot_id=snapshot_id)
+
+    return {
+        "status": "ok",
+        "snapshot": snapshot,
+        "items": items,
+        "source_matches_count": source_matches_count,
+        "ranked_players": len(items),
+        "skipped_regeneration": False,
+    }
 
 
 def get_latest_ranking_snapshot(
@@ -383,6 +501,64 @@ def _find_latest_snapshot(
     return dict(row) if row else None
 
 
+def _find_existing_snapshot_for_window(
+    *,
+    connection: object,
+    timeframe: str,
+    server_key: str,
+    metric: str,
+    window_start: str,
+    window_end: str,
+) -> int | None:
+    row = connection.execute(
+        """
+        SELECT id
+        FROM ranking_snapshots
+        WHERE timeframe = ?
+          AND server_id = ?
+          AND metric = ?
+          AND window_start = ?
+          AND window_end = ?
+        LIMIT 1
+        """,
+        [timeframe, server_key, metric, window_start, window_end],
+    ).fetchone()
+    return int(row["id"]) if row else None
+
+
+def _get_snapshot_record(
+    *,
+    connection: object,
+    snapshot_id: int,
+) -> dict[str, object] | None:
+    row = connection.execute(
+        """
+        SELECT
+            id,
+            timeframe,
+            server_id,
+            metric,
+            window_start,
+            window_end,
+            generated_at,
+            source,
+            snapshot_status,
+            item_count,
+            limit_size,
+            source_matches_count,
+            freshness,
+            window_kind,
+            window_label,
+            error_message
+        FROM ranking_snapshots
+        WHERE id = ?
+        LIMIT 1
+        """,
+        [snapshot_id],
+    ).fetchone()
+    return dict(row) if row else None
+
+
 def _list_snapshot_items(
     *,
     connection: object,
@@ -411,6 +587,115 @@ def _list_snapshot_items(
         params.append(limit)
     rows = connection.execute(query, params).fetchall()
     return [dict(row) for row in rows]
+
+
+def _delete_snapshot(*, connection: object, snapshot_id: int) -> None:
+    connection.execute(
+        "DELETE FROM ranking_snapshot_items WHERE snapshot_id = ?",
+        [snapshot_id],
+    )
+    connection.execute(
+        "DELETE FROM ranking_snapshots WHERE id = ?",
+        [snapshot_id],
+    )
+
+
+def _insert_snapshot_record(
+    *,
+    connection: object,
+    timeframe: str,
+    server_key: str,
+    metric: str,
+    limit: int,
+    source_matches_count: int,
+    window_start: str,
+    window_end: str,
+    generated_at: str,
+    window_kind: str,
+    window_label: str,
+    item_count: int,
+) -> int:
+    cursor = connection.execute(
+        """
+        INSERT INTO ranking_snapshots (
+            timeframe,
+            server_id,
+            metric,
+            window_start,
+            window_end,
+            generated_at,
+            source,
+            snapshot_status,
+            item_count,
+            limit_size,
+            source_matches_count,
+            freshness,
+            window_kind,
+            window_label,
+            error_message
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, 'ready', ?, ?, ?, 'fresh', ?, ?, NULL)
+        RETURNING id
+        """,
+        [
+            timeframe,
+            server_key,
+            metric,
+            window_start,
+            window_end,
+            generated_at,
+            "rcon-materialized-admin-log",
+            item_count,
+            limit,
+            source_matches_count,
+            window_kind,
+            window_label,
+        ],
+    )
+    row = cursor.fetchone()
+    if row is None or row["id"] is None:
+        raise RuntimeError("Unable to resolve ranking snapshot id after insert.")
+    return int(row["id"])
+
+
+def _insert_snapshot_items(
+    *,
+    connection: object,
+    snapshot_id: int,
+    rows: list[dict[str, object]],
+    limit: int,
+) -> None:
+    for index, row in enumerate(rows[:limit], start=1):
+        item = _build_item(row, index=index)
+        connection.execute(
+            """
+            INSERT INTO ranking_snapshot_items (
+                snapshot_id,
+                ranking_position,
+                player_id,
+                player_name,
+                metric_value,
+                matches_considered,
+                kills,
+                deaths,
+                teamkills,
+                kd_ratio,
+                kills_per_match
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            [
+                snapshot_id,
+                int(item["ranking_position"]),
+                str(item["player_id"]),
+                str(item["player_name"]),
+                float(item["metric_value"]),
+                int(item["matches_considered"]),
+                int(item["kills"]),
+                int(item["deaths"]),
+                int(item["teamkills"]),
+                float(item["kd_ratio"]),
+                float(item["kills_per_match"]),
+            ],
+        )
 
 
 def _fetch_leaderboard_rows(
@@ -702,6 +987,14 @@ def _connect_scope(resolved_path: Path, *, db_path: Path | None):
     return closing(connect_sqlite_readonly(resolved_path))
 
 
+def _connect_write_scope(resolved_path: Path, *, db_path: Path | None):
+    if use_postgres_rcon_storage(explicit_sqlite_path=db_path):
+        from .postgres_rcon_storage import connect_postgres_compat
+
+        return connect_postgres_compat()
+    return connect_sqlite_writer(resolved_path)
+
+
 def _empty_payload(
     *,
     server_key: str | None,
@@ -783,6 +1076,40 @@ def _previous_month_start(current_month_start: datetime) -> datetime:
 
 def _normalize_timeframe(value: str) -> LeaderboardTimeframe:
     return "monthly" if str(value or "").strip().lower() == "monthly" else "weekly"
+
+
+def _normalize_generator_timeframe(value: str) -> str:
+    normalized = str(value or "").strip().lower()
+    if normalized not in SNAPSHOT_GENERATOR_TIMEFRAMES:
+        raise ValueError(
+            f"timeframe must be one of: {', '.join(SNAPSHOT_GENERATOR_TIMEFRAMES)}"
+        )
+    return normalized
+
+
+def _normalize_generator_server_key(server_key: str | None) -> str:
+    normalized = _normalize_snapshot_server_key(server_key)
+    if normalized not in SNAPSHOT_GENERATOR_SERVER_KEYS:
+        raise ValueError(
+            "server_key must be one of: all, all-servers, comunidad-hispana-01, comunidad-hispana-02"
+        )
+    return normalized
+
+
+def _normalize_generator_metric(metric: str) -> str:
+    normalized = str(metric or "").strip().lower()
+    if normalized not in SNAPSHOT_GENERATOR_METRICS:
+        raise ValueError(
+            f"metric must be one of: {', '.join(SNAPSHOT_GENERATOR_METRICS)}"
+        )
+    return normalized
+
+
+def _normalize_limit(limit: object, *, maximum: int = 100) -> int:
+    normalized_limit = int(limit or 1)
+    if normalized_limit < 1:
+        raise ValueError("limit must be greater than zero")
+    return min(normalized_limit, maximum)
 
 
 def _normalize_metric(value: str) -> LeaderboardMetric:
@@ -909,3 +1236,50 @@ def _to_iso(value: object) -> str:
     if parsed is None:
         parsed = datetime.now(timezone.utc)
     return parsed.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+def _main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(
+        description="Read and generate weekly/monthly ranking snapshots.",
+    )
+    subparsers = parser.add_subparsers(dest="command")
+    generate_parser = subparsers.add_parser("generate-ranking-snapshot")
+    generate_parser.add_argument(
+        "--timeframe",
+        required=True,
+        choices=SNAPSHOT_GENERATOR_TIMEFRAMES,
+    )
+    generate_parser.add_argument("--server-key", default=None)
+    generate_parser.add_argument(
+        "--metric",
+        required=True,
+        choices=SNAPSHOT_GENERATOR_METRICS,
+    )
+    generate_parser.add_argument("--limit", type=int, default=20)
+    generate_parser.add_argument(
+        "--no-replace-existing",
+        action="store_false",
+        dest="replace_existing",
+        help="keep an existing snapshot for the selected exact window and metric scope",
+    )
+    parser.set_defaults(command="generate-ranking-snapshot", replace_existing=True)
+    args = parser.parse_args(argv)
+
+    if args.command == "generate-ranking-snapshot":
+        payload = generate_ranking_snapshot(
+            timeframe=args.timeframe,
+            server_key=args.server_key,
+            metric=args.metric,
+            limit=args.limit,
+            replace_existing=args.replace_existing,
+            db_path=get_storage_path(),
+        )
+        print(json.dumps({"status": "ok", "data": payload}, ensure_ascii=True, indent=2))
+        return 0
+
+    parser.print_help()
+    return 2
+
+
+if __name__ == "__main__":
+    raise SystemExit(_main())

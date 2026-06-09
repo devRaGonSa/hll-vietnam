@@ -127,6 +127,8 @@ import app.postgres_rcon_storage as postgres_rcon_storage
 import app.rcon_historical_leaderboards as ranking_leaderboards
 
 initialize_ranking_snapshot_storage = ranking_leaderboards.initialize_ranking_snapshot_storage
+generate_ranking_snapshot = ranking_leaderboards.generate_ranking_snapshot
+get_latest_ranking_snapshot = ranking_leaderboards.get_latest_ranking_snapshot
 
 
 def require(condition, message):
@@ -297,6 +299,23 @@ def cleanup_snapshot_fixture(db_path):
         )
         connection.execute(
             "DELETE FROM ranking_snapshots WHERE source = 'stats-validation-fixture'"
+        )
+    connection.close()
+
+
+def cleanup_generated_snapshot(snapshot_id):
+    if not snapshot_id:
+        return
+    db_path = Path("backend/data/hll_vietnam_dev.sqlite3")
+    connection = sqlite3.connect(db_path)
+    with connection:
+        connection.execute(
+            "DELETE FROM ranking_snapshot_items WHERE snapshot_id = ?",
+            (snapshot_id,),
+        )
+        connection.execute(
+            "DELETE FROM ranking_snapshots WHERE id = ?",
+            (snapshot_id,),
         )
     connection.close()
 
@@ -567,6 +586,73 @@ missing_year_ranking_status, _ = read_payload(
 )
 require(missing_year_ranking_status == 400, "Global ranking annual requests without year should return 400.")
 
+generated_snapshot_id = None
+try:
+    generated_snapshot = generate_ranking_snapshot(
+        timeframe="weekly",
+        server_key="all",
+        metric="kills",
+        limit=20,
+        now=datetime(2026, 5, 20, 12, 0, 0, tzinfo=timezone.utc),
+        db_path=Path("backend/data/hll_vietnam_dev.sqlite3"),
+    )
+    generated_snapshot_record = generated_snapshot.get("snapshot") or {}
+    generated_snapshot_id = generated_snapshot_record.get("id")
+    require(generated_snapshot.get("status") == "ok", "Weekly ranking snapshot generation should return ok.")
+    require(generated_snapshot_id, "Generated weekly ranking snapshot should expose snapshot id.")
+    require(
+        generated_snapshot_record.get("timeframe") == "weekly",
+        "Generated weekly ranking snapshot should preserve timeframe.",
+    )
+    require(
+        generated_snapshot_record.get("metric") == "kills",
+        "Generated weekly ranking snapshot should preserve metric.",
+    )
+    latest_generated_snapshot = get_latest_ranking_snapshot(
+        server_key="all",
+        timeframe="weekly",
+        metric="kills",
+        limit=20,
+        db_path=Path("backend/data/hll_vietnam_dev.sqlite3"),
+    )
+    require(
+        latest_generated_snapshot.get("snapshot_status") == "ready",
+        "Generated weekly ranking snapshot should be readable as ready.",
+    )
+    require(
+        latest_generated_snapshot.get("generated_at"),
+        "Generated weekly ranking snapshot should expose generated_at.",
+    )
+    generated_route_status, generated_route_payload = read_payload(
+        "/api/ranking?timeframe=weekly&server_id=all&metric=kills&limit=20"
+    )
+    require(generated_route_status == 200, "Generated weekly ranking route should return 200.")
+    generated_route_data = generated_route_payload.get("data") or {}
+    require(
+        generated_route_data.get("snapshot_status") == "ready",
+        "Generated weekly ranking route should return snapshot_status=ready.",
+    )
+    require(
+        generated_route_data.get("fallback_used") is False,
+        "Generated weekly ranking route should not use runtime fallback.",
+    )
+    require(
+        isinstance(generated_route_data.get("items"), list),
+        "Generated weekly ranking route should return items list.",
+    )
+
+    generated_fallback_status, generated_fallback_payload = read_payload(
+        "/api/ranking?timeframe=weekly&server_id=all&metric=deaths&limit=20"
+    )
+    require(generated_fallback_status == 200, "Generated validation fallback route should return 200.")
+    generated_fallback_data = generated_fallback_payload.get("data") or {}
+    require(
+        generated_fallback_data.get("fallback_used") is True,
+        "Missing weekly deaths snapshot should still use runtime fallback when enabled.",
+    )
+finally:
+    cleanup_generated_snapshot(generated_snapshot_id)
+
 fixture_db_path = build_snapshot_fixture()
 try:
     fixture_weekly_status, fixture_weekly_payload = read_payload(
@@ -609,10 +695,11 @@ print(json.dumps({
         "stats-annual-ranking",
         "global-ranking",
         "postgres-ranking-derived-metric-sql",
-        "postgres-ranking-schema-path",
-        "ranking-snapshot-ready",
-        "ranking-snapshot-missing",
-    ],
+    "postgres-ranking-schema-path",
+    "ranking-snapshot-generator",
+    "ranking-snapshot-ready",
+    "ranking-snapshot-missing",
+],
     "annual_snapshot_status": annual_data.get("snapshot_status"),
     "global_ranking_annual_snapshot_status": annual_ranking_data.get("snapshot_status"),
     "search_items_count": len(search_data.get("items") or []),

@@ -245,6 +245,72 @@ Operational note after `TASK-191`:
 - runtime fallback remains enabled by default for transition through `HLL_BACKEND_RANKING_RUNTIME_FALLBACK_ENABLED=true`
 - operators can force controlled missing behavior by setting `HLL_BACKEND_RANKING_RUNTIME_FALLBACK_ENABLED=false`
 
+## Manual Generation Workflow
+
+Manual generator entrypoint:
+
+```bash
+python -m app.rcon_historical_leaderboards generate-ranking-snapshot --timeframe weekly --server-key all --metric kills --limit 20
+```
+
+Docker form:
+
+```bash
+docker compose exec backend python -m app.rcon_historical_leaderboards generate-ranking-snapshot --timeframe weekly --server-key all --metric kills --limit 20
+```
+
+Supported manual parameters:
+- `timeframe`: `weekly`, `monthly`
+- `server-key`: `all`, `all-servers`, `comunidad-hispana-01`, `comunidad-hispana-02`
+- `metric`: `kills`, `deaths`, `teamkills`, `matches_considered`, `kd_ratio`, `kills_per_match`
+- `limit`: positive integer, normally `20`
+
+Current implementation note:
+- V1 generator is unitary per command invocation
+- operators should run one command per required `(timeframe, server-key, metric)` combination
+- broad matrix generation can remain a later operational helper if scheduling needs justify it
+
+## Recommended Combinations
+
+Minimum production matrix for parity with the public Ranking filters:
+- weekly + `all-servers` + all six supported metrics
+- weekly + `comunidad-hispana-01` + all six supported metrics
+- weekly + `comunidad-hispana-02` + all six supported metrics
+- monthly + `all-servers` + all six supported metrics
+- monthly + `comunidad-hispana-01` + all six supported metrics
+- monthly + `comunidad-hispana-02` + all six supported metrics
+
+That matrix requires `36` snapshot generations for each refresh cycle.
+
+## Suggested Frequency
+
+Suggested operator cadence:
+- weekly current window: regenerate every `5` to `15` minutes while the active week is changing
+- monthly current window: regenerate every `15` to `30` minutes while the active month is changing
+- previous week and previous month windows: regenerate once after closure or after any historical backfill that changes source coverage
+
+Operational guidance:
+- regenerate after materialized RCON/AdminLog data grows
+- regenerate after manual backfill
+- regenerate after metric SQL changes that affect ranking totals or ordering
+
+## Ready Vs Fallback
+
+Expected API result after successful generation for an exact requested combination:
+- `snapshot_status=ready`
+- `fallback_used=false`
+- `source.read_model=ranking-snapshot`
+
+Expected API result when the requested combination has not been generated yet and fallback remains enabled:
+- `snapshot_status=missing`
+- `fallback_used=true`
+- `freshness=runtime`
+
+Expected API result when the requested combination has not been generated and fallback is disabled:
+- `snapshot_status=missing`
+- `fallback_used=false`
+- `items=[]`
+
 ## Out Of Scope
 
 - backend implementation of the snapshot generator
