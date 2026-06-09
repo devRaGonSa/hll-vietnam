@@ -21,6 +21,7 @@ PLAYER_SEARCH_INDEX_SERVER_KEYS = (
     "comunidad-hispana-01",
     "comunidad-hispana-02",
 )
+PLAYER_PERIOD_STATS_PERIOD_TYPES = ("weekly", "monthly", "yearly")
 
 PLAYER_SEARCH_INDEX_SQLITE_SCHEMA_SQL = """
 CREATE TABLE IF NOT EXISTS player_search_index (
@@ -50,6 +51,42 @@ CREATE INDEX IF NOT EXISTS idx_player_search_index_player
 ON player_search_index(server_id, player_id);
 """
 
+PLAYER_PERIOD_STATS_SQLITE_SCHEMA_SQL = """
+CREATE TABLE IF NOT EXISTS player_period_stats (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    period_type TEXT NOT NULL,
+    window_kind TEXT NOT NULL,
+    period_start TEXT NOT NULL,
+    period_end TEXT NOT NULL,
+    server_id TEXT NOT NULL,
+    player_id TEXT NOT NULL,
+    player_name TEXT NOT NULL,
+    matches_considered INTEGER NOT NULL DEFAULT 0,
+    kills INTEGER NOT NULL DEFAULT 0,
+    deaths INTEGER NOT NULL DEFAULT 0,
+    teamkills INTEGER NOT NULL DEFAULT 0,
+    ranking_position INTEGER,
+    kd_ratio REAL NOT NULL DEFAULT 0.0,
+    kills_per_match REAL NOT NULL DEFAULT 0.0,
+    first_seen_at TEXT,
+    last_seen_at TEXT,
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(period_type, server_id, player_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_player_period_stats_player_period_server
+ON player_period_stats(player_id, period_type, server_id);
+
+CREATE INDEX IF NOT EXISTS idx_player_period_stats_server_period
+ON player_period_stats(server_id, period_type);
+
+CREATE INDEX IF NOT EXISTS idx_player_period_stats_last_seen
+ON player_period_stats(last_seen_at DESC);
+
+CREATE INDEX IF NOT EXISTS idx_player_period_stats_updated
+ON player_period_stats(updated_at DESC);
+"""
+
 
 def initialize_player_search_index_storage(*, db_path: Path | None = None) -> Path:
     """Create the player search read model storage if it does not exist."""
@@ -63,6 +100,21 @@ def initialize_player_search_index_storage(*, db_path: Path | None = None) -> Pa
     with closing(connect_sqlite_writer(resolved_path)) as connection:
         with connection:
             connection.executescript(PLAYER_SEARCH_INDEX_SQLITE_SCHEMA_SQL)
+    return resolved_path
+
+
+def initialize_player_period_stats_storage(*, db_path: Path | None = None) -> Path:
+    """Create the player period stats read model storage if it does not exist."""
+    resolved_path = initialize_rcon_materialized_storage(db_path=db_path)
+    if use_postgres_rcon_storage(explicit_sqlite_path=db_path):
+        from .postgres_rcon_storage import initialize_postgres_rcon_storage
+
+        initialize_postgres_rcon_storage()
+        return resolved_path
+
+    with closing(connect_sqlite_writer(resolved_path)) as connection:
+        with connection:
+            connection.executescript(PLAYER_PERIOD_STATS_SQLITE_SCHEMA_SQL)
     return resolved_path
 
 
@@ -107,6 +159,62 @@ def refresh_player_search_index(
         "year": year_start.year,
         "source": "rcon-materialized-admin-log",
         "server_ids": list(PLAYER_SEARCH_INDEX_SERVER_KEYS),
+        "total_rows": total_rows,
+        "results": results,
+    }
+
+
+def refresh_player_period_stats(
+    *,
+    db_path: Path | None = None,
+    now: datetime | None = None,
+) -> dict[str, object]:
+    """Rebuild the personal player stats read model for supported periods and scopes."""
+    anchor = _as_utc(now or datetime.now(timezone.utc))
+    resolved_path = initialize_player_period_stats_storage(db_path=db_path)
+
+    results: list[dict[str, object]] = []
+    total_rows = 0
+    with _connect_write_scope(resolved_path, db_path=db_path) as connection:
+        for server_id in PLAYER_SEARCH_INDEX_SERVER_KEYS:
+            for period_type in PLAYER_PERIOD_STATS_PERIOD_TYPES:
+                window = _select_player_period_window(
+                    connection=connection,
+                    server_id=server_id,
+                    period_type=period_type,
+                    now=anchor,
+                )
+                rows = _build_player_period_stats_rows(
+                    connection=connection,
+                    server_id=server_id,
+                    period_type=period_type,
+                    window=window,
+                )
+                _replace_player_period_stats_scope(
+                    connection=connection,
+                    server_id=server_id,
+                    period_type=period_type,
+                    rows=rows,
+                    updated_at=_to_iso(anchor),
+                )
+                results.append(
+                    {
+                        "server_id": server_id,
+                        "period_type": period_type,
+                        "window_kind": window["kind"],
+                        "period_start": _to_iso(window["start"]),
+                        "period_end": _to_iso(window["end"]),
+                        "row_count": len(rows),
+                    }
+                )
+                total_rows += len(rows)
+
+    return {
+        "status": "ok",
+        "generated_at": _to_iso(anchor),
+        "source": "rcon-materialized-admin-log",
+        "server_ids": list(PLAYER_SEARCH_INDEX_SERVER_KEYS),
+        "period_types": list(PLAYER_PERIOD_STATS_PERIOD_TYPES),
         "total_rows": total_rows,
         "results": results,
     }
@@ -252,6 +360,52 @@ def get_rcon_materialized_player_stats(
     if resolved_timeframe not in {"weekly", "monthly", "all"}:
         raise ValueError("Invalid timeframe parameter")
 
+    if resolved_timeframe != "all":
+        read_model_result, fallback_reason = _get_player_period_stats_read_model(
+            player_id=normalized_player_id,
+            server_id=server_id,
+            timeframe=resolved_timeframe,
+            db_path=db_path,
+        )
+        if read_model_result is not None:
+            return read_model_result
+
+        runtime_result = _get_rcon_materialized_player_stats_runtime(
+            player_id=normalized_player_id,
+            server_id=server_id,
+            timeframe=resolved_timeframe,
+            db_path=db_path,
+        )
+        runtime_source = dict(runtime_result.get("source") or {})
+        runtime_source.update(
+            {
+                "read_model": "player-period-stats",
+                "fallback_used": True,
+                "fallback_reason": fallback_reason or "player-period-stats-unavailable",
+            }
+        )
+        runtime_result["source"] = runtime_source
+        return runtime_result
+
+    return _get_rcon_materialized_player_stats_runtime(
+        player_id=normalized_player_id,
+        server_id=server_id,
+        timeframe=resolved_timeframe,
+        db_path=db_path,
+    )
+
+
+def _get_rcon_materialized_player_stats_runtime(
+    *,
+    player_id: str,
+    server_id: str | None = None,
+    timeframe: str = "weekly",
+    db_path: Path | None = None,
+) -> dict[str, object]:
+    """Return runtime player stats directly from materialized matches and player rows."""
+    normalized_player_id = player_id.strip()
+    resolved_timeframe = timeframe.strip().lower() if isinstance(timeframe, str) else "weekly"
+
     resolved_path = initialize_rcon_materialized_storage(db_path=db_path)
     resolved_server_id = _normalize_server_id(server_id)
     now = datetime.now(timezone.utc)
@@ -319,13 +473,286 @@ def get_rcon_materialized_player_stats(
         "monthly_ranking": monthly_ranking,
         "source": {
             "primary_source": "rcon",
-            "read_model": "rcon-materialized-admin-log-player-stats",
             "generated_at": _to_iso(now),
             "source_range_start": _to_iso(source_range[0]) if source_range[0] else None,
             "source_range_end": _to_iso(source_range[1]) if source_range[1] else None,
             "freshness": "runtime",
         },
     }
+
+
+def _get_player_period_stats_read_model(
+    *,
+    player_id: str,
+    server_id: str | None,
+    timeframe: str,
+    db_path: Path | None = None,
+) -> tuple[dict[str, object] | None, str | None]:
+    resolved_path = initialize_player_period_stats_storage(db_path=db_path)
+    resolved_server_id = _normalize_server_id(server_id)
+    required_periods = sorted({timeframe, "weekly", "monthly"})
+    placeholders = ", ".join(["?"] * len(required_periods))
+
+    try:
+        with _connect_scope(resolved_path, db_path=db_path) as connection:
+            scope_rows = connection.execute(
+                f"""
+                SELECT period_type, COUNT(*) AS row_count
+                FROM player_period_stats
+                WHERE server_id = ?
+                  AND period_type IN ({placeholders})
+                GROUP BY period_type
+                """,
+                [resolved_server_id, *required_periods],
+            ).fetchall()
+            counts_by_period = {
+                str(row["period_type"] or "").strip(): int(row["row_count"] or 0)
+                for row in scope_rows
+            }
+            if not counts_by_period:
+                return None, "player-period-stats-empty"
+            if any(counts_by_period.get(period_type, 0) <= 0 for period_type in required_periods):
+                return None, "player-period-stats-empty"
+
+            rows = connection.execute(
+                f"""
+                SELECT *
+                FROM player_period_stats
+                WHERE server_id = ?
+                  AND player_id = ?
+                  AND period_type IN ({placeholders})
+                """,
+                [resolved_server_id, player_id, *required_periods],
+            ).fetchall()
+    except Exception:
+        return None, "player-period-stats-unavailable"
+
+    rows_by_period = {
+        str(row["period_type"] or "").strip(): dict(row)
+        for row in rows
+    }
+    if any(period_type not in rows_by_period for period_type in required_periods):
+        return None, "player-period-stats-player-missing"
+
+    selected_row = rows_by_period[timeframe]
+    weekly_row = rows_by_period["weekly"]
+    monthly_row = rows_by_period["monthly"]
+    return (
+        {
+            "player_id": player_id,
+            "server_id": resolved_server_id,
+            "timeframe": timeframe,
+            "player_name": selected_row.get("player_name"),
+            "window_start": _to_datetime_or_none(selected_row.get("period_start")),
+            "window_end": _to_datetime_or_none(selected_row.get("period_end")),
+            "window_kind": selected_row.get("window_kind"),
+            "matches_considered": int(selected_row.get("matches_considered") or 0),
+            "kills": int(selected_row.get("kills") or 0),
+            "deaths": int(selected_row.get("deaths") or 0),
+            "teamkills": int(selected_row.get("teamkills") or 0),
+            "weekly_ranking": _build_player_period_ranking_payload(weekly_row),
+            "monthly_ranking": _build_player_period_ranking_payload(monthly_row),
+            "source": {
+                "primary_source": "rcon",
+                "read_model": "player-period-stats",
+                "fallback_used": False,
+                "fallback_reason": None,
+                "generated_at": selected_row.get("updated_at"),
+                "source_range_start": selected_row.get("first_seen_at"),
+                "source_range_end": selected_row.get("last_seen_at"),
+                "freshness": "read-model",
+            },
+        },
+        None,
+    )
+
+
+def _build_player_period_ranking_payload(row: dict[str, object]) -> dict[str, object]:
+    ranking_position = row.get("ranking_position")
+    return {
+        "metric": "kills",
+        "ranking_position": int(ranking_position) if ranking_position is not None else None,
+        "window_kind": row.get("window_kind"),
+        "window_start": row.get("period_start"),
+        "window_end": row.get("period_end"),
+    }
+
+
+def _select_player_period_window(
+    *,
+    connection: object,
+    server_id: str,
+    period_type: str,
+    now: datetime,
+) -> dict[str, object]:
+    if period_type == "yearly":
+        start = now.replace(month=1, day=1, hour=0, minute=0, second=0, microsecond=0)
+        return {
+            "start": start,
+            "end": now,
+            "kind": "current-year",
+            "label": "Ano actual",
+        }
+    return select_leaderboard_window(
+        connection=connection,
+        server_key=server_id,
+        timeframe=period_type,
+        now=now,
+    )
+
+
+def _build_player_period_stats_rows(
+    *,
+    connection: object,
+    server_id: str,
+    period_type: str,
+    window: dict[str, object],
+) -> list[dict[str, object]]:
+    scope_sql, scope_params = _build_scope_sql(server_id)
+    rows = connection.execute(
+        f"""
+        SELECT
+            stats.player_id,
+            MIN(COALESCE(CAST(matches.ended_at AS TEXT), CAST(matches.started_at AS TEXT))) AS first_seen_at,
+            MAX(COALESCE(CAST(matches.ended_at AS TEXT), CAST(matches.started_at AS TEXT))) AS last_seen_at,
+            COUNT(DISTINCT stats.match_key) AS matches_considered,
+            SUM(COALESCE(stats.kills, 0)) AS kills,
+            SUM(COALESCE(stats.deaths, 0)) AS deaths,
+            SUM(COALESCE(stats.teamkills, 0)) AS teamkills
+        FROM rcon_match_player_stats AS stats
+        INNER JOIN rcon_materialized_matches AS matches
+            ON matches.target_key = stats.target_key
+           AND matches.match_key = stats.match_key
+        WHERE matches.source_basis = ?
+          AND COALESCE(CAST(matches.ended_at AS TEXT), CAST(matches.started_at AS TEXT)) >= ?
+          AND COALESCE(CAST(matches.ended_at AS TEXT), CAST(matches.started_at AS TEXT)) <= ?
+          {scope_sql}
+        GROUP BY stats.player_id
+        HAVING COUNT(DISTINCT stats.match_key) > 0
+        """,
+        [
+            MATCH_RESULT_SOURCE,
+            _to_iso(window["start"]),
+            _to_iso(window["end"]),
+            *scope_params,
+        ],
+    ).fetchall()
+    if not rows:
+        return []
+
+    player_ids = [
+        str(row["player_id"]).strip()
+        for row in rows
+        if str(row["player_id"] or "").strip()
+    ]
+    latest_names = _lookup_latest_player_names_with_connection(
+        connection=connection,
+        player_ids=player_ids,
+        server_id=server_id,
+        start=window["start"],
+        end=window["end"],
+    )
+
+    period_rows: list[dict[str, object]] = []
+    for row in rows:
+        player_id = str(row["player_id"] or "").strip()
+        if not player_id:
+            continue
+        matches_considered = int(row["matches_considered"] or 0)
+        kills = int(row["kills"] or 0)
+        deaths = int(row["deaths"] or 0)
+        teamkills = int(row["teamkills"] or 0)
+        player_name = latest_names.get(player_id) or player_id
+        period_rows.append(
+            {
+                "period_type": period_type,
+                "window_kind": str(window["kind"]),
+                "period_start": _to_iso(window["start"]),
+                "period_end": _to_iso(window["end"]),
+                "server_id": server_id,
+                "player_id": player_id,
+                "player_name": player_name,
+                "matches_considered": matches_considered,
+                "kills": kills,
+                "deaths": deaths,
+                "teamkills": teamkills,
+                "kd_ratio": round(kills / deaths, 2) if deaths else float(kills),
+                "kills_per_match": round(kills / matches_considered, 2) if matches_considered else 0.0,
+                "first_seen_at": row["first_seen_at"],
+                "last_seen_at": row["last_seen_at"],
+            }
+        )
+
+    period_rows.sort(
+        key=lambda item: (
+            -int(item["kills"]),
+            -int(item["matches_considered"]),
+            str(item["player_name"]).casefold(),
+        )
+    )
+    for position, row in enumerate(period_rows, start=1):
+        row["ranking_position"] = position
+    return period_rows
+
+
+def _replace_player_period_stats_scope(
+    *,
+    connection: object,
+    server_id: str,
+    period_type: str,
+    rows: list[dict[str, object]],
+    updated_at: str,
+) -> None:
+    connection.execute(
+        """
+        DELETE FROM player_period_stats
+        WHERE server_id = ? AND period_type = ?
+        """,
+        [server_id, period_type],
+    )
+    for row in rows:
+        connection.execute(
+            """
+            INSERT INTO player_period_stats (
+                period_type,
+                window_kind,
+                period_start,
+                period_end,
+                server_id,
+                player_id,
+                player_name,
+                matches_considered,
+                kills,
+                deaths,
+                teamkills,
+                ranking_position,
+                kd_ratio,
+                kills_per_match,
+                first_seen_at,
+                last_seen_at,
+                updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            [
+                row["period_type"],
+                row["window_kind"],
+                row["period_start"],
+                row["period_end"],
+                row["server_id"],
+                row["player_id"],
+                row["player_name"],
+                row["matches_considered"],
+                row["kills"],
+                row["deaths"],
+                row["teamkills"],
+                row["ranking_position"],
+                row["kd_ratio"],
+                row["kills_per_match"],
+                row["first_seen_at"],
+                row["last_seen_at"],
+                updated_at,
+            ],
+        )
 
 
 def _build_player_timeframe_window(
@@ -1031,10 +1458,28 @@ def _main(argv: list[str] | None = None) -> int:
         default=None,
         help="explicit local SQLite override; default operational mode uses PostgreSQL when configured",
     )
+    refresh_period_stats_parser = subparsers.add_parser("refresh-player-period-stats")
+    refresh_period_stats_parser.add_argument(
+        "--sqlite-path",
+        type=Path,
+        default=None,
+        help="explicit local SQLite override; default operational mode uses PostgreSQL when configured",
+    )
 
     args = parser.parse_args(argv)
     if args.command == "refresh-player-search-index":
         payload = refresh_player_search_index(db_path=args.sqlite_path)
+        print(
+            json.dumps(
+                {"status": "ok", "data": payload},
+                ensure_ascii=True,
+                indent=2,
+                default=_json_default,
+            )
+        )
+        return 0
+    if args.command == "refresh-player-period-stats":
+        payload = refresh_player_period_stats(db_path=args.sqlite_path)
         print(
             json.dumps(
                 {"status": "ok", "data": payload},

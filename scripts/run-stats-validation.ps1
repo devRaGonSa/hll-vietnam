@@ -136,7 +136,10 @@ get_latest_ranking_snapshot = ranking_leaderboards.get_latest_ranking_snapshot
 refresh_ranking_snapshots = ranking_leaderboards.refresh_ranking_snapshots
 initialize_player_search_index_storage = player_search_stats.initialize_player_search_index_storage
 refresh_player_search_index = player_search_stats.refresh_player_search_index
+initialize_player_period_stats_storage = player_search_stats.initialize_player_period_stats_storage
+refresh_player_period_stats = player_search_stats.refresh_player_period_stats
 search_rcon_materialized_players = player_search_stats.search_rcon_materialized_players
+get_rcon_materialized_player_stats = player_search_stats.get_rcon_materialized_player_stats
 MATCH_RESULT_SOURCE = player_search_stats.MATCH_RESULT_SOURCE
 
 
@@ -821,6 +824,333 @@ def validate_player_search_index_fallbacks():
                 pass
 
 
+def validate_postgres_player_period_stats_schema_path():
+    require(
+        "CREATE TABLE IF NOT EXISTS player_period_stats" in postgres_rcon_storage.RCON_SCHEMA_SQL,
+        "PostgreSQL schema should define player_period_stats.",
+    )
+    require(
+        "CREATE INDEX IF NOT EXISTS idx_player_period_stats_player_period_server" in postgres_rcon_storage.RCON_SCHEMA_SQL,
+        "PostgreSQL schema should define the player_period_stats player/period/server index.",
+    )
+
+    original_initialize_materialized = player_search_stats.initialize_rcon_materialized_storage
+    original_use_postgres_storage = player_search_stats.use_postgres_rcon_storage
+    original_initialize_postgres_storage = postgres_rcon_storage.initialize_postgres_rcon_storage
+    calls = {"postgres_init": 0}
+
+    player_search_stats.initialize_rcon_materialized_storage = (
+        lambda db_path=None: Path("backend/data/hll_vietnam_dev.sqlite3")
+    )
+    player_search_stats.use_postgres_rcon_storage = lambda explicit_sqlite_path=None: True
+
+    def fake_initialize_postgres_storage():
+        calls["postgres_init"] += 1
+
+    postgres_rcon_storage.initialize_postgres_rcon_storage = fake_initialize_postgres_storage
+
+    try:
+        initialize_player_period_stats_storage()
+    finally:
+        player_search_stats.initialize_rcon_materialized_storage = original_initialize_materialized
+        player_search_stats.use_postgres_rcon_storage = original_use_postgres_storage
+        postgres_rcon_storage.initialize_postgres_rcon_storage = original_initialize_postgres_storage
+
+    require(
+        calls["postgres_init"] == 1,
+        "Player period stats initialization should delegate to initialize_postgres_rcon_storage exactly once.",
+    )
+
+
+def validate_player_period_stats_cli_defaults():
+    original_refresh_player_period_stats = player_search_stats.refresh_player_period_stats
+    captured = {}
+
+    def fake_refresh_player_period_stats(**kwargs):
+        captured.update(kwargs)
+        return {
+            "status": "ok",
+            "generated_at": datetime(2026, 6, 10, 12, 0, 0, tzinfo=timezone.utc),
+            "source": "rcon-materialized-admin-log",
+            "server_ids": ["all-servers", "comunidad-hispana-01", "comunidad-hispana-02"],
+            "period_types": ["weekly", "monthly", "yearly"],
+            "total_rows": 9,
+            "results": [{"server_id": "all-servers", "period_type": "weekly", "row_count": 2}],
+        }
+
+    player_search_stats.refresh_player_period_stats = fake_refresh_player_period_stats
+    try:
+        stdout_buffer = StringIO()
+        with redirect_stdout(stdout_buffer):
+            exit_code = player_search_stats._main(["refresh-player-period-stats"])
+        require(exit_code == 0, "Player period stats CLI should exit 0 for a valid command.")
+        require(
+            captured.get("db_path") is None,
+            "Player period stats CLI should use PostgreSQL-compatible db_path=None by default.",
+        )
+        serialized_default_payload = json.loads(stdout_buffer.getvalue())
+        require(
+            serialized_default_payload.get("data", {}).get("generated_at") == "2026-06-10T12:00:00Z",
+            "Player period stats CLI should serialize datetime values as ISO strings.",
+        )
+
+        captured.clear()
+        stdout_buffer = StringIO()
+        with redirect_stdout(stdout_buffer):
+            exit_code = player_search_stats._main([
+                "refresh-player-period-stats",
+                "--sqlite-path", "backend/data/hll_vietnam_dev.sqlite3",
+            ])
+        require(exit_code == 0, "Player period stats CLI with --sqlite-path should exit 0.")
+        require(
+            captured.get("db_path") == Path("backend/data/hll_vietnam_dev.sqlite3"),
+            "Player period stats CLI should pass the explicit --sqlite-path override through to refresh_player_period_stats.",
+        )
+    finally:
+        player_search_stats.refresh_player_period_stats = original_refresh_player_period_stats
+
+
+def build_player_period_stats_fixture():
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S%f")
+    db_path = Path(f"backend/data/hll_vietnam_player_period_stats_validation_{stamp}.sqlite3")
+    if db_path.exists():
+        try:
+            db_path.unlink()
+        except PermissionError:
+            pass
+    initialize_player_period_stats_storage(db_path=db_path)
+    connection = sqlite3.connect(db_path)
+    connection.row_factory = sqlite3.Row
+    with connection:
+        connection.execute(
+            """
+            INSERT INTO rcon_materialized_matches (
+                target_key, external_server_id, match_key, map_name, map_pretty_name, game_mode,
+                started_server_time, ended_server_time, started_at, ended_at,
+                allied_score, axis_score, winner, confidence_mode, source_basis
+            ) VALUES
+                ('comunidad-hispana-01', 'comunidad-hispana-01', 's1w1', 'stmarie', 'St. Marie Du Mont', 'warfare', 101, 102, '2026-06-08T18:00:00Z', '2026-06-08T19:00:00Z', 5, 3, 'allied', 'exact', ?),
+                ('comunidad-hispana-01', 'comunidad-hispana-01', 's1w2', 'foy', 'Foy', 'warfare', 103, 104, '2026-06-09T18:00:00Z', '2026-06-09T19:00:00Z', 2, 5, 'axis', 'exact', ?),
+                ('comunidad-hispana-01', 'comunidad-hispana-01', 's1w3', 'kursk', 'Kursk', 'warfare', 105, 106, '2026-06-10T18:00:00Z', '2026-06-10T19:00:00Z', 4, 1, 'allied', 'exact', ?),
+                ('comunidad-hispana-02', 'comunidad-hispana-02', 's2w1', 'hurtgen', 'Hurtgen Forest', 'warfare', 201, 202, '2026-06-08T20:00:00Z', '2026-06-08T21:00:00Z', 5, 0, 'allied', 'exact', ?),
+                ('comunidad-hispana-02', 'comunidad-hispana-02', 's2w2', 'kharkov', 'Kharkov', 'warfare', 203, 204, '2026-06-09T20:00:00Z', '2026-06-09T21:00:00Z', 3, 2, 'allied', 'exact', ?),
+                ('comunidad-hispana-02', 'comunidad-hispana-02', 's2w3', 'driel', 'Driel', 'warfare', 205, 206, '2026-06-10T20:00:00Z', '2026-06-10T21:00:00Z', 2, 1, 'allied', 'exact', ?),
+                ('comunidad-hispana-01', 'comunidad-hispana-01', 'old-year', 'omaha', 'Omaha Beach', 'warfare', 301, 302, '2025-12-15T18:00:00Z', '2025-12-15T19:00:00Z', 1, 0, 'allied', 'exact', ?)
+            """,
+            (
+                MATCH_RESULT_SOURCE,
+                MATCH_RESULT_SOURCE,
+                MATCH_RESULT_SOURCE,
+                MATCH_RESULT_SOURCE,
+                MATCH_RESULT_SOURCE,
+                MATCH_RESULT_SOURCE,
+                MATCH_RESULT_SOURCE,
+            ),
+        )
+        connection.execute(
+            """
+            INSERT INTO rcon_match_player_stats (
+                target_key, match_key, player_id, player_name, team,
+                kills, deaths, teamkills, deaths_by_teamkill,
+                weapons_json, death_by_weapons_json, most_killed_json, death_by_json,
+                first_seen_server_time, last_seen_server_time
+            ) VALUES
+                ('comunidad-hispana-01', 's1w1', 'regression-player', 'Old Regression', 'allied', 10, 4, 1, 0, '{}', '{}', '{}', '{}', 101, 102),
+                ('comunidad-hispana-01', 's1w2', 'regression-player', 'Regression Hero', 'axis', 9, 5, 0, 0, '{}', '{}', '{}', '{}', 103, 104),
+                ('comunidad-hispana-01', 's1w3', 'regression-player', 'Regression Hero', 'allied', 11, 3, 0, 0, '{}', '{}', '{}', '{}', 105, 106),
+                ('comunidad-hispana-02', 's2w1', 'regression-player', 'Regression Hero', 'allied', 4, 2, 0, 0, '{}', '{}', '{}', '{}', 201, 202),
+                ('comunidad-hispana-02', 's2w2', 'regression-player', 'Regression Hero', 'allied', 5, 4, 0, 0, '{}', '{}', '{}', '{}', 203, 204),
+                ('comunidad-hispana-02', 's2w3', 'regression-player', 'Regression Hero', 'allied', 3, 2, 0, 0, '{}', '{}', '{}', '{}', 205, 206),
+                ('comunidad-hispana-01', 'old-year', 'regression-player', 'Historic Regression', 'allied', 99, 1, 0, 0, '{}', '{}', '{}', '{}', 301, 302),
+                ('comunidad-hispana-01', 's1w1', 'other-player', 'Other Player', 'axis', 5, 7, 0, 0, '{}', '{}', '{}', '{}', 101, 102),
+                ('comunidad-hispana-01', 's1w2', 'other-player', 'Other Player', 'allied', 3, 6, 0, 0, '{}', '{}', '{}', '{}', 103, 104),
+                ('comunidad-hispana-01', 's1w3', 'other-player', 'Other Player', 'axis', 4, 8, 0, 0, '{}', '{}', '{}', '{}', 105, 106),
+                ('comunidad-hispana-02', 's2w1', 'other-player', 'Other Player', 'axis', 1, 4, 0, 0, '{}', '{}', '{}', '{}', 201, 202),
+                ('comunidad-hispana-02', 's2w2', 'other-player', 'Other Player', 'axis', 2, 3, 0, 0, '{}', '{}', '{}', '{}', 203, 204),
+                ('comunidad-hispana-02', 's2w3', 'other-player', 'Other Player', 'axis', 1, 2, 0, 0, '{}', '{}', '{}', '{}', 205, 206)
+            """
+        )
+    connection.close()
+    return db_path
+
+
+def validate_player_period_stats_refresh_and_read_model():
+    db_path = build_player_period_stats_fixture()
+    anchor = datetime(2026, 6, 10, 22, 0, 0, tzinfo=timezone.utc)
+    try:
+        payload = refresh_player_period_stats(
+            db_path=db_path,
+            now=anchor,
+        )
+        require(payload.get("status") == "ok", "Player period stats refresh should return ok.")
+        require(payload.get("period_types") == ["weekly", "monthly", "yearly"], "Player period stats refresh should report the supported periods.")
+        require_int(payload.get("total_rows"), "Player period stats refresh should report numeric total_rows.")
+
+        connection = sqlite3.connect(db_path)
+        connection.row_factory = sqlite3.Row
+        weekly_row = connection.execute(
+            """
+            SELECT *
+            FROM player_period_stats
+            WHERE period_type = 'weekly'
+              AND server_id = 'all-servers'
+              AND player_id = 'regression-player'
+            LIMIT 1
+            """
+        ).fetchone()
+        monthly_row = connection.execute(
+            """
+            SELECT *
+            FROM player_period_stats
+            WHERE period_type = 'monthly'
+              AND server_id = 'all-servers'
+              AND player_id = 'regression-player'
+            LIMIT 1
+            """
+        ).fetchone()
+        yearly_row = connection.execute(
+            """
+            SELECT *
+            FROM player_period_stats
+            WHERE period_type = 'yearly'
+              AND server_id = 'all-servers'
+              AND player_id = 'regression-player'
+            LIMIT 1
+            """
+        ).fetchone()
+        server_row = connection.execute(
+            """
+            SELECT *
+            FROM player_period_stats
+            WHERE period_type = 'weekly'
+              AND server_id = 'comunidad-hispana-01'
+              AND player_id = 'regression-player'
+            LIMIT 1
+            """
+        ).fetchone()
+        connection.close()
+
+        require(weekly_row is not None, "Player period stats should materialize a weekly all-servers row.")
+        require(monthly_row is not None, "Player period stats should materialize a monthly all-servers row.")
+        require(yearly_row is not None, "Player period stats should materialize a yearly all-servers row.")
+        require(server_row is not None, "Player period stats should materialize server-scoped rows.")
+        require(int(weekly_row["matches_considered"] or 0) == 6, "Weekly all-servers row should aggregate six closed matches.")
+        require(int(weekly_row["kills"] or 0) == 42, "Weekly all-servers row should aggregate weekly kills.")
+        require(int(weekly_row["deaths"] or 0) == 20, "Weekly all-servers row should aggregate weekly deaths.")
+        require(int(weekly_row["teamkills"] or 0) == 1, "Weekly all-servers row should aggregate weekly teamkills.")
+        require(int(weekly_row["ranking_position"] or 0) == 1, "Weekly all-servers row should persist ranking_position.")
+        require(str(weekly_row["window_kind"]) == "current-week", "Weekly all-servers row should preserve the selected window kind.")
+        require(str(monthly_row["window_kind"]) == "current-month", "Monthly all-servers row should preserve the selected window kind.")
+        require(int(yearly_row["kills"] or 0) == 42, "Yearly row should exclude prior-year matches.")
+        require(int(server_row["matches_considered"] or 0) == 3, "Server-scoped weekly row should aggregate only server-local matches.")
+
+        read_model_result = get_rcon_materialized_player_stats(
+            player_id="regression-player",
+            server_id="all",
+            timeframe="weekly",
+            db_path=db_path,
+        )
+        require(
+            (read_model_result.get("source") or {}).get("read_model") == "player-period-stats",
+            "Player profile should prefer player_period_stats when populated.",
+        )
+        require(
+            (read_model_result.get("source") or {}).get("fallback_used") is False,
+            "Player profile should not report fallback when player_period_stats is used.",
+        )
+        require(read_model_result.get("matches_considered") == 6, "Player period stats read path should preserve weekly matches_considered.")
+        require(read_model_result.get("kills") == 42, "Player period stats read path should preserve weekly kills.")
+        require((read_model_result.get("weekly_ranking") or {}).get("ranking_position") == 1, "Player profile weekly ranking should come from the read model.")
+        require((read_model_result.get("monthly_ranking") or {}).get("ranking_position") == 1, "Player profile monthly ranking should come from the read model.")
+    finally:
+        if db_path.exists():
+            try:
+                db_path.unlink()
+            except PermissionError:
+                pass
+
+
+def validate_player_period_stats_fallbacks():
+    db_path = build_player_period_stats_fixture()
+    try:
+        empty_result = get_rcon_materialized_player_stats(
+            player_id="regression-player",
+            server_id="all",
+            timeframe="weekly",
+            db_path=db_path,
+        )
+        require(
+            (empty_result.get("source") or {}).get("fallback_used") is True,
+            "Player profile should fall back to runtime when player_period_stats is empty.",
+        )
+        require(
+            (empty_result.get("source") or {}).get("fallback_reason") == "player-period-stats-empty",
+            "Player profile should expose an explicit empty read-model fallback reason.",
+        )
+
+        refresh_player_period_stats(
+            db_path=db_path,
+            now=datetime(2026, 6, 10, 22, 0, 0, tzinfo=timezone.utc),
+        )
+        connection = sqlite3.connect(db_path)
+        with connection:
+            connection.execute(
+                """
+                DELETE FROM player_period_stats
+                WHERE period_type = 'monthly'
+                  AND server_id = 'all-servers'
+                  AND player_id = 'regression-player'
+                """
+            )
+        connection.close()
+
+        missing_row_result = get_rcon_materialized_player_stats(
+            player_id="regression-player",
+            server_id="all",
+            timeframe="weekly",
+            db_path=db_path,
+        )
+        require(
+            (missing_row_result.get("source") or {}).get("fallback_used") is True,
+            "Player profile should fall back when one required player period row is missing.",
+        )
+        require(
+            (missing_row_result.get("source") or {}).get("fallback_reason") == "player-period-stats-player-missing",
+            "Player profile should expose an explicit missing-player-row fallback reason.",
+        )
+
+        original_read_model = player_search_stats._get_player_period_stats_read_model
+
+        def fake_get_player_period_stats_read_model(**kwargs):
+            return None, "player-period-stats-unavailable"
+
+        player_search_stats._get_player_period_stats_read_model = fake_get_player_period_stats_read_model
+        try:
+            unavailable_result = get_rcon_materialized_player_stats(
+                player_id="regression-player",
+                server_id="all",
+                timeframe="weekly",
+                db_path=db_path,
+            )
+        finally:
+            player_search_stats._get_player_period_stats_read_model = original_read_model
+
+        require(
+            (unavailable_result.get("source") or {}).get("fallback_used") is True,
+            "Player profile should preserve runtime fallback when the read model is unavailable.",
+        )
+        require(
+            (unavailable_result.get("source") or {}).get("fallback_reason") == "player-period-stats-unavailable",
+            "Player profile should expose an explicit unavailable read-model fallback reason.",
+        )
+    finally:
+        if db_path.exists():
+            try:
+                db_path.unlink()
+            except PermissionError:
+                pass
+
+
 def cleanup_snapshot_fixture(db_path):
     connection = sqlite3.connect(db_path)
     with connection:
@@ -870,6 +1200,10 @@ validate_postgres_player_search_index_schema_path()
 validate_player_search_index_cli_defaults()
 validate_player_search_index_refresh_and_search()
 validate_player_search_index_fallbacks()
+validate_postgres_player_period_stats_schema_path()
+validate_player_period_stats_cli_defaults()
+validate_player_period_stats_refresh_and_read_model()
+validate_player_period_stats_fallbacks()
 
 kd_metric_sql, _, _ = ranking_leaderboards._resolve_metric_sql("kd_ratio")
 require(
@@ -1241,21 +1575,24 @@ print(json.dumps({
         "stats-player-profile",
         "stats-annual-ranking",
         "global-ranking",
-    "postgres-ranking-derived-metric-sql",
-    "postgres-ranking-schema-path",
-    "ranking-snapshot-cli-postgres-default",
-    "ranking-snapshot-bulk-cli",
-    "ranking-snapshot-postgres-selection",
-    "ranking-snapshot-bulk-refresh",
-    "ranking-snapshot-bulk-partial-failure",
-    "ranking-snapshot-generator",
-    "ranking-snapshot-ready",
-    "ranking-snapshot-missing",
-],
+        "postgres-ranking-derived-metric-sql",
+        "postgres-ranking-schema-path",
+        "ranking-snapshot-cli-postgres-default",
+        "ranking-snapshot-bulk-cli",
+        "ranking-snapshot-postgres-selection",
+        "ranking-snapshot-bulk-refresh",
+        "ranking-snapshot-bulk-partial-failure",
+        "ranking-snapshot-generator",
+        "ranking-snapshot-ready",
+        "ranking-snapshot-missing",
+        "player-search-index",
+        "player-period-stats",
+    ],
     "annual_snapshot_status": annual_data.get("snapshot_status"),
     "global_ranking_annual_snapshot_status": annual_ranking_data.get("snapshot_status"),
     "search_items_count": len(search_data.get("items") or []),
     "profile_matches_considered": profile_data.get("matches_considered"),
+    "profile_read_model_source": (profile_data.get("source") or {}).get("read_model"),
 }))
 '@
 

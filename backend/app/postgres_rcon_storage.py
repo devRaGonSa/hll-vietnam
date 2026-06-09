@@ -275,6 +275,28 @@ CREATE TABLE IF NOT EXISTS player_search_index (
     UNIQUE(server_id, player_id)
 );
 
+CREATE TABLE IF NOT EXISTS player_period_stats (
+    id BIGSERIAL PRIMARY KEY,
+    period_type TEXT NOT NULL,
+    window_kind TEXT NOT NULL,
+    period_start TEXT NOT NULL,
+    period_end TEXT NOT NULL,
+    server_id TEXT NOT NULL,
+    player_id TEXT NOT NULL,
+    player_name TEXT NOT NULL,
+    matches_considered INTEGER NOT NULL DEFAULT 0,
+    kills INTEGER NOT NULL DEFAULT 0,
+    deaths INTEGER NOT NULL DEFAULT 0,
+    teamkills INTEGER NOT NULL DEFAULT 0,
+    ranking_position INTEGER,
+    kd_ratio DOUBLE PRECISION NOT NULL DEFAULT 0.0,
+    kills_per_match DOUBLE PRECISION NOT NULL DEFAULT 0.0,
+    first_seen_at TEXT,
+    last_seen_at TEXT,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(period_type, server_id, player_id)
+);
+
 CREATE TABLE IF NOT EXISTS rcon_scoreboard_match_candidates (
     id BIGSERIAL PRIMARY KEY,
     server_slug TEXT NOT NULL,
@@ -345,6 +367,14 @@ CREATE INDEX IF NOT EXISTS idx_player_search_index_last_seen
 ON player_search_index(server_id, last_seen_at DESC);
 CREATE INDEX IF NOT EXISTS idx_player_search_index_player
 ON player_search_index(server_id, player_id);
+CREATE INDEX IF NOT EXISTS idx_player_period_stats_player_period_server
+ON player_period_stats(player_id, period_type, server_id);
+CREATE INDEX IF NOT EXISTS idx_player_period_stats_server_period
+ON player_period_stats(server_id, period_type);
+CREATE INDEX IF NOT EXISTS idx_player_period_stats_last_seen
+ON player_period_stats(last_seen_at DESC);
+CREATE INDEX IF NOT EXISTS idx_player_period_stats_updated
+ON player_period_stats(updated_at DESC);
 CREATE INDEX IF NOT EXISTS idx_rcon_scoreboard_candidates_server_end
 ON rcon_scoreboard_match_candidates(server_slug, ended_at DESC, started_at DESC);
 """
