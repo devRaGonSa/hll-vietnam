@@ -16,6 +16,20 @@
     data-server-refresh-ms="300000"
   >
     <div class="page-shell">
+      <nav class="public-nav" aria-label="Navegación pública principal">
+        <a class="public-nav__link is-active" href="./index.html" aria-current="page">
+          Inicio
+        </a>
+        <a class="public-nav__link" href="./historico.html">
+          Histórico
+        </a>
+        <a class="public-nav__link" href="./stats.html">
+          Stats
+        </a>
+        <a class="public-nav__link" href="./ranking.html">
+          Ranking
+        </a>
+      </nav>
       <header class="hero">
         <div class="hero__overlay"></div>
         <div class="hero__content">
@@ -36,7 +50,7 @@
                 <span class="hero__title-accent">HLL</span>
               </h1>
               <p class="hero__text">
-                Centro de reunion para escuadras, eventos y acceso directo al
+                Centro de reunión para escuadras, eventos y acceso directo al
                 Discord oficial de la comunidad.
               </p>
               <div class="hero__actions">
@@ -47,15 +61,6 @@
                   rel="noreferrer"
                 >
                   Unirse al Discord
-                </a>
-                <a class="secondary-button" href="./stats.html">
-                  Stats
-                </a>
-                <a class="secondary-button" href="./ranking.html">
-                  Ranking
-                </a>
-                <a class="secondary-button" href="./historico.html">
-                  Ver historico propio
                 </a>
               </div>
             </div>
@@ -88,7 +93,7 @@
           <div class="panel__shell">
             <div class="panel__header panel__header--servers">
               <div>
-                <p class="eyebrow eyebrow--section">Servidores pÃºblicos</p>
+                <p class="eyebrow eyebrow--section">Servidores públicos</p>
                 <h2 id="servers-title">Estado actual de servidores</h2>
               </div>
               <p class="status-chip status-chip--fallback" id="servers-badge">
@@ -96,11 +101,11 @@
               </p>
             </div>
             <p class="panel__intro panel__intro--tight">
-              El panel muestra el ultimo estado disponible consultado de los servidores.
+              El panel muestra el último estado disponible consultado de los servidores.
             </p>
             <div class="panel__actions panel__actions--compact">
               <a class="secondary-button secondary-button--compact" href="./historico.html">
-                Abrir zona historico
+                Abrir zona histórico
               </a>
             </div>
             <div class="servers-grid" id="servers-list" aria-live="polite">
@@ -131,4 +136,5 @@
     <script src="./assets/js/main.js"></script>
   </body>
 </html>
+
 

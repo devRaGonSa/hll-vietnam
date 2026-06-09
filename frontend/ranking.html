@@ -1,44 +1,54 @@
-<!DOCTYPE html>
+﻿<!DOCTYPE html>
 <html lang="es">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta
       name="description"
-      content="Ranking global de HLL Vietnam con filtros por periodo, servidor y limite."
+      content="Ranking global de HLL Vietnam con filtros por periodo, servidor y l&iacute;mite."
     />
     <title>Ranking - HLL Vietnam</title>
     <link rel="stylesheet" href="./assets/css/styles.css" />
   </head>
   <body data-backend-base-url="http://127.0.0.1:8000">
     <div class="page-shell stats-page-shell">
+      <nav class="public-nav" aria-label="Navegaci&oacute;n p&uacute;blica principal">
+        <a class="public-nav__link" href="./index.html">
+          Inicio
+        </a>
+        <a class="public-nav__link" href="./historico.html">
+          Hist&oacute;rico
+        </a>
+        <a class="public-nav__link" href="./stats.html">
+          Stats
+        </a>
+        <a class="public-nav__link is-active" href="./ranking.html" aria-current="page">
+          Ranking
+        </a>
+      </nav>
       <header class="hero stats-hero ranking-hero">
         <div class="hero__overlay"></div>
         <div class="hero__content">
-          <div class="hero__copy">
-            <p class="eyebrow eyebrow--section">Seccion Ranking</p>
-            <h1 class="hero__title">
-              Ranking
-              <span class="hero__title-accent">Global</span>
-            </h1>
-            <p class="hero__text">
-              Consulta los lideres publicos por metrica con lectura RCON-first,
-              cambia periodo y servidor sin salir de la pagina, y deja Stats para
-              revisar el rendimiento de un jugador concreto.
-            </p>
-            <p class="status-chip status-chip--fallback" id="ranking-backend-state">
-              Comprobando disponibilidad del backend
-            </p>
-            <div class="hero__actions stats__hero-actions">
-              <a class="secondary-button secondary-button--ghost" href="./index.html">
-                Volver al inicio
-              </a>
-              <a class="secondary-button secondary-button--compact" href="./stats.html">
-                Stats
-              </a>
-              <a class="secondary-button secondary-button--compact" href="./historico.html">
-                Historico
-              </a>
+          <div class="hero__brand">
+            <div class="logo-frame">
+              <img
+                src="./assets/img/logo.png"
+                alt="Logo oficial de la comunidad HLL Vietnam"
+                class="logo-frame__image"
+                width="1024"
+                height="1044"
+                decoding="async"
+              />
+            </div>
+            <div class="hero__copy">
+              <p class="eyebrow eyebrow--section">Secci&oacute;n Ranking</p>
+              <h1 class="hero__title">
+                Ranking
+                <span class="hero__title-accent">Global</span>
+              </h1>
+              <p class="hero__text">
+                Consulta los l&iacute;deres p&uacute;blicos de la comunidad, cambia de periodo y servidor sin salir de la p&aacute;gina y revisa qui&eacute;n destaca en cada ventana.
+              </p>
             </div>
           </div>
         </div>
@@ -49,11 +59,10 @@
           <div class="panel__shell">
             <div class="panel__header">
               <p class="eyebrow eyebrow--section">Filtros de lectura</p>
-              <h2>Top publico por ventana</h2>
+              <h2>Top p&uacute;blico por ventana</h2>
             </div>
             <p class="panel__intro panel__intro--tight">
-              El ranking expone solo la lectura publica de lideres. Para busqueda
-              individual usa la seccion Stats.
+              El ranking expone la lectura p&uacute;blica de l&iacute;deres. Para b&uacute;squeda individual usa la secci&oacute;n Stats.
             </p>
             <form class="ranking-form" id="ranking-form">
               <div class="ranking-form__grid">
@@ -74,7 +83,7 @@
                   </select>
                 </label>
                 <label class="stats-search-form__label" for="ranking-metric">
-                  Metrica
+                  M&eacute;trica
                   <select class="ranking-select" id="ranking-metric" name="metric">
                     <option value="kills">Kills totales</option>
                     <option value="deaths">Deaths</option>
@@ -85,7 +94,7 @@
                   </select>
                 </label>
                 <label class="stats-search-form__label" for="ranking-limit">
-                  Limite
+                  L&iacute;mite
                   <select class="ranking-select" id="ranking-limit" name="limit">
                     <option value="5">Top 5</option>
                     <option value="10">Top 10</option>
@@ -95,7 +104,7 @@
                   </select>
                 </label>
                 <label class="stats-search-form__label" for="ranking-year" id="ranking-year-wrap" hidden>
-                  Ano
+                  A&ntilde;o
                   <input
                     class="stats-search-input"
                     id="ranking-year"
@@ -109,7 +118,7 @@
                 </label>
               </div>
               <p class="ranking-form__note" id="ranking-filter-note">
-                Ranking compara top globales. Para buscar un jugador concreto usa Stats.
+                Consulta l&iacute;deres p&uacute;blicos y cambia de periodo o servidor sin salir de la p&aacute;gina.
               </p>
               <div class="hero__actions ranking-form__actions">
                 <button class="discord-button" type="submit">Actualizar ranking</button>
@@ -159,3 +168,4 @@
     <script src="./assets/js/ranking.js"></script>
   </body>
 </html>
+

@@ -1,43 +1,54 @@
-<!DOCTYPE html>
+﻿<!DOCTYPE html>
 <html lang="es">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta
       name="description"
-      content="Consulta estadisticas personales de jugadores en el panel Stats de HLL Vietnam."
+      content="Consulta estad&iacute;sticas personales de jugadores en el panel Stats de HLL Vietnam."
     />
     <title>Stats - HLL Vietnam</title>
     <link rel="stylesheet" href="./assets/css/styles.css" />
   </head>
   <body data-backend-base-url="http://127.0.0.1:8000">
     <div class="page-shell stats-page-shell">
+      <nav class="public-nav" aria-label="Navegaci&oacute;n p&uacute;blica principal">
+        <a class="public-nav__link" href="./index.html">
+          Inicio
+        </a>
+        <a class="public-nav__link" href="./historico.html">
+          Hist&oacute;rico
+        </a>
+        <a class="public-nav__link is-active" href="./stats.html" aria-current="page">
+          Stats
+        </a>
+        <a class="public-nav__link" href="./ranking.html">
+          Ranking
+        </a>
+      </nav>
       <header class="hero stats-hero">
         <div class="hero__overlay"></div>
         <div class="hero__content">
-          <div class="hero__copy">
-            <p class="eyebrow eyebrow--section">Seccion Stats</p>
-            <h1 class="hero__title">
-              Estadisticas
-              <span class="hero__title-accent">Personales</span>
-            </h1>
-            <p class="hero__text">
-              Busca un jugador por nombre o ID y revisa sus resultados semanales, mensuales
-              y ranking anual con base en datos materializados.
-            </p>
-            <p class="status-chip status-chip--fallback" id="stats-backend-state">
-              Comprobando disponibilidad del backend
-            </p>
-            <div class="hero__actions stats__hero-actions">
-              <a class="secondary-button secondary-button--ghost" href="./index.html">
-                Volver al inicio
-              </a>
-              <a class="secondary-button secondary-button--compact" href="./ranking.html">
-                Ranking
-              </a>
-              <a class="secondary-button secondary-button--compact" href="./historico.html">
-                Historico
-              </a>
+          <div class="hero__brand">
+            <div class="logo-frame">
+              <img
+                src="./assets/img/logo.png"
+                alt="Logo oficial de la comunidad HLL Vietnam"
+                class="logo-frame__image"
+                width="1024"
+                height="1044"
+                decoding="async"
+              />
+            </div>
+            <div class="hero__copy">
+              <p class="eyebrow eyebrow--section">Secci&oacute;n Stats</p>
+              <h1 class="hero__title">
+                Estad&iacute;sticas
+                <span class="hero__title-accent">Personales</span>
+              </h1>
+              <p class="hero__text">
+                Busca un jugador por nombre o ID y revisa sus resultados semanales, mensuales y ranking anual.
+              </p>
             </div>
           </div>
         </div>
@@ -51,7 +62,7 @@
               <h2>Buscar por nombre o ID</h2>
             </div>
             <p class="panel__intro panel__intro--tight" id="stats-search-help">
-              Usa al menos 1 caracter para buscar. Al seleccionar un jugador se cargan sus
+              Usa al menos 1 car&aacute;cter para buscar. Al seleccionar un jugador se cargar&aacute;n sus
               stats y ranking semanal y mensual. El ranking anual se consulta por separado.
             </p>
             <form class="stats-search-form" id="stats-search-form">
@@ -66,7 +77,7 @@
                   name="query"
                   placeholder="Ej: Rambo o 76561198000000000"
                   autocomplete="off"
-                  aria-label="Texto de busqueda de jugadores"
+                  aria-label="Texto de b&uacute;squeda de jugadores"
                 />
                 <button class="discord-button" type="submit" aria-label="Buscar jugador por nombre o ID">
                   Buscar jugador
@@ -118,7 +129,7 @@
               El ranking anual usa snapshots pre-computados para evitar recalcular toda la temporada en cada consulta.
             </p>
             <form class="stats-annual-form" id="stats-annual-form">
-              <label class="stats-search-form__label" for="stats-annual-year">Ano</label>
+              <label class="stats-search-form__label" for="stats-annual-year">A&ntilde;o</label>
               <div class="stats-search-form__fields">
                 <input
                   class="stats-search-input"
@@ -126,7 +137,7 @@
                   type="number"
                   min="2019"
                   value=""
-                  aria-label="Ano del ranking anual"
+                  aria-label="A&ntilde;o del ranking anual"
                   aria-describedby="stats-annual-state"
                 />
                 <button class="discord-button" type="submit" aria-label="Cargar ranking anual">
@@ -135,7 +146,7 @@
               </div>
             </form>
             <p class="stats-state stats-state--neutral" id="stats-annual-state" role="status" aria-live="polite">
-              Esperando ano para cargar el ranking anual (Top 20 por kills).
+              Esperando a&ntilde;o para cargar el ranking anual (Top 20 por kills).
             </p>
             <div class="stats-annual-table-wrap" id="stats-annual-content" aria-live="polite"></div>
           </div>
@@ -147,3 +158,4 @@
     <script src="./assets/js/stats.js"></script>
   </body>
 </html>
+

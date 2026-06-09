@@ -1,4 +1,4 @@
-:root {
+﻿:root {
   --bg: #0f120d;
   --bg-deep: #090b08;
   --bg-elevated: rgba(27, 33, 24, 0.92);
@@ -83,6 +83,58 @@ a {
   background: radial-gradient(circle, rgba(0, 0, 0, 0.36), transparent 72%);
   filter: blur(18px);
   pointer-events: none;
+}
+
+.public-nav {
+  width: min(var(--page-shell-width), calc(100vw - (var(--page-shell-gutter) * 2)));
+  margin: 0 auto 16px;
+  padding: 10px;
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+  border: 1px solid var(--border);
+  border-radius: 22px;
+  background:
+    linear-gradient(180deg, rgba(24, 30, 22, 0.9), rgba(10, 13, 9, 0.96)),
+    radial-gradient(circle at top center, rgba(183, 201, 125, 0.08), transparent 40%);
+  box-shadow: var(--shadow-soft);
+}
+
+.public-nav__link {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 50px;
+  padding: 0 18px;
+  border: 1px solid rgba(159, 168, 141, 0.22);
+  border-radius: 999px;
+  background: linear-gradient(180deg, rgba(18, 23, 16, 0.88), rgba(10, 12, 9, 0.96));
+  color: var(--text-soft);
+  font-size: 0.82rem;
+  font-weight: 800;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  transition:
+    transform 160ms ease,
+    border-color 160ms ease,
+    background 160ms ease,
+    color 160ms ease,
+    box-shadow 160ms ease;
+}
+
+.public-nav__link:hover,
+.public-nav__link:focus-visible {
+  transform: translateY(-1px);
+  border-color: rgba(210, 182, 118, 0.48);
+  background: linear-gradient(180deg, rgba(43, 50, 36, 0.94), rgba(16, 20, 14, 0.98));
+  color: var(--text);
+}
+
+.public-nav__link.is-active {
+  border-color: rgba(183, 201, 125, 0.42);
+  background: linear-gradient(180deg, rgba(183, 201, 125, 0.22), rgba(89, 101, 58, 0.28));
+  color: var(--text);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04);
 }
 
 .hero {
@@ -920,6 +972,11 @@ h2 {
   margin-top: 8px;
 }
 
+.stats-hero .hero__brand,
+.ranking-hero .hero__brand {
+  align-items: center;
+}
+
 .stats-search-form {
   margin: 0 0 14px;
   display: grid;
@@ -1401,6 +1458,10 @@ h2 {
 }
 
 @media (max-width: 760px) {
+  .public-nav {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
   .servers-grid,
   .servers-grid--section,
   .clans-grid {
@@ -1428,6 +1489,18 @@ h2 {
 
   .hero__text {
     font-size: 0.98rem;
+  }
+
+  .public-nav {
+    padding: 8px;
+    gap: 8px;
+  }
+
+  .public-nav__link {
+    min-height: 46px;
+    padding-inline: 12px;
+    font-size: 0.74rem;
+    letter-spacing: 0.08em;
   }
 
   .stats-search-form__fields {
@@ -1475,7 +1548,8 @@ h2 {
     width: 100%;
   }
 
-  .secondary-button {
+  .secondary-button,
+  .public-nav__link {
     width: 100%;
   }
 
@@ -1541,3 +1615,4 @@ h2 {
     grid-template-columns: 1fr;
   }
 }
+

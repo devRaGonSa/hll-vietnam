@@ -1,4 +1,4 @@
-document.addEventListener("DOMContentLoaded", () => {
+﻿document.addEventListener("DOMContentLoaded", () => {
   const backendBaseUrl = document.body.dataset.backendBaseUrl || "http://127.0.0.1:8000";
   const form = document.getElementById("ranking-form");
   const timeframeSelect = document.getElementById("ranking-timeframe");
@@ -185,7 +185,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
     if (isAnnual) {
       setFilterNote(
-        "El ranking anual sigue limitado a kills porque solo esa metrica tiene lectura snapshot segura.",
+        "El ranking anual sigue limitado a kills porque solo esa m\u00e9trica tiene lectura snapshot segura.",
         "warning",
       );
       return;
@@ -272,7 +272,7 @@ document.addEventListener("DOMContentLoaded", () => {
     if (!isBackendOnline) {
       setRankingState("error", "Backend no disponible. El ranking queda en estado offline.");
       renderEmptyState(
-        "No fue posible contactar el backend. Reintenta cuando el servicio vuelva a estar operativo.",
+        "No fue posible contactar el backend. Reintenta cuando el servicio vuelva a estar disponible.",
       );
       return;
     }
@@ -281,8 +281,8 @@ document.addEventListener("DOMContentLoaded", () => {
     if (timeframe === "annual") {
       year = Number.parseInt(String(yearInput?.value || "").trim(), 10);
       if (!Number.isFinite(year) || year <= 0) {
-        setRankingState("error", "El ano solicitado no es valido.");
-        renderEmptyState("Corrige el ano y vuelve a consultar el ranking anual.");
+        setRankingState("error", "El a\u00f1o solicitado no es v\u00e1lido.");
+        renderEmptyState("Corrige el a\u00f1o y vuelve a consultar el ranking anual.");
         return;
       }
     }
@@ -322,7 +322,7 @@ document.addEventListener("DOMContentLoaded", () => {
       setBackendState("Backend no disponible", false);
       setRankingState("error", "Error controlado al cargar el ranking.");
       renderEmptyState(
-        "La lectura del ranking fallo en este intento. Revisa el backend o actualiza la pagina.",
+        "La lectura del ranking fall\u00f3 en este intento. Revisa el backend o actualiza la p\u00e1gina.",
       );
     }
   }
@@ -343,20 +343,20 @@ document.addEventListener("DOMContentLoaded", () => {
     ) {
       setRankingState("warning", "El ranking anual solo admite kills por ahora.");
       renderEmptyState(
-        "Las metricas extra estan disponibles en semanal y mensual. El ranking anual sigue limitado a kills mientras no existan snapshots seguros adicionales.",
+        "Las m\u00e9tricas extra est\u00e1n disponibles en semanal y mensual. El ranking anual sigue limitado a kills mientras no existan snapshots seguros adicionales.",
       );
       return;
     }
     if (statusCode === 400 && normalizedMessage.includes("metric")) {
-      setRankingState("warning", "La metrica solicitada no esta soportada.");
+      setRankingState("warning", "La m\u00e9trica solicitada no est\u00e1 soportada.");
       renderEmptyState(
         "Usa kills, deaths, teamkills, partidas jugadas, K/D o kills por partida.",
       );
       return;
     }
     if (statusCode === 400 && normalizedMessage.includes("year")) {
-      setRankingState("warning", "El ranking anual requiere un ano valido.");
-      renderEmptyState("Define un ano valido para consultar la lectura anual.");
+      setRankingState("warning", "El ranking anual requiere un a\u00f1o v\u00e1lido.");
+      renderEmptyState("Define un a\u00f1o v\u00e1lido para consultar la lectura anual.");
       return;
     }
     if (statusCode === 400 && normalizedMessage.includes("timeframe")) {
@@ -398,7 +398,7 @@ document.addEventListener("DOMContentLoaded", () => {
     if (timeframe === "annual" && snapshotStatus === "missing") {
       setRankingState("warning", "El snapshot anual solicitado aun no fue generado.");
       renderEmptyState(
-        "No existe snapshot anual para el ano y servidor elegidos. Este estado es informativo y no implica caida del backend.",
+        "No existe snapshot anual para el a\u00f1o y servidor elegidos. Este estado es informativo y no implica ca\u00edda del backend.",
       );
       return;
     }
@@ -441,10 +441,9 @@ document.addEventListener("DOMContentLoaded", () => {
     const cards = [
       { label: "Periodo activo", value: labelForTimeframe(timeframe), active: true },
       { label: "Servidor activo", value: labelForServer(data.server_id), active: true },
-      { label: "Metrica activa", value: labelForMetric(metric), active: true },
-      { label: "Limite", value: `Top ${safeInt(data.limit, safeInt(defaultLimit, 20))}` },
+      { label: "M\u00e9trica activa", value: labelForMetric(metric), active: true },
+      { label: "L\u00edmite", value: `Top ${safeInt(data.limit, safeInt(defaultLimit, 20))}` },
       { label: "Ventana", value: labelForWindow(data) },
-      { label: "Fuente", value: String(source.read_model || "No disponible") },
       { label: "Actualizado", value: formatDateTime(source.generated_at) },
     ];
 
@@ -490,7 +489,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
   function labelForWindow(data) {
     if (String(data.timeframe || "") === "annual") {
-      return `Ano ${safeInt(data.year, currentYear)}`;
+      return `A\u00f1o ${safeInt(data.year, currentYear)}`;
     }
     return String(data.window_label || data.window_kind || "Ventana activa");
   }
@@ -586,3 +585,4 @@ document.addEventListener("DOMContentLoaded", () => {
       .replaceAll("'", "&#39;");
   }
 });
+

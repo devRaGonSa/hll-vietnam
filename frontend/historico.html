@@ -1,30 +1,35 @@
-<!DOCTYPE html>
+﻿<!DOCTYPE html>
 <html lang="es">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta
       name="description"
-      content="Historico propio de HLL Vietnam con ranking semanal y partidas recientes por servidor."
+      content="Hist&oacute;rico propio de HLL Vietnam con ranking semanal y partidas recientes por servidor."
     />
-    <title>Historico - HLL Vietnam</title>
+    <title>Hist&oacute;rico - HLL Vietnam</title>
     <link rel="stylesheet" href="./assets/css/styles.css" />
     <link rel="stylesheet" href="./assets/css/historico.css" />
   </head>
   <body data-backend-base-url="http://127.0.0.1:8000">
     <div class="page-shell historical-shell">
+      <nav class="public-nav" aria-label="Navegaci&oacute;n p&uacute;blica principal">
+        <a class="public-nav__link" href="./index.html">
+          Inicio
+        </a>
+        <a class="public-nav__link is-active" href="./historico.html" aria-current="page">
+          Hist&oacute;rico
+        </a>
+        <a class="public-nav__link" href="./stats.html">
+          Stats
+        </a>
+        <a class="public-nav__link" href="./ranking.html">
+          Ranking
+        </a>
+      </nav>
       <header class="hero historical-hero">
         <div class="hero__overlay"></div>
         <div class="hero__content historical-hero__content">
-          <div class="historical-hero__topline">
-            <a class="secondary-button secondary-button--ghost" href="./index.html">
-              VOLVER INICIO
-            </a>
-            <a class="secondary-button secondary-button--ghost" href="./stats.html">
-              STATS
-            </a>
-            <p class="eyebrow">Historico propio</p>
-          </div>
           <div class="historical-hero__layout historical-hero__layout--registry">
             <div class="logo-frame historical-logo-frame">
               <img
@@ -38,6 +43,7 @@
             </div>
             <div class="historical-hero__copy">
               <div>
+                <p class="eyebrow eyebrow--section">Hist&oacute;rico propio</p>
                 <h1 class="historical-hero__title">
                   Registro de la
                   <span class="hero__title-accent">Comunidad Hispana</span>
@@ -47,8 +53,8 @@
                   de nuestros servidores.
                 </p>
               </div>
-              <div class="historical-selector" aria-label="Seleccion de servidor">
-			  <button
+              <div class="historical-selector" aria-label="Selecci&oacute;n de servidor">
+                <button
                   class="historical-selector__button is-active"
                   type="button"
                   data-server-slug="all-servers"
@@ -96,7 +102,7 @@
             <div class="historical-summary-grid" id="historical-summary">
               <article class="historical-stat-card">
                 <p>Estado</p>
-                <strong>Cargando datos historicos</strong>
+                <strong>Cargando datos hist&oacute;ricos</strong>
               </article>
             </div>
           </div>
@@ -106,7 +112,7 @@
           <div class="panel__shell">
               <div class="panel__header historical-panel__header">
                 <div>
-                  <p class="eyebrow eyebrow--section">Rankings historicos</p>
+                  <p class="eyebrow eyebrow--section">Rankings hist&oacute;ricos</p>
                   <h2 id="weekly-ranking-title">Ranking del alcance activo</h2>
                   <p class="historical-panel__note" id="weekly-window-note">
                     Cargando rango del ranking...
@@ -144,7 +150,7 @@
               class="historical-tabs"
               id="weekly-leaderboard-tabs"
               role="tablist"
-              aria-label="Metricas del ranking"
+              aria-label="M&eacute;tricas del ranking"
             >
               <button
                 class="historical-tab is-active"
@@ -207,7 +213,7 @@
               <div class="panel__header historical-panel__header">
                 <div>
                   <p class="eyebrow eyebrow--section">Partidas recientes</p>
-                  <h2 id="recent-matches-title">Ultimas partidas registradas</h2>
+                  <h2 id="recent-matches-title">&Uacute;ltimas partidas registradas</h2>
                   <p class="historical-panel__note" id="recent-matches-note">
                     Lista de partidas ya registradas.
                   </p>
@@ -230,3 +236,4 @@
     <script src="./assets/js/historico-recent-live.js"></script>
   </body>
 </html>
+

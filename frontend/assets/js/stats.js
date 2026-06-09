@@ -1,4 +1,4 @@
-document.addEventListener("DOMContentLoaded", () => {
+﻿document.addEventListener("DOMContentLoaded", () => {
   const backendBaseUrl = document.body.dataset.backendBaseUrl || "http://127.0.0.1:8000";
   const searchForm = document.getElementById("stats-search-form");
   const searchInput = document.getElementById("stats-search-input");
@@ -39,22 +39,22 @@ document.addEventListener("DOMContentLoaded", () => {
       "Error al buscar jugadores. Verifica backend y reintenta.",
     searchReadyPrefix: "Se encontraron ",
     searchReadySuffix:
-      " jugador(es). Selecciona uno para ver sus estadisticas.",
+      " jugador(es). Selecciona uno para ver sus estad\u00edsticas.",
     searchShortQueryHelp:
-      "Usa al menos 1 caracter para iniciar la busqueda.",
-    profileLoading: "Cargando estadisticas personales...",
+      "Usa al menos 1 car\u00e1cter para iniciar la b\u00fasqueda.",
+    profileLoading: "Cargando estad\u00edsticas personales...",
     profileNoStats:
-      "Jugador sin estadisticas suficientes para mostrar datos personales.",
-    profileError: "No fue posible cargar las estadisticas del jugador.",
+      "Jugador sin estad\u00edsticas suficientes para mostrar datos personales.",
+    profileError: "No fue posible cargar las estad\u00edsticas del jugador.",
     annualLoading: "Cargando ranking anual...",
     annualMissing:
-      "No hay snapshot generado para el ano solicitado. Mostrara estado missing hasta que exista.",
+      "No hay snapshot generado para el a\u00f1o solicitado. Mostrar\u00e1 estado pending hasta que exista.",
     annualReadyEmpty:
-      "Snapshot anual listo pero sin datos para el ano y servidor seleccionado.",
+      "Ranking anual listo, pero sin datos para el a\u00f1o y servidor seleccionados.",
     annualUnsupportedMetric:
-      "La metrica anual solicitada no esta soportada en V1.",
+      "La m\u00e9trica anual solicitada no est\u00e1 soportada en V1.",
     annualMetricInvalid:
-      "Parametro de ranking anual invalido. Usa metric=kills en V1.",
+      "Par\u00e1metro de ranking anual inv\u00e1lido. Usa metric=kills en V1.",
     annualReadyPrefix: "Ranking anual listo para",
     weeklyPlaceholder:
       "Sin datos semanales. El ranking semanal se actualiza al cargar un jugador.",
@@ -69,7 +69,7 @@ document.addEventListener("DOMContentLoaded", () => {
     monthlyWindowUnavailableSummary:
       "Resumen mensual no disponible temporalmente.",
     profileReadyTitle: "Perfil personal",
-    profileEmptyTitle: "Selecciona un jugador para ver sus estadisticas.",
+    profileEmptyTitle: "Selecciona un jugador para ver sus estad\u00edsticas.",
     partialProfileLoadWarning:
       "Algunos bloques de ranking no se cargaron; se mantienen los disponibles.",
   };
@@ -78,8 +78,8 @@ document.addEventListener("DOMContentLoaded", () => {
 
   if (searchHelpNode) {
     searchHelpNode.textContent =
-      "Usa el buscador para encontrar un jugador. Al seleccionar uno veras resumen semanal y mensual. " +
-      "El ranking anual se consulta por separado con el ano indicado.";
+      "Usa el buscador para encontrar un jugador. Al seleccionar uno ver\u00e1s resumen semanal y mensual. " +
+      "El ranking anual se consulta por separado con el a\u00f1o indicado.";
   }
 
   setBackendState(messages.backendChecking, false);
@@ -176,7 +176,7 @@ document.addEventListener("DOMContentLoaded", () => {
       setBackendState(messages.backendOnline, true);
       setAnnualState(
         "neutral",
-        "Backend disponible. Selecciona un ano para cargar el ranking anual (kills).",
+        "Backend disponible. Selecciona un a\u00f1o para cargar el ranking anual (kills).",
       );
       void loadAnnualRanking();
     } catch (error) {
@@ -252,7 +252,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
     const year = resolveAnnualYear();
     if (year === null) {
-      setAnnualState("error", "El ano ingresado no es valido.");
+      setAnnualState("error", "El a\u00f1o ingresado no es v\u00e1lido.");
       return;
     }
 
@@ -345,7 +345,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
     setAnnualState(
       "neutral",
-      `${messages.annualReadyPrefix} ${serverId}, ano ${year}, metrica ${metric}`,
+      `${messages.annualReadyPrefix} ${serverId}, a\u00f1o ${year}, m\u00e9trica ${metric}`,
     );
 
     annualContentNode.innerHTML = `
@@ -353,7 +353,7 @@ document.addEventListener("DOMContentLoaded", () => {
         <p class="stats-summary-title">Top ${limit} anual</p>
         <div class="stats-annual-meta">
           <p><strong>Servidor:</strong> ${escapeHtml(serverId)}</p>
-          <p><strong>Metrica:</strong> ${escapeHtml(metric)}</p>
+          <p><strong>M\u00e9trica:</strong> ${escapeHtml(metric)}</p>
           <p><strong>Partidas fuente:</strong> ${safeInt(sourceMatches, 0)}</p>
           <p><strong>Actualizado:</strong> ${escapeHtml(generatedAt || "No disponible")}</p>
         </div>
@@ -755,8 +755,8 @@ document.addEventListener("DOMContentLoaded", () => {
     const metric = escapeHtml(String(ranking.metric || annualMetric));
 
     return `
-      <p><strong>Posicion:</strong> ${rank}</p>
-      <p><strong>Metric:</strong> ${metric}</p>
+      <p><strong>Posici\u00f3n:</strong> ${rank}</p>
+      <p><strong>M\u00e9trica:</strong> ${metric}</p>
       <p>${escapeHtml(formatWindowRange(ranking))}</p>
     `;
   }
@@ -783,7 +783,7 @@ document.addEventListener("DOMContentLoaded", () => {
     if (Number.isFinite(safeParseNumber(ranking.ranking_position))) {
       return {
         tone: "ok",
-        title: `Posicion #${safeInt(ranking.ranking_position, 0)}`,
+        title: `Posici\u00f3n #${safeInt(ranking.ranking_position, 0)}`,
         detail: `Jugador posicionado en el ranking ${label} activo por kills.`,
       };
     }
@@ -902,3 +902,4 @@ document.addEventListener("DOMContentLoaded", () => {
       .replaceAll("'", "&#39;");
   }
 });
+
