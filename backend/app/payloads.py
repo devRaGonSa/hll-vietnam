@@ -1075,23 +1075,11 @@ def build_recent_historical_matches_payload(
     server_slug: str | None = None,
 ) -> dict[str, object]:
     """Return recent historical matches from persisted CRCON data."""
-    if server_slug == ALL_SERVERS_SLUG:
-        snapshot_payload = build_recent_historical_matches_snapshot_payload(
+    if server_slug:
+        return _build_recent_historical_matches_legacy_snapshot_payload(
             limit=limit,
             server_slug=server_slug,
         )
-        data = dict(snapshot_payload.get("data") or {})
-        data.update(
-            {
-                "title": "Partidas recientes por servidor",
-                "context": "historical-recent-matches",
-                "source": "historical-precomputed-snapshots",
-                "historical_data_source": get_historical_data_source_kind(),
-                "coverage_basis": "precomputed-recent-matches-snapshot",
-                "legacy_endpoint_policy": "snapshot-read-only-fast-path",
-            }
-        )
-        return {"status": snapshot_payload.get("status", "ok"), "data": data}
 
     if get_historical_data_source_kind() == "rcon":
         data_source = get_rcon_historical_read_model()
@@ -1213,6 +1201,29 @@ def build_recent_historical_matches_payload(
             "items": items,
         },
     }
+
+
+def _build_recent_historical_matches_legacy_snapshot_payload(
+    *,
+    limit: int,
+    server_slug: str,
+) -> dict[str, object]:
+    snapshot_payload = build_recent_historical_matches_snapshot_payload(
+        limit=limit,
+        server_slug=server_slug,
+    )
+    data = dict(snapshot_payload.get("data") or {})
+    data.update(
+        {
+            "title": "Partidas recientes por servidor",
+            "context": "historical-recent-matches",
+            "source": "historical-precomputed-snapshots",
+            "historical_data_source": get_historical_data_source_kind(),
+            "coverage_basis": "precomputed-recent-matches-snapshot",
+            "legacy_endpoint_policy": "snapshot-read-only-fast-path",
+        }
+    )
+    return {"status": snapshot_payload.get("status", "ok"), "data": data}
 
 
 def build_historical_match_detail_payload(

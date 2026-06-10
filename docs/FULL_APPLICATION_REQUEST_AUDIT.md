@@ -279,6 +279,54 @@ Comando de validacion de produccion tras redeploy:
 python .\scripts\audit_public_requests.py --base-url https://comunidadhll.devzamode.es --timeout 30 --output tmp\full_audit_after_task230.json
 ```
 
+## Estado post-fix TASK-231
+
+Fecha: 2026-06-10  
+Alcance aplicado: dos `CRITICAL` restantes de recent-matches legacy por servidor tras `TASK-230`.
+
+URLs afectadas:
+
+- `GET /api/historical/recent-matches?server=comunidad-hispana-01&limit=20`
+- `GET /api/historical/recent-matches?server=comunidad-hispana-02&limit=20`
+
+Evidencia de produccion previa al fix:
+
+- `historical-recent-matches-comunidad-hispana-01`: timeout `30032.24 ms`.
+- `historical-recent-matches-comunidad-hispana-02`: timeout `30027.15 ms`.
+- `snapshot-recent-matches-comunidad-hispana-01`: `77.50 ms`, OK.
+- `snapshot-recent-matches-comunidad-hispana-02`: `51.11 ms`, OK.
+- `historical-recent-matches-all-servers`: `50.66 ms`, OK.
+
+Causa confirmada:
+
+- `scripts/audit_public_requests.py` etiqueta esas rutas como `historical-recent-matches-comunidad-hispana-01` y `historical-recent-matches-comunidad-hispana-02`.
+- `backend/app/routes.py` las mapea a `build_recent_historical_matches_payload(limit=20, server_slug=...)`.
+- Tras `TASK-229`, solo `server=all-servers` tenia snapshot fast-path.
+- CH01 y CH02 seguian entrando en `get_rcon_historical_read_model().list_recent_activity(...)`.
+- El read model llama a `list_rcon_historical_recent_activity()`, que intenta materialized RCON/AdminLog (`list_materialized_rcon_matches`) antes del fallback por ventanas.
+- Si RCON no cubria o no alcanzaba el `limit`, el builder podia intentar completar con `list_recent_historical_matches()` desde storage legacy CRCON/PostgreSQL display.
+
+Cambios aplicados:
+
+- `build_recent_historical_matches_payload()` usa snapshot fast-path para cualquier `server_slug` explicito.
+- CH01, CH02 y `all-servers` quedan como wrappers legacy sobre `build_recent_historical_matches_snapshot_payload()`.
+- El contrato conserva `context: historical-recent-matches`, `items`, `limit`, `server_slug`, `historical_data_source`, `coverage_basis` y `legacy_endpoint_policy: snapshot-read-only-fast-path`.
+- Si falta snapshot, responde JSON controlado con `items: []`, sin RCON live, sin scoreboard externo, sin `initialize_*` y sin fallback runtime pesado.
+
+Estado esperado tras redeploy:
+
+| Endpoint | Estado TASK-231 en codigo | Severidad esperada tras deploy |
+| --- | --- | --- |
+| `/api/historical/recent-matches?server=comunidad-hispana-01&limit=20` | Wrapper legacy sobre snapshot read-only | OK o WARNING si snapshot missing, sin timeout |
+| `/api/historical/recent-matches?server=comunidad-hispana-02&limit=20` | Wrapper legacy sobre snapshot read-only | OK o WARNING si snapshot missing, sin timeout |
+| `/api/historical/recent-matches?server=all-servers&limit=20` | Wrapper legacy sobre snapshot read-only | OK o WARNING si snapshot missing, sin empeorar |
+
+Comando de validacion de produccion tras redeploy:
+
+```powershell
+python .\scripts\audit_public_requests.py --base-url https://comunidadhll.devzamode.es --timeout 30 --output tmp\full_audit_after_task231.json
+```
+
 ## Evidencia ejecutada
 
 Comandos ejecutados:
@@ -406,7 +454,7 @@ La tabla usa rangos cuando una ruta se lanzo con varias combinaciones representa
 | M026 | backend-api | `backend/app/routes.py` | snapshot monthly MVP V2 | GET | `/api/historical/snapshots/monthly-mvp-v2` | `limit`, `server` | `/api/historical/snapshots/monthly-mvp-v2?server=all-servers&limit=10` | `build_monthly_mvp_v2_snapshot_payload` | displayed snapshots | snapshot | si en Postgres display | no pesado hoy | bajo | n/a | produccion | 200 | 40-41 ms | 1539 B | snapshot missing/fallback | WARNING | completar snapshots |
 | M027 | backend-api | `backend/app/routes.py` | snapshot player events | GET | `/api/historical/snapshots/player-events` | `limit`, `server`, `view` | `/api/historical/snapshots/player-events?server=all-servers&view=duels&limit=10` | `build_player_event_snapshot_payload` | displayed snapshots | snapshot | si en Postgres display | no pesado hoy | bajo | n/a | produccion | 200 | 40-57 ms | ~1176-1188 B | snapshot missing/fallback | WARNING | completar snapshots |
 | M028 | backend-api | `backend/app/routes.py` | snapshot weekly leaderboard | GET | `/api/historical/snapshots/weekly-leaderboard` | `limit`, `server`, `metric` | `/api/historical/snapshots/weekly-leaderboard?server=comunidad-hispana-01&metric=kills&limit=10` | `build_weekly_leaderboard_snapshot_payload` | displayed snapshots | snapshot | si en Postgres display | no pesado hoy | bajo | n/a | produccion | 200 | 44-70 ms | ~1610 B | snapshot missing/fallback | WARNING | completar snapshots |
-| M029 | backend-api | `backend/app/routes.py` | historico recent matches legacy | GET | `/api/historical/recent-matches` | `limit`, `server` | `/api/historical/recent-matches?server=all-servers&limit=20` | `build_recent_historical_matches_payload` | snapshot recent matches | wrapper legacy sobre snapshot | no en `all-servers` | no | bajo | n/a | pendiente redeploy TASK-229 | pendiente | pendiente | pendiente | `legacy_endpoint_policy=snapshot-read-only-fast-path` | OK o WARNING sin timeout | mantener como compatibilidad legacy |
+| M029 | backend-api | `backend/app/routes.py` | historico recent matches legacy | GET | `/api/historical/recent-matches` | `limit`, `server` | `/api/historical/recent-matches?server=comunidad-hispana-01&limit=20` | `build_recent_historical_matches_payload` | snapshot recent matches | wrapper legacy sobre snapshot para cualquier `server=` explicito | no | no | bajo | n/a | pendiente redeploy TASK-231 | pendiente | pendiente | pendiente | `legacy_endpoint_policy=snapshot-read-only-fast-path` | OK o WARNING sin timeout | mantener como compatibilidad legacy |
 | M030 | backend-api | `backend/app/routes.py` | historico recent snapshot | GET | `/api/historical/snapshots/recent-matches` | `limit`, `server` | `/api/historical/snapshots/recent-matches?server=all-servers&limit=20` | `build_recent_historical_matches_snapshot_payload` | displayed snapshots | snapshot | si en Postgres display | no | bajo | historico handles error | produccion | 200 | 48-82 ms | ~24185 B | OK | OK | mantener, quitar init display despues |
 | M031 | backend-api | `backend/app/routes.py` | historico match detail | GET | `/api/historical/matches/detail` | `server`, `match` | `/api/historical/matches/detail?server=comunidad-hispana-01&match=comunidad-hispana-01:1781023156:1781028555:purpleheartlanewarfare` | `build_historical_match_detail_payload` | RCON materialized detail; scoreboard fallback | materialized/read-model + fallback legacy | si: `get_materialized_rcon_match_detail` -> `initialize_rcon_materialized_storage` -> `initialize_postgres_rcon_storage`; fallback display init | si | medio | historico-partida muestra error, sin timeout | produccion | 200 | 120.47 ms | 125580 B | hoy OK, deuda de init persiste | OK | hardening posterior read-only estricto |
 | M032 | backend-api | `backend/app/routes.py` | historico server summary legacy | GET | `/api/historical/server-summary` | `server` | `/api/historical/server-summary?server=comunidad-hispana-01` | `build_historical_server_summary_payload` | snapshot server summary | wrapper legacy sobre snapshot para cualquier `server=` explicito | no | no | bajo | n/a | pendiente redeploy TASK-230 | pendiente | pendiente | pendiente | `legacy_endpoint_policy=snapshot-read-only-fast-path` | OK o WARNING sin timeout | mantener como compatibilidad legacy |
