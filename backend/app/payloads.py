@@ -1338,17 +1338,6 @@ def build_leaderboard_snapshot_payload(
     payload = snapshot.get("payload") if snapshot else {}
     items = payload.get("items") if isinstance(payload, dict) else None
     sliced_items = list(items[:limit]) if isinstance(items, list) else []
-    runtime_enrichment_applied = False
-    if _leaderboard_snapshot_items_need_playtime_enrichment(sliced_items):
-        runtime_items = _load_runtime_leaderboard_items(
-            limit=limit,
-            server_id=server_id,
-            metric=metric,
-            timeframe=normalized_timeframe,
-        )
-        if runtime_items:
-            sliced_items = runtime_items[:limit]
-            runtime_enrichment_applied = True
     is_all_servers = server_id == ALL_SERVERS_SLUG
     return {
         "status": "ok",
@@ -1391,12 +1380,8 @@ def build_leaderboard_snapshot_payload(
             "snapshot_limit": payload.get("limit") if isinstance(payload, dict) else None,
             "limit": limit,
             "runtime_enrichment": {
-                "applied": runtime_enrichment_applied,
-                "reason": (
-                    "snapshot-items-missing-total-time-seconds"
-                    if runtime_enrichment_applied
-                    else None
-                ),
+                "applied": False,
+                "reason": "disabled-on-public-snapshot-path",
             },
             **_resolve_historical_fallback_policy(
                 fallback_reason="rcon-historical-read-model-does-not-support-historical-snapshots-yet",
@@ -1450,55 +1435,6 @@ def build_recent_historical_matches_snapshot_payload(
     payload = snapshot.get("payload") if snapshot else {}
     items = payload.get("items") if isinstance(payload, dict) else None
     sliced_items = list(items[:limit]) if isinstance(items, list) else []
-    if (
-        get_historical_data_source_kind() == SOURCE_KIND_RCON
-        and 0 < len(sliced_items) < limit
-    ):
-        fallback_items = list_recent_historical_matches(limit=limit, server_slug=server_slug)
-        merged_items = _merge_recent_match_items(
-            primary_items=sliced_items,
-            fallback_items=fallback_items,
-            limit=limit,
-        )
-        if len(merged_items) > len(sliced_items):
-            return {
-                "status": "ok",
-                "data": {
-                    "title": "Snapshot historico de partidas recientes por servidor",
-                    "context": "historical-recent-matches-snapshot",
-                    "source": "historical-precomputed-snapshots",
-                    "server_slug": server_slug,
-                    "found": snapshot is not None,
-                    **_build_historical_snapshot_metadata(snapshot),
-                    "snapshot_limit": payload.get("limit") if isinstance(payload, dict) else None,
-                    "limit": limit,
-                    **build_source_policy(
-                        primary_source=SOURCE_KIND_RCON,
-                        selected_source="hybrid-rcon-plus-public-scoreboard",
-                        fallback_used=True,
-                        fallback_reason="rcon-historical-recent-matches-did-not-reach-requested-limit",
-                        source_attempts=[
-                            build_source_attempt(
-                                source=SOURCE_KIND_RCON,
-                                role="primary",
-                                status="success",
-                                reason="recent-matches-snapshot-served-by-rcon-competitive-model",
-                            ),
-                            build_source_attempt(
-                                source=SOURCE_KIND_PUBLIC_SCOREBOARD,
-                                role="fallback",
-                                status="success",
-                                reason="recent-matches-snapshot-completed-from-public-scoreboard",
-                                message=(
-                                    f"RCON snapshot returned {len(sliced_items)} items, completed to "
-                                    f"{len(merged_items)} of requested {limit}."
-                                ),
-                            ),
-                        ],
-                    ),
-                    "items": merged_items,
-                },
-            }
     return {
         "status": "ok",
         "data": {

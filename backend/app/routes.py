@@ -6,7 +6,6 @@ from http import HTTPStatus
 from datetime import datetime, timezone
 from urllib.parse import parse_qs, urlparse
 
-from .config import get_historical_data_source_kind
 from .payloads import (
     build_global_ranking_payload,
     build_stats_player_profile_payload,
@@ -46,7 +45,6 @@ from .payloads import (
     build_weekly_top_kills_payload,
     build_stats_player_search_payload,
 )
-from .rcon_historical_leaderboards import build_rcon_materialized_leaderboard_snapshot_payload
 from .scoreboard_origins import get_trusted_public_scoreboard_origin
 
 RANKING_METRICS = {
@@ -305,13 +303,6 @@ def resolve_get_payload(path: str) -> tuple[HTTPStatus | None, dict[str, object]
             return HTTPStatus.BAD_REQUEST, build_error_payload("Invalid metric parameter")
         if timeframe not in {"weekly", "monthly"}:
             return HTTPStatus.BAD_REQUEST, build_error_payload("Invalid timeframe parameter")
-        if get_historical_data_source_kind() == "rcon":
-            return HTTPStatus.OK, build_rcon_materialized_leaderboard_snapshot_payload(
-                limit=limit,
-                server_id=server_id,
-                metric=metric,
-                timeframe=timeframe,
-            )
         return HTTPStatus.OK, build_leaderboard_snapshot_payload(
             limit=limit,
             server_id=server_id,
@@ -328,13 +319,6 @@ def resolve_get_payload(path: str) -> tuple[HTTPStatus | None, dict[str, object]
         metric = params.get("metric", ["kills"])[0]
         if metric not in {"kills", "deaths", "support", "matches_over_100_kills"}:
             return HTTPStatus.BAD_REQUEST, build_error_payload("Invalid metric parameter")
-        if get_historical_data_source_kind() == "rcon":
-            return HTTPStatus.OK, build_rcon_materialized_leaderboard_snapshot_payload(
-                limit=limit,
-                server_id=server_id,
-                metric=metric,
-                timeframe="monthly",
-            )
         return HTTPStatus.OK, build_monthly_leaderboard_snapshot_payload(
             limit=limit,
             server_id=server_id,
@@ -385,13 +369,6 @@ def resolve_get_payload(path: str) -> tuple[HTTPStatus | None, dict[str, object]
         metric = params.get("metric", ["kills"])[0]
         if metric not in {"kills", "deaths", "support", "matches_over_100_kills"}:
             return HTTPStatus.BAD_REQUEST, build_error_payload("Invalid metric parameter")
-        if get_historical_data_source_kind() == "rcon":
-            return HTTPStatus.OK, build_rcon_materialized_leaderboard_snapshot_payload(
-                limit=limit,
-                server_id=server_id,
-                metric=metric,
-                timeframe="weekly",
-            )
         return HTTPStatus.OK, build_weekly_leaderboard_snapshot_payload(
             limit=limit,
             server_id=server_id,

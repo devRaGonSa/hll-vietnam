@@ -21,6 +21,11 @@ DEFAULT_HISTORICAL_CRCON_RETRY_DELAY_SECONDS = 0.5
 DEFAULT_HISTORICAL_REFRESH_INTERVAL_SECONDS = 1800
 DEFAULT_HISTORICAL_REFRESH_OVERLAP_HOURS = 12
 DEFAULT_HISTORICAL_SNAPSHOT_REFRESH_INTERVAL_SECONDS = 900
+DEFAULT_PUBLIC_FULL_REFRESH_ENABLED = True
+DEFAULT_PUBLIC_FULL_REFRESH_TIME = "06:00"
+DEFAULT_PUBLIC_FULL_REFRESH_TIMEZONE = "Europe/Madrid"
+DEFAULT_PUBLIC_RANKING_REFRESH_INTERVAL_SECONDS = 900
+DEFAULT_PUBLIC_RECENT_MATCHES_REFRESH_INTERVAL_SECONDS = 60
 DEFAULT_HISTORICAL_REFRESH_MAX_RETRIES = 2
 DEFAULT_HISTORICAL_REFRESH_RETRY_DELAY_SECONDS = 30
 DEFAULT_HISTORICAL_FULL_SNAPSHOT_EVERY_RUNS = 4
@@ -508,6 +513,58 @@ def get_rcon_historical_capture_retry_delay_seconds() -> int:
             "HLL_RCON_HISTORICAL_CAPTURE_RETRY_DELAY_SECONDS must be zero or positive."
     )
     return retry_delay_seconds
+
+
+def get_public_full_refresh_enabled() -> bool:
+    """Return whether the runner should execute the daily public full refresh."""
+    return _read_bool_env(
+        "HLL_PUBLIC_FULL_REFRESH_ENABLED",
+        default=DEFAULT_PUBLIC_FULL_REFRESH_ENABLED,
+    )
+
+
+def get_public_full_refresh_time() -> str:
+    """Return the local HH:MM time for the daily public full refresh."""
+    configured_value = os.getenv(
+        "HLL_PUBLIC_FULL_REFRESH_TIME",
+        DEFAULT_PUBLIC_FULL_REFRESH_TIME,
+    ).strip()
+    parts = configured_value.split(":")
+    if len(parts) != 2:
+        raise ValueError("HLL_PUBLIC_FULL_REFRESH_TIME must use HH:MM format.")
+    hour, minute = (int(part) for part in parts)
+    if hour < 0 or hour > 23 or minute < 0 or minute > 59:
+        raise ValueError("HLL_PUBLIC_FULL_REFRESH_TIME must use HH:MM format.")
+    return f"{hour:02d}:{minute:02d}"
+
+
+def get_public_full_refresh_timezone() -> str:
+    """Return the IANA timezone for the daily public full refresh."""
+    configured_value = os.getenv(
+        "HLL_PUBLIC_FULL_REFRESH_TIMEZONE",
+        DEFAULT_PUBLIC_FULL_REFRESH_TIMEZONE,
+    ).strip()
+    if not configured_value:
+        raise ValueError("HLL_PUBLIC_FULL_REFRESH_TIMEZONE cannot be empty.")
+    return configured_value
+
+
+def get_public_ranking_refresh_interval_seconds() -> int:
+    """Return how often weekly/monthly public ranking snapshots should refresh."""
+    return _read_int_env(
+        "HLL_PUBLIC_RANKING_REFRESH_INTERVAL_SECONDS",
+        str(DEFAULT_PUBLIC_RANKING_REFRESH_INTERVAL_SECONDS),
+        minimum=1,
+    )
+
+
+def get_public_recent_matches_refresh_interval_seconds() -> int:
+    """Return how often recent-match public snapshots should refresh without event hooks."""
+    return _read_int_env(
+        "HLL_PUBLIC_RECENT_MATCHES_REFRESH_INTERVAL_SECONDS",
+        str(DEFAULT_PUBLIC_RECENT_MATCHES_REFRESH_INTERVAL_SECONDS),
+        minimum=1,
+    )
 
 
 def get_rcon_capture_mode() -> str:

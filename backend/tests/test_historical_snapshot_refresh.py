@@ -14,8 +14,21 @@ from app.config import (
     get_historical_refresh_interval_seconds,
     get_historical_refresh_max_retries,
     get_historical_refresh_retry_delay_seconds,
+    get_public_full_refresh_enabled,
+    get_public_full_refresh_time,
+    get_public_full_refresh_timezone,
+    get_public_ranking_refresh_interval_seconds,
+    get_public_recent_matches_refresh_interval_seconds,
 )
-from app.historical_runner import _run_refresh_with_retries, run_periodic_historical_refresh
+from app.payloads import (
+    build_leaderboard_snapshot_payload,
+    build_recent_historical_matches_snapshot_payload,
+)
+from app.historical_runner import (
+    _run_refresh_with_retries,
+    get_next_public_full_refresh_at,
+    run_periodic_historical_refresh,
+)
 from app.historical_snapshots import _normalize_snapshot_limit
 from app.postgres_display_storage import _json_payload_default
 from app.rcon_historical_read_model import (
@@ -50,6 +63,108 @@ class HistoricalSnapshotRefreshTests(unittest.TestCase):
                 "HLL_HISTORICAL_SNAPSHOT_REFRESH_INTERVAL_SECONDS must be an integer",
             ):
                 get_historical_refresh_interval_seconds()
+
+    def test_public_refresh_env_values_are_parsed_before_use(self) -> None:
+        with patch.dict(
+            os.environ,
+            {
+                "HLL_PUBLIC_FULL_REFRESH_ENABLED": "true",
+                "HLL_PUBLIC_FULL_REFRESH_TIME": "06:00",
+                "HLL_PUBLIC_FULL_REFRESH_TIMEZONE": "Europe/Madrid",
+                "HLL_PUBLIC_RANKING_REFRESH_INTERVAL_SECONDS": "900",
+                "HLL_PUBLIC_RECENT_MATCHES_REFRESH_INTERVAL_SECONDS": "60",
+            },
+            clear=False,
+        ):
+            self.assertTrue(get_public_full_refresh_enabled())
+            self.assertEqual(get_public_full_refresh_time(), "06:00")
+            self.assertEqual(get_public_full_refresh_timezone(), "Europe/Madrid")
+            self.assertEqual(get_public_ranking_refresh_interval_seconds(), 900)
+            self.assertEqual(get_public_recent_matches_refresh_interval_seconds(), 60)
+
+    def test_next_public_full_refresh_uses_madrid_six_am(self) -> None:
+        with patch.dict(
+            os.environ,
+            {
+                "HLL_PUBLIC_FULL_REFRESH_TIME": "06:00",
+                "HLL_PUBLIC_FULL_REFRESH_TIMEZONE": "Europe/Madrid",
+            },
+            clear=False,
+        ):
+            next_refresh = get_next_public_full_refresh_at(
+                now=datetime(2026, 6, 10, 3, 30, tzinfo=timezone.utc),
+            )
+
+        self.assertEqual(
+            next_refresh,
+            datetime(2026, 6, 10, 4, 0, tzinfo=timezone.utc),
+        )
+
+    def test_historical_leaderboard_snapshot_does_not_runtime_enrich_public_request(self) -> None:
+        snapshot = {
+            "generated_at": "2026-06-10T04:00:00Z",
+            "source_range_start": "2026-06-09T00:00:00Z",
+            "source_range_end": "2026-06-10T00:00:00Z",
+            "is_stale": False,
+            "payload": {
+                "items": [
+                    {
+                        "ranking_position": 1,
+                        "player": {"name": "Player One"},
+                        "metric_value": 12,
+                        "matches_considered": 1,
+                        "kills": 12,
+                    }
+                ],
+                "window_start": "2026-06-09T00:00:00Z",
+                "window_end": "2026-06-10T00:00:00Z",
+                "limit": 10,
+            },
+        }
+        with (
+            patch("app.payloads._get_historical_snapshot_record", return_value=snapshot),
+            patch("app.payloads._load_runtime_leaderboard_items") as runtime_loader,
+        ):
+            payload = build_leaderboard_snapshot_payload(
+                server_id="all-servers",
+                timeframe="weekly",
+                metric="kills",
+                limit=10,
+            )
+
+        runtime_loader.assert_not_called()
+        self.assertEqual(payload["data"]["items"][0]["metric_value"], 12)
+        self.assertFalse(payload["data"]["runtime_enrichment"]["applied"])
+
+    def test_recent_matches_snapshot_does_not_complete_from_public_scoreboard(self) -> None:
+        snapshot = {
+            "generated_at": "2026-06-10T04:00:00Z",
+            "source_range_start": "2026-06-09T21:00:00Z",
+            "source_range_end": "2026-06-09T22:00:00Z",
+            "is_stale": False,
+            "payload": {
+                "items": [
+                    {
+                        "match_id": "match-1",
+                        "closed_at": "2026-06-09T22:00:00Z",
+                    }
+                ],
+                "limit": 100,
+            },
+        }
+        with (
+            patch("app.payloads._get_historical_snapshot_record", return_value=snapshot),
+            patch("app.payloads.get_historical_data_source_kind", return_value="rcon"),
+            patch("app.payloads.list_recent_historical_matches") as fallback_loader,
+        ):
+            payload = build_recent_historical_matches_snapshot_payload(
+                server_slug="all-servers",
+                limit=100,
+            )
+
+        fallback_loader.assert_not_called()
+        self.assertEqual(len(payload["data"]["items"]), 1)
+        self.assertFalse(payload["data"].get("fallback_used", False))
 
     def test_rcon_coverage_accepts_postgres_datetime_values(self) -> None:
         start = datetime(2026, 5, 21, 10, 0, tzinfo=timezone.utc)

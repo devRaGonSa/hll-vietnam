@@ -175,7 +175,7 @@ document.addEventListener("DOMContentLoaded", () => {
       `Preparando datos ${activeTimeframeConfig.shortLabel}...`,
     );
     resetRecentMatchesPagination();
-    recentListNode.innerHTML = "";
+    renderRecentMatchesLoading(recentListNode);
     recentNoteNode.textContent = buildRecentMatchesNote(activeServerSlug);
     setState(recentStateNode, "Cargando partidas recientes...");
     setSnapshotMeta(recentSnapshotMetaNode, "Cargando datos de partidas...");
@@ -637,6 +637,8 @@ function hydrateWeeklyLeaderboard(
 function hydrateRecentMatches(result, stateNode, listNode, snapshotMetaNode) {
   const emptyState = getHistoricalEmptyState(activeServerSlug);
   if (result.status !== "fulfilled") {
+    resetRecentMatchesPagination();
+    listNode.innerHTML = "";
     setState(stateNode, "No se pudieron cargar las partidas recientes.", true);
     setSnapshotMeta(snapshotMetaNode, "Error al leer los datos de partidas.");
     return;
@@ -664,6 +666,34 @@ function hydrateRecentMatches(result, stateNode, listNode, snapshotMetaNode) {
 
   setRecentMatchesPaginationItems(items.slice(0, RECENT_MATCHES_LIMIT), listNode);
   stateNode.hidden = true;
+}
+
+function renderRecentMatchesLoading(listNode) {
+  if (!listNode) {
+    return;
+  }
+
+  listNode.innerHTML = Array.from({ length: 3 }, (_, index) => `
+    <article class="historical-match-card historical-match-card--clean" aria-hidden="true">
+      <div class="historical-match-card__top historical-match-card__top--clean">
+        <h3 class="historical-match-card__title">Cargando partida ${index + 1}</h3>
+      </div>
+      <div class="historical-match-meta historical-match-meta--clean">
+        <article>
+          <p class="historical-match-meta__label">Mapa</p>
+          <strong>Preparando registro</strong>
+        </article>
+        <article>
+          <p class="historical-match-meta__label">Cierre</p>
+          <strong>...</strong>
+        </article>
+        <article>
+          <p class="historical-match-meta__label">Resultado</p>
+          <strong>...</strong>
+        </article>
+      </div>
+    </article>
+  `).join("");
 }
 
 function initializeRecentMatchesPagination(listNode) {

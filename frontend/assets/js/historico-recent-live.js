@@ -1,6 +1,7 @@
 (() => {
-  const RECENT_MATCHES_ENDPOINT = "/api/historical/recent-matches";
+  const RECENT_MATCHES_ENDPOINT = "/api/historical/snapshots/recent-matches";
   const REFRESH_DELAYS_MS = [150, 1000, 3000, 6000];
+  const RECENT_MATCHES_POLL_INTERVAL_MS = 60000;
   const RECENT_MATCHES_LIMIT = 100;
   const DEFAULT_RECENT_MATCHES_PAGE_SIZE = 10;
   const RECENT_MATCHES_PAGE_SIZES = Object.freeze([10, 25, 50, 100]);
@@ -26,6 +27,9 @@
         void refreshDynamicRecentMatches();
       }, delay);
     });
+    window.setInterval(() => {
+      void refreshDynamicRecentMatches();
+    }, RECENT_MATCHES_POLL_INTERVAL_MS);
 
     document.querySelectorAll("[data-server-slug]").forEach((button) => {
       button.addEventListener("click", () => {

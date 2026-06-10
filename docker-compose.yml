@@ -45,7 +45,7 @@ services:
     build:
       context: ./backend
     container_name: hll-vietnam-historical-runner
-    command: ["python", "-m", "app.historical_runner", "--hourly"]
+    command: ["python", "-m", "app.historical_runner"]
     env_file:
       - ./backend/.env.example
     environment:
@@ -53,6 +53,11 @@ services:
       HLL_BACKEND_LIVE_DATA_SOURCE: ${HLL_BACKEND_LIVE_DATA_SOURCE:-rcon}
       HLL_BACKEND_HISTORICAL_DATA_SOURCE: ${HLL_BACKEND_HISTORICAL_DATA_SOURCE:-rcon}
       HLL_BACKEND_RCON_TIMEOUT_SECONDS: ${HLL_BACKEND_RCON_TIMEOUT_SECONDS:-20}
+      HLL_PUBLIC_FULL_REFRESH_ENABLED: ${HLL_PUBLIC_FULL_REFRESH_ENABLED:-true}
+      HLL_PUBLIC_FULL_REFRESH_TIME: ${HLL_PUBLIC_FULL_REFRESH_TIME:-06:00}
+      HLL_PUBLIC_FULL_REFRESH_TIMEZONE: ${HLL_PUBLIC_FULL_REFRESH_TIMEZONE:-Europe/Madrid}
+      HLL_PUBLIC_RANKING_REFRESH_INTERVAL_SECONDS: ${HLL_PUBLIC_RANKING_REFRESH_INTERVAL_SECONDS:-900}
+      HLL_PUBLIC_RECENT_MATCHES_REFRESH_INTERVAL_SECONDS: ${HLL_PUBLIC_RECENT_MATCHES_REFRESH_INTERVAL_SECONDS:-60}
       HLL_BACKEND_RCON_TARGETS: >-
         ${HLL_BACKEND_RCON_TARGETS:-[{"name":"Comunidad Hispana #01","slug":"comunidad-hispana-01","external_server_id":"comunidad-hispana-01","host":"152.114.195.174","port":7779,"password":"replace-me-01","source_name":"community-hispana-rcon","region":"ES","game_port":null,"query_port":null},{"name":"Comunidad Hispana #02","slug":"comunidad-hispana-02","external_server_id":"comunidad-hispana-02","host":"152.114.195.150","port":7879,"password":"replace-me-02","source_name":"community-hispana-rcon","region":"ES","game_port":null,"query_port":null}]}
     depends_on:

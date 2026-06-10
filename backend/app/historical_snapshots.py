@@ -392,6 +392,49 @@ def generate_and_persist_priority_historical_snapshots(
     }
 
 
+def generate_and_persist_recent_historical_snapshots(
+    *,
+    server_key: str | None = None,
+    generated_at: datetime | None = None,
+    recent_matches_limit: int = DEFAULT_RECENT_MATCHES_LIMIT,
+    db_path: Path | None = None,
+) -> dict[str, object]:
+    """Build and persist only the public recent-matches snapshots."""
+    from .historical_snapshot_storage import persist_historical_snapshot_batch
+
+    generated_at_value = _as_utc(generated_at or datetime.now(timezone.utc))
+    recent_matches_limit = _normalize_snapshot_limit(
+        "recent_matches_limit",
+        recent_matches_limit,
+    )
+    snapshots = [
+        _build_recent_matches_snapshot(
+            target_server_key,
+            generated_at_value,
+            limit=recent_matches_limit,
+            db_path=db_path,
+        )
+        for target_server_key in _resolve_snapshot_target_keys(
+            server_key=server_key,
+            db_path=db_path,
+        )
+    ]
+    persisted_records = persist_historical_snapshot_batch(snapshots, db_path=db_path)
+    snapshots_by_server: dict[str, int] = {}
+    for record in persisted_records:
+        snapshots_by_server.setdefault(record.server_key, 0)
+        snapshots_by_server[record.server_key] += 1
+
+    return {
+        "generated_at": _to_iso(generated_at_value),
+        "server_slug": server_key,
+        "snapshot_policy": "recent-matches-only",
+        "snapshot_count": len(persisted_records),
+        "servers_processed": len(snapshots_by_server),
+        "snapshots_by_server": snapshots_by_server,
+    }
+
+
 def _build_server_summary_snapshot(
     server_key: str,
     generated_at: datetime,

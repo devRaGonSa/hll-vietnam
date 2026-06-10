@@ -6,8 +6,9 @@ import argparse
 import json
 import time
 import traceback
-from datetime import datetime, timezone
+from datetime import date, datetime, time as datetime_time, timedelta, timezone
 from typing import Any
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from .config import (
     DEFAULT_DB_MAINTENANCE_INTERVAL_SECONDS,
@@ -20,6 +21,11 @@ from .config import (
     get_historical_refresh_max_retries,
     get_historical_refresh_retry_delay_seconds,
     get_historical_data_source_kind,
+    get_public_full_refresh_enabled,
+    get_public_full_refresh_time,
+    get_public_full_refresh_timezone,
+    get_public_ranking_refresh_interval_seconds,
+    get_public_recent_matches_refresh_interval_seconds,
 )
 from .database_maintenance import run_database_maintenance_cleanup
 from .elo_mmr_engine import rebuild_elo_mmr_models
@@ -28,8 +34,15 @@ from .historical_ingestion import run_incremental_refresh
 from .historical_snapshots import (
     generate_and_persist_historical_snapshots,
     generate_and_persist_priority_historical_snapshots,
+    generate_and_persist_recent_historical_snapshots,
+)
+from .historical_storage import ALL_SERVERS_SLUG
+from .rcon_annual_rankings import (
+    SUPPORTED_ANNUAL_RANKING_METRICS,
+    generate_annual_ranking_snapshot,
 )
 from .rcon_historical_leaderboards import refresh_ranking_snapshots
+from .rcon_historical_leaderboards import SNAPSHOT_GENERATOR_SERVER_KEYS
 from .rcon_historical_player_stats import (
     refresh_player_period_stats,
     refresh_player_search_index,
@@ -44,6 +57,14 @@ DEFAULT_HISTORICAL_SERVER_SCOPE = (
     "comunidad-hispana-02",
 )
 _LAST_DATABASE_MAINTENANCE_RUN_AT: datetime | None = None
+_LAST_PUBLIC_FULL_REFRESH_LOCAL_DATE: date | None = None
+_LAST_PUBLIC_RANKING_REFRESH_AT: datetime | None = None
+_LAST_PUBLIC_RECENT_MATCHES_REFRESH_AT: datetime | None = None
+_PUBLIC_REFRESH_IN_PROGRESS: set[str] = set()
+PUBLIC_FULL_REFRESH_YEAR = 2026
+PUBLIC_REFRESH_LOCK_FULL = "public-full-refresh"
+PUBLIC_REFRESH_LOCK_RANKING = "public-ranking-refresh"
+PUBLIC_REFRESH_LOCK_RECENT_MATCHES = "public-recent-matches-refresh"
 
 
 def run_periodic_historical_refresh(
@@ -73,23 +94,41 @@ def run_periodic_historical_refresh(
     )
     print("Press Ctrl+C to stop.")
 
+    last_historical_refresh_started_at: datetime | None = None
+    loop_tick_seconds = _resolve_runner_tick_seconds(interval_seconds)
     try:
         while max_runs is None or completed_runs < max_runs:
-            completed_runs += 1
-            payload = _run_refresh_with_retries(
-                max_retries=max_retries,
-                retry_delay_seconds=retry_delay_seconds,
-                server_slug=server_slug,
-                max_pages=max_pages,
-                page_size=page_size,
-                run_number=completed_runs,
+            now = datetime.now(timezone.utc)
+            historical_refresh_due = _is_interval_due(
+                last_run_at=last_historical_refresh_started_at,
+                interval_seconds=interval_seconds,
+                now=now,
             )
-            _emit_json_log({"run": completed_runs, **payload})
+            if historical_refresh_due:
+                completed_runs += 1
+                last_historical_refresh_started_at = now
+                payload = _run_refresh_with_retries(
+                    max_retries=max_retries,
+                    retry_delay_seconds=retry_delay_seconds,
+                    server_slug=server_slug,
+                    max_pages=max_pages,
+                    page_size=page_size,
+                    run_number=completed_runs,
+                )
+                _record_public_refreshes_from_cycle(payload, now=now)
+                _emit_json_log({"run": completed_runs, **payload})
+            else:
+                payload = _maybe_run_public_read_model_refreshes(
+                    run_number=completed_runs,
+                    now=now,
+                )
+                if payload["status"] != "skipped":
+                    _emit_json_log({"run": completed_runs, **payload})
 
             if max_runs is not None and completed_runs >= max_runs:
                 break
 
-            time.sleep(interval_seconds)
+            time.sleep(loop_tick_seconds)
     except KeyboardInterrupt:
         print("\nHistorical refresh loop stopped by user.")
 
@@ -193,6 +232,11 @@ def _run_refresh_with_retries(
                     server_slug=server_slug,
                     run_number=run_number,
                 )
+                recent_matches_event_result = _maybe_refresh_recent_matches_after_capture(
+                    rcon_capture_result=rcon_capture_result,
+                    server_slug=server_slug,
+                    run_number=run_number,
+                )
                 maintenance_result = _maybe_run_database_maintenance()
             return {
                 "status": _resolve_refresh_cycle_status(
@@ -201,6 +245,7 @@ def _run_refresh_with_retries(
                     player_search_index_result=player_search_index_result,
                     player_period_stats_result=player_period_stats_result,
                     ranking_snapshot_result=ranking_snapshot_result,
+                    recent_matches_event_result=recent_matches_event_result,
                     elo_mmr_result=elo_mmr_result,
                     database_maintenance_result=maintenance_result,
                 ),
@@ -215,6 +260,7 @@ def _run_refresh_with_retries(
                 "player_search_index_result": player_search_index_result,
                 "player_period_stats_result": player_period_stats_result,
                 "ranking_snapshot_result": ranking_snapshot_result,
+                "recent_matches_event_result": recent_matches_event_result,
                 "elo_mmr_result": elo_mmr_result,
                 "database_maintenance_result": maintenance_result,
             }
@@ -413,6 +459,456 @@ def refresh_periodic_player_period_stats(
         "generation_policy": "periodic-historical-refresh-cycle",
         "scope_policy": "always-refresh-supported-public-player-period-scopes",
     }
+
+
+def _maybe_run_public_read_model_refreshes(
+    *,
+    run_number: int,
+    now: datetime | None = None,
+) -> dict[str, Any]:
+    """Run due public read-model refreshes without doing the heavy RCON capture cycle."""
+    anchor = _as_utc(now or datetime.now(timezone.utc))
+    results: dict[str, Any] = {}
+
+    if _is_public_full_refresh_due(anchor):
+        results["public_full_refresh_result"] = _run_non_overlapping_public_refresh(
+            PUBLIC_REFRESH_LOCK_FULL,
+            lambda: refresh_public_full_read_models(run_number=run_number, now=anchor),
+        )
+
+    if _is_public_interval_refresh_due(
+        last_run_at=_LAST_PUBLIC_RANKING_REFRESH_AT,
+        interval_seconds=get_public_ranking_refresh_interval_seconds(),
+        now=anchor,
+    ):
+        results["ranking_snapshot_result"] = _run_non_overlapping_public_refresh(
+            PUBLIC_REFRESH_LOCK_RANKING,
+            lambda: refresh_public_ranking_snapshots(run_number=run_number, now=anchor),
+        )
+
+    if _is_public_interval_refresh_due(
+        last_run_at=_LAST_PUBLIC_RECENT_MATCHES_REFRESH_AT,
+        interval_seconds=get_public_recent_matches_refresh_interval_seconds(),
+        now=anchor,
+    ):
+        results["recent_matches_snapshot_result"] = _run_non_overlapping_public_refresh(
+            PUBLIC_REFRESH_LOCK_RECENT_MATCHES,
+            lambda: refresh_public_recent_matches_snapshots(
+                run_number=run_number,
+                now=anchor,
+                trigger="polling-interval",
+            ),
+        )
+
+    if not results:
+        return {
+            "event": "public-read-model-refresh-scheduler-skipped",
+            "status": "skipped",
+            "reason": "no-public-refresh-due",
+        }
+
+    return {
+        "event": "public-read-model-refresh-scheduler-completed",
+        "status": _resolve_refresh_cycle_status(**results),
+        **results,
+    }
+
+
+def refresh_public_full_read_models(
+    *,
+    run_number: int,
+    now: datetime | None = None,
+) -> dict[str, Any]:
+    """Refresh the full public read-model set intended for the low-load nightly window."""
+    global _LAST_PUBLIC_FULL_REFRESH_LOCAL_DATE
+
+    anchor = _as_utc(now or datetime.now(timezone.utc))
+    local_anchor = anchor.astimezone(_get_public_refresh_zone())
+    steps: dict[str, Any] = {}
+    started = time.perf_counter()
+    _emit_json_log(
+        {
+            "event": "public-full-refresh-started",
+            "run_number": run_number,
+            "scheduled_local_date": local_anchor.date().isoformat(),
+            "scheduled_time": get_public_full_refresh_time(),
+            "timezone": get_public_full_refresh_timezone(),
+        }
+    )
+
+    steps["historical_snapshots"] = _run_public_refresh_step(
+        "historical-snapshots-full",
+        lambda: generate_and_persist_historical_snapshots(generated_at=anchor),
+    )
+    steps["ranking_snapshots"] = _run_public_refresh_step(
+        "ranking-snapshots-weekly-monthly",
+        lambda: refresh_periodic_ranking_snapshots(run_number=run_number),
+    )
+    steps["annual_ranking_snapshots"] = _run_public_refresh_step(
+        "annual-ranking-snapshots-2026",
+        lambda: refresh_public_annual_ranking_snapshots(year=PUBLIC_FULL_REFRESH_YEAR),
+    )
+    steps["player_search_index"] = _run_public_refresh_step(
+        "player-search-index",
+        refresh_player_search_index,
+    )
+    steps["player_period_stats"] = _run_public_refresh_step(
+        "player-period-stats",
+        refresh_player_period_stats,
+    )
+
+    status = _resolve_refresh_cycle_status(**steps)
+    if status in {"ok", "partial"}:
+        _LAST_PUBLIC_FULL_REFRESH_LOCAL_DATE = local_anchor.date()
+    result = {
+        "status": status,
+        "run_number": run_number,
+        "generated_at": _to_iso(anchor),
+        "duration_ms": _elapsed_ms(started),
+        "timezone": get_public_full_refresh_timezone(),
+        "scheduled_time": get_public_full_refresh_time(),
+        "steps": steps,
+    }
+    _emit_json_log({"event": "public-full-refresh-completed", **result})
+    return result
+
+
+def refresh_public_ranking_snapshots(
+    *,
+    run_number: int,
+    now: datetime | None = None,
+) -> dict[str, Any]:
+    """Refresh weekly/monthly public ranking snapshots on the short cadence."""
+    global _LAST_PUBLIC_RANKING_REFRESH_AT
+
+    anchor = _as_utc(now or datetime.now(timezone.utc))
+    started = time.perf_counter()
+    _emit_json_log(
+        {
+            "event": "public-ranking-refresh-started",
+            "run_number": run_number,
+            "interval_seconds": get_public_ranking_refresh_interval_seconds(),
+        }
+    )
+    result = refresh_periodic_ranking_snapshots(run_number=run_number)
+    status = str(result.get("status") or "ok")
+    if status != "error":
+        _LAST_PUBLIC_RANKING_REFRESH_AT = anchor
+    completed = {
+        **result,
+        "duration_ms": _elapsed_ms(started),
+        "generated_at": _to_iso(anchor),
+        "interval_seconds": get_public_ranking_refresh_interval_seconds(),
+        "generation_policy": "public-ranking-short-cadence",
+    }
+    _emit_json_log({"event": "public-ranking-refresh-completed", **completed})
+    return completed
+
+
+def refresh_public_recent_matches_snapshots(
+    *,
+    run_number: int,
+    now: datetime | None = None,
+    trigger: str,
+    server_slug: str | None = None,
+) -> dict[str, Any]:
+    """Refresh recent-match snapshots after match-finalization evidence or short polling."""
+    global _LAST_PUBLIC_RECENT_MATCHES_REFRESH_AT
+
+    anchor = _as_utc(now or datetime.now(timezone.utc))
+    started = time.perf_counter()
+    _emit_json_log(
+        {
+            "event": "public-recent-matches-refresh-started",
+            "run_number": run_number,
+            "trigger": trigger,
+            "server_slug": server_slug,
+            "interval_seconds": get_public_recent_matches_refresh_interval_seconds(),
+        }
+    )
+    try:
+        result = generate_and_persist_recent_historical_snapshots(
+            server_key=server_slug,
+            generated_at=anchor,
+        )
+    except Exception as exc:  # noqa: BLE001 - scheduler must keep the runner alive
+        result = {
+            "status": "error",
+            "error_type": type(exc).__name__,
+            "error": str(exc),
+            "traceback": traceback.format_exc(),
+        }
+    status = str(result.get("status") or "ok")
+    if status != "error":
+        _LAST_PUBLIC_RECENT_MATCHES_REFRESH_AT = anchor
+    completed = {
+        **result,
+        "duration_ms": _elapsed_ms(started),
+        "generated_at": _to_iso(anchor),
+        "trigger": trigger,
+        "server_slug": server_slug,
+        "interval_seconds": get_public_recent_matches_refresh_interval_seconds(),
+    }
+    _emit_json_log({"event": "public-recent-matches-refresh-completed", **completed})
+    return completed
+
+
+def refresh_public_annual_ranking_snapshots(
+    *,
+    year: int = PUBLIC_FULL_REFRESH_YEAR,
+    limit: int = 20,
+) -> dict[str, Any]:
+    """Refresh supported annual ranking snapshots for all public scopes."""
+    combinations = [
+        (server_key, metric)
+        for server_key in SNAPSHOT_GENERATOR_SERVER_KEYS
+        for metric in SUPPORTED_ANNUAL_RANKING_METRICS
+    ]
+    results: list[dict[str, Any]] = []
+    succeeded = 0
+    failed = 0
+    for server_key, metric in combinations:
+        try:
+            payload = generate_annual_ranking_snapshot(
+                year=year,
+                server_key=None if server_key == ALL_SERVERS_SLUG else server_key,
+                metric=metric,
+                limit=limit,
+                replace_existing=True,
+            )
+            snapshot = payload.get("snapshot") if isinstance(payload, dict) else {}
+            succeeded += 1
+            results.append(
+                {
+                    "status": "ok",
+                    "year": year,
+                    "server_key": server_key,
+                    "metric": metric,
+                    "snapshot_id": snapshot.get("id") if isinstance(snapshot, dict) else None,
+                    "ranked_players": int(payload.get("ranked_players") or 0),
+                    "source_matches_count": int(payload.get("source_matches_count") or 0),
+                }
+            )
+        except Exception as exc:  # noqa: BLE001 - report per-snapshot failures
+            failed += 1
+            results.append(
+                {
+                    "status": "error",
+                    "year": year,
+                    "server_key": server_key,
+                    "metric": metric,
+                    "error_type": type(exc).__name__,
+                    "error": str(exc),
+                }
+            )
+
+    status = "ok"
+    if failed and succeeded:
+        status = "partial"
+    elif failed:
+        status = "error"
+    return {
+        "status": status,
+        "year": year,
+        "limit": limit,
+        "combinations_expected": len(combinations),
+        "totals": {
+            "succeeded": succeeded,
+            "failed": failed,
+        },
+        "results": results,
+    }
+
+
+def get_next_public_full_refresh_at(
+    *,
+    now: datetime | None = None,
+) -> datetime:
+    """Return the next configured daily public full refresh in UTC."""
+    anchor = _as_utc(now or datetime.now(timezone.utc))
+    zone = _get_public_refresh_zone()
+    local_anchor = anchor.astimezone(zone)
+    hour, minute = (int(part) for part in get_public_full_refresh_time().split(":"))
+    candidate = datetime.combine(
+        local_anchor.date(),
+        datetime_time(hour=hour, minute=minute),
+        tzinfo=zone,
+    )
+    if local_anchor >= candidate:
+        candidate += timedelta(days=1)
+    return candidate.astimezone(timezone.utc)
+
+
+def _maybe_refresh_recent_matches_after_capture(
+    *,
+    rcon_capture_result: dict[str, Any],
+    server_slug: str | None,
+    run_number: int,
+) -> dict[str, Any]:
+    if not _rcon_capture_materialized_finished_match(rcon_capture_result):
+        return {
+            "status": "skipped",
+            "reason": "no-materialized-finished-match-detected",
+            "trigger": "rcon-capture",
+        }
+    return _run_non_overlapping_public_refresh(
+        PUBLIC_REFRESH_LOCK_RECENT_MATCHES,
+        lambda: refresh_public_recent_matches_snapshots(
+            run_number=run_number,
+            trigger="rcon-capture-materialized-match",
+            server_slug=server_slug,
+        ),
+    )
+
+
+def _run_public_refresh_step(
+    step_name: str,
+    callback: Any,
+) -> dict[str, Any]:
+    started = time.perf_counter()
+    _emit_json_log({"event": "public-refresh-step-started", "step": step_name})
+    try:
+        result = callback()
+    except Exception as exc:  # noqa: BLE001 - keep neighboring refreshes running
+        result = {
+            "status": "error",
+            "error_type": type(exc).__name__,
+            "error": str(exc),
+            "traceback": traceback.format_exc(),
+        }
+    completed = {
+        **result,
+        "step": step_name,
+        "duration_ms": _elapsed_ms(started),
+    }
+    _emit_json_log({"event": "public-refresh-step-completed", **completed})
+    return completed
+
+
+def _run_non_overlapping_public_refresh(
+    refresh_key: str,
+    callback: Any,
+) -> dict[str, Any]:
+    if refresh_key in _PUBLIC_REFRESH_IN_PROGRESS:
+        return {
+            "status": "skipped",
+            "reason": "refresh-already-in-progress",
+            "refresh_key": refresh_key,
+        }
+    _PUBLIC_REFRESH_IN_PROGRESS.add(refresh_key)
+    try:
+        return callback()
+    finally:
+        _PUBLIC_REFRESH_IN_PROGRESS.discard(refresh_key)
+
+
+def _record_public_refreshes_from_cycle(
+    payload: dict[str, Any],
+    *,
+    now: datetime,
+) -> None:
+    global _LAST_PUBLIC_RANKING_REFRESH_AT, _LAST_PUBLIC_RECENT_MATCHES_REFRESH_AT
+
+    ranking_result = payload.get("ranking_snapshot_result")
+    if isinstance(ranking_result, dict) and ranking_result.get("status") != "error":
+        _LAST_PUBLIC_RANKING_REFRESH_AT = now
+    recent_result = payload.get("recent_matches_event_result")
+    if isinstance(recent_result, dict) and recent_result.get("status") not in {
+        "error",
+        "skipped",
+    }:
+        _LAST_PUBLIC_RECENT_MATCHES_REFRESH_AT = now
+
+
+def _is_public_full_refresh_due(now: datetime) -> bool:
+    if not get_public_full_refresh_enabled():
+        return False
+    local_now = now.astimezone(_get_public_refresh_zone())
+    hour, minute = (int(part) for part in get_public_full_refresh_time().split(":"))
+    scheduled_today = datetime.combine(
+        local_now.date(),
+        datetime_time(hour=hour, minute=minute),
+        tzinfo=local_now.tzinfo,
+    )
+    return (
+        local_now >= scheduled_today
+        and _LAST_PUBLIC_FULL_REFRESH_LOCAL_DATE != local_now.date()
+    )
+
+
+def _is_public_interval_refresh_due(
+    *,
+    last_run_at: datetime | None,
+    interval_seconds: int,
+    now: datetime,
+) -> bool:
+    return _is_interval_due(
+        last_run_at=last_run_at,
+        interval_seconds=interval_seconds,
+        now=now,
+    )
+
+
+def _is_interval_due(
+    *,
+    last_run_at: datetime | None,
+    interval_seconds: int,
+    now: datetime,
+) -> bool:
+    if last_run_at is None:
+        return True
+    elapsed_seconds = (now - _as_utc(last_run_at)).total_seconds()
+    return elapsed_seconds >= interval_seconds
+
+
+def _resolve_runner_tick_seconds(interval_seconds: int) -> int:
+    intervals = [
+        interval_seconds,
+        get_public_ranking_refresh_interval_seconds(),
+        get_public_recent_matches_refresh_interval_seconds(),
+    ]
+    return max(1, min(intervals))
+
+
+def _get_public_refresh_zone() -> ZoneInfo:
+    timezone_name = get_public_full_refresh_timezone()
+    try:
+        return ZoneInfo(timezone_name)
+    except ZoneInfoNotFoundError as error:
+        raise ValueError(
+            f"HLL_PUBLIC_FULL_REFRESH_TIMEZONE is not a valid IANA timezone: {timezone_name}"
+        ) from error
+
+
+def _rcon_capture_materialized_finished_match(
+    rcon_capture_result: dict[str, Any],
+) -> bool:
+    totals = rcon_capture_result.get("totals")
+    if isinstance(totals, dict) and int(totals.get("materialized_matches_inserted") or 0) > 0:
+        return True
+    targets = rcon_capture_result.get("targets")
+    if not isinstance(targets, list):
+        return False
+    for target in targets:
+        if not isinstance(target, dict):
+            continue
+        if int(target.get("materialized_matches_inserted") or 0) > 0:
+            return True
+    return False
+
+
+def _elapsed_ms(started: float) -> int:
+    return int((time.perf_counter() - started) * 1000)
+
+
+def _as_utc(value: datetime) -> datetime:
+    if value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc)
+
+
+def _to_iso(value: datetime) -> str:
+    return _as_utc(value).isoformat().replace("+00:00", "Z")
 
 
 def _resolve_refresh_cycle_status(**results: dict[str, Any]) -> str:
