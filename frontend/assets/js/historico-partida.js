@@ -1,6 +1,5 @@
 document.addEventListener("DOMContentLoaded", () => {
-  const backendBaseUrl =
-    document.body.dataset.backendBaseUrl || "http://127.0.0.1:8000";
+  const backendBaseUrl = resolveBackendBaseUrl();
   const params = new URLSearchParams(window.location.search);
   const serverSlug = params.get("server") || "";
   const matchId = params.get("match") || "";
@@ -80,10 +79,31 @@ async function loadMatchDetail({ backendBaseUrl, serverSlug, matchId, nodes }) {
     renderMatchDetail(item, nodes);
   } catch (error) {
     nodes.title.textContent = "Detalle no disponible";
-    nodes.summary.textContent = "No se pudo conectar con el backend local.";
+    nodes.summary.textContent = "No se pudo cargar el detalle desde el backend.";
     nodes.note.textContent = "";
     setState(nodes.state, "Error al cargar el detalle de la partida.", true);
   }
+}
+
+function resolveBackendBaseUrl() {
+  const bodyBackendBaseUrl = document.body.dataset.backendBaseUrl;
+  if (typeof bodyBackendBaseUrl === "string" && bodyBackendBaseUrl.trim()) {
+    return trimTrailingSlash(bodyBackendBaseUrl);
+  }
+
+  const configuredBackendBaseUrl = window.HLL_FRONTEND_CONFIG?.backendBaseUrl;
+  if (
+    typeof configuredBackendBaseUrl === "string" &&
+    configuredBackendBaseUrl.trim()
+  ) {
+    return trimTrailingSlash(configuredBackendBaseUrl);
+  }
+
+  return "";
+}
+
+function trimTrailingSlash(value) {
+  return String(value || "").trim().replace(/\/+$/, "");
 }
 
 function renderMatchDetail(item, nodes) {
@@ -354,10 +374,7 @@ function comparePlayerSortValue(a, b, item, sort) {
   if (sort === "kd") {
     return compareNumericStat(getKdRatioValue(a.player), getKdRatioValue(b.player));
   }
-  return compareNumericStat(
-    getKpmValue(a.player.kills, item.duration_seconds),
-    getKpmValue(b.player.kills, item.duration_seconds),
-  );
+  return compareNumericStat(a.player.kills, b.player.kills);
 }
 
 function compareInactivePriority(a, b) {
@@ -383,7 +400,6 @@ function renderPlayerRows(player, item, index, inactive = false) {
   const rowId = `match-player-row-${index}`;
   const panelId = `match-player-panel-${index}`;
   const playerName = getPlayerName(player);
-  const kpm = formatKpm(player.kills, item.duration_seconds);
   return `
     <tr
       class="historical-player-row historical-player-row--${team.key} ${inactive ? "is-inactive" : ""}"
@@ -410,15 +426,14 @@ function renderPlayerRows(player, item, index, inactive = false) {
       <td>${escapeHtml(formatOptionalNumber(player.deaths))}</td>
       <td>${escapeHtml(formatOptionalNumber(player.teamkills))}</td>
       <td>${escapeHtml(formatKdRatio(player))}</td>
-      <td>${escapeHtml(kpm)}</td>
     </tr>
     <tr
       class="historical-player-detail-row"
       id="${escapeHtml(panelId)}"
       aria-labelledby="${escapeHtml(rowId)}"
     >
-      <td colspan="7">
-        ${renderPlayerStatsPanel(player, item, { team, playerName, kpm })}
+      <td colspan="6">
+        ${renderPlayerStatsPanel(player, item, { team, playerName })}
       </td>
     </tr>
   `;
@@ -510,7 +525,6 @@ function renderPlayerStatsPanel(player, item, context) {
           ${renderPlayerStatChip("Muertes", formatOptionalNumber(player.deaths))}
           ${renderPlayerStatChip("TK", formatOptionalNumber(player.teamkills))}
           ${renderPlayerStatChip("KD", formatKdRatio(player))}
-          ${renderPlayerStatChip("KPM", context.kpm)}
         </div>
       </div>
       ${renderExternalProfilesSection(player)}
@@ -873,23 +887,6 @@ function getKdRatioValue(player) {
     return 0;
   }
   return deaths > 0 ? kills / deaths : kills;
-}
-
-function formatKpm(kills, durationSeconds) {
-  return formatDecimal(getKpmValue(kills, durationSeconds), 2);
-}
-
-function getKpmValue(kills, durationSeconds) {
-  const parsedKills = Number(kills);
-  const parsedDurationSeconds = Number(durationSeconds);
-  if (
-    !Number.isFinite(parsedKills) ||
-    !Number.isFinite(parsedDurationSeconds) ||
-    parsedDurationSeconds <= 0
-  ) {
-    return 0;
-  }
-  return parsedKills / (parsedDurationSeconds / 60);
 }
 
 function formatNamedCounts(items) {
