@@ -5,6 +5,7 @@
   const serverSelect = document.getElementById("ranking-server");
   const metricSelect = document.getElementById("ranking-metric");
   const limitSelect = document.getElementById("ranking-limit");
+  const submitButton = document.getElementById("ranking-submit");
   const yearWrap = document.getElementById("ranking-year-wrap");
   const yearInput = document.getElementById("ranking-year");
   const stateNode = document.getElementById("ranking-state");
@@ -37,9 +38,10 @@
     "comunidad-hispana-01",
     "comunidad-hispana-02",
   ];
-  const supportedLimits = ["5", "10", "20", "50", "100"];
+  const supportedLimits = ["5", "10", "20", "30", "50", "100"];
 
-  let isBackendOnline = false;
+  let currentRequestId = 0;
+  let activeController = null;
 
   if (yearInput) {
     yearInput.value = String(currentYear);
@@ -48,9 +50,9 @@
   applyInitialUrlState();
   toggleYearField();
   syncMetricState();
-  setRankingState("neutral", "Esperando filtros para cargar el ranking global.");
+  setRankingState("neutral", "Preparando ranking p\u00fablico...");
   clearRankingSurface();
-  refreshBackendHealth();
+  void loadRanking();
 
   if (timeframeSelect) {
     timeframeSelect.addEventListener("change", () => {
@@ -103,6 +105,14 @@
     }
     filterNoteNode.textContent = message;
     filterNoteNode.className = `ranking-form__note ranking-form__note--${tone}`;
+  }
+
+  function setFormBusy(isBusy) {
+    if (!submitButton) {
+      return;
+    }
+    submitButton.disabled = isBusy;
+    submitButton.setAttribute("aria-busy", String(isBusy));
   }
 
   function applyInitialUrlState() {
@@ -181,7 +191,7 @@
     }
 
     setFilterNote(
-      "Ranking compara top globales. Para buscar un jugador concreto usa Estadísticas.",
+      "El ranking expone los resultados de los l\u00edderes. Para b\u00fasqueda individual usa Estad\u00edsticas.",
       "neutral",
     );
   }
@@ -224,47 +234,13 @@
     emptyNode.textContent = message;
   }
 
-  async function refreshBackendHealth() {
-    try {
-      const response = await fetch(`${backendBaseUrl}/health`);
-      if (!response.ok) {
-        throw new Error(`Health request failed with ${response.status}`);
-      }
-      const payload = await response.json();
-      if (!payload || payload.status !== "ok") {
-        throw new Error("Unexpected health payload");
-      }
-      isBackendOnline = true;
-      if (!String(stateNode?.textContent || "").includes("limite del URL")) {
-        setRankingState(
-          "neutral",
-          "Backend disponible. Ajusta filtros o usa la lectura inicial.",
-        );
-      }
-      void loadRanking();
-    } catch (error) {
-      console.warn("Ranking health check failed", error);
-      isBackendOnline = false;
-      setRankingState("error", "Backend no disponible. El ranking queda en estado offline.");
-      renderEmptyState(
-        "No fue posible contactar el backend. Cuando vuelva a estar disponible podras consultar semanal, mensual o anual.",
-      );
-    }
-  }
-
   async function loadRanking() {
+    const requestId = currentRequestId + 1;
+    currentRequestId = requestId;
     const timeframe = String(timeframeSelect?.value || defaultTimeframe);
     const serverId = String(serverSelect?.value || defaultServerId);
     const metric = String(metricSelect?.value || defaultMetric);
     const limit = String(limitSelect?.value || defaultLimit);
-
-    if (!isBackendOnline) {
-      setRankingState("error", "Backend no disponible. El ranking queda en estado offline.");
-      renderEmptyState(
-        "No fue posible contactar el backend. Reintenta cuando el servicio vuelva a estar disponible.",
-      );
-      return;
-    }
 
     let year = null;
     if (timeframe === "annual") {
@@ -277,7 +253,12 @@
     }
 
     setRankingState("loading", "Cargando ranking global...");
-    clearRankingSurface();
+    setFormBusy(true);
+
+    if (activeController) {
+      activeController.abort();
+    }
+    activeController = new AbortController();
 
     try {
       const searchParams = new URLSearchParams({
@@ -290,7 +271,12 @@
         searchParams.set("year", String(year));
       }
 
-      const response = await fetch(`${backendBaseUrl}/api/ranking?${searchParams.toString()}`);
+      const response = await fetch(`${backendBaseUrl}/api/ranking?${searchParams.toString()}`, {
+        signal: activeController.signal,
+      });
+      if (requestId !== currentRequestId) {
+        return;
+      }
       if (!response.ok) {
         const errorPayload = await safeParseJson(response);
         const errorMessage = String(
@@ -307,12 +293,22 @@
 
       renderRanking(payload.data || {});
     } catch (error) {
+      if (error?.name === "AbortError") {
+        return;
+      }
+      if (requestId !== currentRequestId) {
+        return;
+      }
       console.warn("Ranking request failed", error);
-      isBackendOnline = false;
       setRankingState("error", "Error controlado al cargar el ranking.");
       renderEmptyState(
-        "La lectura del ranking fall\u00f3 en este intento. Revisa el backend o actualiza la p\u00e1gina.",
+        "La lectura del ranking fall\u00f3 en este intento. Revisa el backend o vuelve a intentarlo.",
       );
+    } finally {
+      if (requestId === currentRequestId) {
+        setFormBusy(false);
+        activeController = null;
+      }
     }
   }
 
@@ -321,7 +317,7 @@
     if (statusCode === 400 && normalizedMessage.includes("limit")) {
       setRankingState("warning", "El limite solicitado no es valido.");
       renderEmptyState(
-        "Usa un limite permitido por la interfaz o por el backend. Esta vista admite Top 5, 10, 20, 50 y 100.",
+        "Usa un limite permitido por la interfaz o por el backend. Esta vista admite Top 5, 10, 20, 30, 50 y 100.",
       );
       return;
     }
@@ -350,7 +346,7 @@
     }
     if (statusCode === 400 && normalizedMessage.includes("timeframe")) {
       setRankingState("warning", "El periodo solicitado no esta soportado.");
-      renderEmptyState("Usa una ventana semanal, mensual o anual.");
+      renderEmptyState("Usa un periodo semanal, mensual o anual.");
       return;
     }
     setRankingState(
@@ -402,7 +398,7 @@
       renderEmptyState(
         timeframe === "annual"
           ? "La lectura anual existe pero no devolvio filas para este filtro."
-          : "No se encontraron jugadores con actividad suficiente en esta ventana.",
+          : "No se encontraron jugadores con actividad suficiente en este periodo.",
       );
       return;
     }
@@ -433,7 +429,7 @@
       { label: "Servidor activo", value: labelForServer(data.server_id), active: true },
       { label: "M\u00e9trica activa", value: labelForMetric(metric), active: true },
       { label: "L\u00edmite", value: `Top ${safeInt(data.limit, safeInt(defaultLimit, 20))}` },
-      { label: "Ventana", value: labelForWindow(data) },
+      { label: "Periodo", value: labelForWindow(data) },
       { label: "Actualizado", value: formatDateTime(source.generated_at) },
     ];
 
@@ -501,7 +497,7 @@
     if (String(data.timeframe || "") === "annual") {
       return `A\u00f1o ${safeInt(data.year, currentYear)}`;
     }
-    return String(data.window_label || data.window_kind || "Ventana activa");
+    return String(data.window_label || data.window_kind || "Periodo activo");
   }
 
   function labelForServer(serverId) {

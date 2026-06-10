@@ -1479,6 +1479,11 @@ h2 {
   grid-template-columns: repeat(auto-fit, minmax(min(100%, 180px), 1fr));
 }
 
+.ranking-results-title {
+  margin: 0 0 16px;
+  font-size: 1.08rem;
+}
+
 .ranking-meta-card {
   margin: 0;
   padding: 14px 16px;
@@ -1567,6 +1572,11 @@ h2 {
   background: linear-gradient(180deg, rgba(31, 28, 22, 0.82), rgba(14, 12, 9, 0.92));
   color: var(--text-soft);
   line-height: 1.7;
+}
+
+.ranking-form__actions .discord-button[disabled] {
+  opacity: 0.72;
+  cursor: progress;
 }
 
 .server-action-link--disabled {

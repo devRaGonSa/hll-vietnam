@@ -47,7 +47,7 @@
                 <span class="hero__title-accent">Global</span>
               </h1>
               <p class="hero__text">
-                Consulta los l&iacute;deres p&uacute;blicos de la comunidad, cambia de periodo y servidor sin salir de la p&aacute;gina y revisa qui&eacute;n destaca en cada ventana.
+                Consulta los l&iacute;deres p&uacute;blicos de la comunidad, cambia de periodo y servidor sin salir de la p&aacute;gina y revisa qui&eacute;n destaca en cada periodo.
               </p>
             </div>
           </div>
@@ -59,10 +59,10 @@
           <div class="panel__shell">
             <div class="panel__header">
               <p class="eyebrow eyebrow--section">Filtros de lectura</p>
-              <h2>Top p&uacute;blico por ventana</h2>
+              <h2>Top p&uacute;blico por periodo</h2>
             </div>
             <p class="panel__intro panel__intro--tight">
-              El ranking expone la lectura p&uacute;blica de l&iacute;deres. Para b&uacute;squeda individual usa Estad&iacute;sticas.
+              El ranking expone los resultados de los l&iacute;deres. Para b&uacute;squeda individual usa Estad&iacute;sticas.
             </p>
             <form class="ranking-form" id="ranking-form">
               <div class="ranking-form__grid">
@@ -99,6 +99,7 @@
                     <option value="5">Top 5</option>
                     <option value="10">Top 10</option>
                     <option value="20" selected>Top 20</option>
+                    <option value="30">Top 30</option>
                     <option value="50">Top 50</option>
                     <option value="100">Top 100</option>
                   </select>
@@ -121,24 +122,16 @@
                 Consulta l&iacute;deres p&uacute;blicos y cambia de periodo o servidor sin salir de la p&aacute;gina.
               </p>
               <div class="hero__actions ranking-form__actions">
-                <button class="discord-button" type="submit">Actualizar ranking</button>
+                <button class="discord-button" id="ranking-submit" type="submit">Actualizar ranking</button>
                 <a class="secondary-button secondary-button--compact" href="./stats.html">
                   Buscar jugador en Estad&iacute;sticas
                 </a>
               </div>
             </form>
             <p class="stats-state stats-state--neutral" id="ranking-state" role="status" aria-live="polite">
-              Esperando filtros para cargar el ranking global.
+              Preparando ranking p&uacute;blico...
             </p>
-          </div>
-        </section>
-
-        <section class="panel">
-          <div class="panel__shell">
-            <div class="panel__header">
-              <p class="eyebrow eyebrow--section">Resultados</p>
-              <h2 id="ranking-title">Tabla activa</h2>
-            </div>
+            <h3 class="ranking-results-title" id="ranking-title">Tabla activa</h3>
             <div class="ranking-meta" id="ranking-meta"></div>
             <div class="ranking-table-shell">
               <table class="historical-table ranking-table" id="ranking-table" hidden>
