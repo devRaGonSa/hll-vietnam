@@ -360,7 +360,7 @@ def list_current_match_kill_feed(
     if use_postgres_rcon_storage(explicit_sqlite_path=db_path):
         from .postgres_rcon_storage import connect_postgres_compat
 
-        connection_scope = connect_postgres_compat()
+        connection_scope = connect_postgres_compat(initialize=ensure_storage)
     else:
         connection_scope = closing(_connect_admin_log_sqlite_read(resolved_path))
 
@@ -485,7 +485,7 @@ def list_current_match_player_stats(
     if use_postgres_rcon_storage(explicit_sqlite_path=db_path):
         from .postgres_rcon_storage import connect_postgres_compat
 
-        connection_scope = connect_postgres_compat()
+        connection_scope = connect_postgres_compat(initialize=ensure_storage)
     else:
         connection_scope = closing(_connect_admin_log_sqlite_read(resolved_path))
 

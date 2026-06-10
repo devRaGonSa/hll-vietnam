@@ -108,6 +108,42 @@ Notas:
 - La frescura de `/api/servers` depende ahora del proceso/runner que mantenga snapshots calientes fuera del request publico.
 - Auditoria parcial contra produccion ejecutada el 2026-06-10 antes de desplegar este codigo: `current-match` todavia mostro los timeouts/500 previos y `/api/servers` midio 4249.71 ms. Repetir tras deploy para confirmar los tiempos post-fix reales.
 
+## Estado post-fix TASK-227
+
+Fecha: 2026-06-10  
+Alcance aplicado: correccion especifica de `/api/current-match/kills` y `/api/current-match/players` despues de que la auditoria real post-`TASK-226` siguiera mostrando timeouts de 26-30 s en esos endpoints.
+
+Causa confirmada:
+
+- Los payloads ya llamaban `list_current_match_kill_feed(..., ensure_storage=False)` y `list_current_match_player_stats(..., ensure_storage=False)`.
+- En la rama SQLite eso abria el storage en modo lectura.
+- En la rama PostgreSQL, `backend/app/rcon_admin_log_storage.py` llamaba `connect_postgres_compat()` sin pasar el flag.
+- `connect_postgres_compat()` usa `initialize=True` por defecto, por lo que kills/players seguian ejecutando `initialize_postgres_rcon_storage()` en el GET publico.
+
+Cambios de codigo aplicados:
+
+- `/api/current-match/kills`: la lectura PostgreSQL de AdminLog ahora propaga `initialize=ensure_storage`; con `ensure_storage=False` no ejecuta bootstrap/DDL.
+- `/api/current-match/players`: aplica el mismo fix para el resumen de jugadores.
+- Tests de regresion verifican que ambos caminos PostgreSQL publicos llaman `connect_postgres_compat(initialize=False)`.
+
+Diferencia con `/api/current-match` general:
+
+- `/api/current-match` usa `_query_current_match_rcon_sample()` y fallback a snapshot de servidores; no pasa por el read model AdminLog de kills/players.
+- Kills/players son vistas derivadas de AdminLog y el problema estaba en la inicializacion PostgreSQL de esa capa, no en host/puerto RCON.
+
+Estado esperado tras redeploy:
+
+| Endpoint | Estado TASK-227 en codigo | Severidad esperada tras deploy |
+| --- | --- | --- |
+| `/api/current-match/kills` | PostgreSQL read-only real; sin `initialize_postgres_rcon_storage()` en GET publico | OK o WARNING si falta read model |
+| `/api/current-match/players` | PostgreSQL read-only real; sin `initialize_postgres_rcon_storage()` en GET publico | OK o WARNING si falta read model |
+
+Comando de validacion de produccion tras redeploy:
+
+```powershell
+python .\scripts\audit_public_requests.py --base-url https://comunidadhll.devzamode.es --timeout 30 --filter current-match --output tmp\task227_current_match_audit_after.json
+```
+
 ## Evidencia ejecutada
 
 Comandos ejecutados:

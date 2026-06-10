@@ -1,9 +1,10 @@
 from http import HTTPStatus
 from datetime import datetime, timezone
 import unittest
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 from app import payloads
+from app import rcon_admin_log_storage
 from app.payloads import build_current_match_payload
 from app.rcon_admin_log_storage import list_current_match_player_stats, persist_rcon_admin_log_entries
 from app.rcon_client import RconServerTarget
@@ -561,6 +562,53 @@ class CurrentMatchPublicEndpointHardeningTests(unittest.TestCase):
         self.assertEqual(data["refresh_status"], "cache-only")
         self.assertEqual(data["source"], "persisted-stale-snapshot")
 
+    def test_kill_feed_postgres_read_only_does_not_initialize_storage(self) -> None:
+        connection = _FakeAdminLogConnection(
+            [
+                None,
+                [],
+            ]
+        )
+        connection_scope = _FakeConnectionScope(connection)
+        with (
+            patch.object(rcon_admin_log_storage, "use_postgres_rcon_storage", return_value=True),
+            patch(
+                "app.postgres_rcon_storage.connect_postgres_compat",
+                return_value=connection_scope,
+            ) as connect_postgres,
+        ):
+            result = rcon_admin_log_storage.list_current_match_kill_feed(
+                server_key="comunidad-hispana-01",
+                ensure_storage=False,
+            )
+
+        connect_postgres.assert_called_once_with(initialize=False)
+        self.assertEqual(result["items"], [])
+
+    def test_player_stats_postgres_read_only_does_not_initialize_storage(self) -> None:
+        connection = _FakeAdminLogConnection(
+            [
+                None,
+                [],
+            ]
+        )
+        connection_scope = _FakeConnectionScope(connection)
+        with (
+            patch.object(rcon_admin_log_storage, "use_postgres_rcon_storage", return_value=True),
+            patch(
+                "app.postgres_rcon_storage.connect_postgres_compat",
+                return_value=connection_scope,
+            ) as connect_postgres,
+        ):
+            result = rcon_admin_log_storage.list_current_match_player_stats(
+                server_key="comunidad-hispana-01",
+                ensure_storage=False,
+            )
+
+        connect_postgres.assert_called_once_with(initialize=False)
+        self.assertEqual(result["items"], [])
+        self.assertEqual(result["source"], "rcon-admin-log-current-match-summary")
+
 
 def _build_with_rcon_sample(sample: dict[str, object]) -> dict[str, object]:
     with (
@@ -590,3 +638,26 @@ def _build_with_snapshot_fallback(
     ):
         payload = build_current_match_payload(server_slug=server_slug)
     return payload["data"]
+
+
+class _FakeConnectionScope:
+    def __init__(self, connection: object) -> None:
+        self.connection = connection
+
+    def __enter__(self) -> object:
+        return self.connection
+
+    def __exit__(self, exc_type: object, exc: object, traceback: object) -> None:
+        return None
+
+
+class _FakeAdminLogConnection:
+    def __init__(self, query_results: list[object]) -> None:
+        self._query_results = list(query_results)
+
+    def execute(self, *_args: object, **_kwargs: object) -> MagicMock:
+        result = self._query_results.pop(0)
+        cursor = MagicMock()
+        cursor.fetchone.return_value = result
+        cursor.fetchall.return_value = result
+        return cursor
