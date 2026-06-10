@@ -11,11 +11,10 @@
   const tableNode = document.getElementById("ranking-table");
   const tableBodyNode = document.getElementById("ranking-table-body");
   const metricHeadingNode = document.getElementById("ranking-metric-heading");
-  const kpmHeadingNode = document.getElementById("ranking-kpm-heading");
+  const kppHeadingNode = document.getElementById("ranking-kpp-heading");
   const emptyNode = document.getElementById("ranking-empty");
 
   const annualYear = 2026;
-  const annualMetric = "kills";
   const defaultMetric = "kills";
   const defaultLimit = "20";
   const defaultTimeframe = "weekly";
@@ -132,11 +131,11 @@
     }
 
     Array.from(metricSelect.options).forEach((option) => {
-      option.disabled = isAnnual && option.value !== annualMetric;
+      option.disabled = isAnnual && !supportedMetrics.includes(option.value);
     });
 
-    if (isAnnual && metricSelect.value !== annualMetric) {
-      metricSelect.value = annualMetric;
+    if (isAnnual && !supportedMetrics.includes(metricSelect.value)) {
+      metricSelect.value = defaultMetric;
     }
   }
 
@@ -313,9 +312,9 @@
     }
 
     if (timeframe === "annual" && snapshotStatus === "missing") {
-      setRankingState("warning", "El snapshot anual solicitado aun no fue generado.");
+      setRankingState("warning", "Snapshot anual no disponible para esta metrica.");
       renderEmptyState(
-        "No existe snapshot anual para el a\u00f1o y servidor elegidos. Este estado es informativo y no implica ca\u00edda del backend.",
+        "Genera el snapshot anual para esta combinacion de metrica, servidor y a\u00f1o antes de publicarlo.",
       );
       return;
     }
@@ -340,7 +339,7 @@
     if (tableBodyNode) {
       tableBodyNode.innerHTML = items.map((item) => renderRow(item, metric)).join("");
     }
-    syncKpmColumn(metric);
+    syncKppColumn(metric);
     if (tableNode) {
       tableNode.hidden = false;
     }
@@ -387,7 +386,7 @@
       item.kills,
       item.matches_considered,
     );
-    const hideKpmColumn = metric === "kills_per_match";
+    const hideKppColumn = metric === "kills_per_match";
 
     return `
       <tr>
@@ -404,24 +403,24 @@
         <td>${safeInt(item.teamkills, 0)}</td>
         <td>${safeInt(item.matches_considered, 0)}</td>
         <td>${safeDecimal(item.kd_ratio, 2, "0.00")}</td>
-        ${hideKpmColumn ? "" : `<td>${killsPerMatch}</td>`}
+        ${hideKppColumn ? "" : `<td>${killsPerMatch}</td>`}
       </tr>
     `;
   }
 
-  function syncKpmColumn(metric) {
-    if (!tableNode || !kpmHeadingNode) {
+  function syncKppColumn(metric) {
+    if (!tableNode || !kppHeadingNode) {
       return;
     }
 
-    const kpmColumnIndex = kpmHeadingNode.cellIndex + 1;
-    const hideKpmColumn = metric === "kills_per_match";
-    kpmHeadingNode.hidden = hideKpmColumn;
+    const kppColumnIndex = kppHeadingNode.cellIndex + 1;
+    const hideKppColumn = metric === "kills_per_match";
+    kppHeadingNode.hidden = hideKppColumn;
 
     tableNode.querySelectorAll("tbody tr").forEach((row) => {
-      const cell = row.children[kpmColumnIndex - 1];
+      const cell = row.children[kppColumnIndex - 1];
       if (cell) {
-        cell.hidden = hideKpmColumn;
+        cell.hidden = hideKppColumn;
       }
     });
   }

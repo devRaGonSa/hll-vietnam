@@ -7,6 +7,7 @@ import json
 import sqlite3
 from contextlib import closing
 from contextlib import contextmanager
+from contextlib import nullcontext
 from datetime import date, datetime, timezone
 from pathlib import Path
 
@@ -14,6 +15,16 @@ from .config import get_storage_path, use_postgres_rcon_storage
 from .historical_storage import ALL_SERVERS_SLUG
 from .rcon_admin_log_materialization import MATCH_RESULT_SOURCE, initialize_rcon_materialized_storage
 from .sqlite_utils import connect_sqlite_readonly, connect_sqlite_writer
+
+
+SUPPORTED_ANNUAL_RANKING_METRICS = (
+    "kills",
+    "deaths",
+    "teamkills",
+    "matches_considered",
+    "kd_ratio",
+    "kills_per_match",
+)
 
 
 def generate_annual_ranking_snapshot(
@@ -34,75 +45,78 @@ def generate_annual_ranking_snapshot(
 
     resolved_path = initialize_rcon_materialized_storage(db_path=db_path)
     scope_sql, scope_params = _build_scope_sql(normalized_server_key)
-    if use_postgres_rcon_storage(explicit_sqlite_path=db_path):
+    postgres_enabled = use_postgres_rcon_storage(explicit_sqlite_path=db_path)
+    if postgres_enabled:
         from .postgres_rcon_storage import connect_postgres_compat
 
         connection_scope = connect_postgres_compat()
     else:
-        connection_scope = connect_sqlite_writer(resolved_path)
+        connection_scope = closing(connect_sqlite_writer(resolved_path))
 
     with connection_scope as connection:
-        source_matches_count = _count_matches_in_window(
-            connection=connection,
-            start=window_start,
-            end=window_end,
-            scope_sql=scope_sql,
-            scope_params=scope_params,
-        )
-        existing_snapshot_id = _find_existing_snapshot(
-            connection=connection,
-            year=normalized_year,
-            server_key=normalized_server_key,
-            metric=normalized_metric,
-        )
-        if existing_snapshot_id is not None and not replace_existing:
-            snapshot = _get_snapshot(connection=connection, snapshot_id=existing_snapshot_id)
-            items = _list_items(connection=connection, snapshot_id=existing_snapshot_id)
-            return {
-                "status": "ok",
-                "snapshot": snapshot,
-                "items": items,
-                "source_matches_count": source_matches_count,
-                "ranked_players": len(items),
-                "skipped_regeneration": True,
-            }
+        transaction_scope = nullcontext() if postgres_enabled else connection
+        with transaction_scope:
+            source_matches_count = _count_matches_in_window(
+                connection=connection,
+                start=window_start,
+                end=window_end,
+                scope_sql=scope_sql,
+                scope_params=scope_params,
+            )
+            existing_snapshot_id = _find_existing_snapshot(
+                connection=connection,
+                year=normalized_year,
+                server_key=normalized_server_key,
+                metric=normalized_metric,
+            )
+            if existing_snapshot_id is not None and not replace_existing:
+                snapshot = _get_snapshot(connection=connection, snapshot_id=existing_snapshot_id)
+                items = _list_items(connection=connection, snapshot_id=existing_snapshot_id)
+                return {
+                    "status": "ok",
+                    "snapshot": snapshot,
+                    "items": items,
+                    "source_matches_count": source_matches_count,
+                    "ranked_players": len(items),
+                    "skipped_regeneration": True,
+                }
 
-        ranking_rows = _fetch_annual_ranking_rows(
-            connection=connection,
-            start=window_start,
-            end=window_end,
-            metric=normalized_metric,
-            limit=normalized_limit,
-            scope_sql=scope_sql,
-            scope_params=scope_params,
-        )
+            ranking_rows = _fetch_annual_ranking_rows(
+                connection=connection,
+                start=window_start,
+                end=window_end,
+                metric=normalized_metric,
+                limit=normalized_limit,
+                scope_sql=scope_sql,
+                scope_params=scope_params,
+            )
 
-        _delete_existing_snapshot(
-            connection=connection,
-            year=normalized_year,
-            server_key=normalized_server_key,
-            metric=normalized_metric,
-        )
-        snapshot_id = _insert_snapshot(
-            connection=connection,
-            year=normalized_year,
-            server_key=normalized_server_key,
-            metric=normalized_metric,
-            limit=normalized_limit,
-            source_matches_count=source_matches_count,
-            window_start=window_start,
-            window_end=window_end,
-        )
+            _delete_existing_snapshot(
+                connection=connection,
+                year=normalized_year,
+                server_key=normalized_server_key,
+                metric=normalized_metric,
+            )
+            snapshot_id = _insert_snapshot(
+                connection=connection,
+                year=normalized_year,
+                server_key=normalized_server_key,
+                metric=normalized_metric,
+                limit=normalized_limit,
+                source_matches_count=source_matches_count,
+                window_start=window_start,
+                window_end=window_end,
+            )
 
-        _insert_items(
-            connection=connection,
-            snapshot_id=snapshot_id,
-            rows=ranking_rows,
-            limit=normalized_limit,
-        )
+            _insert_items(
+                connection=connection,
+                snapshot_id=snapshot_id,
+                rows=ranking_rows,
+                limit=normalized_limit,
+            )
 
-        snapshot = _get_snapshot(connection=connection, snapshot_id=snapshot_id)
-        items = _list_items(connection=connection, snapshot_id=snapshot_id)
+            snapshot = _get_snapshot(connection=connection, snapshot_id=snapshot_id)
+            items = _list_items(connection=connection, snapshot_id=snapshot_id)
 
     return {
         "status": "ok",
@@ -241,7 +255,7 @@ def _normalize_server_key(server_key: str | None) -> str:
 
 def _normalize_metric(metric: str) -> str:
     normalized = str(metric or "kills").strip().lower()
-    if normalized != "kills":
+    if normalized not in SUPPORTED_ANNUAL_RANKING_METRICS:
         raise ValueError(
             f"Metric '{normalized}' is not supported for annual ranking snapshots."
         )
@@ -287,20 +301,18 @@ def _fetch_annual_ranking_rows(
     scope_sql: str,
     scope_params: list[object],
 ) -> list[dict[str, object]]:
-    # For now metric support is intentionally narrowed to kills only.
-    if metric != "kills":
-        return []
+    metric_sql, having_sql = _resolve_metric_sql(metric)
 
     rows = connection.execute(
         f"""
         SELECT
             stats.player_id,
             COALESCE(MAX(stats.player_name), stats.player_id) AS player_name,
+            {metric_sql} AS metric_value,
             SUM(COALESCE(stats.kills, 0)) AS kills,
             SUM(COALESCE(stats.deaths, 0)) AS deaths,
             SUM(COALESCE(stats.teamkills, 0)) AS teamkills,
-            COUNT(DISTINCT stats.match_key) AS matches_considered,
-            SUM(COALESCE(stats.kills, 0)) AS metric_value
+            COUNT(DISTINCT stats.match_key) AS matches_considered
         FROM rcon_match_player_stats AS stats
         INNER JOIN rcon_materialized_matches AS matches
             ON matches.target_key = stats.target_key
@@ -311,13 +323,50 @@ def _fetch_annual_ranking_rows(
           {scope_sql}
           AND TRIM(COALESCE(stats.player_name, '')) != ''
         GROUP BY stats.player_id
-        HAVING SUM(COALESCE(stats.kills, 0)) > 0
-        ORDER BY metric_value DESC, matches_considered DESC, player_name ASC
+        {having_sql}
+        ORDER BY metric_value DESC, matches_considered DESC, kills DESC, player_name ASC
         LIMIT ?
         """,
         [MATCH_RESULT_SOURCE, start, end, *scope_params, limit],
     ).fetchall()
     return [dict(row) for row in rows]
+
+
+def _resolve_metric_sql(metric: str) -> tuple[str, str]:
+    metric_sql_by_metric = {
+        "kills": "SUM(COALESCE(stats.kills, 0))",
+        "deaths": "SUM(COALESCE(stats.deaths, 0))",
+        "teamkills": "SUM(COALESCE(stats.teamkills, 0))",
+        "matches_considered": "COUNT(DISTINCT stats.match_key)",
+        "kd_ratio": (
+            "CASE "
+            "WHEN SUM(COALESCE(stats.deaths, 0)) > 0 "
+            "THEN ROUND(CAST(SUM(COALESCE(stats.kills, 0)) AS NUMERIC) / "
+            "CAST(SUM(COALESCE(stats.deaths, 0)) AS NUMERIC), 2) "
+            "ELSE CAST(SUM(COALESCE(stats.kills, 0)) AS NUMERIC) "
+            "END"
+        ),
+        "kills_per_match": (
+            "CASE "
+            "WHEN COUNT(DISTINCT stats.match_key) > 0 "
+            "THEN ROUND(CAST(SUM(COALESCE(stats.kills, 0)) AS NUMERIC) / "
+            "CAST(COUNT(DISTINCT stats.match_key) AS NUMERIC), 2) "
+            "ELSE CAST(0 AS NUMERIC) "
+            "END"
+        ),
+    }
+    having_sql_by_metric = {
+        "kills": "HAVING SUM(COALESCE(stats.kills, 0)) > 0",
+        "deaths": "HAVING SUM(COALESCE(stats.deaths, 0)) > 0",
+        "teamkills": "HAVING SUM(COALESCE(stats.teamkills, 0)) > 0",
+        "matches_considered": "HAVING COUNT(DISTINCT stats.match_key) > 0",
+        "kd_ratio": "HAVING SUM(COALESCE(stats.kills, 0)) > 0",
+        "kills_per_match": (
+            "HAVING COUNT(DISTINCT stats.match_key) > 0 "
+            "AND SUM(COALESCE(stats.kills, 0)) > 0"
+        ),
+    }
+    return metric_sql_by_metric[metric], having_sql_by_metric[metric]
 
 
 def _count_matches_in_window(
@@ -457,7 +506,10 @@ def _insert_snapshot(
             source_matches_count,
         ],
     )
-    row = cursor.fetchone()
+    try:
+        row = cursor.fetchone()
+    finally:
+        cursor.close()
     if row is not None and row["id"] is not None:
         return int(row["id"])
 
@@ -482,7 +534,7 @@ def _insert_items(
     for index, row in enumerate(rows[:limit], start=1):
         kills = int(row.get("kills") or 0)
         deaths = int(row.get("deaths") or 0)
-        metric_value = int(row.get("metric_value") or 0)
+        metric_value = _coerce_metric_value(row.get("metric_value"))
         connection.execute(
             """
             INSERT INTO rcon_annual_ranking_snapshot_items (
@@ -561,6 +613,16 @@ def _list_items(*, connection: object, snapshot_id: int, limit: int | None = Non
         params.append(limit)
     rows = connection.execute(query, params).fetchall()
     return [dict(row) for row in rows]
+
+
+def _coerce_metric_value(value: object) -> int | float:
+    try:
+        numeric = float(value or 0)
+    except (TypeError, ValueError):
+        return 0
+    if numeric.is_integer():
+        return int(numeric)
+    return round(numeric, 2)
 
 
 def _count_items(*, connection: object, snapshot_id: int) -> int:

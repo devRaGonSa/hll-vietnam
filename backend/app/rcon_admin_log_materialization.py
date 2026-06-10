@@ -120,7 +120,7 @@ def initialize_rcon_materialized_storage(*, db_path: Path | None = None) -> Path
                     status TEXT NOT NULL DEFAULT 'ready',
                     source_matches_count INTEGER NOT NULL DEFAULT 0,
                     CHECK (limit_size > 0),
-                    CHECK (metric IN ('kills', 'deaths', 'matches_over_100_kills', 'support')),
+                    CHECK (metric IN ('kills', 'deaths', 'teamkills', 'matches_considered', 'kd_ratio', 'kills_per_match')),
                     UNIQUE (year, server_key, metric)
                 );
 
@@ -136,7 +136,7 @@ def initialize_rcon_materialized_storage(*, db_path: Path | None = None) -> Path
                     ranking_position INTEGER NOT NULL,
                     player_id TEXT NOT NULL,
                     player_name TEXT NOT NULL,
-                    metric_value INTEGER NOT NULL DEFAULT 0,
+                    metric_value REAL NOT NULL DEFAULT 0,
                     matches_considered INTEGER NOT NULL DEFAULT 0,
                     kills INTEGER NOT NULL DEFAULT 0,
                     deaths INTEGER NOT NULL DEFAULT 0,

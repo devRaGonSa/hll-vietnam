@@ -201,7 +201,7 @@ CREATE TABLE IF NOT EXISTS rcon_annual_ranking_snapshots (
     status TEXT NOT NULL DEFAULT 'ready',
     source_matches_count INTEGER NOT NULL DEFAULT 0,
     CHECK (limit_size > 0),
-    CHECK (metric IN ('kills', 'deaths', 'matches_over_100_kills', 'support')),
+    CHECK (metric IN ('kills', 'deaths', 'teamkills', 'matches_considered', 'kd_ratio', 'kills_per_match')),
     UNIQUE (year, server_key, metric)
 );
 
@@ -211,7 +211,7 @@ CREATE TABLE IF NOT EXISTS rcon_annual_ranking_snapshot_items (
     ranking_position INTEGER NOT NULL,
     player_id TEXT NOT NULL,
     player_name TEXT NOT NULL,
-    metric_value BIGINT NOT NULL DEFAULT 0,
+    metric_value DOUBLE PRECISION NOT NULL DEFAULT 0,
     matches_considered INTEGER NOT NULL DEFAULT 0,
     kills BIGINT NOT NULL DEFAULT 0,
     deaths BIGINT NOT NULL DEFAULT 0,
@@ -379,12 +379,49 @@ CREATE INDEX IF NOT EXISTS idx_rcon_scoreboard_candidates_server_end
 ON rcon_scoreboard_match_candidates(server_slug, ended_at DESC, started_at DESC);
 """
 
+POSTGRES_ANNUAL_RANKING_SCHEMA_MIGRATION_SQL = """
+ALTER TABLE rcon_annual_ranking_snapshot_items
+ALTER COLUMN metric_value TYPE DOUBLE PRECISION USING metric_value::double precision;
+
+DO $$
+DECLARE
+    constraint_record record;
+BEGIN
+    FOR constraint_record IN
+        SELECT con.conname
+        FROM pg_constraint AS con
+        JOIN pg_class AS rel ON rel.oid = con.conrelid
+        JOIN pg_namespace AS nsp ON nsp.oid = rel.relnamespace
+        WHERE rel.relname = 'rcon_annual_ranking_snapshots'
+          AND con.contype = 'c'
+          AND pg_get_constraintdef(con.oid) LIKE '%metric%'
+    LOOP
+        EXECUTE format(
+            'ALTER TABLE rcon_annual_ranking_snapshots DROP CONSTRAINT %I',
+            constraint_record.conname
+        );
+    END LOOP;
+
+    ALTER TABLE rcon_annual_ranking_snapshots
+    ADD CONSTRAINT rcon_annual_ranking_snapshots_metric_check
+    CHECK (metric IN (
+        'kills',
+        'deaths',
+        'teamkills',
+        'matches_considered',
+        'kd_ratio',
+        'kills_per_match'
+    ));
+END $$;
+"""
+
 
 def initialize_postgres_rcon_storage() -> None:
     """Create deterministic PostgreSQL schema for migrated RCON domains."""
     with connect_postgres() as connection:
         with connection.cursor() as cursor:
             cursor.execute(RCON_SCHEMA_SQL)
+            cursor.execute(POSTGRES_ANNUAL_RANKING_SCHEMA_MIGRATION_SQL)
 
 
 @contextmanager
