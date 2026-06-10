@@ -918,15 +918,6 @@ h2 {
   padding-inline: 16px;
 }
 
-.clan-card--bxb .clan-card__brand {
-  grid-template-columns: minmax(232px, 268px) minmax(0, 1fr);
-}
-
-.clan-card__logo--bxb {
-  min-height: 204px;
-  padding: 4px;
-}
-
 .clan-card__logo img {
   width: 100%;
   height: 100%;
@@ -941,14 +932,6 @@ h2 {
 
 .clan-card__logo--shield img {
   max-height: 152px;
-}
-
-.clan-card__logo--bxb img {
-  width: 100%;
-  height: 100%;
-  max-width: 100%;
-  max-height: 196px;
-  object-fit: contain;
 }
 
 .clan-card__logo-placeholder {
