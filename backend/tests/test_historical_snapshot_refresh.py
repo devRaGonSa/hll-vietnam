@@ -201,7 +201,61 @@ class HistoricalSnapshotRefreshTests(unittest.TestCase):
         self.assertEqual(payload["data"]["legacy_endpoint_policy"], "snapshot-read-only-fast-path")
         self.assertEqual(payload["data"]["items"][0]["match_id"], "match-1")
 
-    def test_legacy_all_servers_summary_uses_snapshot_fast_path(self) -> None:
+    def test_legacy_server_summary_uses_snapshot_fast_path(self) -> None:
+        snapshot = {
+            "generated_at": "2026-06-10T04:00:00Z",
+            "source_range_start": "2026-06-09T00:00:00Z",
+            "source_range_end": "2026-06-10T00:00:00Z",
+            "is_stale": False,
+            "payload": {
+                "item": {
+                    "server": {"slug": "comunidad-hispana-01", "name": "Comunidad Hispana #01"},
+                    "matches_count": 12,
+                },
+            },
+        }
+        with (
+            patch("app.payloads._get_historical_snapshot_record", return_value=snapshot),
+            patch("app.payloads.get_historical_data_source_kind", return_value="rcon"),
+            patch("app.payloads.get_rcon_historical_read_model") as rcon_loader,
+            patch("app.payloads.list_historical_server_summaries") as fallback_loader,
+        ):
+            payload = build_historical_server_summary_payload(server_slug="comunidad-hispana-01")
+
+        rcon_loader.assert_not_called()
+        fallback_loader.assert_not_called()
+        self.assertEqual(payload["data"]["context"], "historical-server-summary")
+        self.assertEqual(payload["data"]["legacy_endpoint_policy"], "snapshot-read-only-fast-path")
+        self.assertEqual(payload["data"]["server_slug"], "comunidad-hispana-01")
+        self.assertEqual(payload["data"]["items"][0]["matches_count"], 12)
+
+    def test_legacy_second_server_summary_uses_snapshot_fast_path(self) -> None:
+        snapshot = {
+            "generated_at": "2026-06-10T04:00:00Z",
+            "source_range_start": "2026-06-09T00:00:00Z",
+            "source_range_end": "2026-06-10T00:00:00Z",
+            "is_stale": False,
+            "payload": {
+                "item": {
+                    "server": {"slug": "comunidad-hispana-02", "name": "Comunidad Hispana #02"},
+                    "matches_count": 8,
+                },
+            },
+        }
+        with (
+            patch("app.payloads._get_historical_snapshot_record", return_value=snapshot),
+            patch("app.payloads.get_historical_data_source_kind", return_value="rcon"),
+            patch("app.payloads.get_rcon_historical_read_model") as rcon_loader,
+            patch("app.payloads.list_historical_server_summaries") as fallback_loader,
+        ):
+            payload = build_historical_server_summary_payload(server_slug="comunidad-hispana-02")
+
+        rcon_loader.assert_not_called()
+        fallback_loader.assert_not_called()
+        self.assertEqual(payload["data"]["server_slug"], "comunidad-hispana-02")
+        self.assertEqual(payload["data"]["items"][0]["matches_count"], 8)
+
+    def test_legacy_all_servers_summary_still_uses_snapshot_fast_path(self) -> None:
         snapshot = {
             "generated_at": "2026-06-10T04:00:00Z",
             "source_range_start": "2026-06-09T00:00:00Z",
@@ -210,7 +264,7 @@ class HistoricalSnapshotRefreshTests(unittest.TestCase):
             "payload": {
                 "item": {
                     "server": {"slug": "all-servers", "name": "Todos los servidores"},
-                    "matches_count": 12,
+                    "matches_count": 20,
                 },
             },
         }
@@ -224,9 +278,8 @@ class HistoricalSnapshotRefreshTests(unittest.TestCase):
 
         rcon_loader.assert_not_called()
         fallback_loader.assert_not_called()
-        self.assertEqual(payload["data"]["context"], "historical-server-summary")
-        self.assertEqual(payload["data"]["legacy_endpoint_policy"], "snapshot-read-only-fast-path")
-        self.assertEqual(payload["data"]["items"][0]["matches_count"], 12)
+        self.assertEqual(payload["data"]["server_slug"], "all-servers")
+        self.assertEqual(payload["data"]["items"][0]["matches_count"], 20)
 
     def test_rcon_coverage_accepts_postgres_datetime_values(self) -> None:
         start = datetime(2026, 5, 21, 10, 0, tzinfo=timezone.utc)

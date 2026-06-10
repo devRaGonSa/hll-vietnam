@@ -1764,24 +1764,10 @@ def build_historical_server_summary_payload(
     server_slug: str | None = None,
 ) -> dict[str, object]:
     """Return aggregated historical metrics per server."""
-    if server_slug == ALL_SERVERS_SLUG:
-        snapshot_payload = build_historical_server_summary_snapshot_payload(
+    if server_slug:
+        return _build_historical_server_summary_legacy_snapshot_payload(
             server_slug=server_slug,
         )
-        data = dict(snapshot_payload.get("data") or {})
-        item = data.get("item") if isinstance(data.get("item"), dict) else None
-        data.update(
-            {
-                "title": "Cobertura historica agregada de todos los servidores",
-                "context": "historical-server-summary",
-                "source": "historical-precomputed-snapshots",
-                "summary_basis": "precomputed-server-summary-snapshot",
-                "weekly_ranking_window_days": 7,
-                "legacy_endpoint_policy": "snapshot-read-only-fast-path",
-                "items": [item] if item is not None else [],
-            }
-        )
-        return {"status": snapshot_payload.get("status", "ok"), "data": data}
 
     if get_historical_data_source_kind() == "rcon":
         data_source = get_rcon_historical_read_model()
@@ -1853,6 +1839,33 @@ def build_historical_server_summary_payload(
             "items": items,
         },
     }
+
+
+def _build_historical_server_summary_legacy_snapshot_payload(
+    *,
+    server_slug: str,
+) -> dict[str, object]:
+    snapshot_payload = build_historical_server_summary_snapshot_payload(
+        server_slug=server_slug,
+    )
+    data = dict(snapshot_payload.get("data") or {})
+    item = data.get("item") if isinstance(data.get("item"), dict) else None
+    data.update(
+        {
+            "title": (
+                "Cobertura historica agregada de todos los servidores"
+                if server_slug == ALL_SERVERS_SLUG
+                else "Cobertura historica importada por servidor"
+            ),
+            "context": "historical-server-summary",
+            "source": "historical-precomputed-snapshots",
+            "summary_basis": "precomputed-server-summary-snapshot",
+            "weekly_ranking_window_days": 7,
+            "legacy_endpoint_policy": "snapshot-read-only-fast-path",
+            "items": [item] if item is not None else [],
+        }
+    )
+    return {"status": snapshot_payload.get("status", "ok"), "data": data}
 
 
 def build_historical_player_profile_payload(player_id: str) -> dict[str, object]:

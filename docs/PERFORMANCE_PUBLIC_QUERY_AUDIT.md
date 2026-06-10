@@ -14,6 +14,8 @@ Actualizacion TASK-228, 2026-06-10: `/api/servers` deja de ser cache-only estric
 
 Actualizacion TASK-229, 2026-06-10: los endpoints legacy agregados `/api/historical/server-summary?server=all-servers` y `/api/historical/recent-matches?server=all-servers&limit=20` dejan de ejecutar read model RCON o fallback runtime CRCON/PostgreSQL en lectura publica. Ahora son wrappers de los snapshots precomputados equivalentes, con `legacy_endpoint_policy=snapshot-read-only-fast-path`; si falta snapshot devuelven JSON controlado rapido en vez de agotar el timeout.
 
+Actualizacion TASK-230, 2026-06-10: el ultimo `CRITICAL` de la auditoria global fue `/api/historical/server-summary?server=comunidad-hispana-01`, con HTTP 200, `fallback=False` y ~10.1 s. La causa estaba en el path legacy por servidor, que seguia entrando en el read model RCON y enriquecia el resumen con actividad materializada reciente. `server-summary` legacy pasa a usar snapshot fast-path para cualquier `server=` explicito (`all-servers`, `comunidad-hispana-01`, `comunidad-hispana-02`), manteniendo contrato compatible con `items` y metadata de snapshot.
+
 Conclusiones principales:
 
 - El backend de `ranking` ya no muestra el cuello de botella grave del ranking anual. La evidencia mas fuerte es el test `backend/tests/test_annual_ranking_payload.py`, que confirma que la lectura anual en PostgreSQL ya no inicializa storage en request publico.
@@ -50,7 +52,7 @@ Flujo observado:
 | `/api/historical/snapshots/leaderboard` | `frontend/assets/js/historico.js` | `build_rcon_materialized_leaderboard_snapshot_payload()` en modo rcon | Snapshot historico publico equivalente | En modo rcon el nombre dice snapshot, pero sirve runtime fast path sobre materialized leaderboard | Si, por definicion del endpoint en modo rcon | P1 |
 | `/api/historical/snapshots/recent-matches` | `frontend/assets/js/historico.js` | `build_recent_historical_matches_snapshot_payload()` | Snapshot publico de recent matches | Snapshot precomputado read-only | No | P2 |
 | `/api/historical/recent-matches?server=all-servers` | legacy historico audit | `build_recent_historical_matches_payload()` | Snapshot publico de recent matches | Wrapper legacy sobre snapshot precomputado | No | P2 |
-| `/api/historical/server-summary?server=all-servers` | legacy historico audit | `build_historical_server_summary_payload()` | Snapshot publico de server summary | Wrapper legacy sobre snapshot precomputado | No | P2 |
+| `/api/historical/server-summary?server=<scope>` | legacy historico audit | `build_historical_server_summary_payload()` | Snapshot publico de server summary | Wrapper legacy sobre snapshot precomputado para cualquier `server=` explicito | No | P2 |
 | `/api/historical/matches/detail` | `frontend/assets/js/historico-partida.js` | `build_historical_match_detail_payload()` | Read model detalle de partida | Intenta `get_rcon_historical_match_detail()`, luego fallback a storage historico publico | Si | P2 |
 | `/api/current-match` | `frontend/assets/js/partida-actual.js` | `build_current_match_payload()` | Read model live propio | Primero intenta `_query_current_match_rcon_sample()` directo; luego fallback a `/api/servers` snapshot | Si, y toca RCON directo | P0 |
 | `/api/current-match/kills` | `frontend/assets/js/partida-actual.js` | `build_current_match_kill_feed_payload()` | Read model live propio de kill feed | AdminLog materializado en modo read-only publico; PostgreSQL usa `connect_postgres_compat(initialize=False)` | Degradacion JSON controlada si falla read model | P2 |
