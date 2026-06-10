@@ -4,11 +4,13 @@ from __future__ import annotations
 
 import argparse
 import json
+import sqlite3
 from contextlib import closing
+from contextlib import contextmanager
 from datetime import date, datetime, timezone
 from pathlib import Path
 
-from .config import use_postgres_rcon_storage
+from .config import get_storage_path, use_postgres_rcon_storage
 from .historical_storage import ALL_SERVERS_SLUG
 from .rcon_admin_log_materialization import MATCH_RESULT_SOURCE, initialize_rcon_materialized_storage
 from .sqlite_utils import connect_sqlite_readonly, connect_sqlite_writer
@@ -125,54 +127,43 @@ def get_annual_ranking_snapshot(
     normalized_metric = _normalize_metric(metric)
     normalized_limit = _normalize_limit(limit)
 
-    resolved_path = initialize_rcon_materialized_storage(db_path=db_path)
-    if use_postgres_rcon_storage(explicit_sqlite_path=db_path):
-        from .postgres_rcon_storage import connect_postgres_compat
+    try:
+        with _open_annual_snapshot_read_connection(db_path=db_path) as connection:
+            snapshot = _find_snapshot(
+                connection=connection,
+                year=normalized_year,
+                server_key=normalized_server_key,
+                metric=normalized_metric,
+            )
+            if snapshot is None:
+                return _build_missing_snapshot_result(
+                    year=normalized_year,
+                    server_key=normalized_server_key,
+                    metric=normalized_metric,
+                    limit=normalized_limit,
+                )
 
-        connection_scope = connect_postgres_compat()
-    else:
-        connection_scope = closing(connect_sqlite_readonly(resolved_path))
-
-    with connection_scope as connection:
-        snapshot = _find_snapshot(
-            connection=connection,
+            snapshot_limit = _normalize_limit(snapshot.get("limit_size") or normalized_limit)
+            item_count = _count_items(
+                connection=connection,
+                snapshot_id=int(snapshot["id"]),
+            )
+            effective_limit = _resolve_effective_limit(
+                requested_limit=normalized_limit,
+                snapshot_limit=snapshot_limit,
+                item_count=item_count,
+            )
+            items = _list_items(
+                connection=connection,
+                snapshot_id=int(snapshot["id"]),
+                limit=effective_limit if effective_limit > 0 else None,
+            )
+    except (FileNotFoundError, sqlite3.OperationalError):
+        return _build_missing_snapshot_result(
             year=normalized_year,
             server_key=normalized_server_key,
             metric=normalized_metric,
-        )
-        if snapshot is None:
-            return {
-                "snapshot_status": "missing",
-                "year": normalized_year,
-                "server_id": normalized_server_key,
-                "metric": normalized_metric,
-                "limit": normalized_limit,
-                "requested_limit": normalized_limit,
-                "effective_limit": 0,
-                "snapshot_limit": None,
-                "item_count": 0,
-                "source": "rcon-annual-ranking-snapshot",
-                "generated_at": None,
-                "window_start": None,
-                "window_end": None,
-                "source_matches_count": 0,
-                "items": [],
-            }
-
-        snapshot_limit = _normalize_limit(snapshot.get("limit_size") or normalized_limit)
-        item_count = _count_items(
-            connection=connection,
-            snapshot_id=int(snapshot["id"]),
-        )
-        effective_limit = _resolve_effective_limit(
-            requested_limit=normalized_limit,
-            snapshot_limit=snapshot_limit,
-            item_count=item_count,
-        )
-        items = _list_items(
-            connection=connection,
-            snapshot_id=int(snapshot["id"]),
-            limit=effective_limit if effective_limit > 0 else None,
+            limit=normalized_limit,
         )
 
     return {
@@ -191,6 +182,52 @@ def get_annual_ranking_snapshot(
         "window_end": snapshot.get("window_end"),
         "source_matches_count": int(snapshot.get("source_matches_count") or 0),
         "items": items,
+    }
+
+
+@contextmanager
+def _open_annual_snapshot_read_connection(*, db_path: Path | None = None):
+    if use_postgres_rcon_storage(explicit_sqlite_path=db_path):
+        from .postgres_rcon_storage import PostgresCompatConnection, connect_postgres
+
+        with connect_postgres() as connection:
+            yield PostgresCompatConnection(connection)
+        return
+
+    resolved_path = _resolve_annual_snapshot_sqlite_path(db_path=db_path)
+    if not resolved_path.exists():
+        raise FileNotFoundError(resolved_path)
+    with closing(connect_sqlite_readonly(resolved_path)) as connection:
+        yield connection
+
+
+def _resolve_annual_snapshot_sqlite_path(*, db_path: Path | None = None) -> Path:
+    return db_path if db_path is not None else get_storage_path()
+
+
+def _build_missing_snapshot_result(
+    *,
+    year: int,
+    server_key: str,
+    metric: str,
+    limit: int,
+) -> dict[str, object]:
+    return {
+        "snapshot_status": "missing",
+        "year": year,
+        "server_id": server_key,
+        "metric": metric,
+        "limit": limit,
+        "requested_limit": limit,
+        "effective_limit": 0,
+        "snapshot_limit": None,
+        "item_count": 0,
+        "source": "rcon-annual-ranking-snapshot",
+        "generated_at": None,
+        "window_start": None,
+        "window_end": None,
+        "source_matches_count": 0,
+        "items": [],
     }
 
 
