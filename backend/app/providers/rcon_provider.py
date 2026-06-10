@@ -19,7 +19,12 @@ class RconLiveDataSource:
 
     source_kind: str = "rcon"
 
-    def collect_snapshots(self, *, persist: bool) -> dict[str, object]:
+    def collect_snapshots(
+        self,
+        *,
+        persist: bool,
+        timeout_seconds: float | None = None,
+    ) -> dict[str, object]:
         configured_targets = load_rcon_targets()
         if not configured_targets:
             raise RuntimeError("No RCON targets configured in HLL_BACKEND_RCON_TARGETS.")
@@ -30,7 +35,12 @@ class RconLiveDataSource:
 
         for target in configured_targets:
             try:
-                normalized_records.append(query_live_server_sample(target)["normalized"])
+                normalized_records.append(
+                    query_live_server_sample(
+                        target,
+                        timeout_seconds=timeout_seconds,
+                    )["normalized"]
+                )
             except Exception as error:  # noqa: BLE001 - keep provider failures controlled
                 errors.append(
                     {

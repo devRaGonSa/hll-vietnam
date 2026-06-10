@@ -533,7 +533,71 @@ class CurrentMatchPublicEndpointHardeningTests(unittest.TestCase):
         self.assertTrue(data["fallback_used"])
         self.assertEqual(data["fallback_reason"], "admin-log-read-model-unavailable")
 
-    def test_servers_payload_does_not_refresh_live_on_public_get(self) -> None:
+    def test_servers_payload_refreshes_live_when_no_snapshot_exists(self) -> None:
+        live_snapshot = {
+            "server_name": "Comunidad Hispana #01",
+            "external_server_id": "comunidad-hispana-01",
+            "captured_at": "2026-06-10T10:00:00Z",
+            "snapshot_origin": "real-rcon",
+            "current_map": "carentan",
+            "players": 74,
+            "max_players": 100,
+        }
+        fake_live_source = _FakeLiveSource(
+            collect_payload={
+                "snapshots": [live_snapshot],
+                "errors": [],
+                "primary_source": "rcon",
+                "selected_source": "rcon",
+                "fallback_used": False,
+                "fallback_reason": None,
+                "source_attempts": [
+                    {
+                        "source": "rcon",
+                        "role": "primary",
+                        "status": "success",
+                        "reason": None,
+                        "message": None,
+                    }
+                ],
+            }
+        )
+
+        with (
+            patch.object(payloads, "list_latest_snapshots", return_value=[]),
+            patch.object(payloads, "get_live_data_source", return_value=fake_live_source),
+        ):
+            result = payloads.build_servers_payload()
+
+        data = result["data"]
+        self.assertEqual(result["status"], "ok")
+        self.assertEqual(data["source"], "real-time-rcon-refresh")
+        self.assertEqual(data["refresh_attempted"], True)
+        self.assertEqual(data["refresh_status"], "success")
+        self.assertEqual(data["items"][0]["external_server_id"], "comunidad-hispana-01")
+        self.assertEqual(data["items"][0]["players"], 74)
+        self.assertEqual(fake_live_source.collect_calls, [(False, 2.5)])
+
+    def test_servers_payload_returns_controlled_empty_response_when_live_fails_without_cache(self) -> None:
+        fake_live_source = _FakeLiveSource(collect_error=TimeoutError("RCON timed out"))
+
+        with (
+            patch.object(payloads, "list_latest_snapshots", return_value=[]),
+            patch.object(payloads, "get_live_data_source", return_value=fake_live_source),
+        ):
+            result = payloads.build_servers_payload()
+
+        data = result["data"]
+        self.assertEqual(result["status"], "ok")
+        self.assertEqual(data["items"], [])
+        self.assertEqual(data["source"], "no-snapshot-available")
+        self.assertEqual(data["refresh_attempted"], True)
+        self.assertEqual(data["refresh_status"], "failed")
+        self.assertEqual(data["fallback_used"], True)
+        self.assertEqual(data["fallback_reason"], "live-refresh-timeout")
+        self.assertEqual(data["refresh_errors"][0]["reason"], "live-refresh-timeout")
+
+    def test_servers_payload_falls_back_to_stale_snapshot_when_live_refresh_fails(self) -> None:
         stale_snapshot = {
             "server_name": "Comunidad Hispana #01",
             "external_server_id": "comunidad-hispana-01",
@@ -541,26 +605,21 @@ class CurrentMatchPublicEndpointHardeningTests(unittest.TestCase):
             "snapshot_origin": "real-rcon",
             "current_map": "carentan",
         }
-        fake_live_source = type(
-            "FakeLiveSource",
-            (),
-            {"build_target_index": lambda self: {}},
-        )()
+        fake_live_source = _FakeLiveSource(collect_error=RuntimeError("live source down"))
 
         with (
             patch.object(payloads, "list_latest_snapshots", return_value=[stale_snapshot]),
             patch.object(payloads, "get_live_data_source", return_value=fake_live_source),
-            patch.object(payloads, "_try_collect_real_time_snapshot") as refresh,
         ):
             result = payloads.build_servers_payload()
 
-        refresh.assert_not_called()
         data = result["data"]
         self.assertEqual(result["status"], "ok")
         self.assertEqual(data["items"][0]["external_server_id"], "comunidad-hispana-01")
-        self.assertEqual(data["refresh_attempted"], False)
-        self.assertEqual(data["refresh_status"], "cache-only")
+        self.assertEqual(data["refresh_attempted"], True)
+        self.assertEqual(data["refresh_status"], "failed")
         self.assertEqual(data["source"], "persisted-stale-snapshot")
+        self.assertEqual(data["refresh_errors"][0]["reason"], "live-refresh-failed")
 
     def test_kill_feed_postgres_read_only_does_not_initialize_storage(self) -> None:
         connection = _FakeAdminLogConnection(
@@ -661,3 +720,37 @@ class _FakeAdminLogConnection:
         cursor.fetchone.return_value = result
         cursor.fetchall.return_value = result
         return cursor
+
+
+class _FakeLiveSource:
+    def __init__(
+        self,
+        *,
+        collect_payload: dict[str, object] | None = None,
+        collect_error: Exception | None = None,
+    ) -> None:
+        self.collect_payload = collect_payload or {
+            "snapshots": [],
+            "errors": [],
+            "primary_source": "rcon",
+            "selected_source": "none",
+            "fallback_used": False,
+            "fallback_reason": None,
+            "source_attempts": [],
+        }
+        self.collect_error = collect_error
+        self.collect_calls: list[tuple[bool, float | None]] = []
+
+    def build_target_index(self) -> dict[str, object]:
+        return {}
+
+    def collect_snapshots(
+        self,
+        *,
+        persist: bool,
+        timeout_seconds: float | None = None,
+    ) -> dict[str, object]:
+        self.collect_calls.append((persist, timeout_seconds))
+        if self.collect_error is not None:
+            raise self.collect_error
+        return self.collect_payload

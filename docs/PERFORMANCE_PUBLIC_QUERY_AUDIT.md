@@ -10,6 +10,8 @@ Actualizacion TASK-226, 2026-06-10: `/api/current-match/kills` y `/api/current-m
 
 Actualizacion TASK-227, 2026-06-10: la auditoria real post-`TASK-226` mostro que kills/players seguian bloqueando en produccion porque la rama PostgreSQL de AdminLog no propagaba `ensure_storage=False` a `connect_postgres_compat()`. El fix propaga `initialize=ensure_storage`, de modo que `/api/current-match/kills` y `/api/current-match/players` ya no ejecutan `initialize_postgres_rcon_storage()` en el GET publico cuando se sirven como lecturas read-only.
 
+Actualizacion TASK-228, 2026-06-10: `/api/servers` deja de ser cache-only estricto y vuelve a ser near-real-time controlado para la home. Sirve snapshot fresco si existe; si no hay cache o esta stale, intenta RCON/A2S con timeout publico corto y degrada a snapshot stale o JSON controlado si live falla. `/api/servers/latest` e `/api/servers/history` siguen siendo lecturas de almacenamiento local, no sustitutos del estado live.
+
 Conclusiones principales:
 
 - El backend de `ranking` ya no muestra el cuello de botella grave del ranking anual. La evidencia mas fuerte es el test `backend/tests/test_annual_ranking_payload.py`, que confirma que la lectura anual en PostgreSQL ya no inicializa storage en request publico.
@@ -18,7 +20,7 @@ Conclusiones principales:
 - `partida-actual.js` no bloquea por `/health`, pero hace polling agresivo y paralelo a tres endpoints (`/api/current-match`, `/api/current-match/kills`, `/api/current-match/players`) sin `AbortController`, con intervalos de 1.5 s y 3 s que pueden amplificar carga y re-render innecesario. Tras TASK-227, kills/players usan AdminLog PostgreSQL en modo read-only real y degradan desde backend en JSON controlado.
 - En backend siguen existiendo fallbacks runtime publicos sobre tablas materializadas grandes para `ranking`, `stats search` y `stats player profile`. Son mejores que consultar RCON directo, pero siguen rompiendo la meta de servir lecturas publicas desde read models dedicados.
 - Las queries runtime de leaderboard y player stats usan patrones como `COALESCE(CAST(matches.ended_at AS TEXT), CAST(matches.started_at AS TEXT))` y agregaciones sobre `rcon_match_player_stats`, lo que aumenta riesgo de scans y de uso parcial de indices.
-- `current-match` sigue consultando RCON directo en request publico cuando hay target confiable. Eso contradice la regla objetivo de esta auditoria y debe tratarse como deuda arquitectonica explicita aunque hoy sea un requisito funcional de la pagina live.
+- `current-match` sigue consultando RCON directo en request publico cuando hay target confiable. `/api/servers` tambien consulta live de forma controlada cuando falta cache o esta stale porque la home requiere estado actual/casi actual.
 
 ## Mapa de Arquitectura de Lectura Publica
 
@@ -33,7 +35,7 @@ Flujo observado:
 
 - `ranking` y `stats` mezclan frontend secuencial con backend que aun puede caer a runtime sobre tablas materializadas si falta snapshot o read model.
 - `historico` ya prioriza snapshots y fallback controlado.
-- `current-match` expone una excepcion relevante: `/api/current-match` consulta RCON directo en la ruta publica cuando encuentra target valido. Kills/players leen AdminLog sin inicializar storage en request publico, incluyendo la rama PostgreSQL corregida en `TASK-227`.
+- `current-match` expone una excepcion relevante: `/api/current-match` consulta RCON directo en la ruta publica cuando encuentra target valido. Kills/players leen AdminLog sin inicializar storage en request publico, incluyendo la rama PostgreSQL corregida en `TASK-227`. `/api/servers` usa refresh live acotado cuando el cache no sirve para mantener la home casi en tiempo real.
 
 ## Inventario de Endpoints Publicos
 
@@ -49,7 +51,7 @@ Flujo observado:
 | `/api/current-match` | `frontend/assets/js/partida-actual.js` | `build_current_match_payload()` | Read model live propio | Primero intenta `_query_current_match_rcon_sample()` directo; luego fallback a `/api/servers` snapshot | Si, y toca RCON directo | P0 |
 | `/api/current-match/kills` | `frontend/assets/js/partida-actual.js` | `build_current_match_kill_feed_payload()` | Read model live propio de kill feed | AdminLog materializado en modo read-only publico; PostgreSQL usa `connect_postgres_compat(initialize=False)` | Degradacion JSON controlada si falla read model | P2 |
 | `/api/current-match/players` | `frontend/assets/js/partida-actual.js` | `build_current_match_player_stats_payload()` | Read model live propio de player stats | AdminLog materializado en modo read-only publico; PostgreSQL usa `connect_postgres_compat(initialize=False)` | Degradacion JSON controlada si falla read model | P2 |
-| `/api/servers` | `frontend/assets/js/main.js`, fallback de current-match | `build_servers_payload()` | Snapshot live de servidores | Snapshot/cache persistido | Sin refresh live en GET publico | P2 |
+| `/api/servers` | `frontend/assets/js/main.js`, fallback de current-match | `build_servers_payload()` | Snapshot live de servidores | Snapshot fresco o refresh live RCON/A2S acotado si falta/stale | Stale snapshot o JSON controlado si live falla | P1 |
 | `/health` | `frontend/assets/js/main.js`, `ranking.js`, `stats.js` | `build_health_payload()` | N/A | Check tecnico | No aplica | P1 por bloqueo UI, no por backend |
 
 Notas:

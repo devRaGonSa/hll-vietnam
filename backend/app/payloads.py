@@ -63,6 +63,8 @@ from .rcon_admin_log_storage import list_current_match_kill_feed, list_current_m
 from .scoreboard_origins import get_trusted_public_scoreboard_origin
 from .storage import list_latest_snapshots, list_server_history, list_snapshot_history
 
+PUBLIC_SERVER_STATUS_TIMEOUT_SECONDS = 2.5
+
 
 def build_health_payload() -> dict[str, str]:
     """Return a small status payload without committing to business contracts."""
@@ -118,32 +120,49 @@ def build_discord_payload() -> dict[str, object]:
 
 
 def build_servers_payload() -> dict[str, object]:
-    """Return current server status from persisted snapshots only."""
+    """Return current server status, refreshing stale snapshots before responding."""
     max_snapshot_age_seconds = get_refresh_interval_seconds()
     persisted_items = _select_primary_snapshot_items(
         _enrich_server_items(list_latest_snapshots())
     )
     persisted_snapshot_at = _resolve_last_snapshot_at(persisted_items)
     persisted_snapshot_age_seconds = _calculate_snapshot_age_seconds(persisted_snapshot_at)
+
+    refresh_attempted = _should_refresh_snapshot(
+        persisted_items,
+        persisted_snapshot_age_seconds,
+        max_snapshot_age_seconds,
+    )
     refresh_errors: list[dict[str, object]] = []
     refresh_source_policy = build_source_policy(
         primary_source=get_live_data_source_kind(),
-        selected_source="persisted-snapshot" if persisted_items else "none",
+        selected_source="none",
         fallback_reason=None,
-        source_attempts=[
-            build_source_attempt(
-                source="persisted-snapshot",
-                role="served-response",
-                status="success" if persisted_items else "empty",
-                reason="public-servers-read-is-cache-only",
-            )
-        ],
+        source_attempts=[],
     )
 
+    if refresh_attempted:
+        refreshed_items, refresh_errors, refresh_source_policy = _try_collect_real_time_snapshot()
+        if refreshed_items:
+            refreshed_snapshot_at = _resolve_last_snapshot_at(refreshed_items)
+            refreshed_snapshot_age_seconds = _calculate_snapshot_age_seconds(refreshed_snapshot_at)
+            return _build_servers_response(
+                items=refreshed_items,
+                response_source=_build_live_response_source(refresh_source_policy),
+                last_snapshot_at=refreshed_snapshot_at,
+                snapshot_age_seconds=refreshed_snapshot_age_seconds,
+                max_snapshot_age_seconds=max_snapshot_age_seconds,
+                refresh_attempted=True,
+                refresh_status="success",
+                refresh_errors=refresh_errors,
+                source_policy=refresh_source_policy,
+            )
+
     if persisted_items:
+        refresh_status = "failed" if refresh_attempted else "not-needed"
         response_source = (
             "persisted-stale-snapshot"
-            if _is_snapshot_stale(persisted_snapshot_age_seconds, max_snapshot_age_seconds)
+            if refresh_attempted
             else "persisted-fresh-snapshot"
         )
         return _build_servers_response(
@@ -152,12 +171,12 @@ def build_servers_payload() -> dict[str, object]:
             last_snapshot_at=persisted_snapshot_at,
             snapshot_age_seconds=persisted_snapshot_age_seconds,
             max_snapshot_age_seconds=max_snapshot_age_seconds,
-            refresh_attempted=False,
-            refresh_status="cache-only",
+            refresh_attempted=refresh_attempted,
+            refresh_status=refresh_status,
             refresh_errors=refresh_errors,
             source_policy=_infer_live_source_policy_from_items(
                 persisted_items,
-                refresh_attempted=False,
+                refresh_attempted=refresh_attempted,
                 refresh_errors=refresh_errors,
             ),
         )
@@ -174,8 +193,8 @@ def build_servers_payload() -> dict[str, object]:
             "max_snapshot_age_seconds": max_snapshot_age_seconds,
             "is_stale": True,
             "freshness": "stale",
-            "refresh_attempted": False,
-            "refresh_status": "cache-only",
+            "refresh_attempted": refresh_attempted,
+            "refresh_status": "failed" if refresh_attempted else "not-needed",
             "refresh_errors": refresh_errors,
             **refresh_source_policy,
             "items": [],
@@ -2391,7 +2410,39 @@ def _try_collect_real_time_snapshot() -> tuple[
     list[dict[str, object]],
     dict[str, object],
 ]:
-    payload = get_live_data_source().collect_snapshots(persist=False)
+    try:
+        payload = get_live_data_source().collect_snapshots(
+            persist=False,
+            timeout_seconds=PUBLIC_SERVER_STATUS_TIMEOUT_SECONDS,
+        )
+    except Exception as error:  # noqa: BLE001 - public server status must degrade cleanly
+        reason = _public_server_refresh_error_reason(error)
+        return (
+            [],
+            [
+                {
+                    "source": get_live_data_source_kind(),
+                    "reason": reason,
+                    "error_type": type(error).__name__,
+                    "message": str(error),
+                }
+            ],
+            build_source_policy(
+                primary_source=get_live_data_source_kind(),
+                selected_source="none",
+                fallback_used=True,
+                fallback_reason=reason,
+                source_attempts=[
+                    build_source_attempt(
+                        source=get_live_data_source_kind(),
+                        role="primary",
+                        status="error",
+                        reason=reason,
+                        message=str(error),
+                    )
+                ],
+            ),
+        )
     snapshots = payload.get("snapshots")
     items = _select_primary_snapshot_items(_enrich_server_items(list(snapshots or [])))
     errors = payload.get("errors")
@@ -2406,6 +2457,15 @@ def _try_collect_real_time_snapshot() -> tuple[
             "source_attempts": list(payload.get("source_attempts") or []),
         },
     )
+
+
+def _public_server_refresh_error_reason(error: Exception) -> str:
+    message = str(error).lower()
+    if isinstance(error, TimeoutError) or "timeout" in message or "timed out" in message:
+        return "live-refresh-timeout"
+    if "no rcon targets" in message or "no live" in message or "configured" in message:
+        return "live-refresh-unavailable"
+    return "live-refresh-failed"
 
 
 def _build_servers_response(

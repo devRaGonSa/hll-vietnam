@@ -144,6 +144,53 @@ Comando de validacion de produccion tras redeploy:
 python .\scripts\audit_public_requests.py --base-url https://comunidadhll.devzamode.es --timeout 30 --filter current-match --output tmp\task227_current_match_audit_after.json
 ```
 
+## Estado post-fix TASK-228
+
+Fecha: 2026-06-10  
+Alcance aplicado: restauracion de `/api/servers` como endpoint near-real-time controlado para la home.
+
+Causa confirmada:
+
+- `TASK-226` hizo que `/api/servers` dejara de llamar `_try_collect_real_time_snapshot()`.
+- La ruta quedo en modo `cache-only`, con `refresh_attempted: false` y `refresh_status: cache-only`.
+- Cuando no existian snapshots persistidos, respondia rapido pero con `source: no-snapshot-available` e `items: []`, aunque la fuente live pudiera estar disponible en produccion.
+
+Cambios de codigo aplicados:
+
+- `/api/servers` vuelve a usar la politica live/casi-live:
+  - sirve snapshot fresco si existe.
+  - intenta refresh live si no hay snapshot o el snapshot esta stale.
+  - devuelve live RCON/A2S si hay items.
+  - cae a snapshot stale si live falla y existe ultimo estado conocido.
+  - devuelve JSON controlado con error/fallback si live falla y no hay snapshot.
+- El refresh publico usa timeout corto interno (`2.5s`) propagado a RCON/A2S sin cambiar variables de entorno, hosts, puertos ni configuracion de servidores.
+- No se persiste desde el GET publico para evitar inicializaciones/DDL pesadas en lectura.
+
+Estado esperado tras redeploy:
+
+| Endpoint | Estado TASK-228 en codigo | Severidad esperada tras deploy |
+| --- | --- | --- |
+| `/api/servers` | Near-real-time controlado; live si cache falta/stale, stale fallback si live falla | OK o WARNING si live no disponible |
+| `/api/servers/latest` | Sigue leyendo almacenamiento local | OK o WARNING si no hay snapshots persistidos |
+| `/api/servers/history` | Sigue leyendo almacenamiento local | OK o WARNING si no hay snapshots persistidos |
+
+Comando de validacion de produccion tras redeploy:
+
+```powershell
+$base = "https://comunidadhll.devzamode.es"
+
+Invoke-WebRequest "$base/api/servers" |
+  Select-Object -ExpandProperty Content
+
+Invoke-WebRequest "$base/api/servers/latest" |
+  Select-Object -ExpandProperty Content
+
+Invoke-WebRequest "$base/api/servers/history" |
+  Select-Object -ExpandProperty Content
+
+python .\scripts\audit_public_requests.py --base-url https://comunidadhll.devzamode.es --timeout 30 --filter servers --output tmp\task228_servers_audit_after.json
+```
+
 ## Evidencia ejecutada
 
 Comandos ejecutados:

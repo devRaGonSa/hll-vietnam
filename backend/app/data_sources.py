@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Protocol
 
+from .a2s_client import DEFAULT_A2S_TIMEOUT
 from .collector import collect_server_snapshots
 from .config import get_historical_data_source_kind, get_live_data_source_kind
 from .providers.public_scoreboard_provider import PublicScoreboardHistoricalDataSource
@@ -48,7 +49,12 @@ class LiveDataSource(Protocol):
 
     source_kind: str
 
-    def collect_snapshots(self, *, persist: bool) -> dict[str, object]:
+    def collect_snapshots(
+        self,
+        *,
+        persist: bool,
+        timeout_seconds: float | None = None,
+    ) -> dict[str, object]:
         """Collect one live snapshot batch."""
 
     def build_target_index(self) -> dict[str | None, object]:
@@ -61,11 +67,17 @@ class A2SLiveDataSource:
 
     source_kind: str = LIVE_SOURCE_A2S
 
-    def collect_snapshots(self, *, persist: bool) -> dict[str, object]:
+    def collect_snapshots(
+        self,
+        *,
+        persist: bool,
+        timeout_seconds: float | None = None,
+    ) -> dict[str, object]:
         return collect_server_snapshots(
             source_mode="a2s",
             allow_controlled_fallback=False,
             persist=persist,
+            timeout=timeout_seconds if timeout_seconds is not None else DEFAULT_A2S_TIMEOUT,
         )
 
     def build_target_index(self) -> dict[str | None, A2SServerTarget]:
@@ -84,12 +96,20 @@ class RconFirstLiveDataSource:
     fallback_source: A2SLiveDataSource = A2SLiveDataSource()
     source_kind: str = SOURCE_KIND_RCON
 
-    def collect_snapshots(self, *, persist: bool) -> dict[str, object]:
+    def collect_snapshots(
+        self,
+        *,
+        persist: bool,
+        timeout_seconds: float | None = None,
+    ) -> dict[str, object]:
         attempts: list[dict[str, object]] = []
         fallback_reason: str | None = None
 
         try:
-            primary_payload = self.primary_source.collect_snapshots(persist=persist)
+            primary_payload = self.primary_source.collect_snapshots(
+                persist=persist,
+                timeout_seconds=timeout_seconds,
+            )
         except Exception as error:  # noqa: BLE001 - source arbitration keeps fallback controlled
             attempts.append(
                 build_source_attempt(
@@ -133,7 +153,10 @@ class RconFirstLiveDataSource:
             fallback_reason = "rcon-live-returned-no-usable-snapshots"
 
         try:
-            fallback_payload = self.fallback_source.collect_snapshots(persist=persist)
+            fallback_payload = self.fallback_source.collect_snapshots(
+                persist=persist,
+                timeout_seconds=timeout_seconds,
+            )
         except Exception as error:  # noqa: BLE001 - keep combined failure explicit
             attempts.append(
                 build_source_attempt(
