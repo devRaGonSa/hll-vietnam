@@ -5,12 +5,18 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import sqlite3
 from contextlib import closing
+from contextlib import contextmanager
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Literal
 
-from .config import get_historical_weekly_fallback_min_matches, use_postgres_rcon_storage
+from .config import (
+    get_historical_weekly_fallback_min_matches,
+    get_storage_path,
+    use_postgres_rcon_storage,
+)
 from .historical_storage import ALL_SERVERS_SLUG
 from .rcon_admin_log_materialization import (
     MATCH_RESULT_SOURCE,
@@ -111,10 +117,10 @@ def initialize_ranking_snapshot_storage(*, db_path: Path | None = None) -> Path:
 
 
 def is_ranking_runtime_fallback_enabled() -> bool:
-    """Return whether `/api/ranking` may fall back to runtime reads when snapshot is missing."""
+    """Return whether `/api/ranking` may fall back to runtime reads in explicit internal mode."""
     normalized = os.getenv(
         "HLL_BACKEND_RANKING_RUNTIME_FALLBACK_ENABLED",
-        "true",
+        "false",
     ).strip().lower()
     return normalized in {"1", "true", "yes", "on"}
 
@@ -326,44 +332,36 @@ def get_latest_ranking_snapshot(
     normalized_metric = _normalize_metric(metric)
     normalized_limit = max(1, int(limit or 10))
 
-    resolved_path = initialize_ranking_snapshot_storage(db_path=db_path)
-    connection_scope = _connect_scope(resolved_path, db_path=db_path)
-    with connection_scope as connection:
-        snapshot = _find_latest_snapshot(
-            connection=connection,
+    try:
+        with _open_ranking_snapshot_read_connection(db_path=db_path) as connection:
+            snapshot = _find_latest_snapshot(
+                connection=connection,
+                timeframe=normalized_timeframe,
+                server_key=normalized_server_key,
+                metric=normalized_metric,
+            )
+            if snapshot is None:
+                return _build_missing_ranking_snapshot_result(
+                    timeframe=normalized_timeframe,
+                    server_key=normalized_server_key,
+                    metric=normalized_metric,
+                    limit=normalized_limit,
+                )
+
+            snapshot_limit = max(1, int(snapshot.get("limit_size") or normalized_limit))
+            item_count = int(snapshot.get("item_count") or 0)
+            effective_limit = max(0, min(normalized_limit, snapshot_limit, item_count))
+            items = _list_snapshot_items(
+                connection=connection,
+                snapshot_id=int(snapshot["id"]),
+                limit=effective_limit if effective_limit > 0 else None,
+            )
+    except (FileNotFoundError, sqlite3.OperationalError):
+        return _build_missing_ranking_snapshot_result(
             timeframe=normalized_timeframe,
             server_key=normalized_server_key,
             metric=normalized_metric,
-        )
-        if snapshot is None:
-            return {
-                "snapshot_status": "missing",
-                "timeframe": normalized_timeframe,
-                "server_id": normalized_server_key,
-                "metric": normalized_metric,
-                "limit": normalized_limit,
-                "requested_limit": normalized_limit,
-                "effective_limit": 0,
-                "snapshot_limit": None,
-                "item_count": 0,
-                "generated_at": None,
-                "window_start": None,
-                "window_end": None,
-                "window_kind": None,
-                "window_label": None,
-                "source": "ranking-snapshot",
-                "freshness": "missing",
-                "source_matches_count": 0,
-                "items": [],
-            }
-
-        snapshot_limit = max(1, int(snapshot.get("limit_size") or normalized_limit))
-        item_count = int(snapshot.get("item_count") or 0)
-        effective_limit = max(0, min(normalized_limit, snapshot_limit, item_count))
-        items = _list_snapshot_items(
-            connection=connection,
-            snapshot_id=int(snapshot["id"]),
-            limit=effective_limit if effective_limit > 0 else None,
+            limit=normalized_limit,
         )
 
     return {
@@ -385,6 +383,55 @@ def get_latest_ranking_snapshot(
         "freshness": snapshot.get("freshness") or "fresh",
         "source_matches_count": int(snapshot.get("source_matches_count") or 0),
         "items": items,
+    }
+
+
+@contextmanager
+def _open_ranking_snapshot_read_connection(*, db_path: Path | None = None):
+    if use_postgres_rcon_storage(explicit_sqlite_path=db_path):
+        from .postgres_rcon_storage import PostgresCompatConnection, connect_postgres
+
+        with connect_postgres() as connection:
+            yield PostgresCompatConnection(connection)
+        return
+
+    resolved_path = _resolve_ranking_snapshot_sqlite_path(db_path=db_path)
+    if not resolved_path.exists():
+        raise FileNotFoundError(resolved_path)
+    with closing(connect_sqlite_readonly(resolved_path)) as connection:
+        yield connection
+
+
+def _resolve_ranking_snapshot_sqlite_path(*, db_path: Path | None = None) -> Path:
+    return db_path if db_path is not None else get_storage_path()
+
+
+def _build_missing_ranking_snapshot_result(
+    *,
+    timeframe: str,
+    server_key: str,
+    metric: str,
+    limit: int,
+) -> dict[str, object]:
+    return {
+        "snapshot_status": "missing",
+        "timeframe": timeframe,
+        "server_id": server_key,
+        "metric": metric,
+        "limit": limit,
+        "requested_limit": limit,
+        "effective_limit": 0,
+        "snapshot_limit": None,
+        "item_count": 0,
+        "generated_at": None,
+        "window_start": None,
+        "window_end": None,
+        "window_kind": None,
+        "window_label": None,
+        "source": "ranking-snapshot",
+        "freshness": "missing",
+        "source_matches_count": 0,
+        "items": [],
     }
 
 
