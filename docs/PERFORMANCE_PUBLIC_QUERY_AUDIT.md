@@ -4,6 +4,8 @@
 
 Esta auditoria revisa las rutas publicas que alimentan `ranking`, `stats`, `historico`, `historico-partida`, `partida-actual` e `index`, con foco en latencia percibida por UI y en el cumplimiento de la regla arquitectonica de leer read models publicos propios en PostgreSQL.
 
+Actualizacion TASK-225, 2026-06-10: la deuda P1 de `stats search` y `stats player profile` fue corregida en codigo para que los GET publicos usen `player_search_index` y `player_period_stats` en modo read-only estricto, sin inicializar storage ni caer a runtime fallback pesado. La medicion HTTP final requiere redeploy. `current-match` sigue pendiente porque depende de RCON live y debe tratarse como hardening/degradacion sin cambiar hosts, puertos ni configuracion RCON.
+
 Conclusiones principales:
 
 - El backend de `ranking` ya no muestra el cuello de botella grave del ranking anual. La evidencia mas fuerte es el test `backend/tests/test_annual_ranking_payload.py`, que confirma que la lectura anual en PostgreSQL ya no inicializa storage en request publico.
@@ -399,4 +401,3 @@ Puntos concretos:
 7. `TASK-221-run-explain-analyze-for-public-runtime-and-read-model-queries`
    Alcance: SQL audit operativa.
    Objetivo: validar indices y predicados temporales.
-

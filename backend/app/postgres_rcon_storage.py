@@ -453,9 +453,10 @@ class PostgresCompatConnection:
 
 
 @contextmanager
-def connect_postgres_compat():
+def connect_postgres_compat(*, initialize: bool = True):
     """Yield a query shim that accepts the phase-1 SQLite-style placeholders."""
-    initialize_postgres_rcon_storage()
+    if initialize:
+        initialize_postgres_rcon_storage()
     with connect_postgres() as connection:
         yield PostgresCompatConnection(connection)
 

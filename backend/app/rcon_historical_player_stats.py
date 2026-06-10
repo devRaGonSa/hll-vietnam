@@ -9,7 +9,7 @@ from datetime import date, datetime, timezone
 from pathlib import Path
 import unicodedata
 
-from .config import use_postgres_rcon_storage
+from .config import get_storage_path, use_postgres_rcon_storage
 from .historical_storage import ALL_SERVERS_SLUG
 from .rcon_admin_log_materialization import MATCH_RESULT_SOURCE, initialize_rcon_materialized_storage
 from .rcon_historical_leaderboards import select_leaderboard_window
@@ -227,7 +227,7 @@ def search_rcon_materialized_players(
     limit: int = 10,
     db_path: Path | None = None,
 ) -> dict[str, object]:
-    """Search players from the read model first, with runtime fallback."""
+    """Search players from the public read model without runtime fallback."""
     normalized_query = query.strip()
     if not normalized_query:
         raise ValueError("Query cannot be empty.")
@@ -241,18 +241,19 @@ def search_rcon_materialized_players(
     if read_model_result is not None:
         return read_model_result
 
-    runtime_result = _search_rcon_materialized_players_runtime(
-        query=normalized_query,
-        server_id=server_id,
-        limit=limit,
-        db_path=db_path,
-    )
-    runtime_result["source"] = {
-        "read_model": "rcon-materialized-admin-log-player-stats",
-        "fallback_used": True,
-        "fallback_reason": fallback_reason or "player-search-index-unavailable",
+    resolved_server_id = _normalize_server_id(server_id)
+    return {
+        "server_id": resolved_server_id,
+        "query": normalized_query,
+        "items": [],
+        "source": {
+            "read_model": "player-search-index",
+            "status": "unavailable",
+            "fallback_used": False,
+            "fallback_reason": None,
+            "missing_reason": fallback_reason or "player-search-index-unavailable",
+        },
     }
-    return runtime_result
 
 
 def _search_rcon_materialized_players_runtime(
@@ -370,22 +371,12 @@ def get_rcon_materialized_player_stats(
         if read_model_result is not None:
             return read_model_result
 
-        runtime_result = _get_rcon_materialized_player_stats_runtime(
+        return _build_missing_player_period_stats_result(
             player_id=normalized_player_id,
             server_id=server_id,
             timeframe=resolved_timeframe,
-            db_path=db_path,
+            missing_reason=fallback_reason or "player-period-stats-unavailable",
         )
-        runtime_source = dict(runtime_result.get("source") or {})
-        runtime_source.update(
-            {
-                "read_model": "player-period-stats",
-                "fallback_used": True,
-                "fallback_reason": fallback_reason or "player-period-stats-unavailable",
-            }
-        )
-        runtime_result["source"] = runtime_source
-        return runtime_result
 
     return _get_rcon_materialized_player_stats_runtime(
         player_id=normalized_player_id,
@@ -488,13 +479,13 @@ def _get_player_period_stats_read_model(
     timeframe: str,
     db_path: Path | None = None,
 ) -> tuple[dict[str, object] | None, str | None]:
-    resolved_path = initialize_player_period_stats_storage(db_path=db_path)
+    resolved_path = _resolve_rcon_read_model_path(db_path=db_path)
     resolved_server_id = _normalize_server_id(server_id)
     required_periods = sorted({timeframe, "weekly", "monthly"})
     placeholders = ", ".join(["?"] * len(required_periods))
 
     try:
-        with _connect_scope(resolved_path, db_path=db_path) as connection:
+        with _connect_read_scope(resolved_path, db_path=db_path) as connection:
             scope_rows = connection.execute(
                 f"""
                 SELECT period_type, COUNT(*) AS row_count
@@ -1085,7 +1076,7 @@ def _search_player_search_index(
     limit: int = 10,
     db_path: Path | None = None,
 ) -> tuple[dict[str, object] | None, str | None]:
-    resolved_path = initialize_player_search_index_storage(db_path=db_path)
+    resolved_path = _resolve_rcon_read_model_path(db_path=db_path)
     resolved_server_id = _normalize_server_id(server_id)
     normalized_query = query.strip()
     normalized_name_query = _normalize_player_search_text(normalized_query)
@@ -1097,7 +1088,7 @@ def _search_player_search_index(
     escaped_id_exact = normalized_query.casefold()
 
     try:
-        with _connect_scope(resolved_path, db_path=db_path) as connection:
+        with _connect_read_scope(resolved_path, db_path=db_path) as connection:
             has_rows = connection.execute(
                 """
                 SELECT 1
@@ -1399,12 +1390,56 @@ def _connect_scope(resolved_path: Path, *, db_path: Path | None = None):
     return closing(connect_sqlite_readonly(resolved_path))
 
 
+def _connect_read_scope(resolved_path: Path, *, db_path: Path | None = None):
+    if use_postgres_rcon_storage(explicit_sqlite_path=db_path):
+        from .postgres_rcon_storage import connect_postgres_compat
+
+        return connect_postgres_compat(initialize=False)
+    return closing(connect_sqlite_readonly(resolved_path))
+
+
 def _connect_write_scope(resolved_path: Path, *, db_path: Path | None = None):
     if use_postgres_rcon_storage(explicit_sqlite_path=db_path):
         from .postgres_rcon_storage import connect_postgres_compat
 
         return connect_postgres_compat()
     return connect_sqlite_writer(resolved_path)
+
+
+def _resolve_rcon_read_model_path(*, db_path: Path | None = None) -> Path:
+    return db_path or get_storage_path()
+
+
+def _build_missing_player_period_stats_result(
+    *,
+    player_id: str,
+    server_id: str | None,
+    timeframe: str,
+    missing_reason: str,
+) -> dict[str, object]:
+    resolved_server_id = _normalize_server_id(server_id)
+    return {
+        "player_id": player_id,
+        "server_id": resolved_server_id,
+        "timeframe": timeframe,
+        "player_name": None,
+        "window_start": None,
+        "window_end": None,
+        "window_kind": timeframe,
+        "matches_considered": 0,
+        "kills": 0,
+        "deaths": 0,
+        "teamkills": 0,
+        "weekly_ranking": None,
+        "monthly_ranking": None,
+        "source": {
+            "read_model": "player-period-stats",
+            "status": "unavailable",
+            "fallback_used": False,
+            "fallback_reason": None,
+            "missing_reason": missing_reason,
+        },
+    }
 
 
 def _normalize_player_search_text(value: object) -> str:

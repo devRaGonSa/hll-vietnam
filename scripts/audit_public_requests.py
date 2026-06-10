@@ -76,6 +76,16 @@ def main() -> int:
         default=0,
         help="Optional cap for smoke runs. 0 means all probes.",
     )
+    parser.add_argument(
+        "--filter",
+        default=None,
+        help="Run only probes whose id, kind, context, path or parameters contain this text.",
+    )
+    parser.add_argument(
+        "--player-id",
+        default=None,
+        help="Add player-dependent probes for this player id before applying --filter.",
+    )
     args = parser.parse_args()
 
     base_url = normalize_base_url(args.base_url)
@@ -83,6 +93,10 @@ def main() -> int:
     output_path = resolve_output_path(args.output)
 
     specs = build_probe_specs()
+    if args.player_id:
+        specs.extend(build_player_dependent_specs(args.player_id))
+    if args.filter:
+        specs = filter_probe_specs(specs, args.filter)
     if args.max_probes and args.max_probes > 0:
         specs = specs[: args.max_probes]
 
@@ -391,6 +405,26 @@ def build_player_dependent_specs(player_id: str) -> list[ProbeSpec]:
             path=f"/api/historical/elo-mmr/player?server=all-servers&player={quoted_player}",
             parameters="player from search, server=all-servers",
         ),
+    ]
+
+
+def filter_probe_specs(specs: list[ProbeSpec], raw_filter: str) -> list[ProbeSpec]:
+    needle = raw_filter.strip().casefold()
+    if not needle:
+        return specs
+    return [
+        spec
+        for spec in specs
+        if needle
+        in " ".join(
+            (
+                spec.id,
+                spec.kind,
+                spec.context,
+                spec.path,
+                spec.parameters,
+            )
+        ).casefold()
     ]
 
 

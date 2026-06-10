@@ -28,6 +28,61 @@ Los fallos criticos actuales no estan en rankings/snapshots ni en el match detai
 
 Siguiente fix prioritario recomendado: aislar o eliminar inicializacion/fallback runtime de `/api/stats/players/search` y `/api/stats/players/{player_id}`. Despues, corregir `/api/current-match/kills` y `/api/current-match/players`. `/api/historical/matches/detail` debe quedar en cola de hardening para hacerlo estrictamente read-only, pero no aparece como el primer incendio operativo en esta medicion.
 
+## Estado post-fix TASK-225
+
+Fecha: 2026-06-10  
+Alcance aplicado: Fase 1, estabilizacion de lecturas publicas no dependientes de RCON live.
+
+Cambios de codigo aplicados:
+
+- `/api/stats/players/search`: el builder sigue llamando al mismo helper, pero `search_rcon_materialized_players()` ahora es lectura estricta de `player_search_index`. Ya no inicializa `player_search_index` ni cae a busqueda runtime sobre `rcon_match_player_stats` durante un GET publico. Si el read model no existe o esta vacio, devuelve `items: []`, `source.read_model: player-search-index`, `source.status: unavailable`, `fallback_used: false`.
+- `/api/stats/players/{player_id}` semanal/mensual: `get_rcon_materialized_player_stats()` usa `player_period_stats` como read model publico. Si falta el read model o el jugador no esta en el periodo, devuelve una respuesta controlada con contadores a cero, `source.read_model: player-period-stats`, `source.status: unavailable`, `fallback_used: false`. El modo `timeframe=all` conserva el camino runtime interno existente.
+- `/api/historical/matches/detail`: `get_materialized_rcon_match_detail()` acepta `ensure_storage=False` por defecto y la ruta publica lo usa en modo read-only. PostgreSQL puede abrirse sin `initialize_postgres_rcon_storage()` y SQLite se abre en `mode=ro`. Si falta la tabla/read model, la lectura devuelve `None` y el payload publico RCON responde `found: false`, `fallback_used: false`, sin fallback legacy pesado ni inicializacion.
+- `scripts/audit_public_requests.py`: se anadieron `--filter` y `--player-id` para medir subconjuntos afectados sin lanzar toda la matriz.
+
+Validacion local de codigo:
+
+```powershell
+python -m compileall backend\app
+python -m py_compile scripts\audit_public_requests.py
+cd backend
+python -m unittest tests.test_rcon_materialization_pipeline
+python -m unittest tests.test_current_match_payload tests.test_rcon_admin_log_storage tests.test_historical_snapshot_refresh
+```
+
+Resultado:
+
+- `compileall`: OK.
+- `py_compile`: OK.
+- `tests.test_rcon_materialization_pipeline`: OK, 12 tests. La suite mantiene `ResourceWarning` SQLite ya presentes en tests existentes.
+- Tests relacionados de current match, admin log storage y historical snapshot refresh: OK, 13 tests.
+
+Medicion HTTP local:
+
+- `http://127.0.0.1:8000/health` no estaba disponible desde el host.
+- Las ejecuciones parciales del script contra `http://127.0.0.1:8000` seleccionaron los probes esperados, pero fallaron por falta de backend local. No miden rendimiento del cambio.
+
+Comandos de medicion recomendados tras redeploy:
+
+```powershell
+python scripts\audit_public_requests.py --base-url https://comunidadhll.devzamode.es --timeout 30 --filter stats-player-search --output tmp\task225_prod_player_search_audit.json
+python scripts\audit_public_requests.py --base-url https://comunidadhll.devzamode.es --timeout 30 --player-id 76561198092154180 --filter stats-player-profile --output tmp\task225_prod_player_profile_audit.json
+python scripts\audit_public_requests.py --base-url https://comunidadhll.devzamode.es --timeout 30 --filter historical-match-detail --output tmp\task225_prod_match_detail_audit.json
+```
+
+Estado de severidad esperado tras deploy:
+
+| Endpoint | Severidad TASK-224 | Estado TASK-225 en codigo | Severidad esperada tras deploy |
+| --- | --- | --- | --- |
+| `/api/stats/players/search` | CRITICAL | Sin initialize ni fallback runtime pesado en GET publico | OK o WARNING si falta read model |
+| `/api/stats/players/{player_id}` weekly/monthly | CRITICAL | Sin initialize ni recalculo runtime pesado en GET publico | OK o WARNING si falta read model |
+| `/api/historical/matches/detail` | WARNING por deuda estatica | Read-only sin `initialize_*`; sin fallback legacy en modo RCON | OK o WARNING si falta read model |
+| `/api/current-match/kills` | CRITICAL | No abordado en Fase 1 | CRITICAL pendiente |
+| `/api/current-match/players` | CRITICAL | No abordado en Fase 1 | CRITICAL pendiente |
+| `/api/servers` | WARNING | No abordado en Fase 1 | WARNING pendiente |
+
+Siguiente fix prioritario actualizado: Fase 2 de `TASK-225` en task separada o continuacion autorizada, centrada en hardening de `/api/current-match/kills` y `/api/current-match/players` sin cambiar configuracion RCON. La validacion final debe repetirse en el entorno donde RCON este local.
+
 ## Evidencia ejecutada
 
 Comandos ejecutados:

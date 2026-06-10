@@ -1147,6 +1147,30 @@ def build_historical_match_detail_payload(
                     "item": item,
                 },
             }
+        return {
+            "status": "ok",
+            "data": {
+                "title": "Detalle de partida historica",
+                "context": "historical-match-detail",
+                "source": "rcon-historical-competitive-read-model",
+                "found": False,
+                **build_source_policy(
+                    primary_source=SOURCE_KIND_RCON,
+                    selected_source=SOURCE_KIND_RCON,
+                    fallback_used=False,
+                    fallback_reason=None,
+                    source_attempts=[
+                        build_source_attempt(
+                            source=SOURCE_KIND_RCON,
+                            role="primary",
+                            status="empty",
+                            reason="historical-match-detail-read-model-missing",
+                        )
+                    ],
+                ),
+                "item": None,
+            },
+        }
 
     item = get_historical_match_detail(server_slug=server_slug, match_id=match_id)
     return {

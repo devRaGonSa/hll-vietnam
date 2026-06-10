@@ -154,7 +154,11 @@ def get_rcon_historical_match_detail(
     """Return one RCON competitive window as a match-detail compatible payload."""
     from .rcon_admin_log_materialization import get_materialized_rcon_match_detail
 
-    materialized = get_materialized_rcon_match_detail(server_key=server_key, match_key=match_id)
+    materialized = get_materialized_rcon_match_detail(
+        server_key=server_key,
+        match_key=match_id,
+        ensure_storage=False,
+    )
     if materialized is not None:
         return _build_materialized_detail_item(materialized)
 

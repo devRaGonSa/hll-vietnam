@@ -310,66 +310,74 @@ def get_materialized_rcon_match_detail(
     server_key: str,
     match_key: str,
     db_path: Path | None = None,
+    ensure_storage: bool = False,
 ) -> dict[str, object] | None:
     """Return one materialized match with player stats."""
-    resolved_path = initialize_rcon_materialized_storage(db_path=db_path)
+    resolved_path = (
+        initialize_rcon_materialized_storage(db_path=db_path)
+        if ensure_storage
+        else (db_path or get_storage_path())
+    )
     if use_postgres_rcon_storage(explicit_sqlite_path=db_path):
         from .postgres_rcon_storage import connect_postgres_compat
 
-        connection_scope = connect_postgres_compat()
+        connection_scope = connect_postgres_compat(initialize=ensure_storage)
     else:
         connection_scope = closing(connect_sqlite_readonly(resolved_path))
-    with connection_scope as connection:
-        match = connection.execute(
-            """
-            SELECT *
-            FROM rcon_materialized_matches
-            WHERE match_key = ?
-              AND (target_key = ? OR external_server_id = ?)
-            LIMIT 1
-            """,
-            (match_key, server_key, server_key),
-        ).fetchone()
-        if match is None and match_key.startswith(f"{server_key}:"):
+    try:
+        with connection_scope as connection:
             match = connection.execute(
                 """
                 SELECT *
                 FROM rcon_materialized_matches
                 WHERE match_key = ?
+                  AND (target_key = ? OR external_server_id = ?)
                 LIMIT 1
                 """,
-                (match_key,),
+                (match_key, server_key, server_key),
             ).fetchone()
-        if match is None:
-            return None
-        stat_rows = connection.execute(
-            """
-            SELECT *
-            FROM rcon_match_player_stats
-            WHERE target_key = ? AND match_key = ?
-            ORDER BY kills DESC, deaths ASC, player_name ASC
-            """,
-            (match["target_key"], match["match_key"]),
-        ).fetchall()
-        timeline_rows = connection.execute(
-            """
-            SELECT event_type, COUNT(*) AS event_count
-            FROM rcon_admin_log_events
-            WHERE target_key = ?
-              AND server_time IS NOT NULL
-              AND (? IS NULL OR server_time >= ?)
-              AND (? IS NULL OR server_time <= ?)
-            GROUP BY event_type
-            ORDER BY event_count DESC, event_type ASC
-            """,
-            (
-                match["target_key"],
-                match["started_server_time"],
-                match["started_server_time"],
-                match["ended_server_time"],
-                match["ended_server_time"],
-            ),
-        ).fetchall()
+            if match is None and match_key.startswith(f"{server_key}:"):
+                match = connection.execute(
+                    """
+                    SELECT *
+                    FROM rcon_materialized_matches
+                    WHERE match_key = ?
+                    LIMIT 1
+                    """,
+                    (match_key,),
+                ).fetchone()
+            if match is None:
+                return None
+            stat_rows = connection.execute(
+                """
+                SELECT *
+                FROM rcon_match_player_stats
+                WHERE target_key = ? AND match_key = ?
+                ORDER BY kills DESC, deaths ASC, player_name ASC
+                """,
+                (match["target_key"], match["match_key"]),
+            ).fetchall()
+            timeline_rows = connection.execute(
+                """
+                SELECT event_type, COUNT(*) AS event_count
+                FROM rcon_admin_log_events
+                WHERE target_key = ?
+                  AND server_time IS NOT NULL
+                  AND (? IS NULL OR server_time >= ?)
+                  AND (? IS NULL OR server_time <= ?)
+                GROUP BY event_type
+                ORDER BY event_count DESC, event_type ASC
+                """,
+                (
+                    match["target_key"],
+                    match["started_server_time"],
+                    match["started_server_time"],
+                    match["ended_server_time"],
+                    match["ended_server_time"],
+                ),
+            ).fetchall()
+    except Exception:
+        return None
 
     return {
         "match": dict(match),
