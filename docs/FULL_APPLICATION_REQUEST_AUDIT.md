@@ -83,6 +83,31 @@ Estado de severidad esperado tras deploy:
 
 Siguiente fix prioritario actualizado: Fase 2 de `TASK-225` en task separada o continuacion autorizada, centrada en hardening de `/api/current-match/kills` y `/api/current-match/players` sin cambiar configuracion RCON. La validacion final debe repetirse en el entorno donde RCON este local.
 
+## Estado post-fix TASK-226
+
+Fecha: 2026-06-10  
+Alcance aplicado: hardening de endpoints publicos RCON/live pendientes, sin cambiar hosts, puertos, `27001`, variables de entorno ni configuracion de servidores.
+
+Cambios de codigo aplicados:
+
+- `/api/current-match/kills`: el payload usa AdminLog en modo lectura publica sin inicializar storage (`ensure_storage=False`). Si falta el read model, hay timeout o falla la lectura, devuelve `status: ok`, `items: []`, `confidence: unavailable`, `fallback_used: true` y `fallback_reason` controlado (`admin-log-read-model-unavailable`, `admin-log-read-timeout` o `admin-log-read-failed`).
+- `/api/current-match/players`: aplica el mismo patron de degradacion controlada sobre player stats de AdminLog. Una excepcion de storage ya no se propaga como 500 sin cuerpo.
+- `/api/servers`: el builder publico deja de llamar `_try_collect_real_time_snapshot()` y no refresca RCON/A2S en cada GET publico. Sirve snapshots persistidos, marca `freshness`/`is_stale` y expone `refresh_status: "cache-only"`.
+
+Estado de severidad esperado tras deploy:
+
+| Endpoint | Severidad TASK-224 | Estado TASK-226 en codigo | Severidad esperada tras deploy |
+| --- | --- | --- | --- |
+| `/api/current-match/kills` | CRITICAL | Read-only AdminLog, degradacion JSON controlada | OK o WARNING si falta read model |
+| `/api/current-match/players` | CRITICAL | Read-only AdminLog, degradacion JSON controlada | OK o WARNING si falta read model |
+| `/api/servers` | WARNING | Snapshot/cache-only; sin refresh RCON live en request publica | OK o WARNING si snapshot stale |
+
+Notas:
+
+- `/api/current-match` conserva deuda separada porque todavia puede intentar muestra RCON directa antes de caer a snapshot.
+- La frescura de `/api/servers` depende ahora del proceso/runner que mantenga snapshots calientes fuera del request publico.
+- Auditoria parcial contra produccion ejecutada el 2026-06-10 antes de desplegar este codigo: `current-match` todavia mostro los timeouts/500 previos y `/api/servers` midio 4249.71 ms. Repetir tras deploy para confirmar los tiempos post-fix reales.
+
 ## Evidencia ejecutada
 
 Comandos ejecutados:

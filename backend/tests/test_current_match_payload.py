@@ -1,7 +1,9 @@
 from http import HTTPStatus
 from datetime import datetime, timezone
+import unittest
 from unittest.mock import patch
 
+from app import payloads
 from app.payloads import build_current_match_payload
 from app.rcon_admin_log_storage import list_current_match_player_stats, persist_rcon_admin_log_entries
 from app.rcon_client import RconServerTarget
@@ -492,6 +494,72 @@ def test_current_match_player_stats_filter_stale_recent_events(tmp_path):
     assert stats["scope"] == "no-current-match-events"
     assert stats["confidence"] == "stale-filtered"
     assert stats["items"] == []
+
+
+class CurrentMatchPublicEndpointHardeningTests(unittest.TestCase):
+    def test_kill_feed_degrades_when_admin_log_read_fails(self) -> None:
+        with patch.object(
+            payloads,
+            "list_current_match_kill_feed",
+            side_effect=TimeoutError("read timed out"),
+        ):
+            result = payloads.build_current_match_kill_feed_payload(
+                server_slug="comunidad-hispana-01",
+                limit=30,
+            )
+
+        data = result["data"]
+        self.assertEqual(result["status"], "ok")
+        self.assertEqual(data["items"], [])
+        self.assertEqual(data["confidence"], "unavailable")
+        self.assertTrue(data["fallback_used"])
+        self.assertEqual(data["fallback_reason"], "admin-log-read-timeout")
+
+    def test_player_stats_degrades_when_admin_log_read_fails(self) -> None:
+        with patch.object(
+            payloads,
+            "list_current_match_player_stats",
+            side_effect=RuntimeError("no such table: rcon_admin_log_events"),
+        ):
+            result = payloads.build_current_match_player_stats_payload(
+                server_slug="comunidad-hispana-01",
+            )
+
+        data = result["data"]
+        self.assertEqual(result["status"], "ok")
+        self.assertEqual(data["items"], [])
+        self.assertEqual(data["updated_at"], None)
+        self.assertTrue(data["fallback_used"])
+        self.assertEqual(data["fallback_reason"], "admin-log-read-model-unavailable")
+
+    def test_servers_payload_does_not_refresh_live_on_public_get(self) -> None:
+        stale_snapshot = {
+            "server_name": "Comunidad Hispana #01",
+            "external_server_id": "comunidad-hispana-01",
+            "captured_at": "2020-01-01T00:00:00Z",
+            "snapshot_origin": "real-rcon",
+            "current_map": "carentan",
+        }
+        fake_live_source = type(
+            "FakeLiveSource",
+            (),
+            {"build_target_index": lambda self: {}},
+        )()
+
+        with (
+            patch.object(payloads, "list_latest_snapshots", return_value=[stale_snapshot]),
+            patch.object(payloads, "get_live_data_source", return_value=fake_live_source),
+            patch.object(payloads, "_try_collect_real_time_snapshot") as refresh,
+        ):
+            result = payloads.build_servers_payload()
+
+        refresh.assert_not_called()
+        data = result["data"]
+        self.assertEqual(result["status"], "ok")
+        self.assertEqual(data["items"][0]["external_server_id"], "comunidad-hispana-01")
+        self.assertEqual(data["refresh_attempted"], False)
+        self.assertEqual(data["refresh_status"], "cache-only")
+        self.assertEqual(data["source"], "persisted-stale-snapshot")
 
 
 def _build_with_rcon_sample(sample: dict[str, object]) -> dict[str, object]:

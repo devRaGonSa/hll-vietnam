@@ -6,12 +6,14 @@ Esta auditoria revisa las rutas publicas que alimentan `ranking`, `stats`, `hist
 
 Actualizacion TASK-225, 2026-06-10: la deuda P1 de `stats search` y `stats player profile` fue corregida en codigo para que los GET publicos usen `player_search_index` y `player_period_stats` en modo read-only estricto, sin inicializar storage ni caer a runtime fallback pesado. La medicion HTTP final requiere redeploy. `current-match` sigue pendiente porque depende de RCON live y debe tratarse como hardening/degradacion sin cambiar hosts, puertos ni configuracion RCON.
 
+Actualizacion TASK-226, 2026-06-10: `/api/current-match/kills` y `/api/current-match/players` pasan a usar AdminLog en lectura publica sin inicializar storage y con degradacion JSON controlada si el read model no esta disponible o falla. `/api/servers` pasa a ser snapshot/cache-only en el GET publico y ya no dispara refresh RCON/A2S live durante la lectura. La deuda restante de `current-match` queda en `/api/current-match`, que todavia puede intentar una muestra RCON directa antes de caer a snapshot.
+
 Conclusiones principales:
 
 - El backend de `ranking` ya no muestra el cuello de botella grave del ranking anual. La evidencia mas fuerte es el test `backend/tests/test_annual_ranking_payload.py`, que confirma que la lectura anual en PostgreSQL ya no inicializa storage en request publico.
 - El cuello de botella visible actual mas claro esta en frontend: `frontend/assets/js/ranking.js` y `frontend/assets/js/stats.js` bloquean la carga principal detras de `/health`, y `ranking.js` no tiene proteccion contra request race ni limpieza robusta del estado de carga.
 - `historico.js` es hoy la referencia mas sana del frontend publico: usa snapshots, cache TTL, deduplicacion de peticiones y `requestId` para ignorar respuestas obsoletas.
-- `partida-actual.js` no bloquea por `/health`, pero hace polling agresivo y paralelo a tres endpoints (`/api/current-match`, `/api/current-match/kills`, `/api/current-match/players`) sin `AbortController`, con intervalos de 1.5 s y 3 s que pueden amplificar carga y re-render innecesario.
+- `partida-actual.js` no bloquea por `/health`, pero hace polling agresivo y paralelo a tres endpoints (`/api/current-match`, `/api/current-match/kills`, `/api/current-match/players`) sin `AbortController`, con intervalos de 1.5 s y 3 s que pueden amplificar carga y re-render innecesario. Tras TASK-226, kills/players degradan desde backend en JSON controlado.
 - En backend siguen existiendo fallbacks runtime publicos sobre tablas materializadas grandes para `ranking`, `stats search` y `stats player profile`. Son mejores que consultar RCON directo, pero siguen rompiendo la meta de servir lecturas publicas desde read models dedicados.
 - Las queries runtime de leaderboard y player stats usan patrones como `COALESCE(CAST(matches.ended_at AS TEXT), CAST(matches.started_at AS TEXT))` y agregaciones sobre `rcon_match_player_stats`, lo que aumenta riesgo de scans y de uso parcial de indices.
 - `current-match` sigue consultando RCON directo en request publico cuando hay target confiable. Eso contradice la regla objetivo de esta auditoria y debe tratarse como deuda arquitectonica explicita aunque hoy sea un requisito funcional de la pagina live.
@@ -29,7 +31,7 @@ Flujo observado:
 
 - `ranking` y `stats` mezclan frontend secuencial con backend que aun puede caer a runtime sobre tablas materializadas si falta snapshot o read model.
 - `historico` ya prioriza snapshots y fallback controlado.
-- `current-match` expone una excepcion relevante: consulta RCON directo en la ruta publica cuando encuentra target valido.
+- `current-match` expone una excepcion relevante: `/api/current-match` consulta RCON directo en la ruta publica cuando encuentra target valido. Kills/players ya leen AdminLog sin inicializar storage en request publico.
 
 ## Inventario de Endpoints Publicos
 
@@ -43,9 +45,9 @@ Flujo observado:
 | `/api/historical/snapshots/recent-matches` | `frontend/assets/js/historico.js` | `build_recent_historical_matches_snapshot_payload()` | Snapshot publico de recent matches | Segun source kind puede usar RCON read model o fallback publico | Si | P2 |
 | `/api/historical/matches/detail` | `frontend/assets/js/historico-partida.js` | `build_historical_match_detail_payload()` | Read model detalle de partida | Intenta `get_rcon_historical_match_detail()`, luego fallback a storage historico publico | Si | P2 |
 | `/api/current-match` | `frontend/assets/js/partida-actual.js` | `build_current_match_payload()` | Read model live propio | Primero intenta `_query_current_match_rcon_sample()` directo; luego fallback a `/api/servers` snapshot | Si, y toca RCON directo | P0 |
-| `/api/current-match/kills` | `frontend/assets/js/partida-actual.js` | `build_current_match_kill_feed_payload()` | Read model live propio de kill feed | `list_current_match_kill_feed()` desde evidencia AdminLog materializada | No se observo fallback a scoreboard | P1 |
-| `/api/current-match/players` | `frontend/assets/js/partida-actual.js` | `build_current_match_player_stats_payload()` | Read model live propio de player stats | `list_current_match_player_stats()` desde evidencia AdminLog materializada | No se observo fallback a scoreboard | P1 |
-| `/api/servers` | `frontend/assets/js/main.js`, fallback de current-match | `build_servers_payload()` | Snapshot live de servidores | Snapshot local/live payload | Sin fallback costoso visible | P2 |
+| `/api/current-match/kills` | `frontend/assets/js/partida-actual.js` | `build_current_match_kill_feed_payload()` | Read model live propio de kill feed | AdminLog materializado en modo read-only publico | Degradacion JSON controlada si falla read model | P2 |
+| `/api/current-match/players` | `frontend/assets/js/partida-actual.js` | `build_current_match_player_stats_payload()` | Read model live propio de player stats | AdminLog materializado en modo read-only publico | Degradacion JSON controlada si falla read model | P2 |
+| `/api/servers` | `frontend/assets/js/main.js`, fallback de current-match | `build_servers_payload()` | Snapshot live de servidores | Snapshot/cache persistido | Sin refresh live en GET publico | P2 |
 | `/health` | `frontend/assets/js/main.js`, `ranking.js`, `stats.js` | `build_health_payload()` | N/A | Check tecnico | No aplica | P1 por bloqueo UI, no por backend |
 
 Notas:

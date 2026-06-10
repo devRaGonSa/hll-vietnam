@@ -118,48 +118,33 @@ def build_discord_payload() -> dict[str, object]:
 
 
 def build_servers_payload() -> dict[str, object]:
-    """Return current server status, refreshing stale snapshots before responding."""
+    """Return current server status from persisted snapshots only."""
     max_snapshot_age_seconds = get_refresh_interval_seconds()
     persisted_items = _select_primary_snapshot_items(
         _enrich_server_items(list_latest_snapshots())
     )
     persisted_snapshot_at = _resolve_last_snapshot_at(persisted_items)
     persisted_snapshot_age_seconds = _calculate_snapshot_age_seconds(persisted_snapshot_at)
-
-    refresh_attempted = _should_refresh_snapshot(
-        persisted_items,
-        persisted_snapshot_age_seconds,
-        max_snapshot_age_seconds,
-    )
     refresh_errors: list[dict[str, object]] = []
     refresh_source_policy = build_source_policy(
         primary_source=get_live_data_source_kind(),
-        selected_source="none",
+        selected_source="persisted-snapshot" if persisted_items else "none",
         fallback_reason=None,
-        source_attempts=[],
+        source_attempts=[
+            build_source_attempt(
+                source="persisted-snapshot",
+                role="served-response",
+                status="success" if persisted_items else "empty",
+                reason="public-servers-read-is-cache-only",
+            )
+        ],
     )
 
-    if refresh_attempted:
-        refreshed_items, refresh_errors, refresh_source_policy = _try_collect_real_time_snapshot()
-        if refreshed_items:
-            refreshed_snapshot_at = _resolve_last_snapshot_at(refreshed_items)
-            refreshed_snapshot_age_seconds = _calculate_snapshot_age_seconds(refreshed_snapshot_at)
-            return _build_servers_response(
-                items=refreshed_items,
-                response_source=_build_live_response_source(refresh_source_policy),
-                last_snapshot_at=refreshed_snapshot_at,
-                snapshot_age_seconds=refreshed_snapshot_age_seconds,
-                max_snapshot_age_seconds=max_snapshot_age_seconds,
-                refresh_attempted=True,
-                refresh_status="success",
-                refresh_errors=refresh_errors,
-                source_policy=refresh_source_policy,
-            )
-
     if persisted_items:
-        refresh_status = "failed" if refresh_attempted else "not-needed"
         response_source = (
-            "persisted-stale-snapshot" if refresh_attempted else "persisted-fresh-snapshot"
+            "persisted-stale-snapshot"
+            if _is_snapshot_stale(persisted_snapshot_age_seconds, max_snapshot_age_seconds)
+            else "persisted-fresh-snapshot"
         )
         return _build_servers_response(
             items=persisted_items,
@@ -167,12 +152,12 @@ def build_servers_payload() -> dict[str, object]:
             last_snapshot_at=persisted_snapshot_at,
             snapshot_age_seconds=persisted_snapshot_age_seconds,
             max_snapshot_age_seconds=max_snapshot_age_seconds,
-            refresh_attempted=refresh_attempted,
-            refresh_status=refresh_status,
+            refresh_attempted=False,
+            refresh_status="cache-only",
             refresh_errors=refresh_errors,
             source_policy=_infer_live_source_policy_from_items(
                 persisted_items,
-                refresh_attempted=refresh_attempted,
+                refresh_attempted=False,
                 refresh_errors=refresh_errors,
             ),
         )
@@ -189,8 +174,8 @@ def build_servers_payload() -> dict[str, object]:
             "max_snapshot_age_seconds": max_snapshot_age_seconds,
             "is_stale": True,
             "freshness": "stale",
-            "refresh_attempted": refresh_attempted,
-            "refresh_status": "failed" if refresh_attempted else "not-needed",
+            "refresh_attempted": False,
+            "refresh_status": "cache-only",
             "refresh_errors": refresh_errors,
             **refresh_source_policy,
             "items": [],
@@ -415,16 +400,27 @@ def build_current_match_kill_feed_payload(
     origin = get_trusted_public_scoreboard_origin(server_slug)
     if origin is None:
         raise ValueError("Unsupported current match server.")
-    feed = list_current_match_kill_feed(
-        server_key=origin.slug,
-        limit=limit,
-        since_event_id=since_event_id,
-    )
+    try:
+        feed = list_current_match_kill_feed(
+            server_key=origin.slug,
+            limit=limit,
+            since_event_id=since_event_id,
+            ensure_storage=False,
+        )
+        source_policy = _build_current_match_admin_log_source_policy(status="success")
+    except Exception as error:  # noqa: BLE001 - public live read must degrade cleanly
+        feed = _empty_current_match_kill_feed_payload()
+        source_policy = _build_current_match_admin_log_source_policy(
+            status="error",
+            error_reason=_public_error_reason(error),
+            message=str(error),
+        )
     return {
         "status": "ok",
         "data": {
             "server_slug": origin.slug,
             "server_name": origin.display_name,
+            **source_policy,
             **feed,
         },
     }
@@ -435,15 +431,84 @@ def build_current_match_player_stats_payload(*, server_slug: str) -> dict[str, o
     origin = get_trusted_public_scoreboard_origin(server_slug)
     if origin is None:
         raise ValueError("Unsupported current match server.")
-    stats = list_current_match_player_stats(server_key=origin.slug)
+    try:
+        stats = list_current_match_player_stats(
+            server_key=origin.slug,
+            ensure_storage=False,
+        )
+        source_policy = _build_current_match_admin_log_source_policy(status="success")
+    except Exception as error:  # noqa: BLE001 - public live read must degrade cleanly
+        stats = _empty_current_match_player_stats_payload()
+        source_policy = _build_current_match_admin_log_source_policy(
+            status="error",
+            error_reason=_public_error_reason(error),
+            message=str(error),
+        )
     return {
         "status": "ok",
         "data": {
             "server_slug": origin.slug,
             "server_name": origin.display_name,
+            **source_policy,
             **stats,
         },
     }
+
+
+def _empty_current_match_kill_feed_payload() -> dict[str, object]:
+    return {
+        "scope": "no-current-match-events",
+        "confidence": "unavailable",
+        "stale_events_filtered": 0,
+        "items": [],
+    }
+
+
+def _empty_current_match_player_stats_payload() -> dict[str, object]:
+    return {
+        "scope": "no-current-match-events",
+        "confidence": "unavailable",
+        "source": "rcon-admin-log-current-match-summary",
+        "updated_at": None,
+        "stale_events_filtered": 0,
+        "items": [],
+    }
+
+
+def _build_current_match_admin_log_source_policy(
+    *,
+    status: str,
+    error_reason: str | None = None,
+    message: str | None = None,
+) -> dict[str, object]:
+    return build_source_policy(
+        primary_source=SOURCE_KIND_RCON,
+        selected_source="rcon-admin-log",
+        fallback_used=status != "success",
+        fallback_reason=error_reason,
+        source_attempts=[
+            build_source_attempt(
+                source="rcon-admin-log",
+                role="read-model",
+                status=status,
+                reason=error_reason,
+                message=message,
+            )
+        ],
+    )
+
+
+def _public_error_reason(error: Exception) -> str:
+    if isinstance(error, FileNotFoundError):
+        return "admin-log-read-model-unavailable"
+    if isinstance(error, TimeoutError):
+        return "admin-log-read-timeout"
+    message = str(error).lower()
+    if "timeout" in message or "timed out" in message:
+        return "admin-log-read-timeout"
+    if "does not exist" in message or "no such table" in message:
+        return "admin-log-read-model-unavailable"
+    return "admin-log-read-failed"
 
 
 def _query_current_match_rcon_sample(server_slug: str) -> dict[str, object] | None:
@@ -2312,6 +2377,13 @@ def _should_refresh_snapshot(
         return True
 
     return snapshot_age_seconds > max_snapshot_age_seconds
+
+
+def _is_snapshot_stale(
+    snapshot_age_seconds: int | None,
+    max_snapshot_age_seconds: int,
+) -> bool:
+    return snapshot_age_seconds is None or snapshot_age_seconds > max_snapshot_age_seconds
 
 
 def _try_collect_real_time_snapshot() -> tuple[

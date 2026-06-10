@@ -348,16 +348,21 @@ def list_current_match_kill_feed(
     since_event_id: str | None = None,
     db_path: Path | None = None,
     now: datetime | None = None,
+    ensure_storage: bool = True,
 ) -> dict[str, object]:
     """Return safe recent kill rows for one AdminLog server window."""
-    resolved_path = initialize_rcon_admin_log_storage(db_path=db_path)
+    resolved_path = (
+        initialize_rcon_admin_log_storage(db_path=db_path)
+        if ensure_storage
+        else db_path or get_storage_path()
+    )
     since_row_id = _parse_current_match_event_row_id(since_event_id)
     if use_postgres_rcon_storage(explicit_sqlite_path=db_path):
         from .postgres_rcon_storage import connect_postgres_compat
 
         connection_scope = connect_postgres_compat()
     else:
-        connection_scope = closing(sqlite3.connect(resolved_path))
+        connection_scope = closing(_connect_admin_log_sqlite_read(resolved_path))
 
     with connection_scope as connection:
         if isinstance(connection, sqlite3.Connection):
@@ -469,15 +474,20 @@ def list_current_match_player_stats(
     server_key: str,
     db_path: Path | None = None,
     now: datetime | None = None,
+    ensure_storage: bool = True,
 ) -> dict[str, object]:
     """Return current-match participants and partial stats from the safe AdminLog window."""
-    resolved_path = initialize_rcon_admin_log_storage(db_path=db_path)
+    resolved_path = (
+        initialize_rcon_admin_log_storage(db_path=db_path)
+        if ensure_storage
+        else db_path or get_storage_path()
+    )
     if use_postgres_rcon_storage(explicit_sqlite_path=db_path):
         from .postgres_rcon_storage import connect_postgres_compat
 
         connection_scope = connect_postgres_compat()
     else:
-        connection_scope = closing(sqlite3.connect(resolved_path))
+        connection_scope = closing(_connect_admin_log_sqlite_read(resolved_path))
 
     with connection_scope as connection:
         if isinstance(connection, sqlite3.Connection):
@@ -590,6 +600,14 @@ def list_current_match_player_stats(
         "stale_events_filtered": int(window["stale_events_filtered"]),
         "items": items,
     }
+
+
+def _connect_admin_log_sqlite_read(db_path: Path) -> sqlite3.Connection:
+    """Open AdminLog storage for read without creating files during public GETs."""
+    if not db_path.exists():
+        raise FileNotFoundError(f"AdminLog storage is not available: {db_path}")
+    uri = f"file:{db_path.as_posix()}?mode=ro"
+    return sqlite3.connect(uri, uri=True)
 
 
 def _resolve_current_match_window(
