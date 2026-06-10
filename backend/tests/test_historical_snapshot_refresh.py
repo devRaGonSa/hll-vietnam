@@ -21,7 +21,9 @@ from app.config import (
     get_public_recent_matches_refresh_interval_seconds,
 )
 from app.payloads import (
+    build_historical_server_summary_payload,
     build_leaderboard_snapshot_payload,
+    build_recent_historical_matches_payload,
     build_recent_historical_matches_snapshot_payload,
 )
 from app.historical_runner import (
@@ -165,6 +167,66 @@ class HistoricalSnapshotRefreshTests(unittest.TestCase):
         fallback_loader.assert_not_called()
         self.assertEqual(len(payload["data"]["items"]), 1)
         self.assertFalse(payload["data"].get("fallback_used", False))
+
+    def test_legacy_all_servers_recent_matches_uses_snapshot_fast_path(self) -> None:
+        snapshot = {
+            "generated_at": "2026-06-10T04:00:00Z",
+            "source_range_start": "2026-06-09T21:00:00Z",
+            "source_range_end": "2026-06-09T22:00:00Z",
+            "is_stale": False,
+            "payload": {
+                "items": [
+                    {
+                        "match_id": "match-1",
+                        "closed_at": "2026-06-09T22:00:00Z",
+                    }
+                ],
+                "limit": 100,
+            },
+        }
+        with (
+            patch("app.payloads._get_historical_snapshot_record", return_value=snapshot),
+            patch("app.payloads.get_historical_data_source_kind", return_value="rcon"),
+            patch("app.payloads.get_rcon_historical_read_model") as rcon_loader,
+            patch("app.payloads.list_recent_historical_matches") as fallback_loader,
+        ):
+            payload = build_recent_historical_matches_payload(
+                server_slug="all-servers",
+                limit=20,
+            )
+
+        rcon_loader.assert_not_called()
+        fallback_loader.assert_not_called()
+        self.assertEqual(payload["data"]["context"], "historical-recent-matches")
+        self.assertEqual(payload["data"]["legacy_endpoint_policy"], "snapshot-read-only-fast-path")
+        self.assertEqual(payload["data"]["items"][0]["match_id"], "match-1")
+
+    def test_legacy_all_servers_summary_uses_snapshot_fast_path(self) -> None:
+        snapshot = {
+            "generated_at": "2026-06-10T04:00:00Z",
+            "source_range_start": "2026-06-09T00:00:00Z",
+            "source_range_end": "2026-06-10T00:00:00Z",
+            "is_stale": False,
+            "payload": {
+                "item": {
+                    "server": {"slug": "all-servers", "name": "Todos los servidores"},
+                    "matches_count": 12,
+                },
+            },
+        }
+        with (
+            patch("app.payloads._get_historical_snapshot_record", return_value=snapshot),
+            patch("app.payloads.get_historical_data_source_kind", return_value="rcon"),
+            patch("app.payloads.get_rcon_historical_read_model") as rcon_loader,
+            patch("app.payloads.list_historical_server_summaries") as fallback_loader,
+        ):
+            payload = build_historical_server_summary_payload(server_slug="all-servers")
+
+        rcon_loader.assert_not_called()
+        fallback_loader.assert_not_called()
+        self.assertEqual(payload["data"]["context"], "historical-server-summary")
+        self.assertEqual(payload["data"]["legacy_endpoint_policy"], "snapshot-read-only-fast-path")
+        self.assertEqual(payload["data"]["items"][0]["matches_count"], 12)
 
     def test_rcon_coverage_accepts_postgres_datetime_values(self) -> None:
         start = datetime(2026, 5, 21, 10, 0, tzinfo=timezone.utc)

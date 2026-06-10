@@ -12,6 +12,8 @@ Actualizacion TASK-227, 2026-06-10: la auditoria real post-`TASK-226` mostro que
 
 Actualizacion TASK-228, 2026-06-10: `/api/servers` deja de ser cache-only estricto y vuelve a ser near-real-time controlado para la home. Sirve snapshot fresco si existe; si no hay cache o esta stale, intenta RCON/A2S con timeout publico corto y degrada a snapshot stale o JSON controlado si live falla. `/api/servers/latest` e `/api/servers/history` siguen siendo lecturas de almacenamiento local, no sustitutos del estado live.
 
+Actualizacion TASK-229, 2026-06-10: los endpoints legacy agregados `/api/historical/server-summary?server=all-servers` y `/api/historical/recent-matches?server=all-servers&limit=20` dejan de ejecutar read model RCON o fallback runtime CRCON/PostgreSQL en lectura publica. Ahora son wrappers de los snapshots precomputados equivalentes, con `legacy_endpoint_policy=snapshot-read-only-fast-path`; si falta snapshot devuelven JSON controlado rapido en vez de agotar el timeout.
+
 Conclusiones principales:
 
 - El backend de `ranking` ya no muestra el cuello de botella grave del ranking anual. La evidencia mas fuerte es el test `backend/tests/test_annual_ranking_payload.py`, que confirma que la lectura anual en PostgreSQL ya no inicializa storage en request publico.
@@ -46,7 +48,9 @@ Flujo observado:
 | `/api/stats/players/{player_id}` | `frontend/assets/js/stats.js` | `build_stats_player_profile_payload()` | `player_period_stats` | Primero `player_period_stats`, si falta cae a runtime y ademas calcula weekly/monthly ranking en caliente | Si | P1 |
 | `/api/stats/rankings/annual` | `frontend/assets/js/stats.js` | `build_annual_ranking_snapshot_payload()` | `rcon_annual_ranking_snapshots`, `rcon_annual_ranking_snapshot_items` | Snapshot anual | No recalcula ranking en lectura | P2 |
 | `/api/historical/snapshots/leaderboard` | `frontend/assets/js/historico.js` | `build_rcon_materialized_leaderboard_snapshot_payload()` en modo rcon | Snapshot historico publico equivalente | En modo rcon el nombre dice snapshot, pero sirve runtime fast path sobre materialized leaderboard | Si, por definicion del endpoint en modo rcon | P1 |
-| `/api/historical/snapshots/recent-matches` | `frontend/assets/js/historico.js` | `build_recent_historical_matches_snapshot_payload()` | Snapshot publico de recent matches | Segun source kind puede usar RCON read model o fallback publico | Si | P2 |
+| `/api/historical/snapshots/recent-matches` | `frontend/assets/js/historico.js` | `build_recent_historical_matches_snapshot_payload()` | Snapshot publico de recent matches | Snapshot precomputado read-only | No | P2 |
+| `/api/historical/recent-matches?server=all-servers` | legacy historico audit | `build_recent_historical_matches_payload()` | Snapshot publico de recent matches | Wrapper legacy sobre snapshot precomputado | No | P2 |
+| `/api/historical/server-summary?server=all-servers` | legacy historico audit | `build_historical_server_summary_payload()` | Snapshot publico de server summary | Wrapper legacy sobre snapshot precomputado | No | P2 |
 | `/api/historical/matches/detail` | `frontend/assets/js/historico-partida.js` | `build_historical_match_detail_payload()` | Read model detalle de partida | Intenta `get_rcon_historical_match_detail()`, luego fallback a storage historico publico | Si | P2 |
 | `/api/current-match` | `frontend/assets/js/partida-actual.js` | `build_current_match_payload()` | Read model live propio | Primero intenta `_query_current_match_rcon_sample()` directo; luego fallback a `/api/servers` snapshot | Si, y toca RCON directo | P0 |
 | `/api/current-match/kills` | `frontend/assets/js/partida-actual.js` | `build_current_match_kill_feed_payload()` | Read model live propio de kill feed | AdminLog materializado en modo read-only publico; PostgreSQL usa `connect_postgres_compat(initialize=False)` | Degradacion JSON controlada si falla read model | P2 |

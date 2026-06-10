@@ -1075,6 +1075,24 @@ def build_recent_historical_matches_payload(
     server_slug: str | None = None,
 ) -> dict[str, object]:
     """Return recent historical matches from persisted CRCON data."""
+    if server_slug == ALL_SERVERS_SLUG:
+        snapshot_payload = build_recent_historical_matches_snapshot_payload(
+            limit=limit,
+            server_slug=server_slug,
+        )
+        data = dict(snapshot_payload.get("data") or {})
+        data.update(
+            {
+                "title": "Partidas recientes por servidor",
+                "context": "historical-recent-matches",
+                "source": "historical-precomputed-snapshots",
+                "historical_data_source": get_historical_data_source_kind(),
+                "coverage_basis": "precomputed-recent-matches-snapshot",
+                "legacy_endpoint_policy": "snapshot-read-only-fast-path",
+            }
+        )
+        return {"status": snapshot_payload.get("status", "ok"), "data": data}
+
     if get_historical_data_source_kind() == "rcon":
         data_source = get_rcon_historical_read_model()
         if data_source is not None:
@@ -1746,6 +1764,25 @@ def build_historical_server_summary_payload(
     server_slug: str | None = None,
 ) -> dict[str, object]:
     """Return aggregated historical metrics per server."""
+    if server_slug == ALL_SERVERS_SLUG:
+        snapshot_payload = build_historical_server_summary_snapshot_payload(
+            server_slug=server_slug,
+        )
+        data = dict(snapshot_payload.get("data") or {})
+        item = data.get("item") if isinstance(data.get("item"), dict) else None
+        data.update(
+            {
+                "title": "Cobertura historica agregada de todos los servidores",
+                "context": "historical-server-summary",
+                "source": "historical-precomputed-snapshots",
+                "summary_basis": "precomputed-server-summary-snapshot",
+                "weekly_ranking_window_days": 7,
+                "legacy_endpoint_policy": "snapshot-read-only-fast-path",
+                "items": [item] if item is not None else [],
+            }
+        )
+        return {"status": snapshot_payload.get("status", "ok"), "data": data}
+
     if get_historical_data_source_kind() == "rcon":
         data_source = get_rcon_historical_read_model()
         if data_source is not None:
