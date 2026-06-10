@@ -61,9 +61,11 @@
               <p class="eyebrow eyebrow--section">Filtros de lectura</p>
               <h2>Top p&uacute;blico por periodo</h2>
             </div>
-            <p class="panel__intro panel__intro--tight">
-              El ranking expone los resultados de los l&iacute;deres. Para b&uacute;squeda individual usa Estad&iacute;sticas.
-            </p>
+            <div class="ranking-secondary-action">
+              <a class="secondary-button secondary-button--compact" href="./stats.html">
+                Buscar jugador en Estad&iacute;sticas
+              </a>
+            </div>
             <form class="ranking-form" id="ranking-form">
               <div class="ranking-form__grid">
                 <label class="stats-search-form__label" for="ranking-timeframe">
@@ -90,7 +92,7 @@
                     <option value="teamkills">Teamkills</option>
                     <option value="matches_considered">Partidas jugadas</option>
                     <option value="kd_ratio">K/D</option>
-                    <option value="kills_per_match">KPM</option>
+                    <option value="kills_per_match">Kills/partida</option>
                   </select>
                 </label>
                 <label class="stats-search-form__label" for="ranking-limit">
@@ -104,32 +106,10 @@
                     <option value="100">Top 100</option>
                   </select>
                 </label>
-                <label class="stats-search-form__label" for="ranking-year" id="ranking-year-wrap" hidden>
-                  A&ntilde;o
-                  <input
-                    class="stats-search-input"
-                    id="ranking-year"
-                    name="year"
-                    type="number"
-                    min="1"
-                    step="1"
-                    inputmode="numeric"
-                    aria-describedby="ranking-state"
-                  />
-                </label>
-              </div>
-              <p class="ranking-form__note" id="ranking-filter-note">
-                Consulta l&iacute;deres p&uacute;blicos y cambia de periodo o servidor sin salir de la p&aacute;gina.
-              </p>
-              <div class="hero__actions ranking-form__actions">
-                <button class="discord-button" id="ranking-submit" type="submit">Actualizar ranking</button>
-                <a class="secondary-button secondary-button--compact" href="./stats.html">
-                  Buscar jugador en Estad&iacute;sticas
-                </a>
               </div>
             </form>
             <p class="stats-state stats-state--neutral" id="ranking-state" role="status" aria-live="polite">
-              Preparando ranking p&uacute;blico...
+              Cargando ranking p&uacute;blico...
             </p>
             <h3 class="ranking-results-title" id="ranking-title">Tabla activa</h3>
             <div class="ranking-meta" id="ranking-meta"></div>
@@ -145,7 +125,7 @@
                     <th>Teamkills</th>
                     <th>Partidas</th>
                     <th>K/D</th>
-                    <th id="ranking-kpm-heading">KPM</th>
+                    <th id="ranking-kpm-heading">Kills/partida</th>
                   </tr>
                 </thead>
                 <tbody id="ranking-table-body"></tbody>

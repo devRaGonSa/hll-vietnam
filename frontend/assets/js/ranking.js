@@ -5,9 +5,6 @@
   const serverSelect = document.getElementById("ranking-server");
   const metricSelect = document.getElementById("ranking-metric");
   const limitSelect = document.getElementById("ranking-limit");
-  const submitButton = document.getElementById("ranking-submit");
-  const yearWrap = document.getElementById("ranking-year-wrap");
-  const yearInput = document.getElementById("ranking-year");
   const stateNode = document.getElementById("ranking-state");
   const titleNode = document.getElementById("ranking-title");
   const metaNode = document.getElementById("ranking-meta");
@@ -16,9 +13,8 @@
   const metricHeadingNode = document.getElementById("ranking-metric-heading");
   const kpmHeadingNode = document.getElementById("ranking-kpm-heading");
   const emptyNode = document.getElementById("ranking-empty");
-  const filterNoteNode = document.getElementById("ranking-filter-note");
 
-  const currentYear = new Date().getUTCFullYear();
+  const annualYear = 2026;
   const annualMetric = "kills";
   const defaultMetric = "kills";
   const defaultLimit = "20";
@@ -43,20 +39,13 @@
   let currentRequestId = 0;
   let activeController = null;
 
-  if (yearInput) {
-    yearInput.value = String(currentYear);
-  }
-
   applyInitialUrlState();
-  toggleYearField();
   syncMetricState();
-  setRankingState("neutral", "Preparando ranking p\u00fablico...");
   clearRankingSurface();
   void loadRanking();
 
   if (timeframeSelect) {
     timeframeSelect.addEventListener("change", () => {
-      toggleYearField();
       syncMetricState();
       updateUrlState();
       void loadRanking();
@@ -74,20 +63,9 @@
     });
   });
 
-  if (yearInput) {
-    yearInput.addEventListener("change", () => {
-      updateUrlState();
-      if (String(timeframeSelect?.value || defaultTimeframe) === "annual") {
-        void loadRanking();
-      }
-    });
-  }
-
   if (form) {
     form.addEventListener("submit", (event) => {
       event.preventDefault();
-      updateUrlState();
-      void loadRanking();
     });
   }
 
@@ -95,24 +73,10 @@
     if (!stateNode) {
       return;
     }
-    stateNode.textContent = message;
+    const normalizedMessage = String(message || "").trim();
+    stateNode.hidden = !normalizedMessage;
+    stateNode.textContent = normalizedMessage;
     stateNode.className = `stats-state stats-state--${state}`;
-  }
-
-  function setFilterNote(message, tone = "neutral") {
-    if (!filterNoteNode) {
-      return;
-    }
-    filterNoteNode.textContent = message;
-    filterNoteNode.className = `ranking-form__note ranking-form__note--${tone}`;
-  }
-
-  function setFormBusy(isBusy) {
-    if (!submitButton) {
-      return;
-    }
-    submitButton.disabled = isBusy;
-    submitButton.setAttribute("aria-busy", String(isBusy));
   }
 
   function applyInitialUrlState() {
@@ -143,12 +107,6 @@
         ? String(limit)
         : defaultLimit;
     }
-    if (yearInput && year) {
-      const normalizedYear = Number.parseInt(year, 10);
-      if (Number.isFinite(normalizedYear) && normalizedYear > 0) {
-        yearInput.value = String(normalizedYear);
-      }
-    }
 
     if (params.has("limit") && !supportedLimits.includes(limit || "")) {
       setRankingState(
@@ -156,15 +114,14 @@
         "El limite del URL no es valido para esta interfaz. Se restauro el valor permitido por defecto.",
       );
     }
-  }
-
-  function toggleYearField() {
-    const isAnnual = timeframeSelect?.value === "annual";
-    if (yearWrap) {
-      yearWrap.hidden = !isAnnual;
-    }
-    if (yearInput) {
-      yearInput.disabled = !isAnnual;
+    if (params.has("year")) {
+      const normalizedYear = Number.parseInt(year || "", 10);
+      if (Number.isFinite(normalizedYear) && normalizedYear !== annualYear) {
+        setRankingState(
+          "warning",
+          `El ranking anual de esta vista usa ${annualYear}. Se ajusto el a\u00f1o del URL.`,
+        );
+      }
     }
   }
 
@@ -181,19 +138,6 @@
     if (isAnnual && metricSelect.value !== annualMetric) {
       metricSelect.value = annualMetric;
     }
-
-    if (isAnnual) {
-      setFilterNote(
-        "El ranking anual sigue limitado a kills porque solo esa m\u00e9trica tiene lectura snapshot segura.",
-        "warning",
-      );
-      return;
-    }
-
-    setFilterNote(
-      "El ranking expone los resultados de los l\u00edderes. Para b\u00fasqueda individual usa Estad\u00edsticas.",
-      "neutral",
-    );
   }
 
   function updateUrlState() {
@@ -204,7 +148,7 @@
       limit: String(limitSelect?.value || defaultLimit),
     });
     if (searchParams.get("timeframe") === "annual") {
-      searchParams.set("year", String(yearInput?.value || currentYear));
+      searchParams.set("year", String(annualYear));
     }
     window.history.replaceState({}, "", `?${searchParams.toString()}`);
   }
@@ -244,16 +188,10 @@
 
     let year = null;
     if (timeframe === "annual") {
-      year = Number.parseInt(String(yearInput?.value || "").trim(), 10);
-      if (!Number.isFinite(year) || year <= 0) {
-        setRankingState("error", "El a\u00f1o solicitado no es v\u00e1lido.");
-        renderEmptyState("Corrige el a\u00f1o y vuelve a consultar el ranking anual.");
-        return;
-      }
+      year = annualYear;
     }
 
     setRankingState("loading", "Cargando ranking global...");
-    setFormBusy(true);
 
     if (activeController) {
       activeController.abort();
@@ -306,7 +244,6 @@
       );
     } finally {
       if (requestId === currentRequestId) {
-        setFormBusy(false);
         activeController = null;
       }
     }
@@ -326,22 +263,17 @@
       normalizedMessage.includes("metric") &&
       normalizedMessage.includes("annual")
     ) {
-      setRankingState("warning", "El ranking anual solo admite kills por ahora.");
+      setRankingState("warning", "La metrica anual solicitada no esta disponible.");
       renderEmptyState(
-        "Las m\u00e9tricas extra est\u00e1n disponibles en semanal y mensual. El ranking anual sigue limitado a kills mientras no existan snapshots seguros adicionales.",
+        "La consulta anual devolvio una metrica sin snapshot seguro para esta vista.",
       );
       return;
     }
     if (statusCode === 400 && normalizedMessage.includes("metric")) {
       setRankingState("warning", "La m\u00e9trica solicitada no est\u00e1 soportada.");
       renderEmptyState(
-        "Usa kills, deaths, teamkills, partidas jugadas, K/D o KPM.",
+        "Usa kills, deaths, teamkills, partidas jugadas, K/D o Kills/partida.",
       );
-      return;
-    }
-    if (statusCode === 400 && normalizedMessage.includes("year")) {
-      setRankingState("warning", "El ranking anual requiere un a\u00f1o v\u00e1lido.");
-      renderEmptyState("Define un a\u00f1o v\u00e1lido para consultar la lectura anual.");
       return;
     }
     if (statusCode === 400 && normalizedMessage.includes("timeframe")) {
@@ -403,10 +335,7 @@
       return;
     }
 
-    setRankingState(
-      "ready",
-      `${labelForMetric(metric)} listo en ${labelForTimeframe(timeframe)} para ${labelForServer(serverId)}.`,
-    );
+    setRankingState("ready", "");
 
     if (tableBodyNode) {
       tableBodyNode.innerHTML = items.map((item) => renderRow(item, metric)).join("");
@@ -453,7 +382,11 @@
   }
 
   function renderRow(item, metric) {
-    const kpm = formatKpm(item.kills_per_match, item.kills, item.matches_considered);
+    const killsPerMatch = formatKillsPerMatch(
+      item.kills_per_match,
+      item.kills,
+      item.matches_considered,
+    );
     const hideKpmColumn = metric === "kills_per_match";
 
     return `
@@ -471,7 +404,7 @@
         <td>${safeInt(item.teamkills, 0)}</td>
         <td>${safeInt(item.matches_considered, 0)}</td>
         <td>${safeDecimal(item.kd_ratio, 2, "0.00")}</td>
-        ${hideKpmColumn ? "" : `<td>${kpm}</td>`}
+        ${hideKpmColumn ? "" : `<td>${killsPerMatch}</td>`}
       </tr>
     `;
   }
@@ -495,7 +428,7 @@
 
   function labelForWindow(data) {
     if (String(data.timeframe || "") === "annual") {
-      return `A\u00f1o ${safeInt(data.year, currentYear)}`;
+      return `A\u00f1o ${safeInt(data.year, annualYear)}`;
     }
     return String(data.window_label || data.window_kind || "Periodo activo");
   }
@@ -527,7 +460,7 @@
       teamkills: "Teamkills",
       matches_considered: "Partidas jugadas",
       kd_ratio: "K/D",
-      kills_per_match: "KPM",
+      kills_per_match: "Kills/partida",
     };
     return labels[metric] || "Kills";
   }
@@ -558,7 +491,7 @@
     });
   }
 
-  function formatKpm(rawKillsPerMatch, rawKills, rawMatches) {
+  function formatKillsPerMatch(rawKillsPerMatch, rawKills, rawMatches) {
     const directValue = Number(rawKillsPerMatch);
     if (Number.isFinite(directValue)) {
       return safeDecimal(directValue, 2, "0.00");

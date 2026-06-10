@@ -1429,6 +1429,10 @@ h2 {
   margin-top: 20px;
 }
 
+.ranking-secondary-action {
+  margin: 0 0 18px;
+}
+
 .ranking-form__grid {
   display: grid;
   gap: 12px;
