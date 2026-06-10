@@ -85,7 +85,7 @@ class RconMaterializationPipelineTests(unittest.TestCase):
             )
             self.assertEqual(players["Charlie"]["platform"], "unknown")
             self.assertNotIn("steam_id_64", players["Charlie"])
-            self.assertNotIn("external_profile_links", players["Charlie"])
+            self.assertEqual(players["Charlie"]["external_profile_links"], {})
             gc.collect()
 
     def test_match_detail_marks_equal_materialized_timestamps_as_server_time_only(self) -> None:
@@ -181,7 +181,7 @@ class RconMaterializationPipelineTests(unittest.TestCase):
             )
             gc.collect()
 
-    def test_match_detail_adds_safe_profile_summary_when_snapshot_exists(self) -> None:
+    def test_match_detail_omits_profile_summary_when_snapshot_exists(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             db_path = Path(tmpdir) / "historical.sqlite3"
             previous_storage_path = os.environ.get("HLL_BACKEND_STORAGE_PATH")
@@ -222,15 +222,11 @@ class RconMaterializationPipelineTests(unittest.TestCase):
 
             self.assertIsNotNone(detail)
             players = {row["player_name"]: row for row in detail["players"]}
-            self.assertIn("profile_summary", players["Alpha"])
+            self.assertNotIn("profile_summary", players["Alpha"])
             self.assertNotIn("profile_summary", players["Bravo"])
-            profile_summary = players["Alpha"]["profile_summary"]
-            self.assertEqual(profile_summary["sessions"], 12)
-            self.assertEqual(profile_summary["matches_played"], 9)
-            self.assertEqual(profile_summary["totals"]["kills"], 141)
-            self.assertEqual(profile_summary["favorite_weapons"], {"M1 Garand": 31})
-            self.assertNotIn("raw_content", profile_summary)
             self.assertNotIn("player_id", players["Alpha"])
+            self.assertEqual(players["Alpha"]["steam_id_64"], "76561198000000001")
+            self.assertIn("external_profile_links", players["Alpha"])
             gc.collect()
 
     def test_recent_matches_prefer_materialized_rcon_over_scoreboard_fallback(self) -> None:

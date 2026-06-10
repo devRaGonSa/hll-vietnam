@@ -253,21 +253,9 @@ def _build_materialized_recent_item(item: dict[str, object]) -> dict[str, object
 
 
 def _build_materialized_detail_item(materialized: dict[str, object]) -> dict[str, object]:
-    from .rcon_admin_log_storage import get_latest_rcon_player_profile_summaries
-
     match = materialized["match"]
     recent_item = _build_materialized_recent_item(match)
-    profile_summaries = get_latest_rcon_player_profile_summaries(
-        target_key=str(match["target_key"]),
-        player_ids=[str(row["player_id"]) for row in materialized["players"] if row.get("player_id")],
-    )
-    players = [
-        _build_player_row(
-            row,
-            profile_summary=profile_summaries.get(str(row.get("player_id"))),
-        )
-        for row in materialized["players"]
-    ]
+    players = [_build_player_row(row) for row in materialized["players"]]
     player_count = len(players) if players else recent_item.get("player_count")
     return {
         **recent_item,
@@ -298,12 +286,10 @@ def _resolve_materialized_player_count(item: dict[str, object]) -> int | None:
 
 def _build_player_row(
     row: dict[str, object],
-    *,
-    profile_summary: dict[str, object] | None = None,
 ) -> dict[str, object]:
     kills = _coerce_optional_int(row.get("kills")) or 0
     deaths = _coerce_optional_int(row.get("deaths")) or 0
-    player = {
+    return {
         "player_name": row.get("player_name"),
         "team": row.get("team"),
         "kills": kills,
@@ -315,9 +301,6 @@ def _build_player_row(
         "death_by": _top_counter(row.get("death_by_json")),
         **build_external_player_profile_fields(player_id=row.get("player_id")),
     }
-    if profile_summary:
-        player["profile_summary"] = profile_summary
-    return player
 
 
 def _top_counter(raw_value: object, *, limit: int = 5) -> list[dict[str, object]]:
