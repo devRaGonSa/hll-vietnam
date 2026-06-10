@@ -543,20 +543,26 @@ function resolveKillFeedWeapon(value) {
 
 function renderKillFeedWeaponIcon(weapon) {
   if (!weapon.icon) {
-    return '<span class="current-match-killfeed__weapon-fallback" aria-hidden="true">?</span>';
+    return `
+      <span class="current-match-killfeed__weapon-icon-frame" aria-hidden="true">
+        <span class="current-match-killfeed__weapon-fallback">?</span>
+      </span>
+    `;
   }
   return `
-    <img
-      class="current-match-killfeed__weapon-icon"
-      src="${escapeHtml(weapon.icon)}"
-      alt=""
-      width="88"
-      height="32"
-      loading="lazy"
-      decoding="async"
-      onerror="this.hidden = true; this.nextElementSibling.hidden = false;"
-    />
-    <span class="current-match-killfeed__weapon-fallback" aria-hidden="true" hidden>?</span>
+    <span class="current-match-killfeed__weapon-icon-frame" aria-hidden="true">
+      <img
+        class="current-match-killfeed__weapon-icon"
+        src="${escapeHtml(weapon.icon)}"
+        alt=""
+        width="88"
+        height="32"
+        loading="lazy"
+        decoding="async"
+        onerror="this.hidden = true; this.nextElementSibling.hidden = false;"
+      />
+      <span class="current-match-killfeed__weapon-fallback" hidden>?</span>
+    </span>
   `;
 }
 
