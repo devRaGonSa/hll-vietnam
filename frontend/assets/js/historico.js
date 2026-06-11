@@ -9,7 +9,7 @@ const HISTORICAL_SERVERS = Object.freeze([
   },
   {
     slug: "all-servers",
-    label: "Todos",
+    label: "Todos los servidores",
   },
 ]);
 const HISTORICAL_SERVER_SLUGS = Object.freeze(
