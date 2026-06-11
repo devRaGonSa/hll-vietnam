@@ -29,6 +29,37 @@ Frequent refreshes:
 - `HLL_PUBLIC_RECENT_MATCHES_REFRESH_INTERVAL_SECONDS`, default `60`, refreshes recent-match snapshots when no direct finished-match hook fires.
 - When the RCON capture cycle reports newly materialized finished matches, the runner refreshes recent-match snapshots immediately.
 
+## Gap Found In Scheduler Audit
+
+Current short cadence refresh only covers:
+
+- `refresh_public_ranking_snapshots()` for `/api/ranking`
+- `refresh_public_recent_matches_snapshots()` for recent matches
+
+It does not refresh the broader historical snapshot matrix consumed by `historico.html` every hour. That means weekly/monthly historical leaderboard or summary data can remain `snapshot_status=missing` until the next daily full refresh at `06:00`, even while ranking snapshots are already updating every 15 minutes.
+
+## Recommended Future Cadence
+
+Target cadence identified by the audit:
+
+- annual ranking snapshots:
+  - daily at `06:00 Europe/Madrid`
+- monthly ranking snapshots:
+  - `07:00` and `19:00 Europe/Madrid`
+- weekly ranking snapshots:
+  - every hour
+- historical weekly leaderboard snapshots used by `historico.html`:
+  - every hour
+- historical monthly leaderboard snapshots used by `historico.html`:
+  - every 2 hours
+
+Operational constraints for that future backend change:
+
+- large ranking matrix refreshes should run sequentially
+- annual/full refresh should not overlap with shorter historical refreshes
+- per-job start/end/duration/scope/result logs should remain explicit
+- public GET endpoints must stay snapshot-only and must not regenerate heavy data on request
+
 Refreshes are idempotent: existing ranking snapshots are replaced for the same window/scope, player read models are rebuilt per scope, and persisted historical snapshots are replaced/upserted by snapshot identity.
 
 ## Portainer
