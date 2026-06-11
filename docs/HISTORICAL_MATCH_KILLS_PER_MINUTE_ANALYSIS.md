@@ -176,7 +176,11 @@ This avoids false `0.00` values for:
 
 ## Personal Player Profile
 
-The public player profile in `stats.html` can now expose real KPM for the selected weekly or monthly window when the profile endpoint can aggregate:
+The public player profile in `stats.html` can now expose real KPM for the selected weekly or monthly window when the lightweight player-period read model already contains enough data for that player and scope.
+
+The profile endpoint does not use a runtime fallback over `rcon_match_player_stats` anymore for weekly/monthly public reads. That fallback was disabled because it could degrade public profile response times when the read model was empty or stale.
+
+When the read model is available, profile KPM uses:
 
 - `SUM(player_active_seconds)`
 - only over rows with:
@@ -195,7 +199,7 @@ This is intentionally narrower than the window total:
 - profile `kills` still show all kills in the selected window
 - profile `KPM` only becomes `ready` when the active-time subset is reliable enough
 
-The profile payload now exposes:
+The profile payload exposes:
 
 - `player_active_seconds`
 - `player_active_minutes`
@@ -204,7 +208,14 @@ The profile payload now exposes:
 - `active_time_source`
 - `active_time_coverage`
 
-If the profile read model is empty, the endpoint can safely fall back to runtime aggregation over `rcon_match_player_stats` for that single player and time window. This avoids inventing KPM while keeping the page usable before the read model is refreshed.
+If the profile read model is empty or unavailable:
+
+- the endpoint keeps the profile fast
+- `kpm` stays `null`
+- `kpm_status` stays `missing_active_time`
+- external links and profile identity fields remain available
+
+This keeps the page responsive without inventing KPM.
 
 ## Kills Per Match Labels
 

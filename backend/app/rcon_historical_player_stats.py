@@ -378,18 +378,12 @@ def get_rcon_materialized_player_stats(
         if read_model_result is not None:
             return read_model_result
 
-        runtime_result = _get_rcon_materialized_player_stats_runtime(
+        return _build_missing_player_period_stats_result(
             player_id=normalized_player_id,
             server_id=server_id,
             timeframe=resolved_timeframe,
-            db_path=db_path,
+            missing_reason=fallback_reason or "player-period-stats-unavailable",
         )
-        runtime_result.setdefault("source", {})
-        runtime_result["source"]["fallback_used"] = True
-        runtime_result["source"]["fallback_reason"] = fallback_reason or "player-period-stats-unavailable"
-        runtime_result["source"]["read_model"] = "player-period-stats"
-        runtime_result["source"]["freshness"] = "runtime-fallback"
-        return runtime_result
 
     return _get_rcon_materialized_player_stats_runtime(
         player_id=normalized_player_id,
@@ -1655,6 +1649,21 @@ def _build_missing_player_period_stats_result(
         "kills": 0,
         "deaths": 0,
         "teamkills": 0,
+        "player_active_seconds": None,
+        "player_active_minutes": None,
+        "kpm": None,
+        "kpm_status": "missing_active_time",
+        "active_time_source": "unavailable",
+        "active_time_coverage": {
+            "eligible_matches": 0,
+            "real_source_matches": 0,
+            "observed_matches": 0,
+            "total_matches_considered": 0,
+            "eligible_kills": 0,
+            "minimum_active_seconds": get_kpm_min_active_seconds(),
+            "sources": [],
+        },
+        **build_external_player_profile_fields(player_id=player_id),
         "weekly_ranking": None,
         "monthly_ranking": None,
         "source": {

@@ -11,40 +11,22 @@ from app.rcon_historical_player_stats import (
 
 
 class StatsPlayerProfilePayloadTests(unittest.TestCase):
-    def test_player_stats_falls_back_to_runtime_when_period_read_model_is_empty(self) -> None:
-        runtime_payload = {
-            "player_id": "76561198000000000",
-            "player_name": "Runtime Player",
-            "server_id": "all-servers",
-            "timeframe": "weekly",
-            "window_kind": "current-week",
-            "matches_considered": 3,
-            "kills": 25,
-            "deaths": 12,
-            "teamkills": 1,
-            "weekly_ranking": {"metric": "kills", "ranking_position": 5},
-            "monthly_ranking": {"metric": "kills", "ranking_position": 8},
-            "source": {"primary_source": "rcon"},
-        }
-        with (
-            patch(
-                "app.rcon_historical_player_stats._get_player_period_stats_read_model",
-                return_value=(None, "player-period-stats-empty"),
-            ),
-            patch(
-                "app.rcon_historical_player_stats._get_rcon_materialized_player_stats_runtime",
-                return_value=runtime_payload,
-            ) as runtime_loader,
+    def test_player_stats_returns_lightweight_missing_payload_when_period_read_model_is_empty(self) -> None:
+        with patch(
+            "app.rcon_historical_player_stats._get_player_period_stats_read_model",
+            return_value=(None, "player-period-stats-empty"),
         ):
             result = get_rcon_materialized_player_stats(
                 player_id="76561198000000000",
                 timeframe="weekly",
             )
 
-        runtime_loader.assert_called_once()
-        self.assertTrue(result["source"]["fallback_used"])
-        self.assertEqual(result["source"]["fallback_reason"], "player-period-stats-empty")
-        self.assertEqual(result["source"]["freshness"], "runtime-fallback")
+        self.assertEqual(result["matches_considered"], 0)
+        self.assertEqual(result["kpm_status"], "missing_active_time")
+        self.assertEqual(result["platform"], "steam")
+        self.assertIn("steam", result["external_profile_links"])
+        self.assertEqual(result["source"]["missing_reason"], "player-period-stats-empty")
+        self.assertFalse(result["source"]["fallback_used"])
 
     def test_build_stats_player_profile_payload_exposes_ready_real_kpm_and_external_links(self) -> None:
         with patch(

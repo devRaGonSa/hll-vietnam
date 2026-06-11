@@ -1783,18 +1783,24 @@ function formatHistoricalRatio(item, metricConfig, matches) {
 }
 
 function formatHistoricalPerMatch(rawDirectValue, rawTotalValue, rawMatches) {
-  const directValue = Number(rawDirectValue);
+  const directValue =
+    rawDirectValue === null || rawDirectValue === undefined || rawDirectValue === ""
+      ? Number.NaN
+      : Number(rawDirectValue);
   if (Number.isFinite(directValue)) {
     return formatDecimal(directValue, 2);
   }
 
-  const kills = Number(rawTotalValue);
+  const totalValue =
+    rawTotalValue === null || rawTotalValue === undefined || rawTotalValue === ""
+      ? Number.NaN
+      : Number(rawTotalValue);
   const matches = Number(rawMatches);
-  if (!Number.isFinite(kills) || !Number.isFinite(matches) || matches <= 0) {
-    return "-";
+  if (!Number.isFinite(totalValue) || !Number.isFinite(matches) || matches <= 0) {
+    return "";
   }
 
-  return formatDecimal(kills / matches, 2);
+  return formatDecimal(totalValue / matches, 2);
 }
 
 function formatDateOnly(timestamp) {
