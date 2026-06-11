@@ -617,10 +617,9 @@ h2 {
 
 .release-countdown {
   margin-top: 18px;
-  display: grid;
-  grid-template-columns: minmax(0, 0.85fr) minmax(360px, 1.15fr);
-  align-items: center;
-  gap: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
   padding: 18px;
   border: 1px solid rgba(210, 182, 118, 0.24);
   border-radius: 18px;
@@ -635,12 +634,17 @@ h2 {
 
 .release-countdown__copy {
   min-width: 0;
+  padding: 11px 16px;
+  border: 1px solid rgba(168, 199, 109, 0.3);
+  border-radius: 999px;
+  background: rgba(62, 88, 43, 0.62);
 }
 
 .release-countdown__copy h3 {
   margin: 0;
-  font-size: clamp(1.15rem, 1.8vw, 1.55rem);
-  line-height: 1.2;
+  color: var(--text-main);
+  font-size: clamp(0.95rem, 1.45vw, 1.12rem);
+  line-height: 1.25;
 }
 
 .release-countdown__units {
