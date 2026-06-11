@@ -98,11 +98,13 @@ document.addEventListener("DOMContentLoaded", () => {
   const serversList = document.getElementById("servers-list");
   const serversBadge = document.getElementById("servers-badge");
   const communityClansList = document.getElementById("community-clans-list");
+  const releaseCountdown = document.querySelector("[data-hll-vietnam-countdown]");
 
   updateBackendStatus(statusNode, "Backend comprobando", "status-chip--idle");
   setServersDataState(serversBadge, { timestampLabel: "" });
   renderServersLoadingState(serversList);
   hydrateCommunityClans(communityClansList);
+  initializeReleaseCountdown(releaseCountdown);
 
   let serverRefreshInFlight = false;
   const refreshServers = async () => {
@@ -363,6 +365,72 @@ function hydrateCommunityClans(listNode) {
   listNode.innerHTML = shuffleItems(COMMUNITY_CLANS)
     .map((clan) => renderCommunityClanCard(clan))
     .join("");
+}
+
+function initializeReleaseCountdown(root) {
+  if (!root) {
+    return;
+  }
+
+  const target = new Date(root.dataset.countdownTarget || "");
+  if (Number.isNaN(target.getTime())) {
+    return;
+  }
+
+  const nodes = {
+    days: root.querySelector("[data-countdown-days]"),
+    hours: root.querySelector("[data-countdown-hours]"),
+    minutes: root.querySelector("[data-countdown-minutes]"),
+    seconds: root.querySelector("[data-countdown-seconds]"),
+    status: root.querySelector("[data-countdown-status]"),
+  };
+
+  const render = () => {
+    const remainingMs = Math.max(0, target.getTime() - Date.now());
+    const remainingSeconds = Math.floor(remainingMs / 1000);
+    const seconds = remainingSeconds % 60;
+    const totalMinutes = Math.floor(remainingSeconds / 60);
+    const minutes = totalMinutes % 60;
+    const totalHours = Math.floor(totalMinutes / 60);
+    const hours = totalHours % 24;
+    const days = Math.floor(totalHours / 24);
+
+    setCountdownUnit(nodes.days, days);
+    setCountdownUnit(nodes.hours, hours);
+    setCountdownUnit(nodes.minutes, minutes);
+    setCountdownUnit(nodes.seconds, seconds);
+
+    if (remainingMs === 0) {
+      root.classList.add("is-available");
+      if (nodes.status) {
+        nodes.status.textContent = "Hell Let Loose Vietnam ya esta disponible.";
+      }
+      return false;
+    }
+
+    root.classList.remove("is-available");
+    if (nodes.status) {
+      nodes.status.textContent = "Objetivo: 13 de agosto de 2026.";
+    }
+    return true;
+  };
+
+  if (!render()) {
+    return;
+  }
+
+  const countdownTimer = window.setInterval(() => {
+    if (!render()) {
+      window.clearInterval(countdownTimer);
+    }
+  }, 1000);
+}
+
+function setCountdownUnit(node, value) {
+  if (!node) {
+    return;
+  }
+  node.textContent = String(Math.max(0, value)).padStart(2, "0");
 }
 
 function renderCommunityClanCard(clan) {
