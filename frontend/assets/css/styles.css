@@ -1455,6 +1455,28 @@ h2 {
   margin-top: 10px;
 }
 
+.stats-profile-links-bar {
+  margin: 0 0 18px;
+}
+
+.stats-profile-links-strip {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px 14px;
+}
+
+.stats-profile-links-strip__label {
+  color: var(--muted);
+  font-size: 0.82rem;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.stats-profile-links-bar .stats-profile-links {
+  margin-top: 0;
+}
+
 .stats-profile-links a {
   display: inline-flex;
   align-items: center;

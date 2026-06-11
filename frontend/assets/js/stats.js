@@ -9,6 +9,7 @@
   const profilePanel = document.getElementById("stats-profile-panel");
   const profileTitle = document.getElementById("stats-profile-title");
   const profileStateNode = document.getElementById("stats-profile-state");
+  const profileLinksBarNode = document.getElementById("stats-profile-links-bar");
   const comparisonGrid = document.getElementById("stats-comparison-grid");
   const summaryGrid = document.getElementById("stats-summary-grid");
   const weeklySummaryNode = document.getElementById("stats-weekly-summary");
@@ -43,14 +44,14 @@
 
   const messages = {
     backendUnavailableForSearch:
-      "Backend no disponible. No se pueden buscar jugadores ni cargar su perfil.",
+      "Servicio no disponible. No se pueden buscar jugadores ni cargar su perfil.",
     backendUnavailableForAnnual:
-      "Backend no disponible. No se puede consultar el ranking anual.",
+      "Servicio no disponible. No se puede consultar el ranking anual.",
     searchNoInput: "Introduce al menos 4 caracteres para buscar un jugador.",
     searchLoading: "Buscando jugadores...",
     searchEmpty: "Sin resultados. Prueba con otro texto o ID.",
     searchError:
-      "Error al buscar jugadores. Verifica backend y reintenta.",
+      "Error al buscar jugadores. Intentalo de nuevo en unos segundos.",
     searchReadyPrefix: "Se encontraron ",
     searchReadySuffix:
       " jugador(es). Selecciona uno para ver sus estad\u00edsticas.",
@@ -58,7 +59,7 @@
       "Introduce al menos 4 caracteres para buscar un jugador.",
     profileLoading: "Cargando estad\u00edsticas personales...",
     profileNoStats:
-      "Jugador sin estad\u00edsticas suficientes para mostrar datos personales.",
+      "Todavia no hay estadisticas suficientes para este jugador.",
     profileError: "No fue posible cargar las estad\u00edsticas del jugador.",
     annualLoading: "Cargando ranking anual...",
     annualMissing:
@@ -75,9 +76,9 @@
     monthlyPlaceholder:
       "Sin datos mensuales. El ranking mensual se actualiza al cargar un jugador.",
     weeklyWindowUnavailable:
-      "No se pudo cargar el bloque semanal; se muestran los datos mensuales.",
+      "No se pudieron cargar los datos semanales; se muestran los datos mensuales.",
     monthlyWindowUnavailable:
-      "No se pudo cargar el bloque mensual; se muestran los datos semanales.",
+      "No se pudieron cargar los datos mensuales; se muestran los datos semanales.",
     weeklyWindowUnavailableSummary:
       "Resumen semanal no disponible temporalmente.",
     monthlyWindowUnavailableSummary:
@@ -85,7 +86,7 @@
     profileReadyTitle: "Perfil personal",
     profileEmptyTitle: "Selecciona un jugador para ver sus estad\u00edsticas.",
     partialProfileLoadWarning:
-      "Algunos bloques de ranking no se cargaron; se mantienen los disponibles.",
+      "Algunas lecturas no se cargaron; se mantienen las disponibles.",
   };
 
   let isBackendOnline = false;
@@ -158,6 +159,9 @@
     if (comparisonGrid) {
       comparisonGrid.innerHTML = "";
     }
+    if (profileLinksBarNode) {
+      profileLinksBarNode.innerHTML = "";
+    }
     summaryGrid.innerHTML = "";
     if (weeklySummaryNode) {
       weeklySummaryNode.textContent = "Cargando ...";
@@ -181,7 +185,7 @@
       isBackendOnline = true;
       setAnnualState(
         "neutral",
-        "Backend disponible. Cargando ranking anual 2026.",
+        "Servicio disponible. Cargando ranking anual 2026.",
       );
       void loadAnnualRanking();
     } catch (error) {
@@ -234,8 +238,9 @@
       resultListNode.querySelectorAll("[data-player-id]").forEach((button) => {
         button.addEventListener("click", () => {
           const playerId = button.getAttribute("data-player-id");
+          const playerName = button.getAttribute("data-player-name");
           if (playerId) {
-            void loadPlayerProfile(playerId);
+            void loadPlayerProfile(playerId, playerName);
           }
         });
       });
@@ -376,7 +381,7 @@
     const rowsMarkup = items
       .map((item) => {
         const rank = safeInt(item.ranking_position, 0);
-        const playerName = escapeHtml(String(item.player_name || "Jugador sin nombre"));
+        const playerName = escapeHtml(resolveVisiblePlayerName(item.player_name, null, null));
         const matches = safeInt(item.matches_considered, 0);
         const kills = safeInt(firstFiniteValue(item.kills, item.metric_value), 0);
         const killsPerMatch = formatKillsPerMatch(
@@ -430,7 +435,7 @@
 
   function renderResultItem(item) {
     const playerId = escapeHtml(String(item.player_id || ""));
-    const playerName = escapeHtml(String(item.player_name || "Jugador sin nombre"));
+    const playerName = escapeHtml(resolveVisiblePlayerName(item.player_name, null, null));
     const matches = Number.isFinite(Number(item.matches_considered))
       ? Number(item.matches_considered)
       : 0;
@@ -448,6 +453,7 @@
           class="stats-result-item__button"
           type="button"
           data-player-id="${playerId}"
+          data-player-name="${playerName}"
           aria-label="Cargar perfil de ${playerName}"
         >
           <div class="stats-result-item__main">
@@ -463,7 +469,7 @@
     `;
   }
 
-  async function loadPlayerProfile(playerId) {
+  async function loadPlayerProfile(playerId, selectedPlayerName = "") {
     if (!isBackendOnline) {
       markAsBackendUnavailable();
       return;
@@ -493,8 +499,10 @@
 
       profilePanel.hidden = false;
       profileTitle.textContent = messages.profileReadyTitle;
-      const playerName = String(
-        (weeklyData?.player_name || monthlyData?.player_name || "Sin nombre"),
+      const playerName = resolveVisiblePlayerName(
+        weeklyData?.player_name || monthlyData?.player_name,
+        selectedPlayerName,
+        searchInput?.value,
       );
       const profileIdentityData =
         weeklyData?.player_id || weeklyData?.external_profile_links
@@ -519,8 +527,13 @@
         monthlyData,
         weeklyFailed,
         monthlyFailed,
-        externalProfileBrands,
       });
+      if (profileLinksBarNode) {
+        profileLinksBarNode.innerHTML = renderStatsExternalProfilesBar(
+          profileIdentityData,
+          externalProfileBrands,
+        );
+      }
 
       if (partialLoadWarning) {
         profileStateNode.textContent += ` ${messages.partialProfileLoadWarning}`;
@@ -567,6 +580,9 @@
       if (comparisonGrid) {
         comparisonGrid.innerHTML = "";
       }
+      if (profileLinksBarNode) {
+        profileLinksBarNode.innerHTML = "";
+      }
       summaryGrid.innerHTML = "";
       if (weeklySummaryNode) {
         weeklySummaryNode.textContent = messages.weeklyPlaceholder;
@@ -579,12 +595,10 @@
 
   function renderProfileSummaryCards({
     playerName,
-    profileIdentityData,
     weeklyData,
     monthlyData,
     weeklyFailed,
     monthlyFailed,
-    externalProfileBrands,
   }) {
     const weeklySummary = weeklyFailed
       ? `
@@ -625,7 +639,6 @@
         <p><strong>Partidas semanales:</strong> ${safeInt(weeklyData?.matches_considered, 0)}</p>
         <p><strong>Partidas mensuales:</strong> ${safeInt(monthlyData?.matches_considered, 0)}</p>
       </article>
-      ${renderStatsExternalProfilesCard(profileIdentityData, externalProfileBrands)}
       ${weeklySummary}
       ${monthlySummary}
     `;
@@ -800,7 +813,7 @@
           <strong>Delta de partidas:</strong> ${formatSignedNumber(matchesDelta)}
         </p>
         <p class="stats-comparison-card__note">
-          La lectura compara solo datos existentes del backend actual, sin recalcular rankings ni pedir nuevos endpoints.
+          Comparativa basada en los datos disponibles actualmente.
         </p>
       </article>
     `;
@@ -836,7 +849,7 @@
     if (requestFailed) {
       return {
         tone: "warning",
-        title: "Bloque no disponible",
+        title: "Datos no disponibles",
         detail: `No fue posible cargar los datos de la ventana ${label} en este intento.`,
       };
     }
@@ -844,8 +857,8 @@
     if (!ranking) {
       return {
         tone: "error",
-        title: "Ranking ausente",
-        detail: `No se recibio bloque de ranking ${label} desde el backend.`,
+        title: "Sin posicion",
+        detail: `Aun no hay datos de la ventana ${label} suficientes para calcular su posicion.`,
       };
     }
 
@@ -921,6 +934,30 @@
     return labels[String(metric || "").trim()] || "Kills";
   }
 
+  function resolveVisiblePlayerName(primaryName, selectedName, queryText) {
+    const candidates = [primaryName, selectedName, queryText];
+    for (const candidate of candidates) {
+      const normalized = String(candidate || "").trim();
+      if (isDisplayablePlayerName(normalized)) {
+        return normalized;
+      }
+    }
+    return "Jugador seleccionado";
+  }
+
+  function isDisplayablePlayerName(value) {
+    if (!value) {
+      return false;
+    }
+    if (/^\d{17}$/.test(value)) {
+      return false;
+    }
+    if (/^[0-9a-f]{32}$/i.test(value)) {
+      return false;
+    }
+    return true;
+  }
+
   function labelForStatsWindowKind(windowKind) {
     const labels = {
       "current-week": "Semana actual",
@@ -950,34 +987,31 @@
     `;
   }
 
-  function renderStatsExternalProfilesCard(profileData, brands) {
+  function renderStatsExternalProfilesBar(profileData, brands) {
     const links = resolveStatsExternalProfileLinks(profileData, brands);
+    if (!links.length) {
+      return "";
+    }
     return `
-      <article class="stats-summary-card">
-        <p class="stats-summary-title">Perfiles externos</p>
-        ${
-          links.length
-            ? `
-              <div class="stats-profile-links">
-                ${links
-                  .map(
-                    ({ href, label, logoSrc }) => `
-                      <a href="${escapeHtml(href)}" target="_blank" rel="noopener noreferrer">
-                        ${
-                          logoSrc
-                            ? `<img class="stats-profile-links__brand" src="${escapeHtml(logoSrc)}" alt="" aria-hidden="true" decoding="async" loading="lazy" onerror="this.remove();" />`
-                            : ""
-                        }
-                        <span>${escapeHtml(label)}</span>
-                      </a>
-                    `,
-                  )
-                  .join("")}
-              </div>
-            `
-            : "<p>Perfiles externos no disponibles.</p>"
-        }
-      </article>
+      <div class="stats-profile-links-strip">
+        <span class="stats-profile-links-strip__label">Perfiles externos</span>
+        <div class="stats-profile-links" aria-label="Perfiles externos">
+          ${links
+            .map(
+              ({ href, label, logoSrc }) => `
+                <a href="${escapeHtml(href)}" target="_blank" rel="noopener noreferrer">
+                  ${
+                    logoSrc
+                      ? `<img class="stats-profile-links__brand" src="${escapeHtml(logoSrc)}" alt="" aria-hidden="true" decoding="async" loading="lazy" onerror="this.remove();" />`
+                      : ""
+                  }
+                  <span>${escapeHtml(label)}</span>
+                </a>
+              `,
+            )
+            .join("")}
+        </div>
+      </div>
     `;
   }
 
