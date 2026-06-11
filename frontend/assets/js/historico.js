@@ -59,15 +59,15 @@ const LEADERBOARD_METRICS = Object.freeze([
   },
   {
     key: "matches_over_100_kills",
-    title: "Top partidas con 100+ kills",
-    valueHeading: "Partidas 100+",
+    title: "Partidas 100+ kills",
+    valueHeading: "Partidas 100+ kills",
     ratioHeading: null,
     ratioMode: null,
     emptyMessage: "Ningun jugador ha registrado partidas de 100+ kills en esta ventana.",
   },
   {
     key: "support",
-    title: "Top puntos de soporte",
+    title: "Soporte",
     valueHeading: "Soporte",
     ratioHeading: "Soporte/partida",
     ratioMode: "support",
@@ -312,6 +312,7 @@ document.addEventListener("DOMContentLoaded", () => {
         weeklyBodyNode,
         weeklyTitleNode,
         weeklyValueHeadingNode,
+        weeklyRatioHeadingNode,
         weeklyWindowNoteNode,
         weeklySnapshotMetaNode,
         activeMetricConfig,
@@ -360,6 +361,7 @@ document.addEventListener("DOMContentLoaded", () => {
         weeklyBodyNode,
         weeklyTitleNode,
         weeklyValueHeadingNode,
+        weeklyRatioHeadingNode,
         weeklyWindowNoteNode,
         weeklySnapshotMetaNode,
         metricConfig,
@@ -399,6 +401,7 @@ document.addEventListener("DOMContentLoaded", () => {
       weeklyBodyNode,
       weeklyTitleNode,
       weeklyValueHeadingNode,
+      weeklyRatioHeadingNode,
       weeklyWindowNoteNode,
       weeklySnapshotMetaNode,
       metricConfig,
@@ -1509,8 +1512,12 @@ function buildWeeklyWindowNote(payload) {
 }
 
 function buildLeaderboardTitle(metricConfig, serverSlug, timeframeKey) {
+  const safeMetricConfig = metricConfig?.key
+    ? metricConfig
+    : getLeaderboardMetricConfig(metricConfig?.key);
   const timeframeLabel = getLeaderboardTimeframeConfig(timeframeKey).label;
-  return `${metricConfig.title} ${timeframeLabel} - ${getHistoricalServerLabel(serverSlug)}`;
+  const titleLabel = safeMetricConfig?.title || LEADERBOARD_METRICS[0].title;
+  return `${titleLabel} ${timeframeLabel} - ${getHistoricalServerLabel(serverSlug)}`;
 }
 
 function buildRecentMatchesNote(serverSlug) {
@@ -1739,7 +1746,7 @@ function syncLeaderboardRatioColumn(tableNode, ratioHeadingNode, bodyNode, metri
   if (!tableNode || !ratioHeadingNode || !bodyNode) {
     return;
   }
-  const showRatio = Boolean(metricConfig?.ratioMode);
+  const showRatio = shouldShowLeaderboardRatioColumn(metricConfig, bodyNode);
   ratioHeadingNode.hidden = !showRatio;
   ratioHeadingNode.textContent = metricConfig?.ratioHeading || "";
   const ratioColumnIndex = ratioHeadingNode.cellIndex;
@@ -1749,6 +1756,16 @@ function syncLeaderboardRatioColumn(tableNode, ratioHeadingNode, bodyNode, metri
       ratioCell.hidden = !showRatio;
     }
   });
+}
+
+function shouldShowLeaderboardRatioColumn(metricConfig, bodyNode) {
+  if (!metricConfig?.ratioMode) {
+    return false;
+  }
+  if (metricConfig.ratioMode === "support") {
+    return bodyNode.children.length > 0;
+  }
+  return true;
 }
 
 function formatHistoricalRatio(item, metricConfig, matches) {
