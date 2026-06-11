@@ -11,6 +11,81 @@ from app.rcon_historical_player_stats import (
 
 
 class StatsPlayerProfilePayloadTests(unittest.TestCase):
+    def test_player_stats_read_model_keeps_payload_valid_when_active_time_lookup_fails(self) -> None:
+        selected_row = {
+            "period_type": "weekly",
+            "window_kind": "current-week",
+            "period_start": "2026-06-01T00:00:00Z",
+            "period_end": "2026-06-08T00:00:00Z",
+            "server_id": "all-servers",
+            "player_id": "76561198000000000",
+            "player_name": "Steam Player",
+            "matches_considered": 4,
+            "kills": 20,
+            "deaths": 10,
+            "teamkills": 0,
+            "ranking_position": 4,
+            "updated_at": "2026-06-11T12:00:00Z",
+            "first_seen_at": "2026-06-01T01:00:00Z",
+            "last_seen_at": "2026-06-08T01:00:00Z",
+        }
+        with (
+            patch(
+                "app.rcon_historical_player_stats._get_player_period_stats_read_model",
+                return_value=(
+                    {
+                        "player_id": "76561198000000000",
+                        "player_name": "Steam Player",
+                        "server_id": "all-servers",
+                        "timeframe": "weekly",
+                        "window_start": None,
+                        "window_end": None,
+                        "window_kind": "current-week",
+                        "matches_considered": 4,
+                        "kills": 20,
+                        "deaths": 10,
+                        "teamkills": 0,
+                        "player_active_seconds": None,
+                        "player_active_minutes": None,
+                        "kpm": None,
+                        "kpm_status": "missing_active_time",
+                        "active_time_source": "unavailable",
+                        "active_time_coverage": {
+                            "eligible_matches": 0,
+                            "real_source_matches": 0,
+                            "observed_matches": 0,
+                            "total_matches_considered": 4,
+                            "eligible_kills": 0,
+                            "minimum_active_seconds": 60,
+                            "sources": [],
+                        },
+                        "platform": "steam",
+                        "steam_id_64": "76561198000000000",
+                        "external_profile_links": {
+                            "steam": "https://steamcommunity.com/profiles/76561198000000000",
+                            "hellor": "https://hellor.pro/player/76561198000000000",
+                            "hll_records": "https://hllrecords.com/profiles/76561198000000000",
+                            "helo": "https://helo-system.de/statistics/players/76561198000000000?series=2024",
+                        },
+                        "weekly_ranking": {"metric": "kills", "ranking_position": 4},
+                        "monthly_ranking": {"metric": "kills", "ranking_position": 7},
+                        "source": {"primary_source": "rcon", "read_model": "player-period-stats"},
+                    },
+                    None,
+                ),
+            ),
+        ):
+            payload = build_stats_player_profile_payload(
+                player_id="76561198000000000",
+                timeframe="weekly",
+            )
+
+        data = payload["data"]
+        self.assertEqual(data["matches_considered"], 4)
+        self.assertIsNone(data["kpm"])
+        self.assertEqual(data["kpm_status"], "missing_active_time")
+        self.assertIn("steam", data["external_profile_links"])
+
     def test_player_stats_returns_lightweight_missing_payload_when_period_read_model_is_empty(self) -> None:
         with patch(
             "app.rcon_historical_player_stats._get_player_period_stats_read_model",

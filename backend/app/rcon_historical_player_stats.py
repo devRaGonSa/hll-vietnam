@@ -544,15 +544,23 @@ def _get_player_period_stats_read_model(
     selected_row = rows_by_period[timeframe]
     weekly_row = rows_by_period["weekly"]
     monthly_row = rows_by_period["monthly"]
-    with _connect_read_scope(resolved_path, db_path=db_path) as connection:
-        active_time = _fetch_player_active_time_summary(
-            connection=connection,
-            player_id=player_id,
-            server_id=resolved_server_id,
-            window={
-                "start": _to_datetime_or_none(selected_row.get("period_start")),
-                "end": _to_datetime_or_none(selected_row.get("period_end")),
-            },
+    active_time = _build_profile_missing_active_time_payload(
+        total_matches_considered=int(selected_row.get("matches_considered") or 0),
+    )
+    try:
+        with _connect_read_scope(resolved_path, db_path=db_path) as connection:
+            active_time = _fetch_player_active_time_summary(
+                connection=connection,
+                player_id=player_id,
+                server_id=resolved_server_id,
+                window={
+                    "start": _to_datetime_or_none(selected_row.get("period_start")),
+                    "end": _to_datetime_or_none(selected_row.get("period_end")),
+                },
+                total_matches_considered=int(selected_row.get("matches_considered") or 0),
+            )
+    except Exception:
+        active_time = _build_profile_missing_active_time_payload(
             total_matches_considered=int(selected_row.get("matches_considered") or 0),
         )
     return (
@@ -1011,6 +1019,22 @@ def _build_profile_active_time_payload(
             },
         }
 
+    return _build_profile_missing_active_time_payload(
+        total_matches_considered=total_matches_considered,
+        min_active_seconds=min_active_seconds,
+    )
+
+
+def _build_profile_missing_active_time_payload(
+    *,
+    total_matches_considered: int,
+    min_active_seconds: int | None = None,
+) -> dict[str, object]:
+    resolved_min_active_seconds = (
+        min_active_seconds
+        if isinstance(min_active_seconds, int) and min_active_seconds > 0
+        else get_kpm_min_active_seconds()
+    )
     return {
         "player_active_seconds": None,
         "player_active_minutes": None,
@@ -1023,7 +1047,7 @@ def _build_profile_active_time_payload(
             "observed_matches": 0,
             "total_matches_considered": total_matches_considered,
             "eligible_kills": 0,
-            "minimum_active_seconds": min_active_seconds,
+            "minimum_active_seconds": resolved_min_active_seconds,
             "sources": [],
         },
     }
@@ -1652,17 +1676,7 @@ def _build_missing_player_period_stats_result(
         "player_active_seconds": None,
         "player_active_minutes": None,
         "kpm": None,
-        "kpm_status": "missing_active_time",
-        "active_time_source": "unavailable",
-        "active_time_coverage": {
-            "eligible_matches": 0,
-            "real_source_matches": 0,
-            "observed_matches": 0,
-            "total_matches_considered": 0,
-            "eligible_kills": 0,
-            "minimum_active_seconds": get_kpm_min_active_seconds(),
-            "sources": [],
-        },
+        **_build_profile_missing_active_time_payload(total_matches_considered=0),
         **build_external_player_profile_fields(player_id=player_id),
         "weekly_ranking": None,
         "monthly_ranking": None,
