@@ -24,7 +24,12 @@ from .config import (
     get_public_full_refresh_enabled,
     get_public_full_refresh_time,
     get_public_full_refresh_timezone,
+    get_public_historical_monthly_refresh_hour_interval,
+    get_public_historical_monthly_refresh_minute,
+    get_public_historical_weekly_refresh_minute,
+    get_public_ranking_monthly_refresh_times,
     get_public_ranking_refresh_interval_seconds,
+    get_public_ranking_weekly_refresh_minute,
     get_public_recent_matches_refresh_interval_seconds,
 )
 from .database_maintenance import run_database_maintenance_cleanup
@@ -32,7 +37,10 @@ from .elo_mmr_engine import rebuild_elo_mmr_models
 from .elo_mmr_storage import get_latest_elo_mmr_generated_at
 from .historical_ingestion import run_incremental_refresh
 from .historical_snapshots import (
+    PREWARM_SNAPSHOT_SERVER_KEYS,
     generate_and_persist_historical_snapshots,
+    generate_and_persist_historical_leaderboard_snapshots,
+    generate_and_persist_historical_monthly_ui_snapshots,
     generate_and_persist_priority_historical_snapshots,
     generate_and_persist_recent_historical_snapshots,
 )
@@ -58,13 +66,27 @@ DEFAULT_HISTORICAL_SERVER_SCOPE = (
 )
 _LAST_DATABASE_MAINTENANCE_RUN_AT: datetime | None = None
 _LAST_PUBLIC_FULL_REFRESH_LOCAL_DATE: date | None = None
-_LAST_PUBLIC_RANKING_REFRESH_AT: datetime | None = None
 _LAST_PUBLIC_RECENT_MATCHES_REFRESH_AT: datetime | None = None
+_LAST_PUBLIC_RANKING_WEEKLY_REFRESH_SLOT: str | None = None
+_LAST_PUBLIC_RANKING_MONTHLY_REFRESH_SLOT: str | None = None
+_LAST_PUBLIC_HISTORICAL_WEEKLY_REFRESH_SLOT: str | None = None
+_LAST_PUBLIC_HISTORICAL_MONTHLY_REFRESH_SLOT: str | None = None
 _PUBLIC_REFRESH_IN_PROGRESS: set[str] = set()
 PUBLIC_FULL_REFRESH_YEAR = 2026
 PUBLIC_REFRESH_LOCK_FULL = "public-full-refresh"
-PUBLIC_REFRESH_LOCK_RANKING = "public-ranking-refresh"
+PUBLIC_REFRESH_LOCK_RANKING_ANNUAL = "public-ranking-annual-refresh"
+PUBLIC_REFRESH_LOCK_RANKING_MONTHLY = "public-ranking-monthly-refresh"
+PUBLIC_REFRESH_LOCK_RANKING_WEEKLY = "public-ranking-weekly-refresh"
+PUBLIC_REFRESH_LOCK_HISTORICAL_WEEKLY = "public-historical-weekly-refresh"
+PUBLIC_REFRESH_LOCK_HISTORICAL_MONTHLY = "public-historical-monthly-refresh"
 PUBLIC_REFRESH_LOCK_RECENT_MATCHES = "public-recent-matches-refresh"
+PUBLIC_HEAVY_REFRESH_KEYS = frozenset(
+    {
+        PUBLIC_REFRESH_LOCK_FULL,
+        PUBLIC_REFRESH_LOCK_RANKING_ANNUAL,
+        PUBLIC_REFRESH_LOCK_RANKING_MONTHLY,
+    }
+)
 
 
 def run_periodic_historical_refresh(
@@ -469,22 +491,118 @@ def _maybe_run_public_read_model_refreshes(
     """Run due public read-model refreshes without doing the heavy RCON capture cycle."""
     anchor = _as_utc(now or datetime.now(timezone.utc))
     results: dict[str, Any] = {}
+    heavy_job_ran = False
 
     if _is_public_full_refresh_due(anchor):
         results["public_full_refresh_result"] = _run_non_overlapping_public_refresh(
             PUBLIC_REFRESH_LOCK_FULL,
             lambda: refresh_public_full_read_models(run_number=run_number, now=anchor),
+            blocked_by=PUBLIC_HEAVY_REFRESH_KEYS - {PUBLIC_REFRESH_LOCK_FULL},
         )
+        heavy_job_ran = _refresh_result_counts_as_executed(results["public_full_refresh_result"])
 
-    if _is_public_interval_refresh_due(
-        last_run_at=_LAST_PUBLIC_RANKING_REFRESH_AT,
-        interval_seconds=get_public_ranking_refresh_interval_seconds(),
+    ranking_monthly_slot = _resolve_latest_daily_schedule_slot(
         now=anchor,
+        times=get_public_ranking_monthly_refresh_times(),
+    )
+    if _is_public_slot_refresh_due(
+        last_completed_slot=_LAST_PUBLIC_RANKING_MONTHLY_REFRESH_SLOT,
+        slot=ranking_monthly_slot,
     ):
-        results["ranking_snapshot_result"] = _run_non_overlapping_public_refresh(
-            PUBLIC_REFRESH_LOCK_RANKING,
-            lambda: refresh_public_ranking_snapshots(run_number=run_number, now=anchor),
-        )
+        if heavy_job_ran:
+            results["ranking_monthly_snapshot_result"] = _build_public_scheduler_skip_result(
+                refresh_key=PUBLIC_REFRESH_LOCK_RANKING_MONTHLY,
+                reason="heavy-public-refresh-ran-this-cycle",
+                scheduled_slot=ranking_monthly_slot,
+            )
+        else:
+            results["ranking_monthly_snapshot_result"] = _run_non_overlapping_public_refresh(
+                PUBLIC_REFRESH_LOCK_RANKING_MONTHLY,
+                lambda: refresh_public_monthly_ranking_snapshots(
+                    run_number=run_number,
+                    now=anchor,
+                    scheduled_slot=ranking_monthly_slot,
+                ),
+                blocked_by=PUBLIC_HEAVY_REFRESH_KEYS - {PUBLIC_REFRESH_LOCK_RANKING_MONTHLY},
+            )
+            if _refresh_result_counts_as_executed(results["ranking_monthly_snapshot_result"]):
+                heavy_job_ran = True
+
+    ranking_weekly_slot = _resolve_latest_hourly_schedule_slot(
+        now=anchor,
+        minute=get_public_ranking_weekly_refresh_minute(),
+    )
+    if _is_public_slot_refresh_due(
+        last_completed_slot=_LAST_PUBLIC_RANKING_WEEKLY_REFRESH_SLOT,
+        slot=ranking_weekly_slot,
+    ):
+        if heavy_job_ran:
+            results["ranking_weekly_snapshot_result"] = _build_public_scheduler_skip_result(
+                refresh_key=PUBLIC_REFRESH_LOCK_RANKING_WEEKLY,
+                reason="heavy-public-refresh-ran-this-cycle",
+                scheduled_slot=ranking_weekly_slot,
+            )
+        else:
+            results["ranking_weekly_snapshot_result"] = _run_non_overlapping_public_refresh(
+                PUBLIC_REFRESH_LOCK_RANKING_WEEKLY,
+                lambda: refresh_public_weekly_ranking_snapshots(
+                    run_number=run_number,
+                    now=anchor,
+                    scheduled_slot=ranking_weekly_slot,
+                ),
+                blocked_by=PUBLIC_HEAVY_REFRESH_KEYS,
+            )
+
+    historical_weekly_slot = _resolve_latest_hourly_schedule_slot(
+        now=anchor,
+        minute=get_public_historical_weekly_refresh_minute(),
+    )
+    if _is_public_slot_refresh_due(
+        last_completed_slot=_LAST_PUBLIC_HISTORICAL_WEEKLY_REFRESH_SLOT,
+        slot=historical_weekly_slot,
+    ):
+        if heavy_job_ran:
+            results["historical_weekly_snapshot_result"] = _build_public_scheduler_skip_result(
+                refresh_key=PUBLIC_REFRESH_LOCK_HISTORICAL_WEEKLY,
+                reason="heavy-public-refresh-ran-this-cycle",
+                scheduled_slot=historical_weekly_slot,
+            )
+        else:
+            results["historical_weekly_snapshot_result"] = _run_non_overlapping_public_refresh(
+                PUBLIC_REFRESH_LOCK_HISTORICAL_WEEKLY,
+                lambda: refresh_public_weekly_historical_snapshots(
+                    run_number=run_number,
+                    now=anchor,
+                    scheduled_slot=historical_weekly_slot,
+                ),
+                blocked_by=PUBLIC_HEAVY_REFRESH_KEYS | {PUBLIC_REFRESH_LOCK_HISTORICAL_MONTHLY},
+            )
+
+    historical_monthly_slot = _resolve_latest_hourly_schedule_slot(
+        now=anchor,
+        minute=get_public_historical_monthly_refresh_minute(),
+        hour_interval=get_public_historical_monthly_refresh_hour_interval(),
+    )
+    if _is_public_slot_refresh_due(
+        last_completed_slot=_LAST_PUBLIC_HISTORICAL_MONTHLY_REFRESH_SLOT,
+        slot=historical_monthly_slot,
+    ):
+        if heavy_job_ran:
+            results["historical_monthly_snapshot_result"] = _build_public_scheduler_skip_result(
+                refresh_key=PUBLIC_REFRESH_LOCK_HISTORICAL_MONTHLY,
+                reason="heavy-public-refresh-ran-this-cycle",
+                scheduled_slot=historical_monthly_slot,
+            )
+        else:
+            results["historical_monthly_snapshot_result"] = _run_non_overlapping_public_refresh(
+                PUBLIC_REFRESH_LOCK_HISTORICAL_MONTHLY,
+                lambda: refresh_public_monthly_historical_snapshots(
+                    run_number=run_number,
+                    now=anchor,
+                    scheduled_slot=historical_monthly_slot,
+                ),
+                blocked_by=PUBLIC_HEAVY_REFRESH_KEYS | {PUBLIC_REFRESH_LOCK_HISTORICAL_WEEKLY},
+            )
 
     if _is_public_interval_refresh_due(
         last_run_at=_LAST_PUBLIC_RECENT_MATCHES_REFRESH_AT,
@@ -546,7 +664,10 @@ def refresh_public_full_read_models(
     )
     steps["annual_ranking_snapshots"] = _run_public_refresh_step(
         "annual-ranking-snapshots-2026",
-        lambda: refresh_public_annual_ranking_snapshots(year=PUBLIC_FULL_REFRESH_YEAR),
+        lambda: refresh_public_annual_ranking_snapshots(
+            year=PUBLIC_FULL_REFRESH_YEAR,
+            now=anchor,
+        ),
     )
     steps["player_search_index"] = _run_public_refresh_step(
         "player-search-index",
@@ -579,8 +700,6 @@ def refresh_public_ranking_snapshots(
     now: datetime | None = None,
 ) -> dict[str, Any]:
     """Refresh weekly/monthly public ranking snapshots on the short cadence."""
-    global _LAST_PUBLIC_RANKING_REFRESH_AT
-
     anchor = _as_utc(now or datetime.now(timezone.utc))
     started = time.perf_counter()
     _emit_json_log(
@@ -591,9 +710,6 @@ def refresh_public_ranking_snapshots(
         }
     )
     result = refresh_periodic_ranking_snapshots(run_number=run_number)
-    status = str(result.get("status") or "ok")
-    if status != "error":
-        _LAST_PUBLIC_RANKING_REFRESH_AT = anchor
     completed = {
         **result,
         "duration_ms": _elapsed_ms(started),
@@ -602,6 +718,118 @@ def refresh_public_ranking_snapshots(
         "generation_policy": "public-ranking-short-cadence",
     }
     _emit_json_log({"event": "public-ranking-refresh-completed", **completed})
+    return completed
+
+
+def refresh_public_weekly_ranking_snapshots(
+    *,
+    run_number: int,
+    now: datetime | None = None,
+    scheduled_slot: datetime | None = None,
+) -> dict[str, Any]:
+    """Refresh the hourly weekly public ranking matrix."""
+    global _LAST_PUBLIC_RANKING_WEEKLY_REFRESH_SLOT
+
+    anchor = _as_utc(now or datetime.now(timezone.utc))
+    slot = scheduled_slot or _resolve_latest_hourly_schedule_slot(
+        now=anchor,
+        minute=get_public_ranking_weekly_refresh_minute(),
+    )
+    started = time.perf_counter()
+    _emit_json_log(
+        {
+            "event": "public-ranking-weekly-refresh-started",
+            "job_name": "public-ranking-weekly",
+            "run_number": run_number,
+            "timeframe": "weekly",
+            "scheduled_slot": _to_iso(slot),
+            "scheduled_slot_local": _format_local_schedule_slot(slot),
+        }
+    )
+    try:
+        result = refresh_ranking_snapshots(
+            limit=30,
+            replace_existing=True,
+            timeframes=("weekly",),
+            now=anchor,
+        )
+    except Exception as exc:  # noqa: BLE001 - scheduler must keep the runner alive
+        result = {
+            "status": "error",
+            "error_type": type(exc).__name__,
+            "error": str(exc),
+            "traceback": traceback.format_exc(),
+        }
+    if str(result.get("status") or "ok") != "error":
+        _LAST_PUBLIC_RANKING_WEEKLY_REFRESH_SLOT = _schedule_slot_key(slot)
+    completed = {
+        **result,
+        "job_name": "public-ranking-weekly",
+        "timeframe": "weekly",
+        "duration_ms": _elapsed_ms(started),
+        "generated_at": _to_iso(anchor),
+        "scheduled_slot": _to_iso(slot),
+        "scheduled_slot_local": _format_local_schedule_slot(slot),
+        "generation_policy": "scheduled-hourly-weekly-ranking-refresh",
+        "server_scope": "all-public-ranking-scopes",
+    }
+    _emit_json_log({"event": "public-ranking-weekly-refresh-completed", **completed})
+    return completed
+
+
+def refresh_public_monthly_ranking_snapshots(
+    *,
+    run_number: int,
+    now: datetime | None = None,
+    scheduled_slot: datetime | None = None,
+) -> dict[str, Any]:
+    """Refresh the twice-daily monthly public ranking matrix."""
+    global _LAST_PUBLIC_RANKING_MONTHLY_REFRESH_SLOT
+
+    anchor = _as_utc(now or datetime.now(timezone.utc))
+    slot = scheduled_slot or _resolve_latest_daily_schedule_slot(
+        now=anchor,
+        times=get_public_ranking_monthly_refresh_times(),
+    )
+    started = time.perf_counter()
+    _emit_json_log(
+        {
+            "event": "public-ranking-monthly-refresh-started",
+            "job_name": "public-ranking-monthly",
+            "run_number": run_number,
+            "timeframe": "monthly",
+            "scheduled_slot": _to_iso(slot),
+            "scheduled_slot_local": _format_local_schedule_slot(slot),
+        }
+    )
+    try:
+        result = refresh_ranking_snapshots(
+            limit=30,
+            replace_existing=True,
+            timeframes=("monthly",),
+            now=anchor,
+        )
+    except Exception as exc:  # noqa: BLE001 - scheduler must keep the runner alive
+        result = {
+            "status": "error",
+            "error_type": type(exc).__name__,
+            "error": str(exc),
+            "traceback": traceback.format_exc(),
+        }
+    if str(result.get("status") or "ok") != "error":
+        _LAST_PUBLIC_RANKING_MONTHLY_REFRESH_SLOT = _schedule_slot_key(slot)
+    completed = {
+        **result,
+        "job_name": "public-ranking-monthly",
+        "timeframe": "monthly",
+        "duration_ms": _elapsed_ms(started),
+        "generated_at": _to_iso(anchor),
+        "scheduled_slot": _to_iso(slot),
+        "scheduled_slot_local": _format_local_schedule_slot(slot),
+        "generation_policy": "scheduled-twice-daily-monthly-ranking-refresh",
+        "server_scope": "all-public-ranking-scopes",
+    }
+    _emit_json_log({"event": "public-ranking-monthly-refresh-completed", **completed})
     return completed
 
 
@@ -657,8 +885,10 @@ def refresh_public_annual_ranking_snapshots(
     *,
     year: int = PUBLIC_FULL_REFRESH_YEAR,
     limit: int = 20,
+    now: datetime | None = None,
 ) -> dict[str, Any]:
     """Refresh supported annual ranking snapshots for all public scopes."""
+    anchor = _as_utc(now or datetime.now(timezone.utc))
     combinations = [
         (server_key, metric)
         for server_key in SNAPSHOT_GENERATOR_SERVER_KEYS
@@ -709,6 +939,7 @@ def refresh_public_annual_ranking_snapshots(
         status = "error"
     return {
         "status": status,
+        "generated_at": _to_iso(anchor),
         "year": year,
         "limit": limit,
         "combinations_expected": len(combinations),
@@ -718,6 +949,122 @@ def refresh_public_annual_ranking_snapshots(
         },
         "results": results,
     }
+
+
+def refresh_public_weekly_historical_snapshots(
+    *,
+    run_number: int,
+    now: datetime | None = None,
+    scheduled_slot: datetime | None = None,
+) -> dict[str, Any]:
+    """Refresh the hourly weekly historical leaderboard subset used by historico.html."""
+    global _LAST_PUBLIC_HISTORICAL_WEEKLY_REFRESH_SLOT
+
+    anchor = _as_utc(now or datetime.now(timezone.utc))
+    slot = scheduled_slot or _resolve_latest_hourly_schedule_slot(
+        now=anchor,
+        minute=get_public_historical_weekly_refresh_minute(),
+    )
+    started = time.perf_counter()
+    _emit_json_log(
+        {
+            "event": "public-historical-weekly-refresh-started",
+            "job_name": "public-historical-weekly",
+            "run_number": run_number,
+            "timeframe": "weekly",
+            "scheduled_slot": _to_iso(slot),
+            "scheduled_slot_local": _format_local_schedule_slot(slot),
+            "server_keys": list(PREWARM_SNAPSHOT_SERVER_KEYS),
+        }
+    )
+    try:
+        result = {
+            "status": "ok",
+            **generate_and_persist_historical_leaderboard_snapshots(
+                timeframe="weekly",
+                server_keys=PREWARM_SNAPSHOT_SERVER_KEYS,
+                generated_at=anchor,
+            ),
+        }
+    except Exception as exc:  # noqa: BLE001 - scheduler must keep the runner alive
+        result = {
+            "status": "error",
+            "error_type": type(exc).__name__,
+            "error": str(exc),
+            "traceback": traceback.format_exc(),
+        }
+    if str(result.get("status") or "ok") != "error":
+        _LAST_PUBLIC_HISTORICAL_WEEKLY_REFRESH_SLOT = _schedule_slot_key(slot)
+    completed = {
+        **result,
+        "job_name": "public-historical-weekly",
+        "timeframe": "weekly",
+        "duration_ms": _elapsed_ms(started),
+        "generated_at": result.get("generated_at") or _to_iso(anchor),
+        "scheduled_slot": _to_iso(slot),
+        "scheduled_slot_local": _format_local_schedule_slot(slot),
+        "generation_policy": "scheduled-hourly-historical-weekly-refresh",
+    }
+    _emit_json_log({"event": "public-historical-weekly-refresh-completed", **completed})
+    return completed
+
+
+def refresh_public_monthly_historical_snapshots(
+    *,
+    run_number: int,
+    now: datetime | None = None,
+    scheduled_slot: datetime | None = None,
+) -> dict[str, Any]:
+    """Refresh the periodic monthly historical subset used by historico.html."""
+    global _LAST_PUBLIC_HISTORICAL_MONTHLY_REFRESH_SLOT
+
+    anchor = _as_utc(now or datetime.now(timezone.utc))
+    slot = scheduled_slot or _resolve_latest_hourly_schedule_slot(
+        now=anchor,
+        minute=get_public_historical_monthly_refresh_minute(),
+        hour_interval=get_public_historical_monthly_refresh_hour_interval(),
+    )
+    started = time.perf_counter()
+    _emit_json_log(
+        {
+            "event": "public-historical-monthly-refresh-started",
+            "job_name": "public-historical-monthly",
+            "run_number": run_number,
+            "timeframe": "monthly",
+            "scheduled_slot": _to_iso(slot),
+            "scheduled_slot_local": _format_local_schedule_slot(slot),
+            "server_keys": list(PREWARM_SNAPSHOT_SERVER_KEYS),
+        }
+    )
+    try:
+        result = {
+            "status": "ok",
+            **generate_and_persist_historical_monthly_ui_snapshots(
+                server_keys=PREWARM_SNAPSHOT_SERVER_KEYS,
+                generated_at=anchor,
+            ),
+        }
+    except Exception as exc:  # noqa: BLE001 - scheduler must keep the runner alive
+        result = {
+            "status": "error",
+            "error_type": type(exc).__name__,
+            "error": str(exc),
+            "traceback": traceback.format_exc(),
+        }
+    if str(result.get("status") or "ok") != "error":
+        _LAST_PUBLIC_HISTORICAL_MONTHLY_REFRESH_SLOT = _schedule_slot_key(slot)
+    completed = {
+        **result,
+        "job_name": "public-historical-monthly",
+        "timeframe": "monthly",
+        "duration_ms": _elapsed_ms(started),
+        "generated_at": result.get("generated_at") or _to_iso(anchor),
+        "scheduled_slot": _to_iso(slot),
+        "scheduled_slot_local": _format_local_schedule_slot(slot),
+        "generation_policy": "scheduled-bi-hourly-historical-monthly-refresh",
+    }
+    _emit_json_log({"event": "public-historical-monthly-refresh-completed", **completed})
+    return completed
 
 
 def get_next_public_full_refresh_at(
@@ -788,12 +1135,21 @@ def _run_public_refresh_step(
 def _run_non_overlapping_public_refresh(
     refresh_key: str,
     callback: Any,
+    blocked_by: set[str] | frozenset[str] | None = None,
 ) -> dict[str, Any]:
     if refresh_key in _PUBLIC_REFRESH_IN_PROGRESS:
         return {
             "status": "skipped",
             "reason": "refresh-already-in-progress",
             "refresh_key": refresh_key,
+        }
+    blocking_keys = sorted((blocked_by or set()) & _PUBLIC_REFRESH_IN_PROGRESS)
+    if blocking_keys:
+        return {
+            "status": "skipped",
+            "reason": "conflicting-refresh-in-progress",
+            "refresh_key": refresh_key,
+            "blocked_by": blocking_keys,
         }
     _PUBLIC_REFRESH_IN_PROGRESS.add(refresh_key)
     try:
@@ -807,11 +1163,7 @@ def _record_public_refreshes_from_cycle(
     *,
     now: datetime,
 ) -> None:
-    global _LAST_PUBLIC_RANKING_REFRESH_AT, _LAST_PUBLIC_RECENT_MATCHES_REFRESH_AT
-
-    ranking_result = payload.get("ranking_snapshot_result")
-    if isinstance(ranking_result, dict) and ranking_result.get("status") != "error":
-        _LAST_PUBLIC_RANKING_REFRESH_AT = now
+    global _LAST_PUBLIC_RECENT_MATCHES_REFRESH_AT
     recent_result = payload.get("recent_matches_event_result")
     if isinstance(recent_result, dict) and recent_result.get("status") not in {
         "error",
@@ -866,8 +1218,85 @@ def _resolve_runner_tick_seconds(interval_seconds: int) -> int:
         interval_seconds,
         get_public_ranking_refresh_interval_seconds(),
         get_public_recent_matches_refresh_interval_seconds(),
+        60,
     ]
     return max(1, min(intervals))
+
+
+def _resolve_latest_hourly_schedule_slot(
+    *,
+    now: datetime,
+    minute: int,
+    hour_interval: int = 1,
+) -> datetime:
+    local_now = now.astimezone(_get_public_refresh_zone())
+    candidate = local_now.replace(minute=minute, second=0, microsecond=0)
+    if local_now < candidate:
+        candidate -= timedelta(hours=1)
+        candidate = candidate.replace(minute=minute, second=0, microsecond=0)
+    while candidate.hour % hour_interval != 0:
+        candidate -= timedelta(hours=1)
+        candidate = candidate.replace(minute=minute, second=0, microsecond=0)
+    return candidate.astimezone(timezone.utc)
+
+
+def _resolve_latest_daily_schedule_slot(
+    *,
+    now: datetime,
+    times: tuple[str, ...],
+) -> datetime:
+    local_now = now.astimezone(_get_public_refresh_zone())
+    candidates: list[datetime] = []
+    for time_value in times:
+        hour, minute = (int(part) for part in time_value.split(":"))
+        candidate = datetime.combine(
+            local_now.date(),
+            datetime_time(hour=hour, minute=minute),
+            tzinfo=local_now.tzinfo,
+        )
+        if candidate > local_now:
+            candidate -= timedelta(days=1)
+        candidates.append(candidate)
+    return max(candidates).astimezone(timezone.utc)
+
+
+def _schedule_slot_key(slot: datetime) -> str:
+    return _as_utc(slot).isoformat().replace("+00:00", "Z")
+
+
+def _format_local_schedule_slot(slot: datetime) -> str:
+    return slot.astimezone(_get_public_refresh_zone()).isoformat(timespec="minutes")
+
+
+def _is_public_slot_refresh_due(
+    *,
+    last_completed_slot: str | None,
+    slot: datetime,
+) -> bool:
+    return last_completed_slot != _schedule_slot_key(slot)
+
+
+def _build_public_scheduler_skip_result(
+    *,
+    refresh_key: str,
+    reason: str,
+    scheduled_slot: datetime | None = None,
+) -> dict[str, Any]:
+    result: dict[str, Any] = {
+        "status": "skipped",
+        "reason": reason,
+        "refresh_key": refresh_key,
+    }
+    if scheduled_slot is not None:
+        result["scheduled_slot"] = _to_iso(scheduled_slot)
+        result["scheduled_slot_local"] = _format_local_schedule_slot(scheduled_slot)
+    return result
+
+
+def _refresh_result_counts_as_executed(result: dict[str, Any]) -> bool:
+    if not isinstance(result, dict):
+        return False
+    return str(result.get("status") or "").lower() in {"ok", "partial"}
 
 
 def _get_public_refresh_zone() -> ZoneInfo:
@@ -927,6 +1356,29 @@ def _resolve_refresh_cycle_status(**results: dict[str, Any]) -> str:
     if any(status == "partial" for status in statuses):
         return "partial"
     return "ok"
+
+
+def run_public_refresh_job_once(job_name: str, *, now: datetime | None = None) -> dict[str, Any]:
+    """Run one public snapshot job immediately for manual validation."""
+    anchor = _as_utc(now or datetime.now(timezone.utc))
+    normalized_job = str(job_name or "").strip().lower()
+    if normalized_job == "public-full":
+        return refresh_public_full_read_models(run_number=1, now=anchor)
+    if normalized_job == "ranking-weekly":
+        return refresh_public_weekly_ranking_snapshots(run_number=1, now=anchor)
+    if normalized_job == "ranking-monthly":
+        return refresh_public_monthly_ranking_snapshots(run_number=1, now=anchor)
+    if normalized_job == "historical-weekly":
+        return refresh_public_weekly_historical_snapshots(run_number=1, now=anchor)
+    if normalized_job == "historical-monthly":
+        return refresh_public_monthly_historical_snapshots(run_number=1, now=anchor)
+    if normalized_job == "recent-matches":
+        return refresh_public_recent_matches_snapshots(
+            run_number=1,
+            now=anchor,
+            trigger="manual-public-job",
+        )
+    raise ValueError(f"Unsupported public job: {job_name}")
 
 
 def _emit_json_log(payload: dict[str, Any]) -> None:
@@ -1178,6 +1630,19 @@ def main() -> None:
         default=None,
         help="Optional safety limit for the number of refresh cycles to execute.",
     )
+    parser.add_argument(
+        "--public-job",
+        choices=(
+            "public-full",
+            "ranking-weekly",
+            "ranking-monthly",
+            "historical-weekly",
+            "historical-monthly",
+            "recent-matches",
+        ),
+        default=None,
+        help="Run one public snapshot scheduler job immediately and exit.",
+    )
     args = parser.parse_args()
 
     if args.hourly:
@@ -1191,6 +1656,10 @@ def main() -> None:
         raise ValueError("--retry-delay must be zero or positive.")
     if args.max_runs is not None and args.max_runs <= 0:
         raise ValueError("--max-runs must be positive when provided.")
+    if args.public_job is not None:
+        payload = run_public_refresh_job_once(args.public_job)
+        print(json.dumps({"status": "ok", "data": payload}, indent=2))
+        return
 
     run_periodic_historical_refresh(
         interval_seconds=args.interval,

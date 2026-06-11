@@ -26,6 +26,11 @@ DEFAULT_PUBLIC_FULL_REFRESH_TIME = "06:00"
 DEFAULT_PUBLIC_FULL_REFRESH_TIMEZONE = "Europe/Madrid"
 DEFAULT_PUBLIC_RANKING_REFRESH_INTERVAL_SECONDS = 900
 DEFAULT_PUBLIC_RECENT_MATCHES_REFRESH_INTERVAL_SECONDS = 60
+DEFAULT_PUBLIC_RANKING_WEEKLY_REFRESH_MINUTE = 10
+DEFAULT_PUBLIC_RANKING_MONTHLY_REFRESH_TIMES = ("07:00", "19:00")
+DEFAULT_PUBLIC_HISTORICAL_WEEKLY_REFRESH_MINUTE = 25
+DEFAULT_PUBLIC_HISTORICAL_MONTHLY_REFRESH_MINUTE = 40
+DEFAULT_PUBLIC_HISTORICAL_MONTHLY_REFRESH_HOUR_INTERVAL = 2
 DEFAULT_HISTORICAL_REFRESH_MAX_RETRIES = 2
 DEFAULT_HISTORICAL_REFRESH_RETRY_DELAY_SECONDS = 30
 DEFAULT_HISTORICAL_FULL_SNAPSHOT_EVERY_RUNS = 4
@@ -300,6 +305,29 @@ def _read_bool_env(name: str, *, default: bool) -> bool:
     raise ValueError(f"{name} must be a boolean value.")
 
 
+def _normalize_hh_mm_value(name: str, configured_value: str) -> str:
+    """Normalize one HH:MM value used by public refresh scheduler settings."""
+    normalized_value = configured_value.strip()
+    parts = normalized_value.split(":")
+    if len(parts) != 2:
+        raise ValueError(f"{name} must use HH:MM format.")
+    try:
+        hour, minute = (int(part) for part in parts)
+    except (TypeError, ValueError) as error:
+        raise ValueError(f"{name} must use HH:MM format.") from error
+    if hour < 0 or hour > 23 or minute < 0 or minute > 59:
+        raise ValueError(f"{name} must use HH:MM format.")
+    return f"{hour:02d}:{minute:02d}"
+
+
+def _read_minute_env(name: str, default_value: int) -> int:
+    """Read one scheduler minute offset constrained to one wall-clock hour."""
+    minute = _read_int_env(name, str(default_value), minimum=0)
+    if minute > 59:
+        raise ValueError(f"{name} must be at most 59.")
+    return minute
+
+
 def get_historical_refresh_overlap_hours() -> int:
     """Return the overlap window used by incremental historical refreshes."""
     configured_value = os.getenv(
@@ -528,14 +556,8 @@ def get_public_full_refresh_time() -> str:
     configured_value = os.getenv(
         "HLL_PUBLIC_FULL_REFRESH_TIME",
         DEFAULT_PUBLIC_FULL_REFRESH_TIME,
-    ).strip()
-    parts = configured_value.split(":")
-    if len(parts) != 2:
-        raise ValueError("HLL_PUBLIC_FULL_REFRESH_TIME must use HH:MM format.")
-    hour, minute = (int(part) for part in parts)
-    if hour < 0 or hour > 23 or minute < 0 or minute > 59:
-        raise ValueError("HLL_PUBLIC_FULL_REFRESH_TIME must use HH:MM format.")
-    return f"{hour:02d}:{minute:02d}"
+    )
+    return _normalize_hh_mm_value("HLL_PUBLIC_FULL_REFRESH_TIME", configured_value)
 
 
 def get_public_full_refresh_timezone() -> str:
@@ -563,6 +585,55 @@ def get_public_recent_matches_refresh_interval_seconds() -> int:
     return _read_int_env(
         "HLL_PUBLIC_RECENT_MATCHES_REFRESH_INTERVAL_SECONDS",
         str(DEFAULT_PUBLIC_RECENT_MATCHES_REFRESH_INTERVAL_SECONDS),
+        minimum=1,
+    )
+
+
+def get_public_ranking_weekly_refresh_minute() -> int:
+    """Return the minute offset used by hourly weekly ranking snapshot refreshes."""
+    return _read_minute_env(
+        "HLL_PUBLIC_RANKING_WEEKLY_REFRESH_MINUTE",
+        DEFAULT_PUBLIC_RANKING_WEEKLY_REFRESH_MINUTE,
+    )
+
+
+def get_public_ranking_monthly_refresh_times() -> tuple[str, ...]:
+    """Return the local HH:MM slots used by monthly ranking refreshes."""
+    configured_value = os.getenv(
+        "HLL_PUBLIC_RANKING_MONTHLY_REFRESH_TIMES",
+        ",".join(DEFAULT_PUBLIC_RANKING_MONTHLY_REFRESH_TIMES),
+    )
+    values = tuple(
+        _normalize_hh_mm_value("HLL_PUBLIC_RANKING_MONTHLY_REFRESH_TIMES", item)
+        for item in configured_value.split(",")
+        if item.strip()
+    )
+    if not values:
+        raise ValueError("HLL_PUBLIC_RANKING_MONTHLY_REFRESH_TIMES cannot be empty.")
+    return values
+
+
+def get_public_historical_weekly_refresh_minute() -> int:
+    """Return the minute offset used by hourly historical weekly refreshes."""
+    return _read_minute_env(
+        "HLL_PUBLIC_HISTORICAL_WEEKLY_REFRESH_MINUTE",
+        DEFAULT_PUBLIC_HISTORICAL_WEEKLY_REFRESH_MINUTE,
+    )
+
+
+def get_public_historical_monthly_refresh_minute() -> int:
+    """Return the minute offset used by periodic historical monthly refreshes."""
+    return _read_minute_env(
+        "HLL_PUBLIC_HISTORICAL_MONTHLY_REFRESH_MINUTE",
+        DEFAULT_PUBLIC_HISTORICAL_MONTHLY_REFRESH_MINUTE,
+    )
+
+
+def get_public_historical_monthly_refresh_hour_interval() -> int:
+    """Return the hour interval used by periodic historical monthly refreshes."""
+    return _read_int_env(
+        "HLL_PUBLIC_HISTORICAL_MONTHLY_REFRESH_HOUR_INTERVAL",
+        str(DEFAULT_PUBLIC_HISTORICAL_MONTHLY_REFRESH_HOUR_INTERVAL),
         minimum=1,
     )
 

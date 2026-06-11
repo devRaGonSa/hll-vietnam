@@ -2,117 +2,168 @@
 
 ## Goal
 
-Public pages should read precomputed PostgreSQL read models or persisted public snapshots. Ranking requests must not regenerate snapshots and must not query RCON directly.
+Public pages must read persisted snapshots and read models only. No public GET endpoint should regenerate ranking or historical snapshots at request time.
 
-## Runner Scheduling
+## Current Scheduler Owner
 
 The internal `historical-runner` owns public refresh scheduling. Host cron is not required.
 
-Daily full refresh:
+## Implemented Cadence
 
-- Controlled by `HLL_PUBLIC_FULL_REFRESH_ENABLED`.
-- Runs once per local day after `HLL_PUBLIC_FULL_REFRESH_TIME` in `HLL_PUBLIC_FULL_REFRESH_TIMEZONE`.
-- Default: `06:00 Europe/Madrid`.
-- Intended for the lowest RCON and database load window.
+Local timezone for scheduled jobs: `Europe/Madrid`.
 
-The daily full refresh rebuilds:
+Heavy daily window:
 
-- full historical public snapshots/read models from `generate_and_persist_historical_snapshots()`;
-- weekly/monthly `ranking_snapshots`;
-- annual 2026 ranking snapshots for `kills`, `deaths`, `teamkills`, `matches_considered`, `kd_ratio` and `kills_per_match`;
-- `player_search_index`;
-- `player_period_stats`.
+- full public refresh:
+  - `06:00`
+  - rebuilds full historical snapshots, weekly/monthly ranking snapshots, annual ranking snapshots, player search index and player period stats
+  - runs under `public-full-refresh`
 
-Frequent refreshes:
+Ranking page:
 
-- `HLL_PUBLIC_RANKING_REFRESH_INTERVAL_SECONDS`, default `900`, refreshes weekly/monthly public ranking snapshots.
-- `HLL_PUBLIC_RECENT_MATCHES_REFRESH_INTERVAL_SECONDS`, default `60`, refreshes recent-match snapshots when no direct finished-match hook fires.
-- When the RCON capture cycle reports newly materialized finished matches, the runner refreshes recent-match snapshots immediately.
+- annual ranking:
+  - rebuilt inside the daily full refresh at `06:00`
+  - generated sequentially per scope and metric
+- monthly ranking:
+  - `07:00` and `19:00`
+  - generated sequentially per scope and metric
+  - runs under `public-ranking-monthly-refresh`
+- weekly ranking:
+  - every hour at minute `10`
+  - generated sequentially per scope and metric
+  - runs under `public-ranking-weekly-refresh`
 
-## Gap Found In Scheduler Audit
+Historical page:
 
-Current short cadence refresh only covers:
+- weekly historical leaderboard subset:
+  - every hour at minute `25`
+  - scopes:
+    - `all-servers`
+    - `comunidad-hispana-01`
+    - `comunidad-hispana-02`
+  - metrics:
+    - `kills`
+    - `deaths`
+    - `matches_over_100_kills`
+    - `support`
+  - runs under `public-historical-weekly-refresh`
+- monthly historical UI subset:
+  - every `2` hours at minute `40`
+  - same scopes as weekly historical
+  - leaderboard metrics:
+    - `kills`
+    - `deaths`
+    - `matches_over_100_kills`
+    - `support`
+  - also refreshes:
+    - `monthly-mvp`
+    - `monthly-mvp-v2`
+  - runs under `public-historical-monthly-refresh`
 
-- `refresh_public_ranking_snapshots()` for `/api/ranking`
-- `refresh_public_recent_matches_snapshots()` for recent matches
+Recent matches:
 
-It does not refresh the broader historical snapshot matrix consumed by `historico.html` every hour. That means weekly/monthly historical leaderboard or summary data can remain `snapshot_status=missing` until the next daily full refresh at `06:00`, even while ranking snapshots are already updating every 15 minutes.
+- interval polling fallback remains enabled through `HLL_PUBLIC_RECENT_MATCHES_REFRESH_INTERVAL_SECONDS`
+- default: `60` seconds
+- immediate refresh still happens when the RCON capture loop materializes a finished match
 
-## Recommended Future Cadence
+## Why Historical Weekly And Monthly Were Missing
 
-Target cadence identified by the audit:
+The previous short cadence only refreshed:
 
-- annual ranking snapshots:
-  - daily at `06:00 Europe/Madrid`
-- monthly ranking snapshots:
-  - `07:00` and `19:00 Europe/Madrid`
-- weekly ranking snapshots:
-  - every hour
-- historical weekly leaderboard snapshots used by `historico.html`:
-  - every hour
-- historical monthly leaderboard snapshots used by `historico.html`:
-  - every 2 hours
+- `ranking_snapshots` for `/api/ranking`
+- `recent-matches` snapshots
 
-Operational constraints for that future backend change:
+It did not refresh the broader historical snapshot subset consumed by `historico.html`. That left weekly and monthly historical leaderboard payloads in `snapshot_status=missing` until the next daily full refresh.
 
-- large ranking matrix refreshes should run sequentially
-- annual/full refresh should not overlap with shorter historical refreshes
-- per-job start/end/duration/scope/result logs should remain explicit
-- public GET endpoints must stay snapshot-only and must not regenerate heavy data on request
+## Locking And Overlap Policy
 
-Refreshes are idempotent: existing ranking snapshots are replaced for the same window/scope, player read models are rebuilt per scope, and persisted historical snapshots are replaced/upserted by snapshot identity.
+The scheduler uses in-process locks and controlled skips. It does not enqueue backlog jobs.
 
-## Portainer
+Heavy jobs:
 
-Run the `historical-runner` service from the Compose stack with the advanced profile. The service runs:
+- `public-full-refresh`
+- `public-ranking-annual-refresh`
+- `public-ranking-monthly-refresh`
+
+Policy:
+
+- heavy jobs do not overlap with other heavy jobs
+- hourly and bi-hourly jobs skip when a conflicting heavy job is in progress
+- if a heavy job already ran in the same scheduler tick, lower-priority jobs skip and retry on the next tick
+- weekly and monthly historical subset jobs also avoid overlapping with each other
+
+This keeps the implementation simple and avoids CPU spikes without reintroducing request-time fallback work.
+
+## Last Update Exposure
+
+Historical and ranking payloads continue to expose persisted generation metadata from the snapshot records:
+
+- `snapshot_status`
+- `generated_at`
+- `source_range_start`
+- `source_range_end`
+- `is_stale`
+
+`historico.js` already renders `generated_at` as the visible "Actualizado" label, so no frontend contract change was required for this task.
+
+## Environment Variables
+
+Existing variables kept:
+
+- `HLL_PUBLIC_FULL_REFRESH_ENABLED`
+- `HLL_PUBLIC_FULL_REFRESH_TIME`
+- `HLL_PUBLIC_FULL_REFRESH_TIMEZONE`
+- `HLL_PUBLIC_RECENT_MATCHES_REFRESH_INTERVAL_SECONDS`
+
+Retained for compatibility:
+
+- `HLL_PUBLIC_RANKING_REFRESH_INTERVAL_SECONDS`
+  - no longer drives the hourly/slot-based ranking scheduler
+  - still participates in runner tick resolution and legacy compatibility paths
+
+New scheduler variables:
+
+- `HLL_PUBLIC_RANKING_WEEKLY_REFRESH_MINUTE`
+  - default `10`
+- `HLL_PUBLIC_RANKING_MONTHLY_REFRESH_TIMES`
+  - default `07:00,19:00`
+- `HLL_PUBLIC_HISTORICAL_WEEKLY_REFRESH_MINUTE`
+  - default `25`
+- `HLL_PUBLIC_HISTORICAL_MONTHLY_REFRESH_MINUTE`
+  - default `40`
+- `HLL_PUBLIC_HISTORICAL_MONTHLY_REFRESH_HOUR_INTERVAL`
+  - default `2`
+
+## Manual Validation Commands
+
+One-off public jobs through the runner:
 
 ```powershell
-python -m app.historical_runner
+docker compose exec historical-runner python -m app.historical_runner --public-job ranking-weekly
+docker compose exec historical-runner python -m app.historical_runner --public-job ranking-monthly
+docker compose exec historical-runner python -m app.historical_runner --public-job historical-weekly
+docker compose exec historical-runner python -m app.historical_runner --public-job historical-monthly
+docker compose exec historical-runner python -m app.historical_runner --public-job public-full
 ```
 
-Recommended Portainer environment values:
-
-```text
-HLL_PUBLIC_FULL_REFRESH_ENABLED=true
-HLL_PUBLIC_FULL_REFRESH_TIME=06:00
-HLL_PUBLIC_FULL_REFRESH_TIMEZONE=Europe/Madrid
-HLL_PUBLIC_RANKING_REFRESH_INTERVAL_SECONDS=900
-HLL_PUBLIC_RECENT_MATCHES_REFRESH_INTERVAL_SECONDS=60
-```
-
-Do not add host cron unless the internal runner cannot be used in the deployment. If a sidecar is ever required, it should call the same Python modules, not duplicate SQL logic.
-
-## Manual Emergency Commands
-
-One-off full runner cycle:
+Direct ranking matrix commands:
 
 ```powershell
-docker compose exec historical-runner python -m app.historical_runner --max-runs 1
-```
-
-Weekly/monthly ranking snapshots:
-
-```powershell
-docker compose exec historical-runner python -m app.rcon_historical_leaderboards refresh-ranking-snapshots --limit 30
-```
-
-Annual ranking snapshot, one metric/scope:
-
-```powershell
-docker compose exec historical-runner python -m app.rcon_annual_rankings generate --year 2026 --metric kills --server-key all
-```
-
-Player read models:
-
-```powershell
-docker compose exec historical-runner python -m app.rcon_historical_player_stats refresh-player-search-index
-docker compose exec historical-runner python -m app.rcon_historical_player_stats refresh-player-period-stats
+docker compose exec historical-runner python -m app.rcon_historical_leaderboards refresh-ranking-snapshots --timeframe weekly --limit 30
+docker compose exec historical-runner python -m app.rcon_historical_leaderboards refresh-ranking-snapshots --timeframe monthly --limit 30
 ```
 
 Operational checks:
 
 ```powershell
-docker compose ps historical-runner
-docker compose logs --tail=200 historical-runner
-docker compose exec backend python -m app.storage_diagnostics
+docker logs --tail=300 hll-vietnam-historical-runner-1
+docker exec hll-vietnam-historical-runner-1 sh -lc 'env | sort | grep HLL_PUBLIC'
+python .\scripts\audit_public_requests.py --base-url https://comunidadhll.devzamode.es --timeout 30 --filter servers --output tmp\task240_servers_after.json
+python .\scripts\audit_public_requests.py --base-url https://comunidadhll.devzamode.es --timeout 30 --output tmp\task240_full_audit_after.json
 ```
+
+UI checks:
+
+- verify `historico.html` weekly rankings render without `snapshot_status=missing`
+- verify `historico.html` monthly rankings render without `snapshot_status=missing`
+- verify the visible "Actualizado" label changes after the corresponding runner job

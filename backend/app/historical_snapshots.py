@@ -392,6 +392,144 @@ def generate_and_persist_priority_historical_snapshots(
     }
 
 
+def generate_and_persist_historical_leaderboard_snapshots(
+    *,
+    timeframe: str,
+    server_keys: tuple[str, ...] = PREWARM_SNAPSHOT_SERVER_KEYS,
+    generated_at: datetime | None = None,
+    leaderboard_limit: int = DEFAULT_WEEKLY_LEADERBOARD_LIMIT,
+    db_path: Path | None = None,
+) -> dict[str, object]:
+    """Build and persist only the weekly or monthly leaderboard snapshot set."""
+    from .historical_snapshot_storage import persist_historical_snapshot_batch
+
+    generated_at_value = _as_utc(generated_at or datetime.now(timezone.utc))
+    leaderboard_limit = _normalize_snapshot_limit("leaderboard_limit", leaderboard_limit)
+    normalized_timeframe = str(timeframe or "").strip().lower()
+    if normalized_timeframe not in {"weekly", "monthly"}:
+        raise ValueError("timeframe must be 'weekly' or 'monthly'.")
+
+    snapshots: list[dict[str, object]] = []
+    for server_key in server_keys:
+        for metric in SNAPSHOT_LEADERBOARD_METRICS:
+            if normalized_timeframe == "weekly":
+                _log_snapshot_build_started(
+                    server_key,
+                    SNAPSHOT_TYPE_WEEKLY_LEADERBOARD,
+                    metric=metric,
+                )
+                snapshots.append(
+                    _build_weekly_leaderboard_snapshot(
+                        server_key,
+                        metric,
+                        generated_at_value,
+                        limit=leaderboard_limit,
+                        db_path=db_path,
+                    )
+                )
+                continue
+
+            _log_snapshot_build_started(
+                server_key,
+                SNAPSHOT_TYPE_MONTHLY_LEADERBOARD,
+                metric=metric,
+            )
+            snapshots.append(
+                _build_monthly_leaderboard_snapshot(
+                    server_key,
+                    metric,
+                    generated_at_value,
+                    limit=leaderboard_limit,
+                    db_path=db_path,
+                )
+            )
+
+    persisted_records = persist_historical_snapshot_batch(snapshots, db_path=db_path)
+    snapshots_by_server: dict[str, int] = {}
+    for record in persisted_records:
+        snapshots_by_server.setdefault(record.server_key, 0)
+        snapshots_by_server[record.server_key] += 1
+
+    return {
+        "generated_at": _to_iso(generated_at_value),
+        "timeframe": normalized_timeframe,
+        "snapshot_policy": "leaderboard-subset",
+        "server_keys": list(server_keys),
+        "metrics": list(SNAPSHOT_LEADERBOARD_METRICS),
+        "snapshot_count": len(persisted_records),
+        "servers_processed": len(snapshots_by_server),
+        "snapshots_by_server": snapshots_by_server,
+    }
+
+
+def generate_and_persist_historical_monthly_ui_snapshots(
+    *,
+    server_keys: tuple[str, ...] = PREWARM_SNAPSHOT_SERVER_KEYS,
+    generated_at: datetime | None = None,
+    leaderboard_limit: int = DEFAULT_WEEKLY_LEADERBOARD_LIMIT,
+    db_path: Path | None = None,
+) -> dict[str, object]:
+    """Build and persist the monthly historical subset rendered by the public UI."""
+    from .historical_snapshot_storage import persist_historical_snapshot_batch
+
+    generated_at_value = _as_utc(generated_at or datetime.now(timezone.utc))
+    leaderboard_limit = _normalize_snapshot_limit("leaderboard_limit", leaderboard_limit)
+
+    snapshots: list[dict[str, object]] = []
+    for server_key in server_keys:
+        for metric in SNAPSHOT_LEADERBOARD_METRICS:
+            _log_snapshot_build_started(
+                server_key,
+                SNAPSHOT_TYPE_MONTHLY_LEADERBOARD,
+                metric=metric,
+            )
+            snapshots.append(
+                _build_monthly_leaderboard_snapshot(
+                    server_key,
+                    metric,
+                    generated_at_value,
+                    limit=leaderboard_limit,
+                    db_path=db_path,
+                )
+            )
+        _log_snapshot_build_started(server_key, SNAPSHOT_TYPE_MONTHLY_MVP)
+        snapshots.append(
+            _build_monthly_mvp_snapshot(
+                server_key,
+                generated_at_value,
+                limit=leaderboard_limit,
+                db_path=db_path,
+            )
+        )
+        _log_snapshot_build_started(server_key, SNAPSHOT_TYPE_MONTHLY_MVP_V2)
+        snapshots.append(
+            _build_monthly_mvp_v2_snapshot(
+                server_key,
+                generated_at_value,
+                limit=leaderboard_limit,
+                db_path=db_path,
+            )
+        )
+
+    persisted_records = persist_historical_snapshot_batch(snapshots, db_path=db_path)
+    snapshots_by_server: dict[str, int] = {}
+    for record in persisted_records:
+        snapshots_by_server.setdefault(record.server_key, 0)
+        snapshots_by_server[record.server_key] += 1
+
+    return {
+        "generated_at": _to_iso(generated_at_value),
+        "timeframe": "monthly",
+        "snapshot_policy": "monthly-ui-subset",
+        "server_keys": list(server_keys),
+        "metrics": list(SNAPSHOT_LEADERBOARD_METRICS),
+        "includes_monthly_mvp": True,
+        "snapshot_count": len(persisted_records),
+        "servers_processed": len(snapshots_by_server),
+        "snapshots_by_server": snapshots_by_server,
+    }
+
+
 def generate_and_persist_recent_historical_snapshots(
     *,
     server_key: str | None = None,

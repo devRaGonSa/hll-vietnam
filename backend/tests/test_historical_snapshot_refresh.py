@@ -10,6 +10,7 @@ from contextlib import nullcontext, redirect_stdout
 from datetime import datetime, timezone
 from unittest.mock import patch
 
+import app.historical_runner as historical_runner_module
 from app.config import (
     get_historical_refresh_interval_seconds,
     get_historical_refresh_max_retries,
@@ -17,7 +18,12 @@ from app.config import (
     get_public_full_refresh_enabled,
     get_public_full_refresh_time,
     get_public_full_refresh_timezone,
+    get_public_historical_monthly_refresh_hour_interval,
+    get_public_historical_monthly_refresh_minute,
+    get_public_historical_weekly_refresh_minute,
+    get_public_ranking_monthly_refresh_times,
     get_public_ranking_refresh_interval_seconds,
+    get_public_ranking_weekly_refresh_minute,
     get_public_recent_matches_refresh_interval_seconds,
 )
 from app.payloads import (
@@ -27,8 +33,10 @@ from app.payloads import (
     build_recent_historical_matches_snapshot_payload,
 )
 from app.historical_runner import (
+    _maybe_run_public_read_model_refreshes,
     _run_refresh_with_retries,
     get_next_public_full_refresh_at,
+    run_public_refresh_job_once,
     run_periodic_historical_refresh,
 )
 from app.historical_snapshots import _normalize_snapshot_limit
@@ -40,6 +48,15 @@ from app.rcon_historical_read_model import (
 
 
 class HistoricalSnapshotRefreshTests(unittest.TestCase):
+    def setUp(self) -> None:
+        historical_runner_module._LAST_PUBLIC_FULL_REFRESH_LOCAL_DATE = None
+        historical_runner_module._LAST_PUBLIC_RECENT_MATCHES_REFRESH_AT = None
+        historical_runner_module._LAST_PUBLIC_RANKING_WEEKLY_REFRESH_SLOT = None
+        historical_runner_module._LAST_PUBLIC_RANKING_MONTHLY_REFRESH_SLOT = None
+        historical_runner_module._LAST_PUBLIC_HISTORICAL_WEEKLY_REFRESH_SLOT = None
+        historical_runner_module._LAST_PUBLIC_HISTORICAL_MONTHLY_REFRESH_SLOT = None
+        historical_runner_module._PUBLIC_REFRESH_IN_PROGRESS.clear()
+
     def test_runner_numeric_env_values_are_parsed_before_use(self) -> None:
         with patch.dict(
             os.environ,
@@ -75,6 +92,11 @@ class HistoricalSnapshotRefreshTests(unittest.TestCase):
                 "HLL_PUBLIC_FULL_REFRESH_TIMEZONE": "Europe/Madrid",
                 "HLL_PUBLIC_RANKING_REFRESH_INTERVAL_SECONDS": "900",
                 "HLL_PUBLIC_RECENT_MATCHES_REFRESH_INTERVAL_SECONDS": "60",
+                "HLL_PUBLIC_RANKING_WEEKLY_REFRESH_MINUTE": "10",
+                "HLL_PUBLIC_RANKING_MONTHLY_REFRESH_TIMES": "07:00,19:00",
+                "HLL_PUBLIC_HISTORICAL_WEEKLY_REFRESH_MINUTE": "25",
+                "HLL_PUBLIC_HISTORICAL_MONTHLY_REFRESH_MINUTE": "40",
+                "HLL_PUBLIC_HISTORICAL_MONTHLY_REFRESH_HOUR_INTERVAL": "2",
             },
             clear=False,
         ):
@@ -83,6 +105,11 @@ class HistoricalSnapshotRefreshTests(unittest.TestCase):
             self.assertEqual(get_public_full_refresh_timezone(), "Europe/Madrid")
             self.assertEqual(get_public_ranking_refresh_interval_seconds(), 900)
             self.assertEqual(get_public_recent_matches_refresh_interval_seconds(), 60)
+            self.assertEqual(get_public_ranking_weekly_refresh_minute(), 10)
+            self.assertEqual(get_public_ranking_monthly_refresh_times(), ("07:00", "19:00"))
+            self.assertEqual(get_public_historical_weekly_refresh_minute(), 25)
+            self.assertEqual(get_public_historical_monthly_refresh_minute(), 40)
+            self.assertEqual(get_public_historical_monthly_refresh_hour_interval(), 2)
 
     def test_next_public_full_refresh_uses_madrid_six_am(self) -> None:
         with patch.dict(
@@ -101,6 +128,126 @@ class HistoricalSnapshotRefreshTests(unittest.TestCase):
             next_refresh,
             datetime(2026, 6, 10, 4, 0, tzinfo=timezone.utc),
         )
+
+    def test_public_scheduler_runs_hourly_weekly_ranking_job(self) -> None:
+        historical_runner_module._LAST_PUBLIC_RECENT_MATCHES_REFRESH_AT = datetime(
+            2026, 6, 10, 6, 10, tzinfo=timezone.utc
+        )
+        historical_runner_module._LAST_PUBLIC_RANKING_MONTHLY_REFRESH_SLOT = "2026-06-10T05:00:00Z"
+        historical_runner_module._LAST_PUBLIC_HISTORICAL_WEEKLY_REFRESH_SLOT = "2026-06-10T05:25:00Z"
+        historical_runner_module._LAST_PUBLIC_HISTORICAL_MONTHLY_REFRESH_SLOT = "2026-06-10T04:40:00Z"
+        with (
+            patch.dict(
+                os.environ,
+                {
+                    "HLL_PUBLIC_FULL_REFRESH_ENABLED": "false",
+                    "HLL_PUBLIC_RANKING_WEEKLY_REFRESH_MINUTE": "10",
+                    "HLL_PUBLIC_RANKING_MONTHLY_REFRESH_TIMES": "07:00,19:00",
+                    "HLL_PUBLIC_HISTORICAL_WEEKLY_REFRESH_MINUTE": "25",
+                    "HLL_PUBLIC_HISTORICAL_MONTHLY_REFRESH_MINUTE": "40",
+                    "HLL_PUBLIC_HISTORICAL_MONTHLY_REFRESH_HOUR_INTERVAL": "2",
+                    "HLL_PUBLIC_RECENT_MATCHES_REFRESH_INTERVAL_SECONDS": "3600",
+                },
+                clear=False,
+            ),
+            patch(
+                "app.historical_runner.refresh_public_weekly_ranking_snapshots",
+                return_value={"status": "ok"},
+            ) as weekly_ranking_refresh,
+        ):
+            payload = _maybe_run_public_read_model_refreshes(
+                run_number=3,
+                now=datetime(2026, 6, 10, 6, 10, tzinfo=timezone.utc),
+            )
+
+        self.assertEqual(payload["status"], "ok")
+        self.assertIn("ranking_weekly_snapshot_result", payload)
+        weekly_ranking_refresh.assert_called_once()
+
+    def test_public_scheduler_runs_bi_hourly_monthly_historical_job(self) -> None:
+        historical_runner_module._LAST_PUBLIC_RECENT_MATCHES_REFRESH_AT = datetime(
+            2026, 6, 10, 6, 40, tzinfo=timezone.utc
+        )
+        historical_runner_module._LAST_PUBLIC_RANKING_MONTHLY_REFRESH_SLOT = "2026-06-10T05:00:00Z"
+        historical_runner_module._LAST_PUBLIC_RANKING_WEEKLY_REFRESH_SLOT = "2026-06-10T06:10:00Z"
+        historical_runner_module._LAST_PUBLIC_HISTORICAL_WEEKLY_REFRESH_SLOT = "2026-06-10T06:25:00Z"
+        with (
+            patch.dict(
+                os.environ,
+                {
+                    "HLL_PUBLIC_FULL_REFRESH_ENABLED": "false",
+                    "HLL_PUBLIC_RANKING_WEEKLY_REFRESH_MINUTE": "10",
+                    "HLL_PUBLIC_RANKING_MONTHLY_REFRESH_TIMES": "07:00,19:00",
+                    "HLL_PUBLIC_HISTORICAL_WEEKLY_REFRESH_MINUTE": "25",
+                    "HLL_PUBLIC_HISTORICAL_MONTHLY_REFRESH_MINUTE": "40",
+                    "HLL_PUBLIC_HISTORICAL_MONTHLY_REFRESH_HOUR_INTERVAL": "2",
+                    "HLL_PUBLIC_RECENT_MATCHES_REFRESH_INTERVAL_SECONDS": "3600",
+                },
+                clear=False,
+            ),
+            patch(
+                "app.historical_runner.refresh_public_monthly_historical_snapshots",
+                return_value={"status": "ok"},
+            ) as historical_monthly_refresh,
+        ):
+            payload = _maybe_run_public_read_model_refreshes(
+                run_number=4,
+                now=datetime(2026, 6, 10, 6, 40, tzinfo=timezone.utc),
+            )
+
+        self.assertEqual(payload["status"], "ok")
+        self.assertIn("historical_monthly_snapshot_result", payload)
+        historical_monthly_refresh.assert_called_once()
+
+    def test_public_scheduler_skips_lower_priority_jobs_when_heavy_job_runs(self) -> None:
+        historical_runner_module._LAST_PUBLIC_RECENT_MATCHES_REFRESH_AT = datetime(
+            2026, 6, 10, 5, 30, tzinfo=timezone.utc
+        )
+        with (
+            patch.dict(
+                os.environ,
+                {
+                    "HLL_PUBLIC_FULL_REFRESH_ENABLED": "false",
+                    "HLL_PUBLIC_RANKING_WEEKLY_REFRESH_MINUTE": "10",
+                    "HLL_PUBLIC_RANKING_MONTHLY_REFRESH_TIMES": "07:00,19:00",
+                    "HLL_PUBLIC_HISTORICAL_WEEKLY_REFRESH_MINUTE": "25",
+                    "HLL_PUBLIC_HISTORICAL_MONTHLY_REFRESH_MINUTE": "40",
+                    "HLL_PUBLIC_HISTORICAL_MONTHLY_REFRESH_HOUR_INTERVAL": "2",
+                    "HLL_PUBLIC_RECENT_MATCHES_REFRESH_INTERVAL_SECONDS": "3600",
+                },
+                clear=False,
+            ),
+            patch(
+                "app.historical_runner.refresh_public_monthly_ranking_snapshots",
+                return_value={"status": "ok"},
+            ) as monthly_ranking_refresh,
+            patch("app.historical_runner.refresh_public_weekly_ranking_snapshots") as weekly_ranking_refresh,
+            patch("app.historical_runner.refresh_public_weekly_historical_snapshots") as weekly_historical_refresh,
+        ):
+            payload = _maybe_run_public_read_model_refreshes(
+                run_number=5,
+                now=datetime(2026, 6, 10, 5, 30, tzinfo=timezone.utc),
+            )
+
+        self.assertEqual(payload["ranking_monthly_snapshot_result"]["status"], "ok")
+        self.assertEqual(payload["ranking_weekly_snapshot_result"]["status"], "skipped")
+        self.assertEqual(payload["historical_weekly_snapshot_result"]["status"], "skipped")
+        monthly_ranking_refresh.assert_called_once()
+        weekly_ranking_refresh.assert_not_called()
+        weekly_historical_refresh.assert_not_called()
+
+    def test_manual_public_job_runner_routes_to_supported_job(self) -> None:
+        with patch(
+            "app.historical_runner.refresh_public_weekly_historical_snapshots",
+            return_value={"status": "ok", "job_name": "public-historical-weekly"},
+        ) as weekly_historical_refresh:
+            result = run_public_refresh_job_once(
+                "historical-weekly",
+                now=datetime(2026, 6, 10, 6, 25, tzinfo=timezone.utc),
+            )
+
+        self.assertEqual(result["job_name"], "public-historical-weekly")
+        weekly_historical_refresh.assert_called_once()
 
     def test_historical_leaderboard_snapshot_does_not_runtime_enrich_public_request(self) -> None:
         snapshot = {

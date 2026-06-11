@@ -230,15 +230,20 @@ def refresh_ranking_snapshots(
     *,
     limit: int = DEFAULT_RANKING_SNAPSHOT_REFRESH_LIMIT,
     replace_existing: bool = True,
+    timeframes: tuple[str, ...] | None = None,
     now: datetime | None = None,
     db_path: Path | None = None,
 ) -> dict[str, object]:
     """Generate the full weekly/monthly ranking snapshot matrix with partial-failure reporting."""
     normalized_limit = _normalize_limit(limit)
     anchor = _as_utc(now or datetime.now(timezone.utc))
+    normalized_timeframes = tuple(
+        _normalize_generator_timeframe(timeframe)
+        for timeframe in (timeframes or SNAPSHOT_GENERATOR_TIMEFRAMES)
+    )
     combinations = [
         (timeframe, server_key, metric)
-        for timeframe in SNAPSHOT_GENERATOR_TIMEFRAMES
+        for timeframe in normalized_timeframes
         for server_key in SNAPSHOT_GENERATOR_SERVER_KEYS
         for metric in SNAPSHOT_GENERATOR_METRICS
     ]
@@ -305,6 +310,7 @@ def refresh_ranking_snapshots(
     return {
         "status": overall_status,
         "generated_at": _to_iso(anchor),
+        "timeframes": list(normalized_timeframes),
         "limit": normalized_limit,
         "replace_existing": replace_existing,
         "combinations_expected": len(combinations),
@@ -1422,6 +1428,13 @@ def _main(argv: list[str] | None = None) -> int:
         default=DEFAULT_RANKING_SNAPSHOT_REFRESH_LIMIT,
     )
     refresh_parser.add_argument(
+        "--timeframe",
+        choices=SNAPSHOT_GENERATOR_TIMEFRAMES,
+        action="append",
+        dest="timeframes",
+        help="Optional timeframe filter. Repeat to refresh more than one timeframe.",
+    )
+    refresh_parser.add_argument(
         "--sqlite-path",
         type=Path,
         default=None,
@@ -1459,6 +1472,7 @@ def _main(argv: list[str] | None = None) -> int:
         payload = refresh_ranking_snapshots(
             limit=args.limit,
             replace_existing=args.replace_existing,
+            timeframes=tuple(args.timeframes) if args.timeframes else None,
             db_path=args.sqlite_path,
         )
         print(
