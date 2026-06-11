@@ -51,11 +51,13 @@ from .rcon_annual_rankings import (
 )
 from .rcon_historical_leaderboards import refresh_ranking_snapshots
 from .rcon_historical_leaderboards import SNAPSHOT_GENERATOR_SERVER_KEYS
+from .rcon_historical_leaderboards import initialize_ranking_snapshot_storage
 from .rcon_historical_player_stats import (
     refresh_player_period_stats,
     refresh_player_search_index,
 )
 from .rcon_historical_storage import count_rcon_historical_samples_since
+from .rcon_historical_storage import initialize_rcon_historical_storage
 from .rcon_historical_worker import run_rcon_historical_capture
 from .writer_lock import backend_writer_lock, build_writer_lock_holder
 
@@ -747,10 +749,12 @@ def refresh_public_weekly_ranking_snapshots(
         }
     )
     try:
+        initialize_ranking_snapshot_storage(ensure_storage=True)
         result = refresh_ranking_snapshots(
             limit=30,
             replace_existing=True,
             timeframes=("weekly",),
+            ensure_storage=False,
             now=anchor,
         )
     except Exception as exc:  # noqa: BLE001 - scheduler must keep the runner alive
@@ -803,10 +807,12 @@ def refresh_public_monthly_ranking_snapshots(
         }
     )
     try:
+        initialize_ranking_snapshot_storage(ensure_storage=True)
         result = refresh_ranking_snapshots(
             limit=30,
             replace_existing=True,
             timeframes=("monthly",),
+            ensure_storage=False,
             now=anchor,
         )
     except Exception as exc:  # noqa: BLE001 - scheduler must keep the runner alive
@@ -978,12 +984,14 @@ def refresh_public_weekly_historical_snapshots(
         }
     )
     try:
+        initialize_rcon_historical_storage(ensure_storage=True)
         result = {
             "status": "ok",
             **generate_and_persist_historical_leaderboard_snapshots(
                 timeframe="weekly",
                 server_keys=PREWARM_SNAPSHOT_SERVER_KEYS,
                 generated_at=anchor,
+                ensure_storage=False,
             ),
         }
     except Exception as exc:  # noqa: BLE001 - scheduler must keep the runner alive
@@ -1037,11 +1045,13 @@ def refresh_public_monthly_historical_snapshots(
         }
     )
     try:
+        initialize_rcon_historical_storage(ensure_storage=True)
         result = {
             "status": "ok",
             **generate_and_persist_historical_monthly_ui_snapshots(
                 server_keys=PREWARM_SNAPSHOT_SERVER_KEYS,
                 generated_at=anchor,
+                ensure_storage=False,
             ),
         }
     except Exception as exc:  # noqa: BLE001 - scheduler must keep the runner alive
@@ -1338,6 +1348,14 @@ def _as_utc(value: datetime) -> datetime:
 
 def _to_iso(value: datetime) -> str:
     return _as_utc(value).isoformat().replace("+00:00", "Z")
+
+
+def _json_default(value: object) -> str:
+    if isinstance(value, datetime):
+        return _to_iso(value)
+    if isinstance(value, date):
+        return value.isoformat()
+    raise TypeError(f"Object of type {type(value).__name__} is not JSON serializable")
 
 
 def _resolve_refresh_cycle_status(**results: dict[str, Any]) -> str:
@@ -1658,7 +1676,7 @@ def main() -> None:
         raise ValueError("--max-runs must be positive when provided.")
     if args.public_job is not None:
         payload = run_public_refresh_job_once(args.public_job)
-        print(json.dumps({"status": "ok", "data": payload}, indent=2))
+        print(json.dumps({"status": "ok", "data": payload}, indent=2, default=_json_default))
         return
 
     run_periodic_historical_refresh(

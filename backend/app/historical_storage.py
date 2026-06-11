@@ -1761,11 +1761,22 @@ def list_monthly_mvp_v2_ranking(
     window_start = monthly_window["window_start"]
     window_end = monthly_window["window_end"]
     month_key = window_start.strftime("%Y-%m")
-    event_coverage = _get_monthly_player_event_coverage(
-        server_id=server_id,
-        month_key=month_key,
-        db_path=resolved_path,
-    )
+    try:
+        event_coverage = _get_monthly_player_event_coverage(
+            server_id=server_id,
+            month_key=month_key,
+            db_path=resolved_path,
+        )
+    except sqlite3.OperationalError as error:
+        if "player_event_raw_ledger" not in str(error):
+            raise
+        event_coverage = {
+            "ready": False,
+            "reason": "player-event-raw-ledger-missing",
+            "source_range_start": None,
+            "source_range_end": None,
+            "error": str(error),
+        }
     window_days = _calculate_window_days(window_start=window_start, window_end=window_end)
 
     empty_result = {

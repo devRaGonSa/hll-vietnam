@@ -5,9 +5,11 @@ from __future__ import annotations
 import io
 import json
 import os
+import sqlite3
 import unittest
 from contextlib import nullcontext, redirect_stdout
 from datetime import datetime, timezone
+from pathlib import Path
 from unittest.mock import patch
 
 import app.historical_runner as historical_runner_module
@@ -34,17 +36,20 @@ from app.payloads import (
 )
 from app.historical_runner import (
     _maybe_run_public_read_model_refreshes,
+    _json_default,
     _run_refresh_with_retries,
     get_next_public_full_refresh_at,
     run_public_refresh_job_once,
     run_periodic_historical_refresh,
 )
 from app.historical_snapshots import _normalize_snapshot_limit
+from app.historical_storage import list_monthly_mvp_v2_ranking
 from app.postgres_display_storage import _json_payload_default
 from app.rcon_historical_read_model import (
     _calculate_coverage_hours,
     _calculate_duration_seconds,
 )
+from app.rcon_historical_leaderboards import _dedupe_snapshot_rows
 
 
 class HistoricalSnapshotRefreshTests(unittest.TestCase):
@@ -248,6 +253,58 @@ class HistoricalSnapshotRefreshTests(unittest.TestCase):
 
         self.assertEqual(result["job_name"], "public-historical-weekly")
         weekly_historical_refresh.assert_called_once()
+
+    def test_historical_runner_json_default_serializes_datetime_payloads(self) -> None:
+        payload = {
+            "status": "ok",
+            "data": {
+                "generated_at": datetime(2026, 6, 11, 8, 0, tzinfo=timezone.utc),
+            },
+        }
+
+        encoded = json.loads(json.dumps(payload, default=_json_default))
+
+        self.assertEqual(encoded["data"]["generated_at"], "2026-06-11T08:00:00Z")
+
+    def test_ranking_snapshot_dedupes_duplicate_player_rows(self) -> None:
+        rows = [
+            {"player_id": "player-1", "player_name": "Alpha", "metric_value": 20},
+            {"player_id": "player-1", "player_name": "Alpha duplicate", "metric_value": 19},
+            {"player_id": "player-2", "player_name": "Bravo", "metric_value": 18},
+        ]
+
+        deduplicated_rows = _dedupe_snapshot_rows(rows)
+
+        self.assertEqual([row["player_id"] for row in deduplicated_rows], ["player-1", "player-2"])
+        self.assertEqual(deduplicated_rows[0]["player_name"], "Alpha")
+
+    def test_monthly_mvp_v2_missing_player_event_ledger_returns_empty_payload(self) -> None:
+        monthly_window = {
+            "window_start": datetime(2026, 6, 1, tzinfo=timezone.utc),
+            "window_end": datetime(2026, 6, 11, tzinfo=timezone.utc),
+            "window_kind": "current-month",
+            "window_label": "Mes activo",
+            "uses_fallback": False,
+            "selection_reason": "test",
+            "current_month_closed_matches": 4,
+            "previous_month_closed_matches": 8,
+            "minimum_closed_matches": 3,
+            "current_month_has_sufficient_sample": True,
+            "is_early_month": False,
+        }
+        with (
+            patch("app.historical_storage.initialize_historical_storage", return_value=Path("dummy.sqlite3")),
+            patch("app.historical_storage._select_monthly_window", return_value=monthly_window),
+            patch(
+                "app.historical_storage._get_monthly_player_event_coverage",
+                side_effect=sqlite3.OperationalError("no such table: player_event_raw_ledger"),
+            ),
+        ):
+            payload = list_monthly_mvp_v2_ranking(server_id="all-servers", limit=10)
+
+        self.assertFalse(payload["event_coverage"]["ready"])
+        self.assertEqual(payload["event_coverage"]["reason"], "player-event-raw-ledger-missing")
+        self.assertEqual(payload["items"], [])
 
     def test_historical_leaderboard_snapshot_does_not_runtime_enrich_public_request(self) -> None:
         snapshot = {

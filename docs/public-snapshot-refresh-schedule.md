@@ -94,6 +94,17 @@ Policy:
 
 This keeps the implementation simple and avoids CPU spikes without reintroducing request-time fallback work.
 
+## Manual Job Hardening
+
+Manual public jobs executed with `python -m app.historical_runner --public-job ...` now follow the same storage and error-handling rules as scheduled runs:
+
+- CLI JSON output serializes `datetime` and `date` values safely
+- ranking snapshot rows are deduplicated by `player_id` before inserting `ranking_snapshot_items`
+- PostgreSQL snapshot storage initialization runs once at the start of the heavy job, then substeps reuse non-DDL connections
+- missing `player_event_raw_ledger` no longer aborts `historical-monthly`; the monthly MVP V2 slice degrades to an empty payload with `event_coverage.ready = false`
+
+This keeps manual validation commands useful without hiding partial failures inside the job payload.
+
 ## Last Update Exposure
 
 Historical and ranking payloads continue to expose persisted generation metadata from the snapshot records:

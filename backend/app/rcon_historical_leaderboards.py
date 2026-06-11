@@ -101,13 +101,21 @@ ON ranking_snapshot_items(snapshot_id, player_id);
 """
 
 
-def initialize_ranking_snapshot_storage(*, db_path: Path | None = None) -> Path:
+def initialize_ranking_snapshot_storage(
+    *,
+    db_path: Path | None = None,
+    ensure_storage: bool = True,
+) -> Path:
     """Create ranking snapshot tables used by weekly/monthly public ranking reads."""
-    resolved_path = initialize_rcon_materialized_storage(db_path=db_path)
+    resolved_path = initialize_rcon_materialized_storage(
+        db_path=db_path,
+        ensure_storage=ensure_storage,
+    )
     if use_postgres_rcon_storage(explicit_sqlite_path=db_path):
-        from .postgres_rcon_storage import initialize_postgres_rcon_storage
+        if ensure_storage:
+            from .postgres_rcon_storage import initialize_postgres_rcon_storage
 
-        initialize_postgres_rcon_storage()
+            initialize_postgres_rcon_storage()
         return resolved_path
 
     with closing(connect_sqlite_writer(resolved_path)) as connection:
@@ -132,6 +140,7 @@ def generate_ranking_snapshot(
     metric: str,
     limit: int,
     replace_existing: bool = True,
+    ensure_storage: bool = True,
     now: datetime | None = None,
     db_path: Path | None = None,
 ) -> dict[str, object]:
@@ -142,8 +151,15 @@ def generate_ranking_snapshot(
     normalized_limit = _normalize_limit(limit)
     anchor = _as_utc(now or datetime.now(timezone.utc))
 
-    resolved_path = initialize_ranking_snapshot_storage(db_path=db_path)
-    connection_scope = _connect_write_scope(resolved_path, db_path=db_path)
+    resolved_path = initialize_ranking_snapshot_storage(
+        db_path=db_path,
+        ensure_storage=ensure_storage,
+    )
+    connection_scope = _connect_write_scope(
+        resolved_path,
+        db_path=db_path,
+        initialize=ensure_storage,
+    )
     with connection_scope as connection:
         window = select_leaderboard_window(
             connection=connection,
@@ -231,6 +247,7 @@ def refresh_ranking_snapshots(
     limit: int = DEFAULT_RANKING_SNAPSHOT_REFRESH_LIMIT,
     replace_existing: bool = True,
     timeframes: tuple[str, ...] | None = None,
+    ensure_storage: bool = True,
     now: datetime | None = None,
     db_path: Path | None = None,
 ) -> dict[str, object]:
@@ -260,6 +277,7 @@ def refresh_ranking_snapshots(
                 metric=metric,
                 limit=normalized_limit,
                 replace_existing=replace_existing,
+                ensure_storage=ensure_storage if not results else False,
                 now=anchor,
                 db_path=db_path,
             )
@@ -532,6 +550,7 @@ def list_rcon_materialized_leaderboard(
     timeframe: str = "weekly",
     metric: str = "kills",
     limit: int = 10,
+    ensure_storage: bool = True,
     db_path: Path | None = None,
     now: datetime | None = None,
 ) -> dict[str, object]:
@@ -547,8 +566,15 @@ def list_rcon_materialized_leaderboard(
     normalized_limit = max(1, int(limit or 10))
     anchor = _as_utc(now or datetime.now(timezone.utc))
 
-    resolved_path = initialize_rcon_materialized_storage(db_path=db_path)
-    connection_scope = _connect_scope(resolved_path, db_path=db_path)
+    resolved_path = initialize_rcon_materialized_storage(
+        db_path=db_path,
+        ensure_storage=ensure_storage,
+    )
+    connection_scope = _connect_scope(
+        resolved_path,
+        db_path=db_path,
+        initialize=ensure_storage,
+    )
     with connection_scope as connection:
         window = select_leaderboard_window(
             connection=connection,
@@ -809,7 +835,8 @@ def _insert_snapshot_items(
     rows: list[dict[str, object]],
     limit: int,
 ) -> None:
-    for index, row in enumerate(rows[:limit], start=1):
+    deduplicated_rows = _dedupe_snapshot_rows(rows)
+    for index, row in enumerate(deduplicated_rows[:limit], start=1):
         item = _build_item(row, index=index)
         connection.execute(
             """
@@ -841,6 +868,19 @@ def _insert_snapshot_items(
                 float(item["kills_per_match"]),
             ],
         )
+
+
+def _dedupe_snapshot_rows(rows: list[dict[str, object]]) -> list[dict[str, object]]:
+    """Keep the first ranked row for each player id to preserve deterministic snapshot order."""
+    deduplicated_rows: list[dict[str, object]] = []
+    seen_player_ids: set[str] = set()
+    for row in rows:
+        player_id = str(row.get("player_id") or "").strip()
+        if not player_id or player_id in seen_player_ids:
+            continue
+        seen_player_ids.add(player_id)
+        deduplicated_rows.append(row)
+    return deduplicated_rows
 
 
 def _fetch_leaderboard_rows(
@@ -1124,19 +1164,24 @@ def _normalize_snapshot_server_key(server_key: str | None) -> str:
     return normalized
 
 
-def _connect_scope(resolved_path: Path, *, db_path: Path | None):
+def _connect_scope(resolved_path: Path, *, db_path: Path | None, initialize: bool = True):
     if use_postgres_rcon_storage(explicit_sqlite_path=db_path):
         from .postgres_rcon_storage import connect_postgres_compat
 
-        return connect_postgres_compat()
+        return connect_postgres_compat(initialize=initialize)
     return closing(connect_sqlite_readonly(resolved_path))
 
 
-def _connect_write_scope(resolved_path: Path, *, db_path: Path | None):
+def _connect_write_scope(
+    resolved_path: Path,
+    *,
+    db_path: Path | None,
+    initialize: bool = True,
+):
     if use_postgres_rcon_storage(explicit_sqlite_path=db_path):
         from .postgres_rcon_storage import connect_postgres_compat
 
-        return connect_postgres_compat()
+        return connect_postgres_compat(initialize=initialize)
     return connect_sqlite_writer(resolved_path)
 
 

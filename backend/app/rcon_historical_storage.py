@@ -20,12 +20,17 @@ COMPETITIVE_MODE_APPROXIMATE = "approximate"
 COMPETITIVE_MODE_EXACT = "exact"
 
 
-def initialize_rcon_historical_storage(*, db_path: Path | None = None) -> Path:
+def initialize_rcon_historical_storage(
+    *,
+    db_path: Path | None = None,
+    ensure_storage: bool = True,
+) -> Path:
     """Create the SQLite structures used by prospective RCON capture."""
     if use_postgres_rcon_storage(explicit_sqlite_path=db_path):
-        from .postgres_rcon_storage import initialize_postgres_rcon_storage
+        if ensure_storage:
+            from .postgres_rcon_storage import initialize_postgres_rcon_storage
 
-        initialize_postgres_rcon_storage()
+            initialize_postgres_rcon_storage()
         return get_storage_path()
 
     resolved_path = db_path or get_storage_path()

@@ -398,6 +398,7 @@ def generate_and_persist_historical_leaderboard_snapshots(
     server_keys: tuple[str, ...] = PREWARM_SNAPSHOT_SERVER_KEYS,
     generated_at: datetime | None = None,
     leaderboard_limit: int = DEFAULT_WEEKLY_LEADERBOARD_LIMIT,
+    ensure_storage: bool = True,
     db_path: Path | None = None,
 ) -> dict[str, object]:
     """Build and persist only the weekly or monthly leaderboard snapshot set."""
@@ -424,6 +425,7 @@ def generate_and_persist_historical_leaderboard_snapshots(
                         metric,
                         generated_at_value,
                         limit=leaderboard_limit,
+                        ensure_storage=ensure_storage if not snapshots else False,
                         db_path=db_path,
                     )
                 )
@@ -440,6 +442,7 @@ def generate_and_persist_historical_leaderboard_snapshots(
                     metric,
                     generated_at_value,
                     limit=leaderboard_limit,
+                    ensure_storage=ensure_storage if not snapshots else False,
                     db_path=db_path,
                 )
             )
@@ -467,6 +470,7 @@ def generate_and_persist_historical_monthly_ui_snapshots(
     server_keys: tuple[str, ...] = PREWARM_SNAPSHOT_SERVER_KEYS,
     generated_at: datetime | None = None,
     leaderboard_limit: int = DEFAULT_WEEKLY_LEADERBOARD_LIMIT,
+    ensure_storage: bool = True,
     db_path: Path | None = None,
 ) -> dict[str, object]:
     """Build and persist the monthly historical subset rendered by the public UI."""
@@ -489,6 +493,7 @@ def generate_and_persist_historical_monthly_ui_snapshots(
                     metric,
                     generated_at_value,
                     limit=leaderboard_limit,
+                    ensure_storage=ensure_storage if not snapshots else False,
                     db_path=db_path,
                 )
             )
@@ -507,6 +512,7 @@ def generate_and_persist_historical_monthly_ui_snapshots(
                 server_key,
                 generated_at_value,
                 limit=leaderboard_limit,
+                tolerate_missing_player_event_ledger=True,
                 db_path=db_path,
             )
         )
@@ -613,6 +619,7 @@ def _build_weekly_leaderboard_snapshot(
     generated_at: datetime,
     *,
     limit: int,
+    ensure_storage: bool = True,
     db_path: Path | None = None,
 ) -> dict[str, object]:
     if get_historical_data_source_kind() == SOURCE_KIND_RCON:
@@ -623,6 +630,7 @@ def _build_weekly_leaderboard_snapshot(
             server_key=server_key,
             metric=metric,
             timeframe="weekly",
+            ensure_storage=ensure_storage,
             db_path=db_path,
             now=generated_at,
         )
@@ -658,6 +666,7 @@ def _build_monthly_leaderboard_snapshot(
     generated_at: datetime,
     *,
     limit: int,
+    ensure_storage: bool = True,
     db_path: Path | None = None,
 ) -> dict[str, object]:
     if get_historical_data_source_kind() == SOURCE_KIND_RCON:
@@ -668,6 +677,7 @@ def _build_monthly_leaderboard_snapshot(
             server_key=server_key,
             metric=metric,
             timeframe="monthly",
+            ensure_storage=ensure_storage,
             db_path=db_path,
             now=generated_at,
         )
@@ -829,13 +839,49 @@ def _build_monthly_mvp_v2_snapshot(
     generated_at: datetime,
     *,
     limit: int,
+    tolerate_missing_player_event_ledger: bool = False,
     db_path: Path | None = None,
 ) -> dict[str, object]:
-    ranking_result = list_monthly_mvp_v2_ranking(
-        limit=limit,
-        server_id=server_key,
-        db_path=db_path,
-    )
+    try:
+        ranking_result = list_monthly_mvp_v2_ranking(
+            limit=limit,
+            server_id=server_key,
+            db_path=db_path,
+        )
+    except sqlite3.OperationalError as error:
+        if not tolerate_missing_player_event_ledger or "player_event_raw_ledger" not in str(error):
+            raise
+        ranking_result = {
+            "timeframe": "monthly",
+            "metric": "mvp-v2",
+            "ranking_version": "v2",
+            "window_start": None,
+            "window_end": None,
+            "window_days": None,
+            "window_kind": "missing-player-event-ledger",
+            "window_label": "Sin ledger de eventos",
+            "uses_fallback": True,
+            "selection_reason": "player-event-raw-ledger-missing",
+            "current_month_start": None,
+            "current_month_closed_matches": 0,
+            "previous_month_closed_matches": 0,
+            "sufficient_sample": {
+                "minimum_closed_matches": 0,
+                "current_month_closed_matches": 0,
+                "current_month_has_sufficient_sample": False,
+                "is_early_month": False,
+            },
+            "event_coverage": {
+                "ready": False,
+                "reason": "player-event-raw-ledger-missing",
+                "source_range_start": None,
+                "source_range_end": None,
+            },
+            "eligibility": None,
+            "eligible_players_count": 0,
+            "items": [],
+            "error": str(error),
+        }
     month_key = str(ranking_result.get("window_start") or "")[:7] or None
     event_coverage = ranking_result.get("event_coverage")
     source_range_start = None
