@@ -600,33 +600,21 @@ function renderMapHero(data, mapName, nodes) {
 }
 
 function resolveMapImagePath(data, mapName) {
-  const normalizedMap = normalizeLookupText(
-    `${data.map_id || ""} ${data.map || ""} ${data.map_pretty_name || ""} ${mapName || ""}`,
-  ).replaceAll(" ", "");
-  const mapAssetByKey = {
-    carentan: "carentan-day.webp",
-    driel: "driel-day.webp",
-    elalamein: "elalamein-day.webp",
-    elsenbornridge: "elsenbornridge-day.webp",
-    foy: "foy-day.webp",
-    hill400: "hill400-day.webp",
-    hurtgenforest: "hurtgenforest-day.webp",
-    kharkov: "kharkov-day.webp",
-    kursk: "kursk-day.webp",
-    mortain: "mortain-day.webp",
-    omahabeach: "omahabeach-day.webp",
-    purpleheartlane: "purpleheartlane-rain.webp",
-    smolensk: "smolensk-day.webp",
-    stmariedumont: "stmariedumont-day.webp",
-    stmereeglise: "stmereeglise-day.webp",
-    tobrukdawn: "tobruk-dawn.webp",
-    tobruk: "tobruk-day.webp",
-    utahbeach: "utahbeach-day.webp",
-  };
-  const matchedKey = Object.keys(mapAssetByKey).find((key) =>
-    normalizedMap.includes(key),
+  const resolver = globalThis.HLL_VIETNAM_MAP_IMAGES?.resolveMapImageAsset;
+  if (typeof resolver !== "function") {
+    return "";
+  }
+  return (
+    resolver({
+      candidates: [
+        data.layer_id,
+        data.map_id,
+        data.map,
+        data.map_pretty_name,
+        mapName,
+      ],
+    })?.src || ""
   );
-  return matchedKey ? `./assets/img/maps/${mapAssetByKey[matchedKey]}` : "";
 }
 
 function resolveTrustedScoreboardUrl(data) {

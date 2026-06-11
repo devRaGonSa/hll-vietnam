@@ -54,7 +54,7 @@ const EXTERNAL_PROFILE_BRANDS = Object.freeze({
   }),
   steam: Object.freeze({
     label: "Steam",
-    logoSrc: "",
+    logoSrc: "./assets/img/brands/steam.png",
   }),
 });
 
@@ -601,7 +601,7 @@ function renderExternalProfilesSection(player) {
                     <a href="${escapeHtml(href)}" target="_blank" rel="noopener noreferrer">
                       ${
                         brand.logoSrc
-                          ? `<img class="historical-player-profile-link__brand" src="${escapeHtml(brand.logoSrc)}" alt="" aria-hidden="true" decoding="async" loading="lazy" />`
+                          ? `<img class="historical-player-profile-link__brand" src="${escapeHtml(brand.logoSrc)}" alt="" aria-hidden="true" decoding="async" loading="lazy" onerror="this.remove();" />`
                           : ""
                       }
                       <span>${escapeHtml(brand.label)}</span>
@@ -807,33 +807,21 @@ function resolveMatchFactions(item, mapName) {
 }
 
 function resolveMapImagePath(item, mapName) {
-  const normalizedMap = normalizeLookupText(
-    `${item.map?.name || ""} ${item.map?.pretty_name || ""} ${mapName || ""}`,
-  ).replaceAll(" ", "");
-  const mapAssetByKey = {
-    carentan: "carentan-day.webp",
-    driel: "driel-day.webp",
-    elalamein: "elalamein-day.webp",
-    elsenbornridge: "elsenbornridge-day.webp",
-    foy: "foy-day.webp",
-    hill400: "hill400-day.webp",
-    hurtgenforest: "hurtgenforest-day.webp",
-    kharkov: "kharkov-day.webp",
-    kursk: "kursk-day.webp",
-    mortain: "mortain-day.webp",
-    omahabeach: "omahabeach-day.webp",
-    purpleheartlane: "purpleheartlane-rain.webp",
-    smolensk: "smolensk-day.webp",
-    stmariedumont: "stmariedumont-day.webp",
-    stmereeglise: "stmereeglise-day.webp",
-    tobrukdawn: "tobruk-dawn.webp",
-    tobruk: "tobruk-day.webp",
-    utahbeach: "utahbeach-day.webp",
-  };
-  const matchedKey = Object.keys(mapAssetByKey).find((key) =>
-    normalizedMap.includes(key),
+  const resolver = globalThis.HLL_VIETNAM_MAP_IMAGES?.resolveMapImageAsset;
+  if (typeof resolver !== "function") {
+    return "";
+  }
+  return (
+    resolver({
+      candidates: [
+        item.match_id,
+        item.map?.id,
+        item.map?.name,
+        item.map?.pretty_name,
+        mapName,
+      ],
+    })?.src || ""
   );
-  return matchedKey ? `./assets/img/maps/${mapAssetByKey[matchedKey]}` : "";
 }
 
 function normalizeLookupText(value) {
