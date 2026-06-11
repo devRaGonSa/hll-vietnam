@@ -633,18 +633,13 @@ h2 {
 }
 
 .release-countdown__copy {
+  align-self: flex-start;
   min-width: 0;
-  padding: 11px 16px;
-  border: 1px solid rgba(168, 199, 109, 0.3);
-  border-radius: 999px;
-  background: rgba(62, 88, 43, 0.62);
+  max-width: 100%;
 }
 
-.release-countdown__copy h3 {
-  margin: 0;
-  color: var(--text-main);
-  font-size: clamp(0.95rem, 1.45vw, 1.12rem);
-  line-height: 1.25;
+.release-countdown__copy .eyebrow--section {
+  margin-bottom: 0;
 }
 
 .release-countdown__units {
