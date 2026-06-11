@@ -410,7 +410,7 @@ function initializeReleaseCountdown(root) {
 
     root.classList.remove("is-available");
     if (nodes.status) {
-      nodes.status.textContent = "Objetivo: 13 de agosto de 2026.";
+      nodes.status.textContent = "";
     }
     return true;
   };
