@@ -9,12 +9,19 @@ from datetime import date, datetime, timezone
 from pathlib import Path
 import unicodedata
 
+from .config import get_kpm_min_active_seconds
 from .config import get_storage_path, use_postgres_rcon_storage
 from .historical_storage import ALL_SERVERS_SLUG
+from .player_external_profiles import build_external_player_profile_fields
 from .rcon_admin_log_materialization import MATCH_RESULT_SOURCE, initialize_rcon_materialized_storage
 from .rcon_historical_leaderboards import select_leaderboard_window
 from .sqlite_utils import connect_sqlite_readonly, connect_sqlite_writer
 from .rcon_historical_leaderboards import _to_iso
+
+REAL_KPM_ACTIVE_TIME_SOURCES = (
+    "connection_intervals",
+    "connection_intervals_carryover",
+)
 
 PLAYER_SEARCH_INDEX_SERVER_KEYS = (
     ALL_SERVERS_SLUG,
@@ -371,12 +378,18 @@ def get_rcon_materialized_player_stats(
         if read_model_result is not None:
             return read_model_result
 
-        return _build_missing_player_period_stats_result(
+        runtime_result = _get_rcon_materialized_player_stats_runtime(
             player_id=normalized_player_id,
             server_id=server_id,
             timeframe=resolved_timeframe,
-            missing_reason=fallback_reason or "player-period-stats-unavailable",
+            db_path=db_path,
         )
+        runtime_result.setdefault("source", {})
+        runtime_result["source"]["fallback_used"] = True
+        runtime_result["source"]["fallback_reason"] = fallback_reason or "player-period-stats-unavailable"
+        runtime_result["source"]["read_model"] = "player-period-stats"
+        runtime_result["source"]["freshness"] = "runtime-fallback"
+        return runtime_result
 
     return _get_rcon_materialized_player_stats_runtime(
         player_id=normalized_player_id,
@@ -414,6 +427,13 @@ def _get_rcon_materialized_player_stats_runtime(
             player_id=normalized_player_id,
             server_id=resolved_server_id,
             window=selected_window if resolved_timeframe != "all" else None,
+        )
+        active_time = _fetch_player_active_time_summary(
+            connection=connection,
+            player_id=normalized_player_id,
+            server_id=resolved_server_id,
+            window=selected_window if resolved_timeframe != "all" else None,
+            total_matches_considered=int(player_stats.get("matches_considered", 0) or 0),
         )
 
         source_range = _fetch_source_range(
@@ -460,6 +480,8 @@ def _get_rcon_materialized_player_stats_runtime(
         "kills": player_stats.get("kills", 0),
         "deaths": player_stats.get("deaths", 0),
         "teamkills": player_stats.get("teamkills", 0),
+        **active_time,
+        **build_external_player_profile_fields(player_id=normalized_player_id),
         "weekly_ranking": weekly_ranking,
         "monthly_ranking": monthly_ranking,
         "source": {
@@ -528,6 +550,17 @@ def _get_player_period_stats_read_model(
     selected_row = rows_by_period[timeframe]
     weekly_row = rows_by_period["weekly"]
     monthly_row = rows_by_period["monthly"]
+    with _connect_read_scope(resolved_path, db_path=db_path) as connection:
+        active_time = _fetch_player_active_time_summary(
+            connection=connection,
+            player_id=player_id,
+            server_id=resolved_server_id,
+            window={
+                "start": _to_datetime_or_none(selected_row.get("period_start")),
+                "end": _to_datetime_or_none(selected_row.get("period_end")),
+            },
+            total_matches_considered=int(selected_row.get("matches_considered") or 0),
+        )
     return (
         {
             "player_id": player_id,
@@ -541,6 +574,8 @@ def _get_player_period_stats_read_model(
             "kills": int(selected_row.get("kills") or 0),
             "deaths": int(selected_row.get("deaths") or 0),
             "teamkills": int(selected_row.get("teamkills") or 0),
+            **active_time,
+            **build_external_player_profile_fields(player_id=player_id),
             "weekly_ranking": _build_player_period_ranking_payload(weekly_row),
             "monthly_ranking": _build_player_period_ranking_payload(monthly_row),
             "source": {
@@ -823,6 +858,196 @@ def _fetch_player_stats(
         "deaths": int(row["deaths"] or 0),
         "teamkills": int(row["teamkills"] or 0),
     }
+
+
+def _fetch_player_active_time_summary(
+    *,
+    connection: object,
+    player_id: str,
+    server_id: str | None,
+    window: dict[str, object] | None,
+    total_matches_considered: int,
+) -> dict[str, object]:
+    scope_sql, scope_params = _build_scope_sql(server_id)
+    min_active_seconds = get_kpm_min_active_seconds()
+    base_where = [
+        "matches.source_basis = ?",
+        "stats.player_id = ?",
+    ]
+    params: list[object] = [MATCH_RESULT_SOURCE, player_id]
+    if window is not None:
+        base_where.append(
+            "COALESCE(CAST(matches.ended_at AS TEXT), CAST(matches.started_at AS TEXT)) >= ?"
+        )
+        base_where.append(
+            "COALESCE(CAST(matches.ended_at AS TEXT), CAST(matches.started_at AS TEXT)) <= ?"
+        )
+        params.extend([_to_iso(window["start"]), _to_iso(window["end"])])
+    where_sql = " AND ".join(base_where)
+    eligible_sources_placeholders = ", ".join(["?"] * len(REAL_KPM_ACTIVE_TIME_SOURCES))
+    row = connection.execute(
+        f"""
+        SELECT
+            COUNT(DISTINCT CASE
+                WHEN stats.player_active_seconds IS NOT NULL
+                THEN stats.match_key
+                ELSE NULL
+            END) AS observed_matches,
+            COUNT(DISTINCT CASE
+                WHEN stats.active_time_source IN ({eligible_sources_placeholders})
+                THEN stats.match_key
+                ELSE NULL
+            END) AS real_source_matches,
+            COUNT(DISTINCT CASE
+                WHEN stats.active_time_source IN ({eligible_sources_placeholders})
+                 AND COALESCE(stats.player_active_seconds, 0) >= ?
+                THEN stats.match_key
+                ELSE NULL
+            END) AS eligible_matches,
+            SUM(CASE
+                WHEN stats.active_time_source IN ({eligible_sources_placeholders})
+                 AND COALESCE(stats.player_active_seconds, 0) >= ?
+                THEN COALESCE(stats.player_active_seconds, 0)
+                ELSE 0
+            END) AS player_active_seconds,
+            SUM(CASE
+                WHEN stats.active_time_source IN ({eligible_sources_placeholders})
+                 AND COALESCE(stats.player_active_seconds, 0) >= ?
+                THEN COALESCE(stats.kills, 0)
+                ELSE 0
+            END) AS eligible_kills,
+            GROUP_CONCAT(DISTINCT CASE
+                WHEN stats.active_time_source IN ({eligible_sources_placeholders})
+                THEN stats.active_time_source
+                ELSE NULL
+            END) AS eligible_sources,
+            GROUP_CONCAT(DISTINCT COALESCE(stats.active_time_source, 'unavailable')) AS observed_sources
+        FROM rcon_match_player_stats AS stats
+        INNER JOIN rcon_materialized_matches AS matches
+            ON matches.target_key = stats.target_key
+           AND matches.match_key = stats.match_key
+        WHERE {where_sql} {scope_sql}
+        """,
+        [
+            *REAL_KPM_ACTIVE_TIME_SOURCES,
+            *REAL_KPM_ACTIVE_TIME_SOURCES,
+            min_active_seconds,
+            *REAL_KPM_ACTIVE_TIME_SOURCES,
+            min_active_seconds,
+            *REAL_KPM_ACTIVE_TIME_SOURCES,
+            min_active_seconds,
+            *REAL_KPM_ACTIVE_TIME_SOURCES,
+            *params,
+            *scope_params,
+        ],
+    ).fetchone()
+    return _build_profile_active_time_payload(
+        row=dict(row) if row is not None else {},
+        total_matches_considered=total_matches_considered,
+        min_active_seconds=min_active_seconds,
+    )
+
+
+def _build_profile_active_time_payload(
+    *,
+    row: dict[str, object],
+    total_matches_considered: int,
+    min_active_seconds: int,
+) -> dict[str, object]:
+    observed_matches = int(row.get("observed_matches") or 0)
+    real_source_matches = int(row.get("real_source_matches") or 0)
+    eligible_matches = int(row.get("eligible_matches") or 0)
+    player_active_seconds = int(row.get("player_active_seconds") or 0)
+    eligible_kills = int(row.get("eligible_kills") or 0)
+    eligible_sources = _split_sources(row.get("eligible_sources"))
+    observed_sources = _split_sources(row.get("observed_sources"))
+
+    if eligible_matches > 0 and player_active_seconds >= min_active_seconds:
+        player_active_minutes = round(player_active_seconds / 60, 3)
+        return {
+            "player_active_seconds": player_active_seconds,
+            "player_active_minutes": player_active_minutes,
+            "kpm": round(eligible_kills / (player_active_seconds / 60), 2),
+            "kpm_status": "ready",
+            "active_time_source": _summarize_real_active_time_sources(eligible_sources),
+            "active_time_coverage": {
+                "eligible_matches": eligible_matches,
+                "real_source_matches": real_source_matches,
+                "observed_matches": observed_matches,
+                "total_matches_considered": total_matches_considered,
+                "eligible_kills": eligible_kills,
+                "minimum_active_seconds": min_active_seconds,
+                "sources": eligible_sources,
+            },
+        }
+
+    if real_source_matches > 0:
+        return {
+            "player_active_seconds": None,
+            "player_active_minutes": None,
+            "kpm": None,
+            "kpm_status": "insufficient_active_time",
+            "active_time_source": _summarize_real_active_time_sources(eligible_sources or observed_sources),
+            "active_time_coverage": {
+                "eligible_matches": eligible_matches,
+                "real_source_matches": real_source_matches,
+                "observed_matches": observed_matches,
+                "total_matches_considered": total_matches_considered,
+                "eligible_kills": eligible_kills,
+                "minimum_active_seconds": min_active_seconds,
+                "sources": observed_sources,
+            },
+        }
+
+    if observed_matches > 0 or "event_span_fallback" in observed_sources:
+        return {
+            "player_active_seconds": None,
+            "player_active_minutes": None,
+            "kpm": None,
+            "kpm_status": "missing_connection_intervals",
+            "active_time_source": "event_span_fallback" if observed_sources else "unavailable",
+            "active_time_coverage": {
+                "eligible_matches": 0,
+                "real_source_matches": real_source_matches,
+                "observed_matches": observed_matches,
+                "total_matches_considered": total_matches_considered,
+                "eligible_kills": 0,
+                "minimum_active_seconds": min_active_seconds,
+                "sources": observed_sources,
+            },
+        }
+
+    return {
+        "player_active_seconds": None,
+        "player_active_minutes": None,
+        "kpm": None,
+        "kpm_status": "missing_active_time",
+        "active_time_source": "unavailable",
+        "active_time_coverage": {
+            "eligible_matches": 0,
+            "real_source_matches": 0,
+            "observed_matches": 0,
+            "total_matches_considered": total_matches_considered,
+            "eligible_kills": 0,
+            "minimum_active_seconds": min_active_seconds,
+            "sources": [],
+        },
+    }
+
+
+def _split_sources(value: object) -> list[str]:
+    if not isinstance(value, str) or not value.strip():
+        return []
+    return [item for item in {part.strip() for part in value.split(",")} if item]
+
+
+def _summarize_real_active_time_sources(sources: list[str]) -> str:
+    normalized = [source for source in sources if source in REAL_KPM_ACTIVE_TIME_SOURCES]
+    if not normalized:
+        return "unavailable"
+    if len(normalized) == 1:
+        return normalized[0]
+    return "connection_intervals_mixed"
 
 
 def _fetch_player_ranking(

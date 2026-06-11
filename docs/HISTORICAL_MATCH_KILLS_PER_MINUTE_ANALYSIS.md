@@ -174,6 +174,38 @@ This avoids false `0.00` values for:
 - rows below `HLL_KPM_MIN_ACTIVE_SECONDS`
 - rows that only expose `event_span_fallback`
 
+## Personal Player Profile
+
+The public player profile in `stats.html` can now expose real KPM for the selected weekly or monthly window when the profile endpoint can aggregate:
+
+- `SUM(player_active_seconds)`
+- only over rows with:
+  - `active_time_source = connection_intervals`
+  - `active_time_source = connection_intervals_carryover`
+  - `player_active_seconds >= HLL_KPM_MIN_ACTIVE_SECONDS`
+
+Weekly and monthly profile KPM use:
+
+```text
+sum(eligible_kills) / (sum(eligible_player_active_seconds) / 60)
+```
+
+This is intentionally narrower than the window total:
+
+- profile `kills` still show all kills in the selected window
+- profile `KPM` only becomes `ready` when the active-time subset is reliable enough
+
+The profile payload now exposes:
+
+- `player_active_seconds`
+- `player_active_minutes`
+- `kpm`
+- `kpm_status`
+- `active_time_source`
+- `active_time_coverage`
+
+If the profile read model is empty, the endpoint can safely fall back to runtime aggregation over `rcon_match_player_stats` for that single player and time window. This avoids inventing KPM while keeping the page usable before the read model is refreshed.
+
 ## Kills Per Match Labels
 
 Several public tables were showing `kills_per_match` under the visible label `KPM`.

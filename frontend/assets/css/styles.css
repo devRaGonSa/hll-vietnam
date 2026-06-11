@@ -1448,6 +1448,39 @@ h2 {
     linear-gradient(180deg, rgba(28, 34, 25, 0.88), rgba(12, 15, 11, 0.96));
 }
 
+.stats-profile-links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 10px;
+}
+
+.stats-profile-links a {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 42px;
+  padding: 0.55rem 0.9rem;
+  border: 1px solid rgba(159, 168, 141, 0.18);
+  border-radius: 999px;
+  background: rgba(15, 18, 13, 0.84);
+  color: var(--text);
+  text-decoration: none;
+  font-weight: 700;
+}
+
+.stats-profile-links a:hover {
+  border-color: rgba(210, 182, 118, 0.34);
+  color: var(--accent-warm);
+}
+
+.stats-profile-links__brand {
+  width: 18px;
+  height: 18px;
+  object-fit: contain;
+  flex: 0 0 auto;
+}
+
 .stats-summary-card--placeholder {
   border-color: rgba(210, 182, 118, 0.26);
   color: var(--accent-warm);

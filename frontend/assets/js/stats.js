@@ -22,6 +22,24 @@
   const annualMetricSupportedOnly = "kills";
   const annualLimit = 20;
   const annualServerId = "all";
+  const externalProfileBrands = Object.freeze({
+    steam: Object.freeze({
+      label: "Steam",
+      logoSrc: "./assets/img/brands/steam.png",
+    }),
+    hellor: Object.freeze({
+      label: "Hellor",
+      logoSrc: "./assets/img/brands/hllor.webp",
+    }),
+    hll_records: Object.freeze({
+      label: "HLL Records",
+      logoSrc: "./assets/img/brands/hllrecords.png",
+    }),
+    helo: Object.freeze({
+      label: "Helo",
+      logoSrc: "./assets/img/brands/helo-system.png",
+    }),
+  });
 
   const messages = {
     backendUnavailableForSearch:
@@ -478,26 +496,30 @@
       const playerName = String(
         (weeklyData?.player_name || monthlyData?.player_name || "Sin nombre"),
       );
-      const playerIdText = String(weeklyData?.player_id || monthlyData?.player_id || playerId);
+      const profileIdentityData =
+        weeklyData?.player_id || weeklyData?.external_profile_links
+          ? weeklyData
+          : monthlyData;
       const hasWeeklyStats = Number(weeklyData?.matches_considered || 0) > 0;
       const hasMonthlyStats = Number(monthlyData?.matches_considered || 0) > 0;
       const hasStats = hasWeeklyStats || hasMonthlyStats;
       const partialLoadWarning = weeklyFailed || monthlyFailed;
 
       profileStateNode.textContent = hasStats
-        ? `${playerName} (${playerIdText})`
-        : `${messages.profileNoStats} (${playerIdText})`;
+        ? playerName
+        : messages.profileNoStats;
       profileStateNode.className = hasStats
         ? "stats-state stats-state--neutral"
         : "stats-state stats-state--warning";
 
       summaryGrid.innerHTML = renderProfileSummaryCards({
         playerName,
-        playerIdText,
+        profileIdentityData,
         weeklyData,
         monthlyData,
         weeklyFailed,
         monthlyFailed,
+        externalProfileBrands,
       });
 
       if (partialLoadWarning) {
@@ -557,11 +579,12 @@
 
   function renderProfileSummaryCards({
     playerName,
-    playerIdText,
+    profileIdentityData,
     weeklyData,
     monthlyData,
     weeklyFailed,
     monthlyFailed,
+    externalProfileBrands,
   }) {
     const weeklySummary = weeklyFailed
       ? `
@@ -599,10 +622,10 @@
       <article class="stats-summary-card">
         <p class="stats-summary-title">Identidad</p>
         <p><strong>Jugador:</strong> ${escapeHtml(playerName)}</p>
-        <p><strong>ID:</strong> ${escapeHtml(playerIdText)}</p>
         <p><strong>Partidas semanales:</strong> ${safeInt(weeklyData?.matches_considered, 0)}</p>
         <p><strong>Partidas mensuales:</strong> ${safeInt(monthlyData?.matches_considered, 0)}</p>
       </article>
+      ${renderStatsExternalProfilesCard(profileIdentityData, externalProfileBrands)}
       ${weeklySummary}
       ${monthlySummary}
     `;
@@ -679,6 +702,7 @@
     const deaths = safeInt(data?.deaths, 0);
     const kdRatio = safeDecimal(data?.kd_ratio, 2, "0.00");
     const killsPerMatch = safeDecimal(data?.kills_per_match, 2, "0.00");
+    const kpmMetric = renderStatsKpmMetric(data);
 
     return `
       <article class="stats-comparison-card">
@@ -704,6 +728,7 @@
             <span class="stats-comparison-card__metric-label">KD</span>
             <span class="stats-comparison-card__metric-value">${kdRatio}</span>
           </div>
+          ${kpmMetric}
         </div>
         <p class="stats-comparison-card__detail">
           <strong>Kills/partida:</strong> ${killsPerMatch}
@@ -718,6 +743,13 @@
     const monthlyKillsPerMatch = safeParseNumber(monthlyData?.kills_per_match);
     const weeklyKd = safeParseNumber(weeklyData?.kd_ratio);
     const monthlyKd = safeParseNumber(monthlyData?.kd_ratio);
+    const weeklyKpm = safeParseNumber(weeklyData?.kpm);
+    const monthlyKpm = safeParseNumber(monthlyData?.kpm);
+    const hasReadyKpm =
+      weeklyData?.kpm_status === "ready" &&
+      monthlyData?.kpm_status === "ready" &&
+      Number.isFinite(weeklyKpm) &&
+      Number.isFinite(monthlyKpm);
     const killsDelta = safeInt(monthlyData?.kills, 0) - safeInt(weeklyData?.kills, 0);
     const matchesDelta =
       safeInt(monthlyData?.matches_considered, 0) - safeInt(weeklyData?.matches_considered, 0);
@@ -746,6 +778,20 @@
             <span class="stats-comparison-card__metric-label">KD mensual</span>
             <span class="stats-comparison-card__metric-value">${safeDecimal(monthlyKd, 2, "0.00")}</span>
           </div>
+          ${
+            hasReadyKpm
+              ? `
+                <div class="stats-comparison-card__metric">
+                  <span class="stats-comparison-card__metric-label">KPM semanal</span>
+                  <span class="stats-comparison-card__metric-value">${safeDecimal(weeklyKpm, 2, "0.00")}</span>
+                </div>
+                <div class="stats-comparison-card__metric">
+                  <span class="stats-comparison-card__metric-label">KPM mensual</span>
+                  <span class="stats-comparison-card__metric-value">${safeDecimal(monthlyKpm, 2, "0.00")}</span>
+                </div>
+              `
+              : ""
+          }
         </div>
         <p class="stats-comparison-card__detail">
           <strong>Delta de kills:</strong> ${formatSignedNumber(killsDelta)}
@@ -854,7 +900,7 @@
   }
 
   function formatWindowRange(ranking) {
-    const windowLabel = String(ranking?.window_kind || "").trim();
+    const windowLabel = labelForStatsWindowKind(ranking?.window_kind);
     const windowStart = formatDateTime(ranking?.window_start);
     const windowEnd = formatDateTime(ranking?.window_end);
     if (windowLabel) {
@@ -873,6 +919,113 @@
       kills_per_match: "Kills/partida",
     };
     return labels[String(metric || "").trim()] || "Kills";
+  }
+
+  function labelForStatsWindowKind(windowKind) {
+    const labels = {
+      "current-week": "Semana actual",
+      "current-month": "Mes actual",
+      "previous-closed-week-fallback": "Semana cerrada anterior",
+      "previous-closed-month-fallback": "Mes cerrado anterior",
+      "previous-week": "Semana anterior",
+      "previous-month": "Mes anterior",
+    };
+    const normalized = String(windowKind || "").trim();
+    return labels[normalized] || normalized;
+  }
+
+  function renderStatsKpmMetric(data) {
+    if (data?.kpm_status !== "ready") {
+      return "";
+    }
+    const kpmValue = safeParseNumber(data?.kpm);
+    if (!Number.isFinite(kpmValue)) {
+      return "";
+    }
+    return `
+      <div class="stats-comparison-card__metric">
+        <span class="stats-comparison-card__metric-label">KPM</span>
+        <span class="stats-comparison-card__metric-value">${safeDecimal(kpmValue, 2, "0.00")}</span>
+      </div>
+    `;
+  }
+
+  function renderStatsExternalProfilesCard(profileData, brands) {
+    const links = resolveStatsExternalProfileLinks(profileData, brands);
+    return `
+      <article class="stats-summary-card">
+        <p class="stats-summary-title">Perfiles externos</p>
+        ${
+          links.length
+            ? `
+              <div class="stats-profile-links">
+                ${links
+                  .map(
+                    ({ href, label, logoSrc }) => `
+                      <a href="${escapeHtml(href)}" target="_blank" rel="noopener noreferrer">
+                        ${
+                          logoSrc
+                            ? `<img class="stats-profile-links__brand" src="${escapeHtml(logoSrc)}" alt="" aria-hidden="true" decoding="async" loading="lazy" onerror="this.remove();" />`
+                            : ""
+                        }
+                        <span>${escapeHtml(label)}</span>
+                      </a>
+                    `,
+                  )
+                  .join("")}
+              </div>
+            `
+            : "<p>Perfiles externos no disponibles.</p>"
+        }
+      </article>
+    `;
+  }
+
+  function resolveStatsExternalProfileLinks(profileData, brands) {
+    const links = [];
+    const fallbackLinks = buildFallbackExternalProfileLinks(profileData);
+    const payloadLinks =
+      profileData?.external_profile_links && typeof profileData.external_profile_links === "object"
+        ? profileData.external_profile_links
+        : {};
+    const candidateLinks = {
+      ...fallbackLinks,
+      ...payloadLinks,
+    };
+    ["steam", "hellor", "hll_records", "helo"].forEach((key) => {
+      const href = candidateLinks?.[key];
+      if (typeof href !== "string" || !href.trim()) {
+        return;
+      }
+      const brand = brands[key];
+      links.push({
+        href,
+        label: brand?.label || key,
+        logoSrc: brand?.logoSrc || "",
+      });
+    });
+    return links;
+  }
+
+  function buildFallbackExternalProfileLinks(profileData) {
+    const playerId = String(profileData?.player_id || "").trim();
+    const steamId = String(profileData?.steam_id_64 || playerId).trim();
+    if (/^\d{17}$/.test(steamId)) {
+      return {
+        steam: `https://steamcommunity.com/profiles/${steamId}`,
+        hellor: `https://hellor.pro/player/${steamId}`,
+        hll_records: `https://hllrecords.com/profiles/${steamId}`,
+        helo: `https://helo-system.de/statistics/players/${steamId}?series=2024`,
+      };
+    }
+    const epicId = String(profileData?.epic_id || playerId).trim().toLowerCase();
+    if (/^[0-9a-f]{32}$/i.test(epicId)) {
+      return {
+        hellor: `https://hellor.pro/player/${epicId}`,
+        hll_records: `https://hllrecords.com/profiles/${epicId}`,
+      };
+    }
+    return {};
   }
 
   function safeInt(value, fallback = 0) {
