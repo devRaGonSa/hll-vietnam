@@ -107,7 +107,7 @@ def initialize_ranking_snapshot_storage(
     ensure_storage: bool = True,
 ) -> Path:
     """Create ranking snapshot tables used by weekly/monthly public ranking reads."""
-    resolved_path = initialize_rcon_materialized_storage(
+    resolved_path = _resolve_materialized_storage_path(
         db_path=db_path,
         ensure_storage=ensure_storage,
     )
@@ -430,6 +430,16 @@ def _resolve_ranking_snapshot_sqlite_path(*, db_path: Path | None = None) -> Pat
     return db_path if db_path is not None else get_storage_path()
 
 
+def _resolve_materialized_storage_path(
+    *,
+    db_path: Path | None = None,
+    ensure_storage: bool = True,
+) -> Path:
+    if ensure_storage:
+        return initialize_rcon_materialized_storage(db_path=db_path)
+    return _resolve_ranking_snapshot_sqlite_path(db_path=db_path)
+
+
 def _build_missing_ranking_snapshot_result(
     *,
     timeframe: str,
@@ -566,7 +576,7 @@ def list_rcon_materialized_leaderboard(
     normalized_limit = max(1, int(limit or 10))
     anchor = _as_utc(now or datetime.now(timezone.utc))
 
-    resolved_path = initialize_rcon_materialized_storage(
+    resolved_path = _resolve_materialized_storage_path(
         db_path=db_path,
         ensure_storage=ensure_storage,
     )

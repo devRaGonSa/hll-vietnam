@@ -50,6 +50,8 @@ from app.rcon_historical_read_model import (
     _calculate_duration_seconds,
 )
 from app.rcon_historical_leaderboards import _dedupe_snapshot_rows
+from app.rcon_historical_leaderboards import initialize_ranking_snapshot_storage
+from app.rcon_historical_leaderboards import list_rcon_materialized_leaderboard
 
 
 class HistoricalSnapshotRefreshTests(unittest.TestCase):
@@ -304,6 +306,86 @@ class HistoricalSnapshotRefreshTests(unittest.TestCase):
 
         self.assertFalse(payload["event_coverage"]["ready"])
         self.assertEqual(payload["event_coverage"]["reason"], "player-event-raw-ledger-missing")
+        self.assertEqual(payload["items"], [])
+
+    def test_initialize_ranking_snapshot_storage_uses_materialized_initializer_without_invalid_keyword(self) -> None:
+        db_path = Path("dummy.sqlite3")
+        with (
+            patch(
+                "app.rcon_historical_leaderboards.initialize_rcon_materialized_storage",
+                return_value=db_path,
+            ) as materialized_initializer,
+            patch("app.rcon_historical_leaderboards.use_postgres_rcon_storage", return_value=False),
+            patch(
+                "app.rcon_historical_leaderboards.connect_sqlite_writer",
+                return_value=sqlite3.connect(":memory:"),
+            ),
+        ):
+            resolved_path = initialize_ranking_snapshot_storage(db_path=db_path, ensure_storage=True)
+
+        materialized_initializer.assert_called_once_with(db_path=db_path)
+        self.assertEqual(resolved_path, db_path)
+
+    def test_initialize_ranking_snapshot_storage_skips_materialized_initializer_when_disabled(self) -> None:
+        db_path = Path("dummy.sqlite3")
+        with (
+            patch("app.rcon_historical_leaderboards.initialize_rcon_materialized_storage") as materialized_initializer,
+            patch("app.rcon_historical_leaderboards.use_postgres_rcon_storage", return_value=False),
+            patch(
+                "app.rcon_historical_leaderboards.connect_sqlite_writer",
+                return_value=sqlite3.connect(":memory:"),
+            ),
+        ):
+            resolved_path = initialize_ranking_snapshot_storage(db_path=db_path, ensure_storage=False)
+
+        materialized_initializer.assert_not_called()
+        self.assertEqual(resolved_path, db_path)
+
+    def test_list_rcon_materialized_leaderboard_skips_materialized_initializer_when_disabled(self) -> None:
+        db_path = Path("dummy.sqlite3")
+        window = {
+            "start": datetime(2026, 6, 9, tzinfo=timezone.utc),
+            "end": datetime(2026, 6, 10, tzinfo=timezone.utc),
+            "days": 1,
+            "kind": "current-week",
+            "label": "Semana actual",
+            "selection_reason": "test",
+            "current_week_start": datetime(2026, 6, 9, tzinfo=timezone.utc),
+            "current_week_closed_matches": 1,
+            "previous_week_closed_matches": 2,
+            "current_month_start": datetime(2026, 6, 1, tzinfo=timezone.utc),
+            "selected_month_start": datetime(2026, 6, 1, tzinfo=timezone.utc),
+            "selected_month_end": datetime(2026, 6, 10, tzinfo=timezone.utc),
+            "current_month_closed_matches": 3,
+            "previous_month_closed_matches": 4,
+            "sufficient_sample": {"minimum_closed_matches": 1},
+        }
+        fake_connection = object()
+        with (
+            patch("app.rcon_historical_leaderboards.initialize_rcon_materialized_storage") as materialized_initializer,
+            patch(
+                "app.rcon_historical_leaderboards._connect_scope",
+                return_value=nullcontext(fake_connection),
+            ) as connect_scope,
+            patch("app.rcon_historical_leaderboards.select_leaderboard_window", return_value=window),
+            patch("app.rcon_historical_leaderboards._fetch_leaderboard_rows", return_value=[]),
+            patch(
+                "app.rcon_historical_leaderboards._fetch_source_range",
+                return_value=(None, None),
+            ),
+        ):
+            payload = list_rcon_materialized_leaderboard(
+                server_key="all-servers",
+                timeframe="weekly",
+                metric="kills",
+                limit=10,
+                ensure_storage=False,
+                db_path=db_path,
+                now=datetime(2026, 6, 10, tzinfo=timezone.utc),
+            )
+
+        materialized_initializer.assert_not_called()
+        connect_scope.assert_called_once_with(db_path, db_path=db_path, initialize=False)
         self.assertEqual(payload["items"], [])
 
     def test_historical_leaderboard_snapshot_does_not_runtime_enrich_public_request(self) -> None:

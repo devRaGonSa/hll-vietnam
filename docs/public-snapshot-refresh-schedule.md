@@ -102,6 +102,7 @@ Manual public jobs executed with `python -m app.historical_runner --public-job .
 - ranking snapshot rows are deduplicated by `player_id` before inserting `ranking_snapshot_items`
 - PostgreSQL snapshot storage initialization runs once at the start of the heavy job, then substeps reuse non-DDL connections
 - missing `player_event_raw_ledger` no longer aborts `historical-monthly`; the monthly MVP V2 slice degrades to an empty payload with `event_coverage.ready = false`
+- materialized storage initialization gating stays in the leaderboard wrapper layer; `initialize_rcon_materialized_storage()` is called without extra keywords only when initialization is actually required
 
 This keeps manual validation commands useful without hiding partial failures inside the job payload.
 
