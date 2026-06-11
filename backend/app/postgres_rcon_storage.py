@@ -183,6 +183,8 @@ CREATE TABLE IF NOT EXISTS rcon_match_player_stats (
     death_by_json TEXT NOT NULL DEFAULT '{}',
     first_seen_server_time BIGINT,
     last_seen_server_time BIGINT,
+    player_active_seconds INTEGER,
+    active_time_source TEXT,
     created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
     UNIQUE(target_key, match_key, player_id)
@@ -415,6 +417,14 @@ BEGIN
 END $$;
 """
 
+POSTGRES_RCON_MATCH_PLAYER_STATS_ACTIVE_TIME_MIGRATION_SQL = """
+ALTER TABLE rcon_match_player_stats
+ADD COLUMN IF NOT EXISTS player_active_seconds INTEGER;
+
+ALTER TABLE rcon_match_player_stats
+ADD COLUMN IF NOT EXISTS active_time_source TEXT;
+"""
+
 
 def initialize_postgres_rcon_storage() -> None:
     """Create deterministic PostgreSQL schema for migrated RCON domains."""
@@ -422,6 +432,7 @@ def initialize_postgres_rcon_storage() -> None:
         with connection.cursor() as cursor:
             cursor.execute(RCON_SCHEMA_SQL)
             cursor.execute(POSTGRES_ANNUAL_RANKING_SCHEMA_MIGRATION_SQL)
+            cursor.execute(POSTGRES_RCON_MATCH_PLAYER_STATS_ACTIVE_TIME_MIGRATION_SQL)
 
 
 @contextmanager

@@ -96,6 +96,8 @@ def initialize_rcon_materialized_storage(*, db_path: Path | None = None) -> Path
                     death_by_json TEXT NOT NULL DEFAULT '{}',
                     first_seen_server_time INTEGER,
                     last_seen_server_time INTEGER,
+                    player_active_seconds INTEGER,
+                    active_time_source TEXT,
                     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                     updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                     UNIQUE(target_key, match_key, player_id)
@@ -153,6 +155,7 @@ def initialize_rcon_materialized_storage(*, db_path: Path | None = None) -> Path
                 ON rcon_annual_ranking_snapshot_items(snapshot_id, player_id);
                 """
             )
+            _ensure_materialized_player_stat_columns(connection)
     return resolved_path
 
 
@@ -752,6 +755,12 @@ def _derive_player_stats_for_match(
 
     stats = []
     for player in players.values():
+        active_time = _build_player_active_time_payload(
+            connection,
+            match=match,
+            player=player,
+            match_rows=rows,
+        )
         stats.append(
             {
                 "target_key": match["target_key"],
@@ -769,6 +778,8 @@ def _derive_player_stats_for_match(
                 "death_by_json": _dump_counter(player["death_by"]),
                 "first_seen_server_time": player.get("first_seen_server_time"),
                 "last_seen_server_time": player.get("last_seen_server_time"),
+                "player_active_seconds": active_time["player_active_seconds"],
+                "active_time_source": active_time["active_time_source"],
             }
         )
     return stats
@@ -781,8 +792,9 @@ def _insert_player_stat(connection: sqlite3.Connection, stat: dict[str, object])
             target_key, match_key, player_id, player_name, team,
             kills, deaths, teamkills, deaths_by_teamkill,
             weapons_json, death_by_weapons_json, most_killed_json, death_by_json,
-            first_seen_server_time, last_seen_server_time
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            first_seen_server_time, last_seen_server_time,
+            player_active_seconds, active_time_source
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             stat["target_key"],
@@ -800,6 +812,8 @@ def _insert_player_stat(connection: sqlite3.Connection, stat: dict[str, object])
             stat["death_by_json"],
             stat.get("first_seen_server_time"),
             stat.get("last_seen_server_time"),
+            stat.get("player_active_seconds"),
+            stat.get("active_time_source"),
         ),
     )
 
@@ -844,6 +858,171 @@ def _touch_player(player: dict[str, object], server_time: int | None) -> None:
     last_seen = _coerce_int(player.get("last_seen_server_time"))
     player["first_seen_server_time"] = server_time if first_seen is None else min(first_seen, server_time)
     player["last_seen_server_time"] = server_time if last_seen is None else max(last_seen, server_time)
+
+
+def _calculate_event_span_seconds(
+    *,
+    first_seen_server_time: object,
+    last_seen_server_time: object,
+) -> int | None:
+    first_seen = _coerce_int(first_seen_server_time)
+    last_seen = _coerce_int(last_seen_server_time)
+    if first_seen is None or last_seen is None:
+        return None
+    return max(0, last_seen - first_seen)
+
+
+def _build_player_active_time_payload(
+    connection: sqlite3.Connection,
+    *,
+    match: dict[str, object],
+    player: dict[str, object],
+    match_rows: list[sqlite3.Row],
+) -> dict[str, object]:
+    lower = _coerce_int(match.get("started_server_time"))
+    upper = _coerce_int(match.get("ended_server_time"))
+    fallback_seconds = _calculate_event_span_seconds(
+        first_seen_server_time=player.get("first_seen_server_time"),
+        last_seen_server_time=player.get("last_seen_server_time"),
+    )
+    player_id = str(player.get("player_id") or "").strip()
+
+    if lower is None or upper is None or upper < lower:
+        return {
+            "player_active_seconds": fallback_seconds,
+            "active_time_source": "event_span_fallback" if fallback_seconds is not None else "unavailable",
+        }
+
+    if not player_id or player_id.startswith("name:"):
+        return {
+            "player_active_seconds": fallback_seconds,
+            "active_time_source": "event_span_fallback" if fallback_seconds is not None else "unavailable",
+        }
+
+    interval_events = _collect_player_connection_events_from_match_rows(
+        match_rows,
+        player_id=player_id,
+    )
+    prior_connected = _player_was_connected_at_match_start(
+        connection,
+        target_key=str(match["target_key"]),
+        player_id=player_id,
+        match_start_server_time=lower,
+    )
+    interval_seconds, interval_source = _calculate_connection_interval_active_seconds(
+        match_start_server_time=lower,
+        match_end_server_time=upper,
+        prior_connected=prior_connected,
+        interval_events=interval_events,
+    )
+    if interval_source is not None:
+        return {
+            "player_active_seconds": interval_seconds,
+            "active_time_source": interval_source,
+        }
+
+    return {
+        "player_active_seconds": fallback_seconds,
+        "active_time_source": "event_span_fallback" if fallback_seconds is not None else "unavailable",
+    }
+
+
+def _collect_player_connection_events_from_match_rows(
+    rows: list[sqlite3.Row],
+    *,
+    player_id: str,
+) -> list[tuple[str, int]]:
+    events: list[tuple[str, int]] = []
+    for row in rows:
+        event_type = str(row["event_type"] or "")
+        if event_type not in {"connected", "disconnected"}:
+            continue
+        payload = _json_object(row["parsed_payload_json"])
+        event_player_id = str(payload.get("player_id") or "").strip()
+        server_time = _coerce_int(row["server_time"])
+        if event_player_id == player_id and server_time is not None:
+            events.append((event_type, server_time))
+    events.sort(key=lambda item: item[1])
+    return events
+
+
+def _player_was_connected_at_match_start(
+    connection: sqlite3.Connection,
+    *,
+    target_key: str,
+    player_id: str,
+    match_start_server_time: int,
+) -> bool:
+    row = connection.execute(
+        """
+        SELECT event_type
+        FROM rcon_admin_log_events
+        WHERE target_key = ?
+          AND server_time IS NOT NULL
+          AND server_time < ?
+          AND event_type IN ('connected', 'disconnected')
+          AND parsed_payload_json LIKE ?
+        ORDER BY server_time DESC, id DESC
+        LIMIT 1
+        """,
+        (
+            target_key,
+            match_start_server_time,
+            f'%"player_id":"{player_id}"%',
+        ),
+    ).fetchone()
+    return bool(row and row["event_type"] == "connected")
+
+
+def _calculate_connection_interval_active_seconds(
+    *,
+    match_start_server_time: int,
+    match_end_server_time: int,
+    prior_connected: bool,
+    interval_events: list[tuple[str, int]],
+) -> tuple[int | None, str | None]:
+    open_since = match_start_server_time if prior_connected else None
+    total_seconds = 0
+    used_carryover = prior_connected
+    has_reliable_intervals = prior_connected
+
+    for event_type, server_time in interval_events:
+        clamped_time = max(match_start_server_time, min(match_end_server_time, server_time))
+        if event_type == "connected":
+            if open_since is None:
+                open_since = clamped_time
+                has_reliable_intervals = True
+            continue
+        if open_since is None:
+            continue
+        total_seconds += max(0, clamped_time - open_since)
+        open_since = None
+        has_reliable_intervals = True
+
+    if open_since is not None:
+        total_seconds += max(0, match_end_server_time - open_since)
+
+    if not has_reliable_intervals:
+        return None, None
+    return (
+        total_seconds,
+        "connection_intervals_carryover" if used_carryover else "connection_intervals",
+    )
+
+
+def _ensure_materialized_player_stat_columns(connection: sqlite3.Connection) -> None:
+    columns = {
+        row["name"]
+        for row in connection.execute("PRAGMA table_info(rcon_match_player_stats)").fetchall()
+    }
+    if "player_active_seconds" not in columns:
+        connection.execute(
+            "ALTER TABLE rcon_match_player_stats ADD COLUMN player_active_seconds INTEGER"
+        )
+    if "active_time_source" not in columns:
+        connection.execute(
+            "ALTER TABLE rcon_match_player_stats ADD COLUMN active_time_source TEXT"
+        )
 
 
 def _counter(player: dict[str, object], key: str) -> Counter[str]:

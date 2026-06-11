@@ -507,6 +507,10 @@ function isInactiveMatchPlayer(player) {
 
 function renderPlayerStatsPanel(player, item, context) {
   const matchups = buildPlayerDirectMatchups(player);
+  const kpmChip =
+    player?.kpm_status === "ready"
+      ? renderPlayerStatChip("KPM", formatDecimal(player.kpm, 2))
+      : "";
   const hasExpandedStats =
     hasNamedCounts(player.top_weapons) ||
     hasNamedCounts(player.most_killed) ||
@@ -525,6 +529,7 @@ function renderPlayerStatsPanel(player, item, context) {
           ${renderPlayerStatChip("Muertes", formatOptionalNumber(player.deaths))}
           ${renderPlayerStatChip("TK", formatOptionalNumber(player.teamkills))}
           ${renderPlayerStatChip("KD", formatKdRatio(player))}
+          ${kpmChip}
         </div>
       </div>
       ${renderExternalProfilesSection(player)}

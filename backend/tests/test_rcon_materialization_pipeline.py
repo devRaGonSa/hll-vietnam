@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import gc
 import os
+import sqlite3
 import tempfile
 import unittest
 from pathlib import Path
@@ -24,6 +25,7 @@ from app.rcon_admin_log_materialization import (
 )
 from app.rcon_admin_log_storage import persist_rcon_admin_log_entries
 from app.rcon_historical_read_model import (
+    _build_player_active_time_payload,
     get_rcon_historical_match_detail,
     list_rcon_historical_recent_activity,
 )
@@ -58,6 +60,10 @@ class RconMaterializationPipelineTests(unittest.TestCase):
             self.assertEqual(players["Alpha"]["teamkills"], 1)
             self.assertEqual(players["Bravo"]["deaths"], 1)
             self.assertEqual(players["Charlie"]["deaths_by_teamkill"], 1)
+            self.assertEqual(players["Alpha"]["player_active_seconds"], 350)
+            self.assertEqual(players["Alpha"]["active_time_source"], "connection_intervals")
+            self.assertEqual(players["Bravo"]["player_active_seconds"], 0)
+            self.assertEqual(players["Bravo"]["active_time_source"], "event_span_fallback")
             self.assertEqual(status["materialized_matches"], 1)
             self.assertEqual(status["matches_with_player_stats"], 1)
             gc.collect()
@@ -84,6 +90,11 @@ class RconMaterializationPipelineTests(unittest.TestCase):
             players = {row["player_name"]: row for row in detail["players"]}
             self.assertNotIn("player_id", players["Alpha"])
             self.assertIn("kd_ratio", players["Alpha"])
+            self.assertEqual(players["Alpha"]["player_active_seconds"], 350)
+            self.assertEqual(players["Alpha"]["kpm_status"], "ready")
+            self.assertEqual(players["Alpha"]["kpm"], 0.17)
+            self.assertEqual(players["Bravo"]["kpm_status"], "missing_connection_intervals")
+            self.assertIsNone(players["Bravo"]["kpm"])
             self.assertEqual(players["Alpha"]["steam_id_64"], "76561198000000001")
             self.assertEqual(players["Alpha"]["platform"], "steam")
             self.assertEqual(
@@ -94,6 +105,372 @@ class RconMaterializationPipelineTests(unittest.TestCase):
             self.assertNotIn("steam_id_64", players["Charlie"])
             self.assertEqual(players["Charlie"]["external_profile_links"], {})
             gc.collect()
+
+    def test_materialization_migrates_existing_player_stats_schema_with_active_time_columns(self) -> None:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmpdir:
+            db_path = Path(tmpdir) / "historical.sqlite3"
+            connection = sqlite3.connect(db_path)
+            try:
+                connection.executescript(
+                    """
+                    CREATE TABLE rcon_admin_log_events (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        target_key TEXT NOT NULL,
+                        external_server_id TEXT,
+                        event_timestamp TEXT,
+                        server_time INTEGER,
+                        relative_time TEXT,
+                        event_type TEXT NOT NULL,
+                        raw_message TEXT NOT NULL,
+                        canonical_message TEXT NOT NULL,
+                        parsed_payload_json TEXT NOT NULL,
+                        raw_entry_json TEXT NOT NULL,
+                        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+                    );
+
+                    CREATE TABLE rcon_materialized_matches (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        target_key TEXT NOT NULL,
+                        external_server_id TEXT,
+                        match_key TEXT NOT NULL,
+                        map_name TEXT,
+                        map_pretty_name TEXT,
+                        game_mode TEXT,
+                        started_server_time INTEGER,
+                        ended_server_time INTEGER,
+                        started_at TEXT,
+                        ended_at TEXT,
+                        allied_score INTEGER,
+                        axis_score INTEGER,
+                        winner TEXT,
+                        confidence_mode TEXT NOT NULL,
+                        source_basis TEXT NOT NULL,
+                        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                        updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                        UNIQUE(target_key, match_key)
+                    );
+
+                    CREATE TABLE rcon_match_player_stats (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        target_key TEXT NOT NULL,
+                        match_key TEXT NOT NULL,
+                        player_id TEXT NOT NULL,
+                        player_name TEXT NOT NULL,
+                        team TEXT,
+                        kills INTEGER NOT NULL DEFAULT 0,
+                        deaths INTEGER NOT NULL DEFAULT 0,
+                        teamkills INTEGER NOT NULL DEFAULT 0,
+                        deaths_by_teamkill INTEGER NOT NULL DEFAULT 0,
+                        weapons_json TEXT NOT NULL DEFAULT '{}',
+                        death_by_weapons_json TEXT NOT NULL DEFAULT '{}',
+                        most_killed_json TEXT NOT NULL DEFAULT '{}',
+                        death_by_json TEXT NOT NULL DEFAULT '{}',
+                        first_seen_server_time INTEGER,
+                        last_seen_server_time INTEGER,
+                        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                        updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                        UNIQUE(target_key, match_key, player_id)
+                    );
+                    """
+                )
+            finally:
+                connection.close()
+
+            materialize_rcon_admin_log(db_path=db_path)
+
+            connection = sqlite3.connect(db_path)
+            try:
+                columns = {
+                    row[1]
+                    for row in connection.execute("PRAGMA table_info(rcon_match_player_stats)")
+                }
+            finally:
+                connection.close()
+
+            self.assertIn("player_active_seconds", columns)
+            self.assertIn("active_time_source", columns)
+            gc.collect()
+
+    def test_match_detail_keeps_kpm_missing_for_legacy_rows_without_active_time(self) -> None:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmpdir:
+            db_path = Path(tmpdir) / "historical.sqlite3"
+            previous_storage_path = os.environ.get("HLL_BACKEND_STORAGE_PATH")
+            os.environ["HLL_BACKEND_STORAGE_PATH"] = str(db_path)
+            try:
+                materialize_rcon_admin_log(db_path=db_path)
+                connection = sqlite3.connect(db_path)
+                try:
+                    connection.execute(
+                        """
+                        INSERT INTO rcon_materialized_matches (
+                            target_key, external_server_id, match_key, map_name, map_pretty_name,
+                            game_mode, started_server_time, ended_server_time, started_at, ended_at,
+                            allied_score, axis_score, winner, confidence_mode, source_basis
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        """,
+                        (
+                            "comunidad-hispana-01",
+                            "comunidad-hispana-01",
+                            "legacy-match",
+                            "mortain_warfare",
+                            "Mortain",
+                            "warfare",
+                            100,
+                            500,
+                            "2026-05-01T10:00:00Z",
+                            "2026-05-01T11:00:00Z",
+                            5,
+                            3,
+                            "allied",
+                            "exact",
+                            "admin-log-match-ended",
+                        ),
+                    )
+                    connection.execute(
+                        """
+                        INSERT INTO rcon_match_player_stats (
+                            target_key, match_key, player_id, player_name, team,
+                            kills, deaths, teamkills, deaths_by_teamkill,
+                            weapons_json, death_by_weapons_json, most_killed_json, death_by_json,
+                            first_seen_server_time, last_seen_server_time, player_active_seconds, active_time_source
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        """,
+                        (
+                            "comunidad-hispana-01",
+                            "legacy-match",
+                            "steam-legacy",
+                            "Legacy",
+                            "Allies",
+                            10,
+                            5,
+                            0,
+                            0,
+                            "{}",
+                            "{}",
+                            "{}",
+                            "{}",
+                            120,
+                            480,
+                            None,
+                            None,
+                        ),
+                    )
+                    connection.commit()
+                finally:
+                    connection.close()
+                detail = get_rcon_historical_match_detail(
+                    server_key="comunidad-hispana-01",
+                    match_id="legacy-match",
+                )
+            finally:
+                _restore_env("HLL_BACKEND_STORAGE_PATH", previous_storage_path)
+
+            self.assertIsNotNone(detail)
+            player = detail["players"][0]
+            self.assertIsNone(player["kpm"])
+            self.assertEqual(player["kpm_status"], "missing_active_time")
+            gc.collect()
+
+    def test_active_time_counts_full_match_for_player_connected_before_start(self) -> None:
+        detail = _materialize_detail_from_entries(
+            entries=[
+                {
+                    "timestamp": "2026-05-01T09:58:00Z",
+                    "message": "[0 min (80)] CONNECTED Carry Over (steam-carry)",
+                },
+                {
+                    "timestamp": "2026-05-01T10:00:00Z",
+                    "message": "[1 min (100)] MATCH START Mortain Warfare",
+                },
+                {
+                    "timestamp": "2026-05-01T10:30:00Z",
+                    "message": (
+                        "[31 min (1900)] KILL: Carry Over(Allies/steam-carry) -> "
+                        "Victim(Axis/steam-victim) with M1 GARAND"
+                    ),
+                },
+                {
+                    "timestamp": "2026-05-01T11:00:00Z",
+                    "message": "[61 min (3700)] MATCH ENDED `Mortain Warfare` ALLIED (5 - 0) AXIS",
+                },
+            ]
+        )
+
+        player = {row["player_name"]: row for row in detail["players"]}["Carry Over"]
+        self.assertEqual(player["player_active_seconds"], 3600)
+        self.assertEqual(player["active_time_source"], "connection_intervals_carryover")
+        self.assertEqual(player["kpm_status"], "ready")
+        self.assertEqual(player["kpm"], 0.02)
+
+    def test_active_time_counts_until_disconnect_for_player_connected_before_start(self) -> None:
+        detail = _materialize_detail_from_entries(
+            entries=[
+                {
+                    "timestamp": "2026-05-01T09:58:00Z",
+                    "message": "[0 min (80)] CONNECTED Carry Over (steam-carry)",
+                },
+                {
+                    "timestamp": "2026-05-01T10:00:00Z",
+                    "message": "[1 min (100)] MATCH START Mortain Warfare",
+                },
+                {
+                    "timestamp": "2026-05-01T10:20:00Z",
+                    "message": "[21 min (1300)] DISCONNECTED Carry Over (steam-carry)",
+                },
+                {
+                    "timestamp": "2026-05-01T11:00:00Z",
+                    "message": "[61 min (3700)] MATCH ENDED `Mortain Warfare` ALLIED (5 - 0) AXIS",
+                },
+            ]
+        )
+
+        player = detail["players"][0]
+        self.assertEqual(player["player_active_seconds"], 1200)
+        self.assertEqual(player["active_time_source"], "connection_intervals_carryover")
+
+    def test_active_time_counts_from_connect_until_match_end(self) -> None:
+        detail = _materialize_detail_from_entries(
+            entries=[
+                {
+                    "timestamp": "2026-05-01T10:00:00Z",
+                    "message": "[1 min (100)] MATCH START Mortain Warfare",
+                },
+                {
+                    "timestamp": "2026-05-01T10:10:00Z",
+                    "message": "[11 min (700)] CONNECTED Late Join (steam-late)",
+                },
+                {
+                    "timestamp": "2026-05-01T11:00:00Z",
+                    "message": "[61 min (3700)] MATCH ENDED `Mortain Warfare` ALLIED (5 - 0) AXIS",
+                },
+            ]
+        )
+
+        player = detail["players"][0]
+        self.assertEqual(player["player_active_seconds"], 3000)
+        self.assertEqual(player["active_time_source"], "connection_intervals")
+
+    def test_active_time_sums_multiple_connection_intervals(self) -> None:
+        detail = _materialize_detail_from_entries(
+            entries=[
+                {
+                    "timestamp": "2026-05-01T10:00:00Z",
+                    "message": "[1 min (100)] MATCH START Mortain Warfare",
+                },
+                {
+                    "timestamp": "2026-05-01T10:05:00Z",
+                    "message": "[6 min (400)] CONNECTED Reconnect (steam-reconnect)",
+                },
+                {
+                    "timestamp": "2026-05-01T10:15:00Z",
+                    "message": "[16 min (1000)] DISCONNECTED Reconnect (steam-reconnect)",
+                },
+                {
+                    "timestamp": "2026-05-01T10:20:00Z",
+                    "message": "[21 min (1300)] CONNECTED Reconnect (steam-reconnect)",
+                },
+                {
+                    "timestamp": "2026-05-01T10:35:00Z",
+                    "message": "[36 min (2200)] DISCONNECTED Reconnect (steam-reconnect)",
+                },
+                {
+                    "timestamp": "2026-05-01T11:00:00Z",
+                    "message": "[61 min (3700)] MATCH ENDED `Mortain Warfare` ALLIED (5 - 0) AXIS",
+                },
+            ]
+        )
+
+        player = detail["players"][0]
+        self.assertEqual(player["player_active_seconds"], 1500)
+        self.assertEqual(player["active_time_source"], "connection_intervals")
+
+    def test_active_time_uses_event_span_fallback_without_ready_kpm_when_connection_intervals_missing(self) -> None:
+        detail = _materialize_detail_from_entries(
+            entries=[
+                {
+                    "timestamp": "2026-05-01T10:00:00Z",
+                    "message": "[1 min (100)] MATCH START Mortain Warfare",
+                },
+                {
+                    "timestamp": "2026-05-01T10:05:00Z",
+                    "message": (
+                        "[6 min (400)] KILL: Fallback(Allies/steam-fallback) -> "
+                        "Victim(Axis/steam-victim) with M1 GARAND"
+                    ),
+                },
+                {
+                    "timestamp": "2026-05-01T10:20:00Z",
+                    "message": "[21 min (1300)] CHAT[Team][Fallback(Allies/steam-fallback)]: test",
+                },
+                {
+                    "timestamp": "2026-05-01T11:00:00Z",
+                    "message": "[61 min (3700)] MATCH ENDED `Mortain Warfare` ALLIED (5 - 0) AXIS",
+                },
+            ]
+        )
+
+        player = {row["player_name"]: row for row in detail["players"]}["Fallback"]
+        self.assertEqual(player["player_active_seconds"], 900)
+        self.assertEqual(player["active_time_source"], "event_span_fallback")
+        self.assertEqual(player["kpm_status"], "missing_connection_intervals")
+        self.assertIsNone(player["kpm"])
+
+    def test_kpm_is_null_when_active_time_is_below_threshold(self) -> None:
+        detail = _materialize_detail_from_entries(
+            entries=[
+                {
+                    "timestamp": "2026-05-01T10:00:00Z",
+                    "message": "[1 min (100)] MATCH START Mortain Warfare",
+                },
+                {
+                    "timestamp": "2026-05-01T10:01:00Z",
+                    "message": "[2 min (120)] CONNECTED Short (steam-short)",
+                },
+                {
+                    "timestamp": "2026-05-01T10:01:30Z",
+                    "message": "[2 min (150)] DISCONNECTED Short (steam-short)",
+                },
+                {
+                    "timestamp": "2026-05-01T11:00:00Z",
+                    "message": "[61 min (3700)] MATCH ENDED `Mortain Warfare` ALLIED (5 - 0) AXIS",
+                },
+            ]
+        )
+
+        player = detail["players"][0]
+        self.assertEqual(player["player_active_seconds"], 30)
+        self.assertEqual(player["kpm_status"], "insufficient_active_time")
+        self.assertIsNone(player["kpm"])
+
+    def test_kpm_payload_helper_returns_ready_for_ten_kills_in_ten_minutes(self) -> None:
+        payload = _build_player_active_time_payload(
+            kills=10,
+            player_active_seconds=600,
+            active_time_source="connection_intervals",
+        )
+
+        self.assertEqual(payload["kpm"], 1.0)
+        self.assertEqual(payload["kpm_status"], "ready")
+
+    def test_kpm_payload_helper_returns_zero_for_zero_kills_with_valid_active_time(self) -> None:
+        payload = _build_player_active_time_payload(
+            kills=0,
+            player_active_seconds=600,
+            active_time_source="connection_intervals",
+        )
+
+        self.assertEqual(payload["kpm"], 0.0)
+        self.assertEqual(payload["kpm_status"], "ready")
+
+    def test_kpm_payload_helper_returns_missing_when_active_time_is_null(self) -> None:
+        payload = _build_player_active_time_payload(
+            kills=10,
+            player_active_seconds=None,
+            active_time_source="unavailable",
+        )
+
+        self.assertIsNone(payload["kpm"])
+        self.assertEqual(payload["kpm_status"], "missing_active_time")
 
     def test_match_detail_marks_equal_materialized_timestamps_as_server_time_only(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -451,6 +828,44 @@ def _persist_admin_log_fixture(db_path: Path) -> None:
                 "message": "[81 min (500)] MATCH ENDED `ST MARIE DU MONT Warfare` ALLIED (5 - 0) AXIS",
             },
         ],
+        db_path=db_path,
+    )
+
+
+def _materialize_detail_from_entries(*, entries: list[dict[str, object]]) -> dict[str, object]:
+    with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmpdir:
+        db_path = Path(tmpdir) / "historical.sqlite3"
+        previous_storage_path = os.environ.get("HLL_BACKEND_STORAGE_PATH")
+        os.environ["HLL_BACKEND_STORAGE_PATH"] = str(db_path)
+        try:
+            persist_rcon_admin_log_entries(
+                target={
+                    "target_key": "comunidad-hispana-01",
+                    "external_server_id": "comunidad-hispana-01",
+                },
+                entries=entries,
+                db_path=db_path,
+            )
+            materialize_rcon_admin_log(db_path=db_path)
+            match_rows = list_materialized_rcon_matches_for_test(db_path)
+            detail = get_rcon_historical_match_detail(
+                server_key="comunidad-hispana-01",
+                match_id=str(match_rows[0]["match_key"]),
+            )
+        finally:
+            _restore_env("HLL_BACKEND_STORAGE_PATH", previous_storage_path)
+        if detail is None:
+            raise AssertionError("expected materialized detail")
+        return detail
+
+
+def list_materialized_rcon_matches_for_test(db_path: Path) -> list[dict[str, object]]:
+    from app.rcon_admin_log_materialization import list_materialized_rcon_matches
+
+    return list_materialized_rcon_matches(
+        target_key="comunidad-hispana-01",
+        only_ended=True,
+        limit=5,
         db_path=db_path,
     )
 

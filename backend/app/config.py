@@ -47,6 +47,7 @@ DEFAULT_RCON_HISTORICAL_CAPTURE_MAX_RETRIES = 2
 DEFAULT_RCON_HISTORICAL_CAPTURE_RETRY_DELAY_SECONDS = 15
 DEFAULT_RCON_CURRENT_MATCH_CAPTURE_INTERVAL_SECONDS = 5
 DEFAULT_RCON_CURRENT_MATCH_WRITER_LOCK_TIMEOUT_SECONDS = 4.0
+DEFAULT_KPM_MIN_ACTIVE_SECONDS = 60
 DEFAULT_RCON_BACKFILL_CHUNK_HOURS = 6
 DEFAULT_RCON_BACKFILL_SLEEP_SECONDS = 1.0
 DEFAULT_RCON_BACKFILL_MAX_DAYS_BACK = 45
@@ -674,6 +675,15 @@ def get_rcon_current_match_writer_lock_timeout_seconds() -> float:
         "HLL_RCON_CURRENT_MATCH_WRITER_LOCK_TIMEOUT_SECONDS",
         str(DEFAULT_RCON_CURRENT_MATCH_WRITER_LOCK_TIMEOUT_SECONDS),
         minimum=0,
+    )
+
+
+def get_kpm_min_active_seconds() -> int:
+    """Return the minimum observed active seconds required before KPM is considered valid."""
+    return _read_int_env(
+        "HLL_KPM_MIN_ACTIVE_SECONDS",
+        str(DEFAULT_KPM_MIN_ACTIVE_SECONDS),
+        minimum=1,
     )
 
 

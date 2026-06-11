@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 from datetime import datetime, timedelta, timezone
 
+from .config import get_kpm_min_active_seconds
 from .historical_storage import ALL_SERVERS_SLUG
 from .normalizers import normalize_map_name
 from .player_external_profiles import build_external_player_profile_fields
@@ -293,6 +294,12 @@ def _build_player_row(
 ) -> dict[str, object]:
     kills = _coerce_optional_int(row.get("kills")) or 0
     deaths = _coerce_optional_int(row.get("deaths")) or 0
+    player_active_seconds = _coerce_optional_int(row.get("player_active_seconds"))
+    active_time_payload = _build_player_active_time_payload(
+        kills=kills,
+        player_active_seconds=player_active_seconds,
+        active_time_source=row.get("active_time_source"),
+    )
     return {
         "player_name": row.get("player_name"),
         "team": row.get("team"),
@@ -303,7 +310,57 @@ def _build_player_row(
         "top_weapons": _top_counter(row.get("weapons_json")),
         "most_killed": _top_counter(row.get("most_killed_json")),
         "death_by": _top_counter(row.get("death_by_json")),
+        **active_time_payload,
         **build_external_player_profile_fields(player_id=row.get("player_id")),
+    }
+
+
+def _build_player_active_time_payload(
+    *,
+    kills: int,
+    player_active_seconds: int | None,
+    active_time_source: object,
+) -> dict[str, object]:
+    min_active_seconds = get_kpm_min_active_seconds()
+    resolved_source = str(active_time_source or "").strip() or None
+    is_real_connection_time = resolved_source in {
+        "connection_intervals",
+        "connection_intervals_carryover",
+    }
+    if player_active_seconds is None:
+        return {
+            "player_active_seconds": None,
+            "player_active_minutes": None,
+            "kpm": None,
+            "kpm_status": "missing_active_time",
+            "active_time_source": resolved_source,
+        }
+
+    player_active_minutes = round(player_active_seconds / 60, 3)
+    if not is_real_connection_time:
+        return {
+            "player_active_seconds": player_active_seconds,
+            "player_active_minutes": player_active_minutes,
+            "kpm": None,
+            "kpm_status": "missing_connection_intervals",
+            "active_time_source": resolved_source or "event_span_fallback",
+        }
+    if player_active_seconds < min_active_seconds:
+        return {
+            "player_active_seconds": player_active_seconds,
+            "player_active_minutes": player_active_minutes,
+            "kpm": None,
+            "kpm_status": "insufficient_active_time",
+            "active_time_source": resolved_source or "event_log",
+        }
+
+    kpm = round(kills / (player_active_seconds / 60), 2)
+    return {
+        "player_active_seconds": player_active_seconds,
+        "player_active_minutes": player_active_minutes,
+        "kpm": kpm,
+        "kpm_status": "ready",
+        "active_time_source": resolved_source or "event_log",
     }
 
 

@@ -2,94 +2,166 @@
 
 ## Scope
 
-This analysis covers the player table inside `historico-partida.html` for historical match detail.
+This document defines how real historical KPM works for the match detail served to `historico-partida.html`.
 
-## Question
+## Why KPM Was Not Safe Before
 
-Can the UI add a `Kills por minuto` column now without reintroducing false KPM?
-
-## Short Answer
-
-No.
-
-## Why It Cannot Be Implemented Honestly Yet
-
-The current historical match detail payload exposes player combat totals and match-level timing, but it does not expose a trustworthy player-level active time.
-
-Available today:
+Historical match detail already exposed:
 
 - per player:
   - `kills`
   - `deaths`
   - `teamkills`
-  - `kd_ratio` or enough data to derive it
-  - `top_weapons`
-  - `most_killed`
-  - `death_by`
+  - weapon and matchup counters
 - per match:
-  - `duration_seconds`
   - `started_at`
   - `ended_at`
+  - `duration_seconds`
 
-Missing for real KPM:
+What it did not expose was player-level active time. Because of that, dividing by total match duration would have produced a false player KPM.
 
-- `player_active_seconds`
-- real played minutes per player
-- presence intervals
-- a quality flag that tells whether playtime is exact, observed, estimated or unknown
+## Real KPM Rule
 
-## Data Review
-
-`build_historical_match_detail_payload()` serves `item` from the RCON historical read model when available.
-
-`historico-partida.js` currently renders the player table with:
-
-- `Jugador`
-- `Equipo`
-- `Kills`
-- `Muertes`
-- `TK`
-- `KD`
-
-There is no frontend or payload field for honest KPM.
-
-## Important Constraint
-
-Real KPM must mean:
+Real KPM means:
 
 ```text
 kills / (player_active_seconds / 60)
 ```
 
-It must not mean:
+It does not mean:
 
 ```text
 kills / match_duration_minutes
 ```
 
-unless the product intentionally introduces a different metric with a clearly different label.
+## Source of Truth
 
-## Existing Design Reference
+The current implementation uses connection intervals reconstructed from the materialized RCON AdminLog match model.
 
-`docs/REAL_KPM_PLAYER_ACTIVE_SECONDS_DESIGN.md` already documents the correct long-term direction:
+Reliable interval signals:
 
-- materialize `player_active_seconds`
-- carry a playtime quality classification
-- compute KPM in backend read models and snapshots
-- never compute real KPM in frontend JavaScript
+- `connected`
+- `disconnected`
+- `match_start`
+- `match_end`
 
-## Recommendation
+Supporting evidence still stored in the player fact:
 
-Do not add the column now.
+- `first_seen_server_time`
+- `last_seen_server_time`
 
-Safe next step:
+The persisted field is:
 
-1. Add real `player_active_seconds` to the historical player detail model.
-2. Expose it in the match detail payload.
-3. Add `Kills por minuto` only when backed by that field.
+- `player_active_seconds`
 
-Optional weaker alternative, only with explicit product approval:
+The source label is:
 
-- `Kills/min partida`
-- clearly labeled as match-duration-based
-- never presented as player KPM
+- `active_time_source = "event_log"`
+
+## Persistence
+
+Forward-only persistence now stores on `rcon_match_player_stats`:
+
+- `player_active_seconds INTEGER NULL`
+- `active_time_source TEXT`
+
+Legacy rows remain valid. If they were materialized before these columns existed, they keep `player_active_seconds = NULL` until new materialization or new matches populate the field.
+
+## Calculation
+
+Observed active time is now:
+
+```text
+sum(connected_interval_seconds clamped to [match_start, match_end])
+```
+
+Rules:
+
+- if the player connects during the match:
+  - open interval at `connected.server_time`
+- if the player disconnects during the match:
+  - close interval at `disconnected.server_time`
+- if the player was already connected before `match_start` and there is no later pre-match disconnect:
+  - open interval at `match_start`
+- if the player is still connected at `match_end`:
+  - close interval at `match_end`
+- if the player reconnects multiple times:
+  - sum all non-overlapping intervals
+
+This is still observed presence, not exact telemetry down to every silent second.
+
+KPM is exposed only when:
+
+- `player_active_seconds` exists
+- `player_active_seconds >= HLL_KPM_MIN_ACTIVE_SECONDS`
+
+Default:
+
+- `HLL_KPM_MIN_ACTIVE_SECONDS = 60`
+
+## Payload Contract
+
+Historical match detail player rows may now expose:
+
+- `player_active_seconds`
+- `player_active_minutes`
+- `kpm`
+- `kpm_status`
+- `active_time_source`
+
+`active_time_source` values currently used:
+
+- `connection_intervals`
+- `connection_intervals_carryover`
+- `event_span_fallback`
+- `unavailable`
+
+`kpm_status` values:
+
+- `ready`
+- `missing_active_time`
+- `insufficient_active_time`
+- `missing_connection_intervals`
+
+Rules:
+
+- missing active time:
+  - `kpm = null`
+  - `kpm_status = "missing_active_time"`
+- fallback event span without reliable connection intervals:
+  - `kpm = null`
+  - `kpm_status = "missing_connection_intervals"`
+- active time below threshold:
+  - `kpm = null`
+  - `kpm_status = "insufficient_active_time"`
+- valid active time:
+  - `kpm = round(kills / (player_active_seconds / 60), 2)`
+  - `kpm_status = "ready"`
+  - only when `active_time_source` is `connection_intervals` or `connection_intervals_carryover`
+
+## Historical Matches Already Stored
+
+Old matches are not backfilled with fake KPM.
+
+For those rows:
+
+- `player_active_seconds` can remain `null`
+- `kpm` stays `null`
+- frontend must not render `0.00` as if the value were real
+- rows rematerialized without reliable connection intervals can still expose
+  `event_span_fallback`, but that fallback must not be shown as real KPM
+
+## Frontend Rule
+
+`historico-partida.js` renders KPM only when:
+
+- `kpm_status == "ready"`
+
+If the value is missing or below threshold, the panel stays clean and does not show a fake metric.
+
+## Limitations
+
+- This is observed active time from AdminLog connection evidence, not exact join/leave telemetry for every silent second.
+- Quiet players with kills/chat/team switches but no reliable connection chain can expose `event_span_fallback`; that span is intentionally blocked from KPM.
+- Legacy matches remain without KPM unless rematerialized from stored AdminLog evidence.
+- We do not discount time spent without squad/unit/role yet because there is no audited historical source for that dimension in this implementation.
