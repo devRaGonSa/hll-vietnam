@@ -359,8 +359,8 @@
       .map((item) => {
         const rank = safeInt(item.ranking_position, 0);
         const playerName = escapeHtml(String(item.player_name || "Jugador sin nombre"));
-        const kills = safeInt(firstFiniteValue(item.kills, item.metric_value), 0);
         const matches = safeInt(item.matches_considered, 0);
+        const kills = safeInt(firstFiniteValue(item.kills, item.metric_value), 0);
         const killsPerMatch = formatKillsPerMatch(
           item.kills_per_match,
           kills,
@@ -378,12 +378,12 @@
                 <strong>${playerName}</strong>
               </div>
             </td>
-            <td class="stats-annual-metric">${kills}</td>
             <td>${matches}</td>
-            <td>${killsPerMatch}</td>
+            <td class="stats-annual-metric">${kills}</td>
             <td>${deaths}</td>
             <td>${teamkills}</td>
             <td>${kd}</td>
+            <td>${killsPerMatch}</td>
           </tr>
         `;
       })
@@ -396,12 +396,12 @@
             <tr>
               <th>Posici\u00f3n</th>
               <th>Jugador</th>
-              <th>Kills</th>
               <th>Partidas</th>
-              <th>Kills/partida</th>
+              <th>Kills</th>
               <th>Muertes</th>
-              <th>Teamkills</th>
-              <th>K/D</th>
+              <th>TK</th>
+              <th>KD</th>
+              <th>Kills/partida</th>
             </tr>
           </thead>
           <tbody>${rowsMarkup}</tbody>
@@ -574,8 +574,8 @@
           <article class="stats-summary-card">
             <p class="stats-summary-title">Ventana semanal</p>
             <p><strong>Kills:</strong> ${safeInt(weeklyData?.kills, 0)}</p>
-            <p><strong>Deaths:</strong> ${safeInt(weeklyData?.deaths, 0)}</p>
-            <p><strong>Teamkills:</strong> ${safeInt(weeklyData?.teamkills, 0)}</p>
+            <p><strong>Muertes:</strong> ${safeInt(weeklyData?.deaths, 0)}</p>
+            <p><strong>TK:</strong> ${safeInt(weeklyData?.teamkills, 0)}</p>
           </article>
         `;
 
@@ -590,8 +590,8 @@
           <article class="stats-summary-card">
             <p class="stats-summary-title">Ventana mensual</p>
             <p><strong>Kills:</strong> ${safeInt(monthlyData?.kills, 0)}</p>
-            <p><strong>Deaths:</strong> ${safeInt(monthlyData?.deaths, 0)}</p>
-            <p><strong>Teamkills:</strong> ${safeInt(monthlyData?.teamkills, 0)}</p>
+            <p><strong>Muertes:</strong> ${safeInt(monthlyData?.deaths, 0)}</p>
+            <p><strong>TK:</strong> ${safeInt(monthlyData?.teamkills, 0)}</p>
           </article>
         `;
 
@@ -697,16 +697,16 @@
             <span class="stats-comparison-card__metric-value">${kills}</span>
           </div>
           <div class="stats-comparison-card__metric">
-            <span class="stats-comparison-card__metric-label">Deaths</span>
+            <span class="stats-comparison-card__metric-label">Muertes</span>
             <span class="stats-comparison-card__metric-value">${deaths}</span>
           </div>
           <div class="stats-comparison-card__metric">
-            <span class="stats-comparison-card__metric-label">K/D</span>
+            <span class="stats-comparison-card__metric-label">KD</span>
             <span class="stats-comparison-card__metric-value">${kdRatio}</span>
           </div>
         </div>
         <p class="stats-comparison-card__detail">
-          <strong>Kills por partida:</strong> ${killsPerMatch}
+          <strong>Kills/partida:</strong> ${killsPerMatch}
         </p>
         <p class="stats-comparison-card__note">${escapeHtml(rankingState.detail)}</p>
       </article>
@@ -739,11 +739,11 @@
             <span class="stats-comparison-card__metric-value">${safeDecimal(monthlyKillsPerMatch, 2, "0.00")}</span>
           </div>
           <div class="stats-comparison-card__metric">
-            <span class="stats-comparison-card__metric-label">K/D semanal</span>
+            <span class="stats-comparison-card__metric-label">KD semanal</span>
             <span class="stats-comparison-card__metric-value">${safeDecimal(weeklyKd, 2, "0.00")}</span>
           </div>
           <div class="stats-comparison-card__metric">
-            <span class="stats-comparison-card__metric-label">K/D mensual</span>
+            <span class="stats-comparison-card__metric-label">KD mensual</span>
             <span class="stats-comparison-card__metric-value">${safeDecimal(monthlyKd, 2, "0.00")}</span>
           </div>
         </div>
@@ -775,7 +775,7 @@
     }
 
     const rank = safeInt(ranking.ranking_position, 0);
-    const metric = escapeHtml(String(ranking.metric || annualMetric));
+    const metric = escapeHtml(labelForStatsMetric(ranking.metric || annualMetric));
 
     return `
       <p><strong>Posici\u00f3n:</strong> ${rank}</p>
@@ -861,6 +861,18 @@
       return `${windowLabel}: ${windowStart} - ${windowEnd}`;
     }
     return `Ventana: ${windowStart} - ${windowEnd}`;
+  }
+
+  function labelForStatsMetric(metric) {
+    const labels = {
+      kills: "Kills",
+      deaths: "Muertes",
+      teamkills: "TK",
+      matches_considered: "Partidas",
+      kd_ratio: "KD",
+      kills_per_match: "Kills/partida",
+    };
+    return labels[String(metric || "").trim()] || "Kills";
   }
 
   function safeInt(value, fallback = 0) {

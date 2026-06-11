@@ -271,7 +271,7 @@
     if (statusCode === 400 && normalizedMessage.includes("metric")) {
       setRankingState("warning", "La m\u00e9trica solicitada no est\u00e1 soportada.");
       renderEmptyState(
-        "Usa kills, deaths, teamkills, partidas jugadas, K/D o Kills/partida.",
+        "Usa Kills, Muertes, TK, Partidas, KD o Kills/partida.",
       );
       return;
     }
@@ -397,10 +397,10 @@
             </div>
           </td>
         <td class="ranking-table__metric">${formatMetricValue(item.metric_value, metric)}</td>
+        <td>${safeInt(item.matches_considered, 0)}</td>
         <td>${safeInt(item.kills, 0)}</td>
         <td>${safeInt(item.deaths, 0)}</td>
         <td>${safeInt(item.teamkills, 0)}</td>
-        <td>${safeInt(item.matches_considered, 0)}</td>
         <td>${safeDecimal(item.kd_ratio, 2, "0.00")}</td>
         ${hideKppColumn ? "" : `<td>${killsPerMatch}</td>`}
       </tr>
@@ -454,10 +454,10 @@
   function labelForMetric(metric) {
     const labels = {
       kills: "Kills",
-      deaths: "Deaths",
-      teamkills: "Teamkills",
-      matches_considered: "Partidas jugadas",
-      kd_ratio: "K/D",
+      deaths: "Muertes",
+      teamkills: "TK",
+      matches_considered: "Partidas",
+      kd_ratio: "KD",
       kills_per_match: "Kills/partida",
     };
     return labels[metric] || "Kills";

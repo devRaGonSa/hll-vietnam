@@ -45,24 +45,32 @@ const LEADERBOARD_METRICS = Object.freeze([
     key: "kills",
     title: "Top kills",
     valueHeading: "Kills",
+    ratioHeading: "Kills/partida",
+    ratioMode: "kills",
     emptyMessage: "Sin datos historicos suficientes para mostrar este ranking de kills.",
   },
   {
     key: "deaths",
     title: "Top muertes",
     valueHeading: "Muertes",
+    ratioHeading: "Muertes/partida",
+    ratioMode: "deaths",
     emptyMessage: "Sin datos historicos suficientes para mostrar este ranking de muertes.",
   },
   {
     key: "matches_over_100_kills",
     title: "Top partidas con 100+ kills",
     valueHeading: "Partidas 100+",
+    ratioHeading: null,
+    ratioMode: null,
     emptyMessage: "Ningun jugador ha registrado partidas de 100+ kills en esta ventana.",
   },
   {
     key: "support",
     title: "Top puntos de soporte",
     valueHeading: "Soporte",
+    ratioHeading: "Soporte/partida",
+    ratioMode: "support",
     emptyMessage: "Sin datos historicos suficientes para mostrar este ranking de soporte.",
   },
 ]);
@@ -94,6 +102,7 @@ document.addEventListener("DOMContentLoaded", () => {
   const weeklyTableNode = document.getElementById("weekly-leaderboard-table");
   const weeklyBodyNode = document.getElementById("weekly-leaderboard-body");
   const weeklyValueHeadingNode = document.getElementById("weekly-leaderboard-value-heading");
+  const weeklyRatioHeadingNode = document.getElementById("weekly-leaderboard-ratio-heading");
   const weeklyWindowNoteNode = document.getElementById("weekly-window-note");
   const weeklySnapshotMetaNode = document.getElementById(
     "weekly-leaderboard-snapshot-meta",
@@ -210,6 +219,7 @@ document.addEventListener("DOMContentLoaded", () => {
         weeklyBodyNode,
         weeklyTitleNode,
         weeklyValueHeadingNode,
+        weeklyRatioHeadingNode,
         weeklyWindowNoteNode,
         weeklySnapshotMetaNode,
         activeMetricConfig,
@@ -547,6 +557,7 @@ function hydrateWeeklyLeaderboard(
   bodyNode,
   titleNode,
   valueHeadingNode,
+  ratioHeadingNode,
   noteNode,
   snapshotMetaNode,
   metricConfig,
@@ -555,6 +566,7 @@ function hydrateWeeklyLeaderboard(
   const targetServerSlug = result.value?.data?.server_slug || activeServerSlug;
   const resolvedTimeframeKey = result.value?.data?.timeframe || timeframeKey;
   valueHeadingNode.textContent = metricConfig.valueHeading;
+  syncLeaderboardRatioColumn(tableNode, ratioHeadingNode, bodyNode, metricConfig);
   if (result.status !== "fulfilled") {
     titleNode.textContent = buildLeaderboardTitle(
       metricConfig,
@@ -614,13 +626,11 @@ function hydrateWeeklyLeaderboard(
   bodyNode.innerHTML = items
     .map(
       (item) => {
-        const kills = resolveHistoricalKills(item, metricConfig);
         const matches = Number(item.matches_considered);
-        const killsPerMatch = formatHistoricalKillsPerMatch(
-          item?.kills_per_match,
-          kills,
-          matches,
-        );
+        const ratioValue = formatHistoricalRatio(item, metricConfig, matches);
+        const ratioCell = metricConfig.ratioMode
+          ? `<td>${escapeHtml(ratioValue)}</td>`
+          : "";
 
         return `
         <tr>
@@ -628,13 +638,14 @@ function hydrateWeeklyLeaderboard(
           <td>${escapeHtml(item.player?.name || "Jugador no identificado")}</td>
           <td>${escapeHtml(formatNumber(item.metric_value))}</td>
           <td>${escapeHtml(formatNumber(item.matches_considered))}</td>
-          <td>${escapeHtml(killsPerMatch)}</td>
+          ${ratioCell}
         </tr>
       `;
       },
     )
     .join("");
   stateNode.hidden = true;
+  syncLeaderboardRatioColumn(tableNode, ratioHeadingNode, bodyNode, metricConfig);
   tableNode.hidden = false;
 }
 
@@ -1724,13 +1735,43 @@ function resolveHistoricalKills(item, metricConfig) {
   return Number.NaN;
 }
 
-function formatHistoricalKillsPerMatch(rawKillsPerMatch, rawKills, rawMatches) {
-  const directValue = Number(rawKillsPerMatch);
+function syncLeaderboardRatioColumn(tableNode, ratioHeadingNode, bodyNode, metricConfig) {
+  if (!tableNode || !ratioHeadingNode || !bodyNode) {
+    return;
+  }
+  const showRatio = Boolean(metricConfig?.ratioMode);
+  ratioHeadingNode.hidden = !showRatio;
+  ratioHeadingNode.textContent = metricConfig?.ratioHeading || "";
+  const ratioColumnIndex = ratioHeadingNode.cellIndex;
+  bodyNode.querySelectorAll("tr").forEach((row) => {
+    const ratioCell = row.children[ratioColumnIndex];
+    if (ratioCell) {
+      ratioCell.hidden = !showRatio;
+    }
+  });
+}
+
+function formatHistoricalRatio(item, metricConfig, matches) {
+  if (!metricConfig?.ratioMode) {
+    return "";
+  }
+  if (metricConfig.ratioMode === "kills") {
+    const kills = resolveHistoricalKills(item, metricConfig);
+    return formatHistoricalPerMatch(item?.kills_per_match, kills, matches);
+  }
+  if (metricConfig.ratioMode === "deaths" || metricConfig.ratioMode === "support") {
+    return formatHistoricalPerMatch(null, Number(item?.metric_value), matches);
+  }
+  return "";
+}
+
+function formatHistoricalPerMatch(rawDirectValue, rawTotalValue, rawMatches) {
+  const directValue = Number(rawDirectValue);
   if (Number.isFinite(directValue)) {
     return formatDecimal(directValue, 2);
   }
 
-  const kills = Number(rawKills);
+  const kills = Number(rawTotalValue);
   const matches = Number(rawMatches);
   if (!Number.isFinite(kills) || !Number.isFinite(matches) || matches <= 0) {
     return "-";
