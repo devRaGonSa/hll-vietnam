@@ -388,15 +388,14 @@
     );
     const hideKppColumn = metric === "kills_per_match";
 
-    return `
-      <tr>
-        <td>#${safeInt(item.ranking_position, 0)}</td>
-        <td>
-          <div class="ranking-player">
-            <strong>${escapeHtml(String(item.player_name || "Jugador sin nombre"))}</strong>
-            <span>${escapeHtml(String(item.player_id || "Sin ID"))}</span>
-          </div>
-        </td>
+      return `
+        <tr>
+          <td>#${safeInt(item.ranking_position, 0)}</td>
+          <td>
+            <div class="ranking-player">
+              <strong>${escapeHtml(String(item.player_name || "Jugador sin nombre"))}</strong>
+            </div>
+          </td>
         <td class="ranking-table__metric">${formatMetricValue(item.metric_value, metric)}</td>
         <td>${safeInt(item.kills, 0)}</td>
         <td>${safeInt(item.deaths, 0)}</td>

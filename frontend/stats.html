@@ -90,9 +90,13 @@
                 </button>
               </div>
             </form>
-            <p class="stats-state stats-state--neutral" id="stats-search-state" role="status" aria-live="polite">
-              Estado inicial: usa el buscador para encontrar jugadores.
-            </p>
+            <p
+              class="stats-state stats-state--neutral"
+              id="stats-search-state"
+              role="status"
+              aria-live="polite"
+              hidden
+            ></p>
             <div class="stats-result-list" id="stats-result-list" aria-live="polite"></div>
           </div>
         </section>
@@ -131,9 +135,6 @@
               <p class="eyebrow eyebrow--section">Ranking anual</p>
               <h2>Top 20 temporada 2026</h2>
             </div>
-            <p class="panel__intro panel__intro--tight">
-              El ranking anual usa un corte ya preparado de la temporada para cargar el Top 20 sin recalcular toda la campa&ntilde;a en cada consulta.
-            </p>
             <div class="stats-annual-season" aria-label="Temporada fija del ranking anual">
               <span class="stats-annual-season__label">Temporada</span>
               <strong class="stats-annual-season__value">2026</strong>

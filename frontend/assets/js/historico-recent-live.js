@@ -83,7 +83,7 @@
       }
 
       stateNode.hidden = true;
-      if (noteNode) noteNode.textContent = "Lista dinámica de partidas registradas.";
+      if (noteNode) noteNode.textContent = "";
       metaNode.textContent = buildDynamicRecentMeta(items);
       renderDynamicRecentMatchesPage();
     } catch (error) {
@@ -92,8 +92,8 @@
       }
       recentMatchesState.items = [];
       recentMatchesState.page = 1;
-      setDynamicState(stateNode, "No se pudieron cargar las partidas recientes dinámicas.", true);
-      metaNode.textContent = "Error al leer las partidas recientes dinámicas.";
+      setDynamicState(stateNode, "No se pudieron cargar las partidas recientes dinÃ¡micas.", true);
+      metaNode.textContent = "Error al leer las partidas recientes dinÃ¡micas.";
       renderDynamicPagination();
     }
   }

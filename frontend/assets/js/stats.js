@@ -111,7 +111,14 @@
     if (!searchStateNode) {
       return;
     }
-    searchStateNode.textContent = message;
+    const normalizedMessage = String(message || "").trim();
+    searchStateNode.hidden = !normalizedMessage;
+    if (!normalizedMessage) {
+      searchStateNode.textContent = "";
+      searchStateNode.className = "stats-state stats-state--neutral";
+      return;
+    }
+    searchStateNode.textContent = normalizedMessage;
     searchStateNode.className = `stats-state stats-state--${state}`;
   }
 
@@ -296,6 +303,7 @@
     const items = normalizeArray(data.items);
     const limit = safeInt(data.limit, 0);
     const serverId = String(data.server_id || annualServerId);
+    const serverLabel = labelForStatsServer(serverId);
     const sourceMatches = safeInt(data.source_matches_count, 0);
     const generatedAt = formatDateTime(data.generated_at);
     const year = safeInt(data.year, annualDefaultYear);
@@ -313,7 +321,7 @@
 
     setAnnualState(
       "neutral",
-      `${messages.annualReadyPrefix} ${serverId}, a\u00f1o ${year}.`,
+      `${messages.annualReadyPrefix} ${serverLabel}, a\u00f1o ${year}.`,
     );
 
     annualContentNode.innerHTML = `
@@ -322,7 +330,7 @@
         <div class="stats-annual-meta">
           <article class="stats-annual-meta-item">
             <p>Servidor</p>
-            <strong>${escapeHtml(serverId)}</strong>
+            <strong>${escapeHtml(serverLabel)}</strong>
           </article>
           <article class="stats-annual-meta-item">
             <p>A\u00f1o</p>
@@ -350,7 +358,6 @@
     const rowsMarkup = items
       .map((item) => {
         const rank = safeInt(item.ranking_position, 0);
-        const playerId = escapeHtml(String(item.player_id || ""));
         const playerName = escapeHtml(String(item.player_name || "Jugador sin nombre"));
         const kills = safeInt(firstFiniteValue(item.kills, item.metric_value), 0);
         const matches = safeInt(item.matches_considered, 0);
@@ -365,7 +372,6 @@
             <td>
               <div class="stats-annual-player">
                 <strong>${playerName}</strong>
-                <span class="stats-annual-player__id">ID ${playerId}</span>
               </div>
             </td>
             <td class="stats-annual-metric">${kills}</td>
@@ -948,10 +954,7 @@
     }
 
     if (!query) {
-      setSearchState(
-        "neutral",
-        "Estado inicial: introduce al menos 4 caracteres para buscar un jugador.",
-      );
+      setSearchState("neutral", "");
       return;
     }
 
@@ -967,6 +970,20 @@
       .replaceAll(">", "&gt;")
       .replaceAll('"', "&quot;")
       .replaceAll("'", "&#39;");
+  }
+
+  function labelForStatsServer(serverId) {
+    const normalized = String(serverId || "").trim().toLowerCase();
+    if (normalized === "comunidad-hispana-01") {
+      return "Comunidad Hispana #01";
+    }
+    if (normalized === "comunidad-hispana-02") {
+      return "Comunidad Hispana #02";
+    }
+    if (normalized === "all" || normalized === "all-servers") {
+      return "Todos los servidores";
+    }
+    return String(serverId || "Todos los servidores");
   }
 });
 
