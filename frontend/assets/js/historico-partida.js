@@ -629,7 +629,6 @@ function renderNamedCountSection(title, items) {
             const count = stat.count ?? stat.total ?? 0;
             return `
               <li>
-                ${renderHistoricalWeaponIcon(name)}
                 <span>${escapeHtml(name)}</span>
                 <strong>${escapeHtml(formatNumber(count))}</strong>
               </li>
@@ -639,47 +638,6 @@ function renderNamedCountSection(title, items) {
       </ol>
     </article>
   `;
-}
-
-function renderHistoricalWeaponIcon(name) {
-  const weapon = resolveHistoricalWeapon(name);
-  if (!weapon.icon) {
-    return `
-      <span class="historical-weapon-stat-list__icon-frame" aria-hidden="true">
-        <span class="historical-weapon-stat-list__fallback">?</span>
-      </span>
-    `;
-  }
-  return `
-    <span class="historical-weapon-stat-list__icon-frame" aria-hidden="true">
-      <img
-        class="historical-weapon-stat-list__icon"
-        src="${escapeHtml(weapon.icon)}"
-        alt=""
-        width="72"
-        height="26"
-        loading="lazy"
-        decoding="async"
-        onerror="this.hidden = true; this.nextElementSibling.hidden = false;"
-      />
-      <span class="historical-weapon-stat-list__fallback" hidden>?</span>
-    </span>
-  `;
-}
-
-function resolveHistoricalWeapon(value) {
-  const runtimeWeaponIcons = globalThis.HLL_VIETNAM_CURRENT_MATCH_WEAPON_ICONS;
-  if (runtimeWeaponIcons?.lookup) {
-    const runtimeKey = runtimeWeaponIcons.normalize(value);
-    return runtimeWeaponIcons.lookup[runtimeKey] || {
-      label: String(value || runtimeWeaponIcons.unknown.label),
-      icon: runtimeWeaponIcons.unknown.icon,
-    };
-  }
-  return {
-    label: String(value || "Arma desconocida"),
-    icon: "",
-  };
 }
 
 function renderDirectMatchupsSection(matchups) {
