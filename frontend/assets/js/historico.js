@@ -616,7 +616,11 @@ function hydrateWeeklyLeaderboard(
       (item) => {
         const kills = resolveHistoricalKills(item, metricConfig);
         const matches = Number(item.matches_considered);
-        const kpm = formatHistoricalKpm(item?.kills_per_match, kills, matches);
+        const killsPerMatch = formatHistoricalKillsPerMatch(
+          item?.kills_per_match,
+          kills,
+          matches,
+        );
 
         return `
         <tr>
@@ -624,7 +628,7 @@ function hydrateWeeklyLeaderboard(
           <td>${escapeHtml(item.player?.name || "Jugador no identificado")}</td>
           <td>${escapeHtml(formatNumber(item.metric_value))}</td>
           <td>${escapeHtml(formatNumber(item.matches_considered))}</td>
-          <td>${escapeHtml(kpm)}</td>
+          <td>${escapeHtml(killsPerMatch)}</td>
         </tr>
       `;
       },
@@ -1720,7 +1724,7 @@ function resolveHistoricalKills(item, metricConfig) {
   return Number.NaN;
 }
 
-function formatHistoricalKpm(rawKillsPerMatch, rawKills, rawMatches) {
+function formatHistoricalKillsPerMatch(rawKillsPerMatch, rawKills, rawMatches) {
   const directValue = Number(rawKillsPerMatch);
   if (Number.isFinite(directValue)) {
     return formatDecimal(directValue, 2);

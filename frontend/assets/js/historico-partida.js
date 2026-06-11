@@ -340,6 +340,7 @@ function getVisiblePlayers(players, item, state) {
 }
 
 function comparePlayerEntries(a, b, item, state) {
+  void item;
   if (state.isDefaultSort) {
     return (
       compareInactivePriority(a, b) ||
@@ -347,6 +348,19 @@ function comparePlayerEntries(a, b, item, state) {
       compareNumericStat(a.player.deaths, b.player.deaths) ||
       comparePlayerNames(a.player, b.player)
     );
+  }
+
+  if (state.sort === "kpm") {
+    const readyPriority = compareReadyKpmPriority(a.player, b.player);
+    if (readyPriority) {
+      return readyPriority;
+    }
+    const direction = state.direction === "asc" ? 1 : -1;
+    const compared = compareNumericStat(
+      getReadyKpmValue(a.player),
+      getReadyKpmValue(b.player),
+    );
+    return compared * direction || comparePlayerNames(a.player, b.player);
   }
 
   if (!["name", "team"].includes(state.sort)) {
@@ -362,6 +376,7 @@ function comparePlayerEntries(a, b, item, state) {
 }
 
 function comparePlayerSortValue(a, b, item, sort) {
+  void item;
   if (sort === "name") {
     return comparePlayerNames(a.player, b.player);
   }
@@ -375,6 +390,15 @@ function comparePlayerSortValue(a, b, item, sort) {
     return compareNumericStat(getKdRatioValue(a.player), getKdRatioValue(b.player));
   }
   return compareNumericStat(a.player.kills, b.player.kills);
+}
+
+function compareReadyKpmPriority(leftPlayer, rightPlayer) {
+  const leftReady = leftPlayer?.kpm_status === "ready";
+  const rightReady = rightPlayer?.kpm_status === "ready";
+  if (leftReady === rightReady) {
+    return 0;
+  }
+  return leftReady ? -1 : 1;
 }
 
 function compareInactivePriority(a, b) {
@@ -426,13 +450,14 @@ function renderPlayerRows(player, item, index, inactive = false) {
       <td>${escapeHtml(formatOptionalNumber(player.deaths))}</td>
       <td>${escapeHtml(formatOptionalNumber(player.teamkills))}</td>
       <td>${escapeHtml(formatKdRatio(player))}</td>
+      <td>${escapeHtml(formatReadyKpmValue(player))}</td>
     </tr>
     <tr
       class="historical-player-detail-row"
       id="${escapeHtml(panelId)}"
       aria-labelledby="${escapeHtml(rowId)}"
     >
-      <td colspan="6">
+      <td colspan="7">
         ${renderPlayerStatsPanel(player, item, { team, playerName })}
       </td>
     </tr>
@@ -885,6 +910,22 @@ function formatKdRatio(player) {
     return "No disponible";
   }
   return formatDecimal(getKdRatioValue(player), 2);
+}
+
+function getReadyKpmValue(player) {
+  if (player?.kpm_status !== "ready") {
+    return Number.NaN;
+  }
+  const value = Number(player.kpm);
+  return Number.isFinite(value) ? value : Number.NaN;
+}
+
+function formatReadyKpmValue(player) {
+  const value = getReadyKpmValue(player);
+  if (!Number.isFinite(value)) {
+    return "";
+  }
+  return formatDecimal(value, 2);
 }
 
 function getKdRatioValue(player) {

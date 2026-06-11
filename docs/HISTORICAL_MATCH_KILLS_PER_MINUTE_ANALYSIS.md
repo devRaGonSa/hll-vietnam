@@ -159,6 +159,55 @@ For those rows:
 
 If the value is missing or below threshold, the panel stays clean and does not show a fake metric.
 
+## Public Tables
+
+The historical match detail now exposes the same real KPM in two public places:
+
+- expanded player panel in `historico-partida.html`
+- main players table in `historico-partida.html`
+
+The main table leaves the KPM cell empty when `kpm_status != "ready"`.
+
+This avoids false `0.00` values for:
+
+- legacy rows without active time
+- rows below `HLL_KPM_MIN_ACTIVE_SECONDS`
+- rows that only expose `event_span_fallback`
+
+## Kills Per Match Labels
+
+Several public tables were showing `kills_per_match` under the visible label `KPM`.
+
+That is no longer acceptable because:
+
+- `kills_per_match` means kills divided by matches considered
+- real KPM means kills divided by active minutes from reliable connection intervals
+
+Public surfaces that now use `Kills/partida` instead of `KPM` for `kills_per_match`:
+
+- historical weekly and monthly leaderboard tables
+- annual stats summary table
+- annual stats comparison cards
+- ranking metric selector and ranking table label
+
+## Aggregated Real KPM
+
+This repository does not yet expose a public weekly, monthly or annual aggregate KPM based only on:
+
+- `active_time_source = connection_intervals`
+- `active_time_source = connection_intervals_carryover`
+
+That was intentionally left out of this change because the public leaderboard and ranking snapshots would need an explicit coverage contract before mixing:
+
+- rows with real active time
+- older rows without it
+- fallback rows blocked from `kpm_status = ready`
+
+Until that contract exists, public aggregated views keep:
+
+- `Kills/partida` for `kills_per_match`
+- real KPM only at historical match detail player level
+
 ## Limitations
 
 - This is observed active time from AdminLog connection evidence, not exact join/leave telemetry for every silent second.

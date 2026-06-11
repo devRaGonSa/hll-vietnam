@@ -361,7 +361,11 @@
         const playerName = escapeHtml(String(item.player_name || "Jugador sin nombre"));
         const kills = safeInt(firstFiniteValue(item.kills, item.metric_value), 0);
         const matches = safeInt(item.matches_considered, 0);
-        const kpm = formatKpm(item.kills_per_match, kills, matches);
+        const killsPerMatch = formatKillsPerMatch(
+          item.kills_per_match,
+          kills,
+          matches,
+        );
         const deaths = safeInt(item.deaths, 0);
         const teamkills = safeInt(item.teamkills, 0);
         const kd = safeDecimal(item.kd_ratio, 2, "0.00");
@@ -376,7 +380,7 @@
             </td>
             <td class="stats-annual-metric">${kills}</td>
             <td>${matches}</td>
-            <td>${kpm}</td>
+            <td>${killsPerMatch}</td>
             <td>${deaths}</td>
             <td>${teamkills}</td>
             <td>${kd}</td>
@@ -394,7 +398,7 @@
               <th>Jugador</th>
               <th>Kills</th>
               <th>Partidas</th>
-              <th>KPM</th>
+              <th>Kills/partida</th>
               <th>Muertes</th>
               <th>Teamkills</th>
               <th>K/D</th>
@@ -710,8 +714,8 @@
   }
 
   function renderDeltaComparisonCard(weeklyData, monthlyData) {
-    const weeklyKpm = safeParseNumber(weeklyData?.kills_per_match);
-    const monthlyKpm = safeParseNumber(monthlyData?.kills_per_match);
+    const weeklyKillsPerMatch = safeParseNumber(weeklyData?.kills_per_match);
+    const monthlyKillsPerMatch = safeParseNumber(monthlyData?.kills_per_match);
     const weeklyKd = safeParseNumber(weeklyData?.kd_ratio);
     const monthlyKd = safeParseNumber(monthlyData?.kd_ratio);
     const killsDelta = safeInt(monthlyData?.kills, 0) - safeInt(weeklyData?.kills, 0);
@@ -727,12 +731,12 @@
         </span>
         <div class="stats-comparison-card__grid">
           <div class="stats-comparison-card__metric">
-            <span class="stats-comparison-card__metric-label">KPM semanal</span>
-            <span class="stats-comparison-card__metric-value">${safeDecimal(weeklyKpm, 2, "0.00")}</span>
+            <span class="stats-comparison-card__metric-label">Kills/partida semanal</span>
+            <span class="stats-comparison-card__metric-value">${safeDecimal(weeklyKillsPerMatch, 2, "0.00")}</span>
           </div>
           <div class="stats-comparison-card__metric">
-            <span class="stats-comparison-card__metric-label">KPM mensual</span>
-            <span class="stats-comparison-card__metric-value">${safeDecimal(monthlyKpm, 2, "0.00")}</span>
+            <span class="stats-comparison-card__metric-label">Kills/partida mensual</span>
+            <span class="stats-comparison-card__metric-value">${safeDecimal(monthlyKillsPerMatch, 2, "0.00")}</span>
           </div>
           <div class="stats-comparison-card__metric">
             <span class="stats-comparison-card__metric-label">K/D semanal</span>
@@ -893,7 +897,7 @@
     return Number.NaN;
   }
 
-  function formatKpm(rawKillsPerMatch, rawKills, rawMatches) {
+  function formatKillsPerMatch(rawKillsPerMatch, rawKills, rawMatches) {
     const directValue = safeParseNumber(rawKillsPerMatch);
     if (Number.isFinite(directValue)) {
       return safeDecimal(directValue, 2, "0.00");
