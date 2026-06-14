@@ -36,7 +36,7 @@ document.addEventListener("DOMContentLoaded", () => {
     return;
   }
 
-  nodes.history.href = `./historico.html?server=${encodeURIComponent(serverSlug)}`;
+  configureOptionalLinks(nodes, serverSlug);
   const killFeedState = initializeKillFeed(nodes);
   const playerStatsState = initializePlayerStats(nodes);
   let currentMatchRefreshInFlight = false;
@@ -99,9 +99,18 @@ async function loadCurrentMatch({ backendBaseUrl, serverSlug, nodes }) {
     );
     renderCurrentMatch(payload?.data || {}, nodes);
   } catch (error) {
-    nodes.note.textContent = "Se conserva el ultimo estado visible si estaba disponible.";
+    if (nodes.note) {
+      nodes.note.textContent = "Se conserva el ultimo estado visible si estaba disponible.";
+    }
     setState(nodes.state, "No se pudo actualizar la partida actual.", true);
   }
+}
+
+function configureOptionalLinks(nodes, serverSlug) {
+  setOptionalHref(
+    nodes.history,
+    `./historico.html?server=${encodeURIComponent(serverSlug)}`,
+  );
 }
 
 async function loadKillFeed({ backendBaseUrl, serverSlug, nodes, killFeedState }) {
@@ -143,8 +152,8 @@ function renderCurrentMatch(data, nodes) {
   nodes.note.textContent = data.found
     ? "Lectura en vivo recibida. El feed de bajas se actualiza en tiempo casi real."
     : "Todavia no hay snapshot live disponible para este servidor.";
-  nodes.scoreboard.href = scoreboardUrl || "./index.html";
-  nodes.scoreboard.hidden = !scoreboardUrl;
+  setOptionalHref(nodes.scoreboard, scoreboardUrl || "./index.html");
+  setOptionalHidden(nodes.scoreboard, !scoreboardUrl);
   renderMapHero(data, mapName, nodes);
   nodes.grid.innerHTML = renderLiveScoreboard(data, { mapName, serverName });
   nodes.state.hidden = true;
@@ -156,7 +165,7 @@ function renderUnsupportedServer(nodes) {
   nodes.summary.textContent =
     "Abre esta vista desde una tarjeta activa de Comunidad Hispana.";
   nodes.note.textContent = "";
-  nodes.scoreboard.hidden = true;
+  setOptionalHidden(nodes.scoreboard, true);
   nodes.grid.hidden = true;
   renderMapHero({}, "Mapa no disponible", nodes);
   setState(nodes.state, "No se puede consultar la partida solicitada.", true);
@@ -208,6 +217,9 @@ function initializePlayerStats(nodes) {
 }
 
 function renderKillFeed(data, nodes, state) {
+  if (!nodes.feedList || !nodes.feedState) {
+    return;
+  }
   const incoming = Array.isArray(data.items) ? data.items : [];
   if (data.scope === "no-current-match-events") {
     state.byId.clear();
@@ -366,6 +378,9 @@ function renderKillFeedWeaponIcon(weapon) {
 function renderPlayerStats(data, nodes, state) {
   const items = Array.isArray(data.items) ? sortPlayerStats(data.items) : [];
   renderDetectedPlayerCount(items.length, nodes);
+  if (!nodes.playerStatsShell || !nodes.playerStatsState) {
+    return;
+  }
   if (items.length === 0) {
     state.visibleSignature = "";
     nodes.playerStatsShell.innerHTML = "";
@@ -698,9 +713,24 @@ function normalizeLookupText(value) {
 }
 
 function setState(node, message, isError = false) {
+  if (!node) {
+    return;
+  }
   node.textContent = message;
   node.hidden = false;
   node.classList.toggle("historical-state--error", isError);
+}
+
+function setOptionalHref(node, href) {
+  if (node) {
+    node.href = href;
+  }
+}
+
+function setOptionalHidden(node, hidden) {
+  if (node) {
+    node.hidden = hidden;
+  }
 }
 
 async function fetchJson(url) {
