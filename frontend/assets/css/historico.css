@@ -822,10 +822,10 @@
 
 .current-match-killfeed__row {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(86px, 112px) minmax(0, 1fr);
+  grid-template-columns: minmax(0, 1fr) minmax(112px, 128px) minmax(0, 1fr);
   align-items: center;
   gap: 8px;
-  min-height: 54px;
+  min-height: 58px;
   padding: 6px 9px;
   overflow: hidden;
   border: 1px solid rgba(159, 168, 141, 0.14);
@@ -906,9 +906,11 @@
   align-items: center;
   justify-content: center;
   gap: 4px;
-  min-width: 92px;
-  min-height: 40px;
+  width: 112px;
+  min-width: 0;
+  min-height: 48px;
   padding: 3px 5px;
+  overflow: hidden;
   border: 1px solid rgba(159, 168, 141, 0.18);
   border-radius: 3px;
   color: var(--text);
@@ -918,9 +920,10 @@
 .current-match-killfeed__weapon-icon-frame {
   display: grid;
   place-items: center;
-  width: min(100%, 88px);
-  min-width: 0;
-  min-height: 28px;
+  box-sizing: border-box;
+  width: 96px;
+  height: 36px;
+  overflow: hidden;
   padding: 3px 7px;
   justify-self: center;
   border: 1px solid rgba(81, 76, 62, 0.22);
@@ -933,8 +936,10 @@
 
 .current-match-killfeed__weapon-icon {
   display: block;
-  width: 100%;
-  height: 24px;
+  width: auto;
+  height: auto;
+  max-width: 82px;
+  max-height: 26px;
   object-fit: contain;
   object-position: center;
 }
@@ -942,8 +947,7 @@
 .current-match-killfeed__weapon-fallback {
   display: grid;
   width: 100%;
-  min-width: 24px;
-  height: 24px;
+  height: 100%;
   place-items: center;
   color: rgba(49, 43, 31, 0.86);
   font-size: 0.82rem;
@@ -956,7 +960,8 @@
 
 .current-match-killfeed__weapon em {
   display: block;
-  max-width: 112px;
+  max-width: 104px;
+  min-width: 0;
   overflow: hidden;
   color: var(--muted);
   font-size: 0.58rem;
@@ -1270,20 +1275,35 @@
   }
 
   .current-match-killfeed__row {
-    grid-template-columns: minmax(0, 1fr) minmax(86px, 116px) minmax(0, 1fr);
+    grid-template-columns: minmax(0, 1fr) minmax(112px, 128px) minmax(0, 1fr);
   }
 }
 
 @media (max-width: 480px) {
   .current-match-killfeed__row {
-    grid-template-columns: minmax(0, 1fr) 82px minmax(0, 1fr);
+    grid-template-columns: minmax(0, 1fr) 92px minmax(0, 1fr);
     gap: 5px;
     padding-inline: 6px;
   }
 
   .current-match-killfeed__weapon {
-    min-width: 82px;
+    width: 92px;
     padding-inline: 3px;
+  }
+
+  .current-match-killfeed__weapon-icon-frame {
+    width: 72px;
+    height: 32px;
+    padding-inline: 5px;
+  }
+
+  .current-match-killfeed__weapon-icon {
+    max-width: 62px;
+    max-height: 23px;
+  }
+
+  .current-match-killfeed__weapon em {
+    max-width: 82px;
   }
 
   .current-match-killfeed__player-name {
