@@ -10,6 +10,9 @@ const CURRENT_MATCH_SCOREBOARDS = Object.freeze({
   "comunidad-hispana-02": "https://scoreboard.comunidadhll.es:5443",
 });
 const CURRENT_MATCH_KILL_FEED_LIMIT = 18;
+const CURRENT_MATCH_KILL_FEED_VISIBLE_LIMIT_DESKTOP = 12;
+const CURRENT_MATCH_KILL_FEED_VISIBLE_LIMIT_MEDIUM = 6;
+const CURRENT_MATCH_KILL_FEED_VISIBLE_LIMIT_MOBILE = 5;
 
 document.addEventListener("DOMContentLoaded", () => {
   const params = new URLSearchParams(window.location.search);
@@ -192,6 +195,7 @@ function initializeKillFeed(nodes) {
     byId: new Map(),
     latestEventId: "",
     visibleSignature: "",
+    visibleCount: 0,
   };
 }
 
@@ -238,17 +242,36 @@ function renderKillFeed(data, nodes, state) {
   if (events.length === 0) {
     nodes.feedList.innerHTML = "";
     state.visibleSignature = "";
+    state.visibleCount = 0;
     setState(nodes.feedState, "Todavía no se han detectado bajas en esta partida.");
     return;
   }
-  const visualEvents = events;
-  const visibleSignature = visualEvents.map((event) => event.event_id).join("|");
+  const visibleLimit = getKillFeedVisibleLimit();
+  const visualEvents = events.slice(-visibleLimit);
+  const visibleSignature = `${visibleLimit}:${visualEvents
+    .map((event) => event.event_id)
+    .join("|")}`;
   if (visibleSignature !== state.visibleSignature) {
     nodes.feedList.innerHTML = renderKillFeedColumns(visualEvents);
     state.visibleSignature = visibleSignature;
+    state.visibleCount = visualEvents.length;
   }
-  nodes.feedState.textContent = formatKillFeedCoverage(data.scope);
+  nodes.feedState.textContent = formatKillFeedCoverage(
+    data.scope,
+    visualEvents.length,
+    events.length,
+  );
   nodes.feedState.classList.remove("historical-state--error");
+}
+
+function getKillFeedVisibleLimit() {
+  if (window.matchMedia("(max-width: 480px)").matches) {
+    return CURRENT_MATCH_KILL_FEED_VISIBLE_LIMIT_MOBILE;
+  }
+  if (window.matchMedia("(max-width: 1280px)").matches) {
+    return CURRENT_MATCH_KILL_FEED_VISIBLE_LIMIT_MEDIUM;
+  }
+  return CURRENT_MATCH_KILL_FEED_VISIBLE_LIMIT_DESKTOP;
 }
 
 function compareKillFeedEvents(left, right) {
@@ -690,7 +713,10 @@ function formatDuration(value) {
   return hours > 0 ? `${hours} h ${remainingMinutes} min` : `${minutes} min`;
 }
 
-function formatKillFeedCoverage(scope) {
+function formatKillFeedCoverage(scope, visibleCount = 0, totalCount = 0) {
+  if (visibleCount > 0 && totalCount > visibleCount) {
+    return `Mostrando las últimas ${visibleCount} bajas detectadas.`;
+  }
   if (scope === "open-admin-log-match-window") {
     return "Bajas detectadas en la partida actual.";
   }

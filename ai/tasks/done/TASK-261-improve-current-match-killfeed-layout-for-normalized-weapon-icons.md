@@ -24,10 +24,11 @@ Preservar la identidad HLL Vietnam: militar, Vietnam, tactica y sobria. No tocar
 ## Steps
 
 1. Diagnosticar el layout actual del killfeed en HTML, JS y CSS relacionados.
-2. Ajustar el layout CSS para dar altura suficiente a las kill cards, columna central estable al arma, ellipsis a nombres/labels y scroll vertical sin cortes.
-3. Mantener dos columnas solo con ancho suficiente y pasar a una columna en ancho medio/mobile.
-4. Validar visualmente las vistas de partida actual para `comunidad-hispana-01` y `comunidad-hispana-02`.
-5. Ejecutar la auditoria publica indicada y documentar resultado.
+2. Ajustar el layout CSS para dar altura suficiente a las kill cards, columna central estable al arma y ellipsis a nombres/labels.
+3. Eliminar scroll interno del feed de combate.
+4. Limitar en frontend el numero de eventos renderizados para mostrar solo filas completas.
+5. Mantener dos columnas solo con ancho suficiente y pasar a una columna en ancho medio/mobile.
+6. Validar visualmente las vistas de partida actual para `comunidad-hispana-01` y `comunidad-hispana-02`.
 
 ## Files to Read First
 
@@ -43,9 +44,10 @@ Preservar la identidad HLL Vietnam: militar, Vietnam, tactica y sobria. No tocar
 ## Expected Files to Modify
 
 - `frontend/assets/css/historico.css`
+- `frontend/assets/js/partida-actual.js`
 - `ai/tasks/done/TASK-261-improve-current-match-killfeed-layout-for-normalized-weapon-icons.md`
 
-`frontend/assets/js/partida-actual.js` solo debe modificarse si hace falta anadir clases semanticas o corregir estructura.
+`frontend/assets/js/partida-actual.js` se modifica para limitar los eventos visibles por breakpoint.
 
 ## Constraints
 
@@ -67,47 +69,42 @@ Preservar la identidad HLL Vietnam: militar, Vietnam, tactica y sobria. No tocar
   - `/partida-actual.html?server=comunidad-hispana-02`
 - Validar con casos reales o simulados: nombres cortos, nombres largos con clan tags, rifle, MG, mina, strafing run / bombing run y arma con label largo.
 - Confirmar que no se cortan filas, el ultimo elemento no queda medio oculto, el icono queda centrado, el nombre del arma no desborda, killer/victima no empujan fuera el arma, dos columnas solo aparecen con ancho suficiente y una columna aparece en ancho medio/mobile.
-- Ejecutar:
-  `python .\scripts\audit_public_requests.py --base-url https://comunidadhll.devzamode.es --timeout 30 --output tmp\task261_full_audit_after.json`
-- Criterio minimo: CRITICAL 0, `current-match-*` OK 200 y consola sin TypeError.
+- No repetir la auditoria Python si sigue bloqueada por TLS de `urllib`; documentar el bloqueo si aplica.
 - Revisar `git diff --name-only` y confirmar que el alcance coincide con la task.
 
 ## Outcome
 
 Diagnostico corregido:
 
-- El problema principal no era solo el ancho de cada kill card. El recorte visible venia del contenedor interno que muestra la lista de acciones/kills.
+- El usuario no quiere scroll interno en el Feed de combate.
 - El contenedor exacto de la lista es `#current-match-feed-list.current-match-killfeed`, creado en `initializeKillFeed()` dentro de `.current-match-killfeed-screen`.
-- Antes de la correccion inicial, habia doble recorte vertical:
-  - `.current-match-killfeed-screen`: `max-height: 520px` y `overflow: hidden`.
-  - `.current-match-killfeed`: `max-height: 500px` y `overflow: hidden`.
-- Ese doble overflow podia dejar kills partidas por la mitad en la parte inferior: el wrapper con borde recortaba y la lista interna no tenia scroll vertical util.
-- Tras aumentar la altura de fila a `74px`, el viewport de lista debia crecer tambien; con muchas kills, el listado necesitaba scroll claro, padding inferior y comprobacion del ultimo item scrolleado.
+- La correccion anterior quitaba cortes, pero convertia `#current-match-feed-list.current-match-killfeed` en nodo scrolleable con `max-height: 620px`, `overflow-y: auto`, `scroll-padding-bottom` y `scrollbar-gutter`.
+- El comportamiento correcto es renderizar solo las bajas recientes que caben completas y ocultar eventos mas antiguos cuando hay demasiados.
 
 Cambios aplicados:
 
-- `.current-match-killfeed-screen` queda como wrapper visual con borde, `overflow: visible`, `box-sizing: border-box` y padding `10px 10px 12px`; no es el nodo scrolleable.
-- `.current-match-killfeed` queda como unico contenedor scrolleable de la lista:
-  - `max-height: 620px`
-  - `overflow-y: auto`
-  - `overflow-x: hidden`
-  - `padding-bottom: 12px`
-  - `scroll-padding-bottom: 12px`
-  - `scrollbar-gutter: stable`
+- Se elimino el scroll interno de `.current-match-killfeed`:
+  - sin `overflow-y: auto`
+  - sin `scrollbar-gutter`
+  - sin `scroll-padding-bottom`
+  - `max-height: none`
+  - `overflow: visible`
+- `.current-match-killfeed-screen` se mantiene como wrapper visual con `overflow: visible`, `box-sizing: border-box` y padding `10px 10px 12px`.
+- `frontend/assets/js/partida-actual.js` limita los eventos visibles antes de renderizar:
+  - desktop ancho: maximo 12 kills
+  - ancho medio / una columna: maximo 6 kills
+  - mobile: maximo 5 kills
+- Si hay mas eventos almacenados que visibles, el estado muestra: `Mostrando las últimas N bajas detectadas.`
 - Se mantienen las mejoras previas: filas de `min-height: 74px`, columna de arma `128px`, mobile `104px`, ellipsis en nombres/labels y una columna desde `max-width: 1280px`.
 
 Validacion ejecutada:
 
-- No se ejecuto `node --check frontend/assets/js/partida-actual.js` porque no se modifico JS.
-- Validacion visual local con servidor estatico en `http://127.0.0.1:4173`:
-  - `/partida-actual.html?server=comunidad-hispana-01`
-  - `/partida-actual.html?server=comunidad-hispana-02`
-- Fixture simulada larga fuera del repo con 20 kills, nombres largos, clan tags, rifle, MG, mina, strafing run, bombing run y labels largos.
-- Medicion DOM con Playwright scrolleando la lista hasta el final:
-  - desktop `1440px`: 2 columnas, `max-height: 620px`, `clientHeight: 620`, `scrollHeight: 828`, ultimo item completo.
-  - medio `1100px`: 1 columna, `max-height: 620px`, `clientHeight: 620`, `scrollHeight: 1652`, ultimo item completo.
-  - mobile `390px`: 1 columna, `max-height: 620px`, `clientHeight: 620`, `scrollHeight: 1648`, ultimo item completo.
-  - En los tres anchos: `lastBottom <= visibleBottom - paddingBottom + 1`, `clippedRows: 0`, nombres/labels con ellipsis.
+- `node --check frontend/assets/js/partida-actual.js`: OK.
+- Browser plugin: no se pudo usar porque la herramienta requerida `node_repl js` no esta expuesta; se uso Playwright local como fallback.
+- Fixture larga de 20 kills interceptando las APIs de la pagina real:
+  - desktop `1440px`: renderiza 12 kills, 2 columnas, `overflow-y: visible`, `scrollHeight == clientHeight`, sin scrollbar interno, `clippedRows: 0`, copy `Mostrando las últimas 12 bajas detectadas.`
+  - medio `1100px`: renderiza 6 kills, 1 columna, `overflow-y: visible`, `scrollHeight == clientHeight`, sin scrollbar interno, `clippedRows: 0`, copy `Mostrando las últimas 6 bajas detectadas.`
+  - mobile `390px`: renderiza 5 kills, 1 columna, `overflow-y: visible`, `scrollHeight == clientHeight`, sin scrollbar interno, `clippedRows: 0`, copy `Mostrando las últimas 5 bajas detectadas.`
 - Rutas reales local y publicas con Playwright:
   - `partida-actual.html?server=comunidad-hispana-01`
   - `partida-actual.html?server=comunidad-hispana-02`
@@ -118,7 +115,6 @@ Validacion ejecutada:
 
 Alcance:
 
-- Se modifico solo CSS de frontend y esta task.
 - TASK-261 queda en `ai/tasks/done` para cierre y commit aislado.
 - No se tocaron assets fisicos, SVGs, PNGs, `frontend/assets/img/weapons/`, backend, scheduler, RCON, TeamKills, Elo/MMR, mapas, clans, brands, configuracion de servidores, `27001`, `ai/system-metrics.md` ni TASK-204.
 

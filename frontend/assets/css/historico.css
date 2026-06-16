@@ -810,12 +810,8 @@
   grid-template-columns: repeat(2, minmax(0, 1fr));
   align-items: start;
   gap: 8px;
-  max-height: 620px;
-  overflow-x: hidden;
-  overflow-y: auto;
-  padding-bottom: 12px;
-  scroll-padding-bottom: 12px;
-  scrollbar-gutter: stable;
+  max-height: none;
+  overflow: visible;
 }
 
 .current-match-killfeed__column {
@@ -868,8 +864,10 @@
   display: inline-flex;
   align-items: center;
   gap: 6px;
+  width: 100%;
   min-width: 0;
   max-width: 100%;
+  overflow: hidden;
   flex-wrap: nowrap;
 }
 
