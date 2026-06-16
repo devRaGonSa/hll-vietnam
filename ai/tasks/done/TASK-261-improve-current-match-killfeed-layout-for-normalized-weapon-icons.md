@@ -80,6 +80,11 @@ Diagnostico corregido:
 - El contenedor exacto de la lista es `#current-match-feed-list.current-match-killfeed`, creado en `initializeKillFeed()` dentro de `.current-match-killfeed-screen`.
 - La correccion anterior quitaba cortes, pero convertia `#current-match-feed-list.current-match-killfeed` en nodo scrolleable con `max-height: 620px`, `overflow-y: auto`, `scroll-padding-bottom` y `scrollbar-gutter`.
 - El comportamiento correcto es renderizar solo las bajas recientes que caben completas y ocultar eventos mas antiguos cuando hay demasiados.
+- Analisis de parpadeo posterior:
+  - El comportamiento anterior correcto del feed era pedir la lista completa con `/api/current-match/kills?...&limit=18` en cada ciclo y renderizar sobre el estado acumulado.
+  - El cambio que altera el flujo no viene del limite visual de TASK-261; viene de `d558ac8 feat: refine current match live feed`, que anadio `since_event_id` y limpiaba `state.byId` cuando el endpoint respondia `scope: no-current-match-events`.
+  - En produccion se observo el ciclo exacto: request sin cursor devuelve 18 bajas; request siguiente con `since_event_id` devuelve `no-current-match-events` con `items: 0`; el JS borra `state.byId`; el siguiente ciclo vuelve a pedir sin cursor y reaparece la lista.
+  - Por eso el feed alternaba entre lista visible y estado vacio.
 
 Cambios aplicados:
 
@@ -95,6 +100,9 @@ Cambios aplicados:
   - ancho medio / una columna: maximo 6 kills
   - mobile: maximo 5 kills
 - Si hay mas eventos almacenados que visibles, el estado muestra: `Mostrando las últimas N bajas detectadas.`
+- Se restauro el patron de peticion anterior eliminando `since_event_id` del request de killfeed.
+- Se ajusto la limpieza de `no-current-match-events`: solo limpia cuando no hay bajas validas en memoria. Una respuesta vacia transitoria ya no borra una lista valida.
+- No se anadio cache/TTL porque el problema era el cursor incremental borrando estado valido, no la ausencia de una politica de cache.
 - Se mantienen las mejoras previas: filas de `min-height: 74px`, columna de arma `128px`, mobile `104px`, ellipsis en nombres/labels y una columna desde `max-width: 1280px`.
 
 Validacion ejecutada:
@@ -105,6 +113,18 @@ Validacion ejecutada:
   - desktop `1440px`: renderiza 12 kills, 2 columnas, `overflow-y: visible`, `scrollHeight == clientHeight`, sin scrollbar interno, `clippedRows: 0`, copy `Mostrando las últimas 12 bajas detectadas.`
   - medio `1100px`: renderiza 6 kills, 1 columna, `overflow-y: visible`, `scrollHeight == clientHeight`, sin scrollbar interno, `clippedRows: 0`, copy `Mostrando las últimas 6 bajas detectadas.`
   - mobile `390px`: renderiza 5 kills, 1 columna, `overflow-y: visible`, `scrollHeight == clientHeight`, sin scrollbar interno, `clippedRows: 0`, copy `Mostrando las últimas 5 bajas detectadas.`
+- Validacion real de produccion antes del ajuste:
+  - `comunidad-hispana-02` alternaba entre 18 items `recent-admin-log-window` y 0 items `no-current-match-events` cuando se enviaba `since_event_id`.
+  - El DOM alternaba entre 12 filas y 0 filas, reproduciendo el parpadeo reportado.
+- Validacion de flujo tras el ajuste, con APIs simuladas:
+  - ciclo 1 con 20 kills: renderiza 12/6/5 segun breakpoint.
+  - ciclo 2 con `scope: no-current-match-events` e `items: []`: conserva las filas visibles, no muestra estado vacio y no parpadea.
+  - ciclo 3 con kills nuevas: actualiza la ventana visible a los eventos nuevos.
+  - En desktop, medio y mobile: sin scrollbar interno, `scrollHeight == clientHeight`, `clippedRows: 0`.
+- Validacion con datos publicos reales usando el frontend local corregido:
+  - `comunidad-hispana-02` pidio repetidamente `/api/current-match/kills?server=comunidad-hispana-02&limit=18`, sin `since_event_id`.
+  - todas las respuestas observadas fueron `recent-admin-log-window` con 18 items.
+  - el DOM se mantuvo estable en 12 filas visibles durante 8 muestras; no alterno a estado vacio.
 - Rutas reales local y publicas con Playwright:
   - `partida-actual.html?server=comunidad-hispana-01`
   - `partida-actual.html?server=comunidad-hispana-02`

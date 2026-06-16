@@ -118,11 +118,8 @@ function configureOptionalLinks(nodes, serverSlug) {
 
 async function loadKillFeed({ backendBaseUrl, serverSlug, nodes, killFeedState }) {
   try {
-    const cursor = killFeedState.latestEventId
-      ? `&since_event_id=${encodeURIComponent(killFeedState.latestEventId)}`
-      : "";
     const payload = await fetchJson(
-      `${backendBaseUrl}/api/current-match/kills?server=${encodeURIComponent(serverSlug)}&limit=${CURRENT_MATCH_KILL_FEED_LIMIT}${cursor}`,
+      `${backendBaseUrl}/api/current-match/kills?server=${encodeURIComponent(serverSlug)}&limit=${CURRENT_MATCH_KILL_FEED_LIMIT}`,
     );
     renderKillFeed(payload?.data || {}, nodes, killFeedState);
   } catch (error) {
@@ -225,7 +222,8 @@ function renderKillFeed(data, nodes, state) {
     return;
   }
   const incoming = Array.isArray(data.items) ? data.items : [];
-  if (data.scope === "no-current-match-events") {
+  const hasVisibleEvents = state.byId.size > 0;
+  if (data.scope === "no-current-match-events" && !hasVisibleEvents) {
     state.byId.clear();
     state.latestEventId = "";
   }
