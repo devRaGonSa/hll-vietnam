@@ -1,5 +1,46 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="2172" height="724" viewBox="0 0 2172 724">
-<rect width="100%" height="100%" fill="white"/>
-<path d="M 867,374 L 867,380 L 901,391 L 910,390 L 918,380 L 941,383 L 1086,434 L 1169,451 L 1546,582 L 1561,597 L 1581,604 L 1602,602 L 1623,585 L 1638,558 L 1650,518 L 1649,489 L 1640,476 L 1625,467 L 1606,462 L 1585,465 L 1205,342 L 1131,307 L 964,251 L 964,242 L 960,236 L 924,223 L 920,224 L 906,258 Z" fill="black" fill-rule="evenodd"/>
-<path d="M 638,95 L 619,113 L 611,124 L 595,153 L 594,152 L 595,155 L 587,171 L 574,207 L 565,241 L 561,267 L 561,297 L 563,307 L 569,317 L 568,318 L 823,402 L 823,409 L 828,415 L 841,419 L 847,417 L 851,413 L 855,401 L 857,401 L 856,398 L 863,381 L 861,380 L 866,357 L 893,276 L 914,223 L 921,217 L 929,191 L 928,181 L 923,176 L 910,172 L 905,174 L 900,180 L 651,93 L 643,93 Z" fill="black" fill-rule="evenodd"/>
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<svg
+   width="500"
+   height="250"
+   viewBox="0 0 500 250"
+   version="1.1"
+   id="svg2"
+   sodipodi:docname="m43_stielhandgranate_black.svg"
+   inkscape:version="1.4.2 (f4327f4, 2025-05-13)"
+   xmlns:inkscape="http://www.inkscape.org/namespaces/inkscape"
+   xmlns:sodipodi="http://sodipodi.sourceforge.net/DTD/sodipodi-0.dtd"
+   xmlns="http://www.w3.org/2000/svg"
+   xmlns:svg="http://www.w3.org/2000/svg">
+  <defs
+     id="defs2" />
+  <sodipodi:namedview
+     id="namedview2"
+     pagecolor="#ffffff"
+     bordercolor="#000000"
+     borderopacity="0.25"
+     inkscape:showpageshadow="2"
+     inkscape:pageopacity="0.0"
+     inkscape:pagecheckerboard="0"
+     inkscape:deskcolor="#d1d1d1"
+     inkscape:zoom="0.78654235"
+     inkscape:cx="930.65555"
+     inkscape:cy="416.37936"
+     inkscape:window-width="2560"
+     inkscape:window-height="1377"
+     inkscape:window-x="-8"
+     inkscape:window-y="-8"
+     inkscape:window-maximized="1"
+     inkscape:current-layer="svg2" />
+  <path
+     d="m 164.21699,126.80564 v 2.26639 l 12.8429,4.15505 3.3996,-0.37773 3.02185,-3.77732 8.68784,1.1332 54.7712,19.26435 31.35178,6.42145 142.4051,49.48294 5.66599,5.66598 7.55465,2.64413 7.93238,-0.75547 7.93238,-6.42144 5.66598,-10.19878 4.53279,-15.10929 -0.37773,-10.95424 -3.3996,-4.91052 -5.66598,-3.39959 -7.17691,-1.88867 -7.93238,1.1332 -143.53831,-46.46107 -27.95218,-13.22064 -63.08131,-21.153012 v -3.399585 l -1.51093,-2.266398 -13.59836,-4.910524 -1.51093,0.37774 -5.28825,12.842894 z"
+     fill="#000000"
+     fill-rule="evenodd"
+     id="path1"
+     style="stroke-width:0.377733" />
+  <path
+     d="m 77.716292,21.418307 -7.17693,6.799182 -3.02185,4.155055 -6.04371,10.954248 -0.37774,-0.37774 0.37774,1.133199 -3.02187,6.043723 -4.91052,13.598364 -3.39959,12.842895 -1.51093,9.821049 v 11.331974 l 0.75547,3.777314 2.26639,3.77733 -0.37773,0.37773 96.321738,31.72951 v 2.64413 l 1.88867,2.26639 4.91052,1.51093 2.26639,-0.75546 1.51093,-1.51094 1.51093,-4.53278 h 0.75547 l -0.37773,-1.1332 2.64413,-6.42144 -0.75547,-0.37774 1.88865,-8.68784 10.19878,-30.596319 7.93238,-20.01982 2.64413,-2.266387 3.02186,-9.821049 -0.37773,-3.777326 -1.88867,-1.888657 -4.91051,-1.510929 -1.88867,0.75547 -1.88866,2.266387 -94.055358,-32.862711 h -3.02186 z"
+     fill="#000000"
+     fill-rule="evenodd"
+     id="path2"
+     style="stroke-width:0.377733" />
 </svg>

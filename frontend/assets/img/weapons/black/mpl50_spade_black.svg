@@ -1,4 +1,40 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="2172" height="724" viewBox="0 0 2172 724">
-<rect width="100%" height="100%" fill="white"/>
-<path d="M 216,359 L 219,371 L 387,564 L 403,572 L 854,578 L 873,564 L 872,481 L 877,471 L 896,468 L 904,457 L 900,436 L 881,428 L 903,409 L 1218,417 L 1240,404 L 1639,410 L 1905,425 L 1942,404 L 1957,371 L 1954,336 L 1924,304 L 1898,297 L 1449,319 L 1242,321 L 1213,307 L 904,316 L 881,298 L 901,288 L 904,269 L 894,256 L 877,255 L 872,245 L 875,161 L 851,146 L 400,152 L 387,159 L 322,230 Z" fill="black" fill-rule="evenodd"/>
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<svg
+   width="800"
+   height="250"
+   viewBox="0 0 800 250"
+   version="1.1"
+   id="svg1"
+   sodipodi:docname="mpl50_spade_black.svg"
+   inkscape:version="1.4.2 (f4327f4, 2025-05-13)"
+   xmlns:inkscape="http://www.inkscape.org/namespaces/inkscape"
+   xmlns:sodipodi="http://sodipodi.sourceforge.net/DTD/sodipodi-0.dtd"
+   xmlns="http://www.w3.org/2000/svg"
+   xmlns:svg="http://www.w3.org/2000/svg">
+  <defs
+     id="defs1" />
+  <sodipodi:namedview
+     id="namedview1"
+     pagecolor="#ffffff"
+     bordercolor="#000000"
+     borderopacity="0.25"
+     inkscape:showpageshadow="2"
+     inkscape:pageopacity="0.0"
+     inkscape:pagecheckerboard="0"
+     inkscape:deskcolor="#d1d1d1"
+     inkscape:zoom="0.55616943"
+     inkscape:cx="721.00331"
+     inkscape:cy="331.73344"
+     inkscape:window-width="2560"
+     inkscape:window-height="1377"
+     inkscape:window-x="-8"
+     inkscape:window-y="-8"
+     inkscape:window-maximized="1"
+     inkscape:current-layer="svg1" />
+  <path
+     d="m 23.612583,124.29684 1.26442,5.05767 70.80739,81.34421 6.743557,3.37178 190.08414,2.52884 8.00798,-5.90062 -0.42147,-34.98222 2.10736,-4.21473 8.00798,-1.26441 3.37178,-4.6362 -1.68589,-8.85093 -8.00798,-3.37178 9.2724,-8.00798 132.76387,3.37178 9.27239,-5.47914 168.16757,2.52883 112.11171,6.32209 15.59448,-8.85092 6.32209,-13.9086 -1.26442,-14.75154 -12.64418,-13.48712 -10.95828,-2.950313 -189.2412,9.272403 -87.24482,0.84294 -12.22271,-5.90061 -130.23503,3.79325 -9.69387,-7.586513 8.42945,-4.21472 1.26442,-8.00798 -4.21472,-5.47914 -7.16504,-0.42148 -2.10736,-4.21472 1.26442,-35.4037 -10.11535,-6.32209 -190.08413,2.52884 -5.479147,2.9503 -27.39572,29.92456 z"
+     fill="#000000"
+     fill-rule="evenodd"
+     id="path1"
+     style="stroke-width:0.421473" />
 </svg>

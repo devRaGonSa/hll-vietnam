@@ -1,4 +1,40 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="1254" height="1254" viewBox="0 0 1254 1254">
-<rect width="100%" height="100%" fill="white"/>
-<path d="M 1102,165 L 1084,150 L 1060,140 L 1038,137 L 1028,142 L 993,227 L 993,242 L 946,350 L 412,165 L 170,884 L 809,1110 L 1058,389 L 1012,372 L 1054,275 L 1066,261 L 1104,173 Z" fill="black" fill-rule="evenodd"/>
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<svg
+   width="300"
+   height="250"
+   viewBox="0 0 300 250"
+   version="1.1"
+   id="svg1"
+   sodipodi:docname="satchel_charge_black.svg"
+   inkscape:version="1.4.2 (f4327f4, 2025-05-13)"
+   xmlns:inkscape="http://www.inkscape.org/namespaces/inkscape"
+   xmlns:sodipodi="http://sodipodi.sourceforge.net/DTD/sodipodi-0.dtd"
+   xmlns="http://www.w3.org/2000/svg"
+   xmlns:svg="http://www.w3.org/2000/svg">
+  <defs
+     id="defs1" />
+  <sodipodi:namedview
+     id="namedview1"
+     pagecolor="#ffffff"
+     bordercolor="#000000"
+     borderopacity="0.25"
+     inkscape:showpageshadow="2"
+     inkscape:pageopacity="0.0"
+     inkscape:pagecheckerboard="0"
+     inkscape:deskcolor="#d1d1d1"
+     inkscape:zoom="0.93700159"
+     inkscape:cx="129.13532"
+     inkscape:cy="402.88085"
+     inkscape:window-width="2560"
+     inkscape:window-height="1377"
+     inkscape:window-x="-8"
+     inkscape:window-y="-8"
+     inkscape:window-maximized="1"
+     inkscape:current-layer="svg1" />
+  <path
+     d="m 261.82506,19.408158 -4.20563,-3.504695 -5.60753,-2.336466 -5.14022,-0.700943 -2.33647,1.168235 -8.17763,19.859971 v 3.504697 L 225.37619,62.632791 100.60887,19.408158 44.066383,187.40011 193.3666,240.20426 251.54461,71.745012 240.79688,67.773023 250.61003,45.1093 l 2.80376,-3.271062 8.87857,-20.560899 z"
+     fill="#000000"
+     fill-rule="evenodd"
+     id="path1"
+     style="stroke-width:0.233646" />
 </svg>
