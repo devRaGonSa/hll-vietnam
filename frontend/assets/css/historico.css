@@ -771,11 +771,11 @@
 
 .current-match-killfeed-screen {
   position: relative;
+  box-sizing: border-box;
   width: 100%;
   min-height: 180px;
-  max-height: 520px;
-  padding: 10px;
-  overflow: hidden;
+  padding: 10px 10px 12px;
+  overflow: visible;
   border: 1px solid rgba(159, 168, 141, 0.2);
   border-radius: 6px;
   background:
@@ -805,12 +805,17 @@
 .current-match-killfeed {
   position: relative;
   z-index: 2;
+  box-sizing: border-box;
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   align-items: start;
   gap: 8px;
-  max-height: 500px;
-  overflow: hidden;
+  max-height: 620px;
+  overflow-x: hidden;
+  overflow-y: auto;
+  padding-bottom: 12px;
+  scroll-padding-bottom: 12px;
+  scrollbar-gutter: stable;
 }
 
 .current-match-killfeed__column {
@@ -822,12 +827,12 @@
 
 .current-match-killfeed__row {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(112px, 128px) minmax(0, 1fr);
+  grid-template-columns: minmax(0, 1fr) 128px minmax(0, 1fr);
   align-items: center;
   gap: 8px;
-  min-height: 58px;
-  padding: 6px 9px;
-  overflow: hidden;
+  min-height: 74px;
+  padding: 8px 10px;
+  overflow: visible;
   border: 1px solid rgba(159, 168, 141, 0.14);
   border-left: 2px solid rgba(159, 168, 141, 0.24);
   border-radius: 3px;
@@ -865,11 +870,14 @@
   gap: 6px;
   min-width: 0;
   max-width: 100%;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
 }
 
 .current-match-killfeed__player-name {
+  display: block;
+  flex: 1 1 auto;
   min-width: 0;
+  max-width: 100%;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -906,9 +914,9 @@
   align-items: center;
   justify-content: center;
   gap: 4px;
-  width: 112px;
-  min-width: 0;
-  min-height: 48px;
+  width: 128px;
+  min-width: 128px;
+  min-height: 58px;
   padding: 3px 5px;
   overflow: hidden;
   border: 1px solid rgba(159, 168, 141, 0.18);
@@ -960,7 +968,8 @@
 
 .current-match-killfeed__weapon em {
   display: block;
-  max-width: 104px;
+  width: 100%;
+  max-width: 116px;
   min-width: 0;
   overflow: hidden;
   color: var(--muted);
@@ -989,9 +998,11 @@
 }
 
 .current-match-killfeed__team-badge {
+  flex: 0 0 auto;
   min-width: auto;
   padding-inline: 8px;
   font-size: 0.62rem;
+  white-space: nowrap;
 }
 
 .current-match-player-intro {
@@ -1028,6 +1039,12 @@
   to {
     opacity: 1;
     transform: translateX(0);
+  }
+}
+
+@media (max-width: 1280px) {
+  .current-match-killfeed {
+    grid-template-columns: 1fr;
   }
 }
 
@@ -1269,51 +1286,41 @@
     min-width: 540px;
   }
 
-  .current-match-killfeed {
-    grid-template-columns: 1fr;
-    max-height: 500px;
-  }
-
   .current-match-killfeed__row {
-    grid-template-columns: minmax(0, 1fr) minmax(112px, 128px) minmax(0, 1fr);
+    grid-template-columns: minmax(0, 1fr) 128px minmax(0, 1fr);
   }
 }
 
 @media (max-width: 480px) {
   .current-match-killfeed__row {
-    grid-template-columns: minmax(0, 1fr) 92px minmax(0, 1fr);
+    grid-template-columns: minmax(0, 1fr) 104px minmax(0, 1fr);
     gap: 5px;
     padding-inline: 6px;
   }
 
   .current-match-killfeed__weapon {
-    width: 92px;
+    width: 104px;
+    min-width: 104px;
     padding-inline: 3px;
   }
 
   .current-match-killfeed__weapon-icon-frame {
-    width: 72px;
+    width: 86px;
     height: 32px;
     padding-inline: 5px;
   }
 
   .current-match-killfeed__weapon-icon {
-    max-width: 62px;
+    max-width: 76px;
     max-height: 23px;
   }
 
   .current-match-killfeed__weapon em {
-    max-width: 82px;
+    max-width: 94px;
   }
 
   .current-match-killfeed__player-name {
-    display: -webkit-box;
-    overflow: hidden;
     font-size: 0.78rem;
-    -webkit-box-orient: vertical;
-    -webkit-line-clamp: 2;
-    text-overflow: ellipsis;
-    white-space: normal;
   }
 
   .current-match-killfeed__player-identity {
