@@ -191,6 +191,7 @@ function initializeKillFeed(nodes) {
   return {
     byId: new Map(),
     latestEventId: "",
+    contextSignature: "",
     visibleSignature: "",
     visibleCount: 0,
   };
@@ -221,22 +222,51 @@ function renderKillFeed(data, nodes, state) {
   if (!nodes.feedList || !nodes.feedState) {
     return;
   }
-  const incoming = Array.isArray(data.items) ? data.items : [];
-  const hasVisibleEvents = state.byId.size > 0;
-  if (data.scope === "no-current-match-events" && !hasVisibleEvents) {
-    state.byId.clear();
-    state.latestEventId = "";
+  const incoming = Array.isArray(data.items)
+    ? data.items.filter(isValidKillFeedEvent)
+    : [];
+  const contextSignature = getKillFeedContextSignature(data);
+  const hasStoredEvents = state.byId.size > 0;
+  const contextChanged =
+    Boolean(contextSignature) &&
+    Boolean(state.contextSignature) &&
+    contextSignature !== state.contextSignature;
+  if (incoming.length > 0) {
+    const events = buildKillFeedWindow(incoming)
+      .sort(compareKillFeedEvents)
+      .slice(-CURRENT_MATCH_KILL_FEED_LIMIT);
+    replaceKillFeedWindow(state, events, contextSignature);
+    renderKillFeedEvents({
+      data,
+      events,
+      nodes,
+      state,
+    });
+    return;
   }
-  incoming.forEach((event) => {
-    if (event?.event_id) {
-      state.byId.set(event.event_id, event);
-    }
-  });
+  if (!hasStoredEvents || contextChanged) {
+    replaceKillFeedWindow(state, [], contextSignature || state.contextSignature);
+    renderKillFeedEvents({
+      data,
+      events: [],
+      nodes,
+      state,
+    });
+    return;
+  }
   const events = [...state.byId.values()]
     .sort(compareKillFeedEvents)
     .slice(-CURRENT_MATCH_KILL_FEED_LIMIT);
-  state.byId = new Map(events.map((event) => [event.event_id, event]));
-  state.latestEventId = events[events.length - 1]?.event_id || state.latestEventId;
+  replaceKillFeedWindow(state, events, state.contextSignature);
+  renderKillFeedEvents({
+    data: { ...data, scope: "preserved-recent-window" },
+    events,
+    nodes,
+    state,
+  });
+}
+
+function renderKillFeedEvents({ data, events, nodes, state }) {
   if (events.length === 0) {
     nodes.feedList.innerHTML = "";
     state.visibleSignature = "";
@@ -246,9 +276,7 @@ function renderKillFeed(data, nodes, state) {
   }
   const visibleLimit = getKillFeedVisibleLimit();
   const visualEvents = events.slice(-visibleLimit);
-  const visibleSignature = `${visibleLimit}:${visualEvents
-    .map((event) => event.event_id)
-    .join("|")}`;
+  const visibleSignature = getKillFeedVisibleSignature(visualEvents, visibleLimit);
   if (visibleSignature !== state.visibleSignature) {
     nodes.feedList.innerHTML = renderKillFeedColumns(visualEvents);
     state.visibleSignature = visibleSignature;
@@ -260,6 +288,146 @@ function renderKillFeed(data, nodes, state) {
     events.length,
   );
   nodes.feedState.classList.remove("historical-state--error");
+}
+
+function replaceKillFeedWindow(state, events, contextSignature) {
+  state.byId = new Map(
+    events.map((event) => [getKillFeedWindowKey(event), event]),
+  );
+  state.latestEventId = events[events.length - 1]?.event_id || "";
+  state.contextSignature = contextSignature || state.contextSignature;
+}
+
+function buildKillFeedWindow(events) {
+  const deduped = [];
+  const indexByEventId = new Map();
+  const indexBySemanticKey = new Map();
+  events.forEach((event) => {
+    const eventIdKey = getKillFeedEventIdKey(event);
+    const semanticKey = getKillFeedSemanticKey(event);
+    const existingIndex =
+      (eventIdKey ? indexByEventId.get(eventIdKey) : undefined) ??
+      (semanticKey ? indexBySemanticKey.get(semanticKey) : undefined);
+    if (existingIndex !== undefined) {
+      deduped[existingIndex] = pickBetterKillFeedEvent(
+        deduped[existingIndex],
+        event,
+      );
+      if (eventIdKey) {
+        indexByEventId.set(eventIdKey, existingIndex);
+      }
+      if (semanticKey) {
+        indexBySemanticKey.set(semanticKey, existingIndex);
+      }
+      return;
+    }
+    const nextIndex = deduped.length;
+    deduped.push(event);
+    if (eventIdKey) {
+      indexByEventId.set(eventIdKey, nextIndex);
+    }
+    if (semanticKey) {
+      indexBySemanticKey.set(semanticKey, nextIndex);
+    }
+  });
+  return deduped;
+}
+
+function pickBetterKillFeedEvent(current, candidate) {
+  if (!current) {
+    return candidate;
+  }
+  return getKillFeedMetadataScore(candidate) > getKillFeedMetadataScore(current)
+    ? candidate
+    : current;
+}
+
+function getKillFeedMetadataScore(event) {
+  return [
+    isKnownKillFeedTeam(event?.killer_team),
+    isKnownKillFeedTeam(event?.victim_team),
+    isAvailableKillFeedName(event?.killer_name, "Jugador no disponible"),
+    isAvailableKillFeedName(event?.victim_name, "Objetivo no disponible"),
+    Boolean(String(event?.weapon || "").trim()),
+    Boolean(String(event?.event_timestamp || "").trim()),
+    Number.isFinite(Number(event?.server_time)),
+    Boolean(String(event?.event_id || "").trim()),
+  ].filter(Boolean).length;
+}
+
+function isValidKillFeedEvent(event) {
+  return Boolean(
+    event &&
+      typeof event === "object" &&
+      (getKillFeedEventIdKey(event) || getKillFeedSemanticKey(event)),
+  );
+}
+
+function getKillFeedWindowKey(event) {
+  return getKillFeedSemanticKey(event) || getKillFeedEventIdKey(event);
+}
+
+function getKillFeedEventIdKey(event) {
+  const eventId = String(event?.event_id || "").trim();
+  return eventId ? `event:${eventId}` : "";
+}
+
+function getKillFeedSemanticKey(event) {
+  const parts = [
+    event?.server_time,
+    event?.event_timestamp,
+    event?.killer_name,
+    event?.victim_name,
+    event?.weapon,
+  ].map((value) => normalizeKillFeedDedupeValue(value));
+  return parts.every(Boolean) ? `semantic:${parts.join("|")}` : "";
+}
+
+function getKillFeedVisibleSignature(events, visibleLimit) {
+  return `${visibleLimit}:${events
+    .map((event) =>
+      [
+        getKillFeedWindowKey(event),
+        normalizeKillFeedDedupeValue(event?.killer_name),
+        normalizeKillFeedDedupeValue(event?.victim_name),
+        normalizeKillFeedDedupeValue(event?.killer_team),
+        normalizeKillFeedDedupeValue(event?.victim_team),
+        normalizeKillFeedDedupeValue(event?.weapon),
+        event?.is_teamkill ? "1" : "0",
+      ].join(":"),
+    )
+    .join("|")}`;
+}
+
+function getKillFeedContextSignature(data) {
+  return [
+    data?.server_slug,
+    data?.match_id,
+    data?.map,
+    data?.map_id,
+    data?.layer_id,
+    data?.map_pretty_name,
+  ]
+    .map((value) => normalizeKillFeedDedupeValue(value))
+    .filter(Boolean)
+    .join("|");
+}
+
+function normalizeKillFeedDedupeValue(value) {
+  return String(value ?? "").trim().toLowerCase();
+}
+
+function isKnownKillFeedTeam(value) {
+  return getPlayerTeamDisplay(value).key !== "unknown";
+}
+
+function isAvailableKillFeedName(value, fallback) {
+  const normalized = normalizeLookupText(value);
+  return Boolean(
+    normalized &&
+      normalized !== normalizeLookupText(fallback) &&
+      normalized !== normalizeLookupText("No disponible"),
+  );
 }
 
 function getKillFeedVisibleLimit() {
@@ -712,7 +880,10 @@ function formatDuration(value) {
 }
 
 function formatKillFeedCoverage(scope, visibleCount = 0, totalCount = 0) {
-  if (visibleCount > 0 && totalCount > visibleCount) {
+  if (
+    visibleCount > 0 &&
+    (totalCount > visibleCount || scope === "preserved-recent-window")
+  ) {
     return `Mostrando las últimas ${visibleCount} bajas detectadas.`;
   }
   if (scope === "open-admin-log-match-window") {
