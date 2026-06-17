@@ -38,7 +38,7 @@ def initialize_rcon_admin_log_storage(*, db_path: Path | None = None) -> Path:
 
     resolved_path = initialize_rcon_historical_storage(db_path=db_path)
 
-    with connect_sqlite_writer(resolved_path) as connection:
+    with closing(connect_sqlite_writer(resolved_path)) as connection:
         connection.executescript(
             """
             CREATE TABLE IF NOT EXISTS rcon_admin_log_events (
@@ -98,6 +98,7 @@ def initialize_rcon_admin_log_storage(*, db_path: Path | None = None) -> Path:
             """
         )
         _ensure_canonical_message_column(connection)
+        connection.commit()
 
     return resolved_path
 
@@ -121,7 +122,7 @@ def persist_rcon_admin_log_entries(
     inserted = 0
     duplicates = 0
 
-    with connect_sqlite_writer(resolved_path) as connection:
+    with closing(connect_sqlite_writer(resolved_path)) as connection:
         for entry in entries:
             parsed = parse_rcon_admin_log_entry(entry)
             raw_message = str(parsed.get("raw_message") or "")
@@ -175,6 +176,7 @@ def persist_rcon_admin_log_entries(
                 external_server_id=external_server_id,
                 parsed=parsed,
             )
+        connection.commit()
 
     return {
         "events_seen": len(entries),
@@ -322,7 +324,7 @@ def list_rcon_admin_log_event_counts(*, db_path: Path | None = None) -> list[dic
     resolved_path = db_path or get_storage_path()
     initialize_rcon_admin_log_storage(db_path=resolved_path)
 
-    with sqlite3.connect(resolved_path) as connection:
+    with closing(sqlite3.connect(resolved_path)) as connection:
         connection.row_factory = sqlite3.Row
         rows = connection.execute(
             """
@@ -509,6 +511,7 @@ def list_current_match_player_stats(
         event_timestamp = row["event_timestamp"]
         event_type = str(row["event_type"] or "")
         if event_type == "kill":
+            event_key = _current_match_stat_event_key(row, payload)
             killer = _ensure_current_match_player(
                 players,
                 player_name=payload.get("killer_name"),
@@ -529,15 +532,15 @@ def list_current_match_player_stats(
             )
             if killer is not None:
                 weapon = _safe_event_field(payload.get("weapon")) or "UNKNOWN"
-                _player_weapon_counts(killer)[weapon] += 1
+                _add_current_match_player_weapon(killer, weapon, event_key)
                 if payload.get("killer_team") and payload.get("killer_team") == payload.get("victim_team"):
-                    killer["teamkills"] = int(killer["teamkills"]) + 1
+                    _add_current_match_player_stat(killer, "teamkills", event_key)
                 else:
-                    killer["kills"] = int(killer["kills"]) + 1
+                    _add_current_match_player_stat(killer, "kills", event_key)
             if victim is not None:
-                victim["deaths"] = int(victim["deaths"]) + 1
+                _add_current_match_player_stat(victim, "deaths", event_key)
                 if payload.get("killer_team") and payload.get("killer_team") == payload.get("victim_team"):
-                    victim["deaths_by_teamkill"] = int(victim["deaths_by_teamkill"]) + 1
+                    _add_current_match_player_stat(victim, "deaths_by_teamkill", event_key)
             continue
 
         if event_type == "team_switch":
@@ -739,7 +742,7 @@ def get_latest_rcon_player_profile_summaries(
     resolved_path = db_path or get_storage_path()
     initialize_rcon_admin_log_storage(db_path=resolved_path)
     placeholders = ",".join("?" for _ in requested_ids)
-    with sqlite3.connect(resolved_path) as connection:
+    with closing(sqlite3.connect(resolved_path)) as connection:
         connection.row_factory = sqlite3.Row
         rows = connection.execute(
             f"""
@@ -846,7 +849,7 @@ def _ensure_current_match_player(
 ) -> dict[str, object] | None:
     safe_name = _safe_event_field(player_name)
     safe_id = _safe_event_field(player_id)
-    key = _current_match_player_key(safe_id, safe_name)
+    key = _resolve_current_match_player_key(players, player_id=safe_id, player_name=safe_name)
     if key is None:
         return None
     player = players.setdefault(
@@ -862,6 +865,8 @@ def _ensure_current_match_player(
             "is_connected": None,
             "last_seen_at": None,
             "_weapon_counts": Counter(),
+            "_weapon_event_keys": {},
+            "_stat_event_keys": {},
             "_sources": set(),
         },
     )
@@ -872,7 +877,10 @@ def _ensure_current_match_player(
         if current_name is None or len(safe_name) >= len(current_name):
             player["player_name"] = safe_name
     safe_team = _safe_event_field(team)
-    if safe_team:
+    if safe_team and (
+        _is_known_current_match_team(safe_team)
+        or not _is_known_current_match_team(player.get("team"))
+    ):
         player["team"] = safe_team
     if is_connected is not None:
         player["is_connected"] = is_connected
@@ -885,15 +893,194 @@ def _ensure_current_match_player(
     return player
 
 
+def _resolve_current_match_player_key(
+    players: dict[str, dict[str, object]],
+    *,
+    player_id: str | None,
+    player_name: str | None,
+) -> str | None:
+    id_key = f"id:{player_id}" if player_id else None
+    name_key = _current_match_player_name_key(player_name)
+    if id_key is not None:
+        if name_key is not None and name_key in players:
+            named_player = players.pop(name_key)
+            if id_key in players:
+                _merge_current_match_player(players[id_key], named_player)
+            else:
+                players[id_key] = named_player
+        return id_key
+    if name_key is None:
+        return None
+
+    normalized_name = _normalize_current_match_player_name(player_name)
+    matching_id_keys = [
+        key
+        for key, player in players.items()
+        if key.startswith("id:")
+        and _normalize_current_match_player_name(player.get("player_name")) == normalized_name
+    ]
+    if len(matching_id_keys) == 1:
+        return matching_id_keys[0]
+    return name_key
+
+
 def _current_match_player_key(
     player_id: str | None,
     player_name: str | None,
 ) -> str | None:
     if player_id:
         return f"id:{player_id}"
-    if player_name:
-        return f"name:{player_name.casefold()}"
-    return None
+    return _current_match_player_name_key(player_name)
+
+
+def _current_match_player_name_key(player_name: object) -> str | None:
+    normalized = _normalize_current_match_player_name(player_name)
+    return f"name:{normalized}" if normalized else None
+
+
+def _normalize_current_match_player_name(player_name: object) -> str:
+    return " ".join(str(player_name or "").strip().casefold().split())
+
+
+def _merge_current_match_player(
+    destination: dict[str, object],
+    source: Mapping[str, object],
+) -> None:
+    if not destination.get("player_id") and source.get("player_id"):
+        destination["player_id"] = source.get("player_id")
+
+    source_name = _safe_event_field(source.get("player_name"))
+    if source_name:
+        destination_name = _safe_event_field(destination.get("player_name"))
+        if destination_name is None or len(source_name) >= len(destination_name):
+            destination["player_name"] = source_name
+
+    source_team = source.get("team")
+    if _is_known_current_match_team(source_team) or not _is_known_current_match_team(destination.get("team")):
+        if _safe_event_field(source_team):
+            destination["team"] = source_team
+
+    _merge_current_match_stat_events(destination, source)
+    _merge_current_match_weapon_events(destination, source)
+
+    source_last_seen = _safe_event_field(source.get("last_seen_at"))
+    destination_last_seen = _safe_event_field(destination.get("last_seen_at"))
+    if source_last_seen and (destination_last_seen is None or source_last_seen > destination_last_seen):
+        destination["last_seen_at"] = source_last_seen
+        if source.get("is_connected") is not None:
+            destination["is_connected"] = source.get("is_connected")
+    elif destination.get("is_connected") is None and source.get("is_connected") is not None:
+        destination["is_connected"] = source.get("is_connected")
+
+    destination_sources = destination.setdefault("_sources", set())
+    source_sources = source.get("_sources", set())
+    if isinstance(destination_sources, set) and isinstance(source_sources, set):
+        destination_sources.update(source_sources)
+
+
+def _merge_current_match_stat_events(
+    destination: dict[str, object],
+    source: Mapping[str, object],
+) -> None:
+    destination_keys = _stat_event_keys(destination)
+    source_keys = _stat_event_keys(source)
+    for stat_name in ("kills", "deaths", "teamkills", "deaths_by_teamkill"):
+        source_count = int(source.get(stat_name) or 0)
+        if source_count == 0:
+            continue
+        source_stat_keys = source_keys.get(stat_name, set())
+        destination_stat_keys = destination_keys.setdefault(stat_name, set())
+        overlap = len(destination_stat_keys & source_stat_keys)
+        destination[stat_name] = int(destination.get(stat_name) or 0) + max(0, source_count - overlap)
+        destination_stat_keys.update(source_stat_keys)
+
+
+def _merge_current_match_weapon_events(
+    destination: dict[str, object],
+    source: Mapping[str, object],
+) -> None:
+    destination_counts = _player_weapon_counts(destination)
+    source_counts = _player_weapon_counts(source)
+    destination_keys = _weapon_event_keys(destination)
+    source_keys = _weapon_event_keys(source)
+    for weapon, count in source_counts.items():
+        source_weapon_keys = source_keys.get(weapon, set())
+        destination_weapon_keys = destination_keys.setdefault(weapon, set())
+        overlap = len(destination_weapon_keys & source_weapon_keys)
+        destination_counts[weapon] += max(0, int(count) - overlap)
+        destination_weapon_keys.update(source_weapon_keys)
+
+
+def _is_known_current_match_team(value: object) -> bool:
+    normalized = str(value or "").strip().casefold()
+    return normalized in {"allies", "allied", "axis"}
+
+
+def _current_match_stat_event_key(row: Mapping[str, object], payload: Mapping[str, object]) -> str:
+    parts = [
+        "kill",
+        _row_value(row, "server_time"),
+        _row_value(row, "event_timestamp"),
+        payload.get("killer_name"),
+        payload.get("killer_team"),
+        payload.get("victim_name"),
+        payload.get("victim_team"),
+        payload.get("weapon"),
+    ]
+    normalized_parts = [_normalize_current_match_event_value(part) for part in parts]
+    semantic_key = "|".join(normalized_parts)
+    return semantic_key if any(normalized_parts[1:]) else f"row:{_row_value(row, 'id')}"
+
+
+def _row_value(row: Mapping[str, object], key: str) -> object:
+    if isinstance(row, Mapping):
+        return row.get(key)
+    try:
+        return row[key]  # type: ignore[index]
+    except (IndexError, KeyError, TypeError):
+        return None
+
+
+def _normalize_current_match_event_value(value: object) -> str:
+    return " ".join(str(value or "").strip().casefold().split())
+
+
+def _add_current_match_player_stat(
+    player: dict[str, object],
+    stat_name: str,
+    event_key: str,
+) -> None:
+    event_keys = _stat_event_keys(player).setdefault(stat_name, set())
+    if event_key in event_keys:
+        return
+    player[stat_name] = int(player.get(stat_name) or 0) + 1
+    event_keys.add(event_key)
+
+
+def _add_current_match_player_weapon(
+    player: dict[str, object],
+    weapon: str,
+    event_key: str,
+) -> None:
+    weapon_keys = _weapon_event_keys(player).setdefault(weapon, set())
+    if event_key in weapon_keys:
+        return
+    _player_weapon_counts(player)[weapon] += 1
+    weapon_keys.add(event_key)
+
+
+def _stat_event_keys(player: Mapping[str, object]) -> dict[str, set[str]]:
+    event_keys = player.get("_stat_event_keys")
+    if isinstance(event_keys, dict):
+        return event_keys
+    return {}
+
+
+def _weapon_event_keys(player: Mapping[str, object]) -> dict[str, set[str]]:
+    event_keys = player.get("_weapon_event_keys")
+    if isinstance(event_keys, dict):
+        return event_keys
+    return {}
 
 
 def _player_weapon_counts(player: Mapping[str, object]) -> Counter[str]:

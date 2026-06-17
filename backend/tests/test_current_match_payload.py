@@ -1,5 +1,7 @@
 from http import HTTPStatus
 from datetime import datetime, timezone
+from pathlib import Path
+import tempfile
 import unittest
 from unittest.mock import MagicMock, patch
 
@@ -498,6 +500,129 @@ def test_current_match_player_stats_filter_stale_recent_events(tmp_path):
 
 
 class CurrentMatchPublicEndpointHardeningTests(unittest.TestCase):
+    def test_current_match_player_stats_deduplicates_unknown_and_known_team(self) -> None:
+        stats = _build_admin_log_player_stats(
+            [
+                "[1:00 min (100)] MATCH START Mortain Warfare",
+                "[2:00 min (120)] CONNECTED Merge Allies ()",
+                (
+                    "[3:00 min (140)] KILL: Merge Allies(Allies/steam-merge-allies) -> "
+                    "Axis Target(Axis/steam-axis-target) with M1 GARAND"
+                ),
+                "[4:00 min (160)] CONNECTED Merge Axis ()",
+                (
+                    "[5:00 min (180)] KILL: Merge Axis(Axis/steam-merge-axis) -> "
+                    "Allies Target(Allies/steam-allies-target) with MP40"
+                ),
+            ]
+        )
+
+        by_name = _player_stats_by_name(stats)
+
+        self.assertEqual(_count_player_stats_by_name(stats, "Merge Allies"), 1)
+        self.assertEqual(by_name["Merge Allies"]["team"], "Allies")
+        self.assertEqual(by_name["Merge Allies"]["kills"], 1)
+        self.assertEqual(_count_player_stats_by_name(stats, "Merge Axis"), 1)
+        self.assertEqual(by_name["Merge Axis"]["team"], "Axis")
+        self.assertEqual(by_name["Merge Axis"]["kills"], 1)
+
+    def test_current_match_player_stats_deduplicates_same_known_team_rows(self) -> None:
+        stats = _build_admin_log_player_stats(
+            [
+                "[1:00 min (100)] MATCH START Mortain Warfare",
+                "[2:00 min (120)] CHAT[Team][Known Duplicate(Allies/)]: listo",
+                (
+                    "[3:00 min (140)] KILL: Known Duplicate(Allies/steam-known-duplicate) -> "
+                    "Axis Target(Axis/steam-axis-target) with M1 GARAND"
+                ),
+            ]
+        )
+
+        by_name = _player_stats_by_name(stats)
+
+        self.assertEqual(_count_player_stats_by_name(stats, "Known Duplicate"), 1)
+        self.assertEqual(by_name["Known Duplicate"]["team"], "Allies")
+        self.assertEqual(by_name["Known Duplicate"]["kills"], 1)
+
+    def test_current_match_player_stats_preserves_split_stats_when_deduplicating(self) -> None:
+        stats = _build_admin_log_player_stats(
+            [
+                "[1:00 min (100)] MATCH START Mortain Warfare",
+                (
+                    "[2:00 min (120)] KILL: Split Stats(Allies/) -> "
+                    "First Victim(Axis/steam-first-victim) with MP40"
+                ),
+                (
+                    "[3:00 min (140)] KILL: Axis Killer(Axis/steam-axis-killer) -> "
+                    "Split Stats(Allies/steam-split-stats) with M1 GARAND"
+                ),
+            ]
+        )
+
+        player = _player_stats_by_name(stats)["Split Stats"]
+
+        self.assertEqual(_count_player_stats_by_name(stats, "Split Stats"), 1)
+        self.assertEqual(player["team"], "Allies")
+        self.assertEqual(player["kills"], 1)
+        self.assertEqual(player["deaths"], 1)
+        self.assertEqual(player["teamkills"], 0)
+        self.assertEqual(player["deaths_by_teamkill"], 0)
+        self.assertEqual(player["favorite_weapon"], "MP40")
+
+    def test_current_match_player_stats_keeps_distinct_players(self) -> None:
+        stats = _build_admin_log_player_stats(
+            [
+                "[1:00 min (100)] MATCH START Mortain Warfare",
+                "[2:00 min (120)] CONNECTED First Player (steam-first)",
+                "[3:00 min (140)] CONNECTED Second Player (steam-second)",
+            ]
+        )
+
+        names = {item["player_name"] for item in stats["items"]}
+
+        self.assertEqual(names, {"First Player", "Second Player"})
+
+    def test_current_match_player_stats_keeps_same_name_with_different_player_ids(self) -> None:
+        stats = _build_admin_log_player_stats(
+            [
+                "[1:00 min (100)] MATCH START Mortain Warfare",
+                (
+                    "[2:00 min (120)] KILL: Shared Name(Allies/steam-shared-one) -> "
+                    "First Victim(Axis/steam-first-victim) with M1 GARAND"
+                ),
+                (
+                    "[3:00 min (140)] KILL: Shared Name(Allies/steam-shared-two) -> "
+                    "Second Victim(Axis/steam-second-victim) with BAR"
+                ),
+            ]
+        )
+
+        shared_rows = [
+            item for item in stats["items"] if item["player_name"] == "Shared Name"
+        ]
+
+        self.assertEqual(len(shared_rows), 2)
+        self.assertEqual(
+            {item["player_id"] for item in shared_rows},
+            {"steam-shared-one", "steam-shared-two"},
+        )
+
+    def test_current_match_player_stats_preserves_real_favorite_weapon(self) -> None:
+        stats = _build_admin_log_player_stats(
+            [
+                "[1:00 min (100)] MATCH START Mortain Warfare",
+                "[2:00 min (120)] CONNECTED Weapon Player ()",
+                (
+                    "[3:00 min (140)] KILL: Weapon Player(Allies/steam-weapon-player) -> "
+                    "Axis Target(Axis/steam-axis-target) with M1 GARAND"
+                ),
+            ]
+        )
+
+        player = _player_stats_by_name(stats)["Weapon Player"]
+
+        self.assertEqual(player["favorite_weapon"], "M1 GARAND")
+
     def test_kill_feed_degrades_when_admin_log_read_fails(self) -> None:
         with patch.object(
             payloads,
@@ -754,3 +879,42 @@ class _FakeLiveSource:
         if self.collect_error is not None:
             raise self.collect_error
         return self.collect_payload
+
+
+def _build_admin_log_player_stats(messages: list[str]) -> dict[str, object]:
+    with tempfile.TemporaryDirectory() as temp_dir:
+        db_path = Path(temp_dir) / "admin-log.sqlite3"
+        persist_rcon_admin_log_entries(
+            target={
+                "target_key": "comunidad-hispana-01",
+                "external_server_id": "comunidad-hispana-01",
+            },
+            entries=[
+                {
+                    "timestamp": f"2026-05-21T10:{index:02d}:00Z",
+                    "message": message,
+                }
+                for index, message in enumerate(messages)
+            ],
+            db_path=db_path,
+        )
+        return list_current_match_player_stats(
+            server_key="comunidad-hispana-01",
+            db_path=db_path,
+        )
+
+
+def _player_stats_by_name(stats: dict[str, object]) -> dict[str, dict[str, object]]:
+    return {
+        str(item["player_name"]): item
+        for item in stats["items"]
+        if isinstance(item, dict)
+    }
+
+
+def _count_player_stats_by_name(stats: dict[str, object], player_name: str) -> int:
+    return sum(
+        1
+        for item in stats["items"]
+        if isinstance(item, dict) and item.get("player_name") == player_name
+    )

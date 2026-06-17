@@ -5,6 +5,8 @@ from __future__ import annotations
 import json
 import sqlite3
 from collections.abc import Mapping
+from collections.abc import Iterator
+from contextlib import closing, contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -829,12 +831,21 @@ def get_rcon_historical_competitive_window_by_session(
     }
 
 
-def _connect(db_path: Path) -> sqlite3.Connection:
-    return connect_sqlite_writer(db_path)
+@contextmanager
+def _connect(db_path: Path) -> Iterator[sqlite3.Connection]:
+    connection = connect_sqlite_writer(db_path)
+    try:
+        yield connection
+        connection.commit()
+    except Exception:
+        connection.rollback()
+        raise
+    finally:
+        connection.close()
 
 
-def _connect_readonly(db_path: Path) -> sqlite3.Connection:
-    return connect_sqlite_readonly(db_path)
+def _connect_readonly(db_path: Path):
+    return closing(connect_sqlite_readonly(db_path))
 
 
 def _resolve_db_path(db_path: Path | None) -> Path:

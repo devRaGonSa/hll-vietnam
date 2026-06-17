@@ -565,7 +565,9 @@ function renderKillFeedWeaponIcon(weapon) {
 }
 
 function renderPlayerStats(data, nodes, state) {
-  const items = Array.isArray(data.items) ? sortPlayerStats(data.items) : [];
+  const items = Array.isArray(data.items)
+    ? sortPlayerStats(dedupeCurrentMatchPlayerStats(data.items))
+    : [];
   renderDetectedPlayerCount(items.length, nodes);
   if (!nodes.playerStatsShell || !nodes.playerStatsState) {
     return;
@@ -604,8 +606,204 @@ function renderPlayerStats(data, nodes, state) {
 
 function renderDetectedPlayerCount(count, nodes) {
   if (nodes.playerCount) {
-    nodes.playerCount.textContent = `Jugadores detectados: ${count}`;
+    nodes.playerCount.textContent = `Jugadores con estadisticas recientes: ${count}`;
   }
+}
+
+function dedupeCurrentMatchPlayerStats(items) {
+  const byKey = new Map();
+  items.forEach((item) => {
+    const key = resolvePlayerStatsDedupeKey(byKey, item);
+    if (!key) {
+      return;
+    }
+    const current = byKey.get(key);
+    byKey.set(key, current ? mergePlayerStatsRows(current, item) : { ...item });
+  });
+  return [...byKey.values()];
+}
+
+function resolvePlayerStatsDedupeKey(byKey, item) {
+  const identityKey = getPlayerStatsIdentityKey(item);
+  const nameKey = getPlayerStatsNameKey(item);
+  if (identityKey) {
+    if (nameKey && byKey.has(nameKey)) {
+      const namedRow = byKey.get(nameKey);
+      byKey.delete(nameKey);
+      byKey.set(identityKey, byKey.has(identityKey)
+        ? mergePlayerStatsRows(byKey.get(identityKey), namedRow)
+        : namedRow);
+    }
+    return identityKey;
+  }
+  if (!nameKey) {
+    return "";
+  }
+  const matchingIdentityKeys = [...byKey.entries()]
+    .filter(([key, row]) => key.startsWith("id:") && getPlayerStatsNameKey(row) === nameKey)
+    .map(([key]) => key);
+  return matchingIdentityKeys.length === 1 ? matchingIdentityKeys[0] : nameKey;
+}
+
+function getPlayerStatsIdentityKey(item) {
+  const playerId = normalizePlayerStatsDedupeValue(item?.player_id);
+  if (playerId) {
+    return `id:player:${playerId}`;
+  }
+  const steamId = normalizePlayerStatsDedupeValue(item?.steam_id_64);
+  if (steamId) {
+    return `id:steam:${steamId}`;
+  }
+  const epicId = normalizePlayerStatsDedupeValue(item?.epic_id);
+  if (epicId) {
+    return `id:epic:${epicId}`;
+  }
+  return "";
+}
+
+function getPlayerStatsNameKey(item) {
+  const name = normalizePlayerStatsDedupeValue(item?.player_name);
+  return name ? `name:${name}` : "";
+}
+
+function normalizePlayerStatsDedupeValue(value) {
+  return String(value ?? "").trim().toLowerCase().replace(/\s+/g, " ");
+}
+
+function mergePlayerStatsRows(current, candidate) {
+  if (areEquivalentPlayerStatsRows(current, candidate)) {
+    return pickRicherPlayerStatsRow(current, candidate);
+  }
+  const merged = {
+    ...pickRicherPlayerStatsRow(current, candidate),
+    player_id: current.player_id || candidate.player_id,
+    steam_id_64: current.steam_id_64 || candidate.steam_id_64,
+    epic_id: current.epic_id || candidate.epic_id,
+    player_name: pickPlayerStatsName(current.player_name, candidate.player_name),
+    team: pickPlayerStatsTeam(current, candidate),
+    kills: toStatNumber(current.kills) + toStatNumber(candidate.kills),
+    deaths: toStatNumber(current.deaths) + toStatNumber(candidate.deaths),
+    teamkills: toStatNumber(current.teamkills) + toStatNumber(candidate.teamkills),
+    deaths_by_teamkill:
+      toStatNumber(current.deaths_by_teamkill) + toStatNumber(candidate.deaths_by_teamkill),
+    favorite_weapon: pickPlayerStatsFavoriteWeapon(current, candidate),
+    last_seen_at: pickLatestPlayerStatsValue(current.last_seen_at, candidate.last_seen_at),
+    source: mergePlayerStatsSources(current.source, candidate.source),
+  };
+  if (candidate.connected !== undefined || current.connected !== undefined) {
+    merged.connected = pickLatestPlayerStatsConnected(current, candidate);
+    merged.is_connected = merged.connected;
+  }
+  return merged;
+}
+
+function areEquivalentPlayerStatsRows(current, candidate) {
+  return [
+    "team",
+    "kills",
+    "deaths",
+    "teamkills",
+    "deaths_by_teamkill",
+    "favorite_weapon",
+    "last_seen_at",
+  ].every((field) =>
+    normalizePlayerStatsDedupeValue(current?.[field]) ===
+      normalizePlayerStatsDedupeValue(candidate?.[field]),
+  );
+}
+
+function pickRicherPlayerStatsRow(current, candidate) {
+  return getPlayerStatsMetadataScore(candidate) > getPlayerStatsMetadataScore(current)
+    ? { ...candidate }
+    : { ...current };
+}
+
+function getPlayerStatsMetadataScore(item) {
+  return [
+    Boolean(normalizePlayerStatsDedupeValue(item?.player_id)),
+    Boolean(normalizePlayerStatsDedupeValue(item?.steam_id_64)),
+    Boolean(normalizePlayerStatsDedupeValue(item?.epic_id)),
+    getPlayerTeamDisplay(item?.team).key !== "unknown",
+    Boolean(getAvailableFavoriteWeapon(item?.favorite_weapon)),
+    Boolean(normalizePlayerStatsDedupeValue(item?.last_seen_at)),
+  ].filter(Boolean).length;
+}
+
+function pickPlayerStatsName(currentName, candidateName) {
+  const current = String(currentName || "").trim();
+  const candidate = String(candidateName || "").trim();
+  if (!current) {
+    return candidate;
+  }
+  if (!candidate) {
+    return current;
+  }
+  return candidate.length > current.length ? candidate : current;
+}
+
+function pickPlayerStatsTeam(current, candidate) {
+  const currentTeam = getPlayerTeamDisplay(current?.team);
+  const candidateTeam = getPlayerTeamDisplay(candidate?.team);
+  if (candidateTeam.key !== "unknown" && currentTeam.key === "unknown") {
+    return candidate.team;
+  }
+  if (candidateTeam.key !== "unknown" && isPlayerStatsCandidateNewer(current, candidate)) {
+    return candidate.team;
+  }
+  return current.team || candidate.team;
+}
+
+function pickPlayerStatsFavoriteWeapon(current, candidate) {
+  const currentWeapon = getAvailableFavoriteWeapon(current?.favorite_weapon);
+  const candidateWeapon = getAvailableFavoriteWeapon(candidate?.favorite_weapon);
+  if (!currentWeapon) {
+    return candidateWeapon || current.favorite_weapon || candidate.favorite_weapon;
+  }
+  if (!candidateWeapon) {
+    return currentWeapon;
+  }
+  return getPlayerStatsTotal(candidate) > getPlayerStatsTotal(current)
+    ? candidateWeapon
+    : currentWeapon;
+}
+
+function getAvailableFavoriteWeapon(value) {
+  const normalized = normalizePlayerStatsDedupeValue(value);
+  return normalized && normalized !== "no disponible" ? String(value || "").trim() : "";
+}
+
+function pickLatestPlayerStatsValue(current, candidate) {
+  return String(candidate || "") > String(current || "") ? candidate : current;
+}
+
+function pickLatestPlayerStatsConnected(current, candidate) {
+  if (isPlayerStatsCandidateNewer(current, candidate)) {
+    return candidate.connected ?? candidate.is_connected ?? current.connected ?? current.is_connected;
+  }
+  return current.connected ?? current.is_connected ?? candidate.connected ?? candidate.is_connected;
+}
+
+function isPlayerStatsCandidateNewer(current, candidate) {
+  return String(candidate?.last_seen_at || "") > String(current?.last_seen_at || "");
+}
+
+function getPlayerStatsTotal(item) {
+  return (
+    toStatNumber(item?.kills) +
+    toStatNumber(item?.deaths) +
+    toStatNumber(item?.teamkills) +
+    toStatNumber(item?.deaths_by_teamkill)
+  );
+}
+
+function mergePlayerStatsSources(current, candidate) {
+  const sources = new Set(
+    [current, candidate]
+      .flatMap((value) => String(value || "").split(","))
+      .map((value) => value.trim())
+      .filter(Boolean),
+  );
+  return [...sources].sort().join(",");
 }
 
 function sortPlayerStats(items) {
