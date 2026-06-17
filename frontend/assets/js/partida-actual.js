@@ -282,11 +282,8 @@ function renderKillFeedEvents({ data, events, nodes, state }) {
     state.visibleSignature = visibleSignature;
     state.visibleCount = visualEvents.length;
   }
-  nodes.feedState.textContent = formatKillFeedCoverage(
-    data.scope,
-    visualEvents.length,
-    events.length,
-  );
+  nodes.feedState.textContent = "";
+  nodes.feedState.hidden = true;
   nodes.feedState.classList.remove("historical-state--error");
 }
 
@@ -601,7 +598,9 @@ function renderPlayerStats(data, nodes, state) {
     state.visibleSignature = signature;
   }
   nodes.playerStatsShell.hidden = false;
-  setState(nodes.playerStatsState, "Estadisticas derivadas de los eventos recientes.");
+  nodes.playerStatsState.textContent = "";
+  nodes.playerStatsState.hidden = true;
+  nodes.playerStatsState.classList.remove("historical-state--error");
 }
 
 function renderDetectedPlayerCount(count, nodes) {
@@ -1078,12 +1077,6 @@ function formatDuration(value) {
 }
 
 function formatKillFeedCoverage(scope, visibleCount = 0, totalCount = 0) {
-  if (
-    visibleCount > 0 &&
-    (totalCount > visibleCount || scope === "preserved-recent-window")
-  ) {
-    return `Mostrando las últimas ${visibleCount} bajas detectadas.`;
-  }
   if (scope === "open-admin-log-match-window") {
     return "Bajas detectadas en la partida actual.";
   }
