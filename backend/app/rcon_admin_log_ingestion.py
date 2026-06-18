@@ -11,7 +11,7 @@ from .rcon_admin_log_storage import (
     list_rcon_admin_log_event_counts,
     persist_rcon_admin_log_entries,
 )
-from .rcon_client import HllRconConnection, build_rcon_target_key, load_rcon_targets
+from .rcon_client import HllRconConnection, RconServerTarget, build_rcon_target_key, load_rcon_targets
 
 
 @dataclass(slots=True)
@@ -37,24 +37,14 @@ def ingest_rcon_admin_logs(
 
     for target in selected_targets:
         stats.targets_seen += 1
-        target_metadata = _serialize_target(target)
+        target_metadata = serialize_rcon_target(target)
 
         try:
-            with HllRconConnection(timeout_seconds=timeout_seconds) as connection:
-                connection.connect(host=target.host, port=target.port, password=target.password)
-                payload = connection.execute_json(
-                    "GetAdminLog",
-                    {
-                        "LogBackTrackTime": minutes * 60,
-                        "Filters": [],
-                    },
-                )
-
-            entries = payload.get("entries")
-            if not isinstance(entries, list):
-                entries = []
-
-            normalized_entries = [entry for entry in entries if isinstance(entry, dict)]
+            normalized_entries = fetch_recent_admin_log_entries(
+                target,
+                lookback_seconds=minutes * 60,
+                timeout_seconds=timeout_seconds,
+            )
             delta = persist_rcon_admin_log_entries(
                 target=target_metadata,
                 entries=normalized_entries,
@@ -117,7 +107,34 @@ def _select_targets(target_key: str | None) -> list[object]:
     return selected
 
 
-def _serialize_target(target: object) -> dict[str, object]:
+def fetch_recent_admin_log_entries(
+    target: RconServerTarget,
+    *,
+    lookback_seconds: int,
+    timeout_seconds: float | None = None,
+) -> list[dict[str, object]]:
+    """Fetch recent raw AdminLog entries for one configured target."""
+    if lookback_seconds <= 0:
+        raise ValueError("lookback_seconds must be positive.")
+    resolved_timeout = (
+        get_rcon_request_timeout_seconds() if timeout_seconds is None else timeout_seconds
+    )
+    with HllRconConnection(timeout_seconds=resolved_timeout) as connection:
+        connection.connect(host=target.host, port=target.port, password=target.password)
+        payload = connection.execute_json(
+            "GetAdminLog",
+            {
+                "LogBackTrackTime": lookback_seconds,
+                "Filters": [],
+            },
+        )
+    entries = payload.get("entries")
+    if not isinstance(entries, list):
+        return []
+    return [entry for entry in entries if isinstance(entry, dict)]
+
+
+def serialize_rcon_target(target: object) -> dict[str, object]:
     return {
         "target_key": build_rcon_target_key(target),
         "external_server_id": target.external_server_id,

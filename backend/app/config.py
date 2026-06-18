@@ -47,6 +47,9 @@ DEFAULT_RCON_HISTORICAL_CAPTURE_MAX_RETRIES = 2
 DEFAULT_RCON_HISTORICAL_CAPTURE_RETRY_DELAY_SECONDS = 15
 DEFAULT_RCON_CURRENT_MATCH_CAPTURE_INTERVAL_SECONDS = 5
 DEFAULT_RCON_CURRENT_MATCH_WRITER_LOCK_TIMEOUT_SECONDS = 4.0
+DEFAULT_CURRENT_MATCH_ADMINLOG_INTERVAL_SECONDS = 10
+DEFAULT_CURRENT_MATCH_ADMINLOG_LOOKBACK_SECONDS = 180
+DEFAULT_CURRENT_MATCH_ADMINLOG_ENABLED = False
 DEFAULT_KPM_MIN_ACTIVE_SECONDS = 60
 DEFAULT_RCON_BACKFILL_CHUNK_HOURS = 6
 DEFAULT_RCON_BACKFILL_SLEEP_SECONDS = 1.0
@@ -675,6 +678,32 @@ def get_rcon_current_match_writer_lock_timeout_seconds() -> float:
         "HLL_RCON_CURRENT_MATCH_WRITER_LOCK_TIMEOUT_SECONDS",
         str(DEFAULT_RCON_CURRENT_MATCH_WRITER_LOCK_TIMEOUT_SECONDS),
         minimum=0,
+    )
+
+
+def get_current_match_adminlog_interval_seconds() -> int:
+    """Return the dedicated current-match AdminLog worker interval."""
+    return _read_int_env(
+        "CURRENT_MATCH_ADMINLOG_INTERVAL_SECONDS",
+        str(DEFAULT_CURRENT_MATCH_ADMINLOG_INTERVAL_SECONDS),
+        minimum=1,
+    )
+
+
+def get_current_match_adminlog_lookback_seconds() -> int:
+    """Return the overlap-safe AdminLog lookback for the dedicated current-match worker."""
+    return _read_int_env(
+        "CURRENT_MATCH_ADMINLOG_LOOKBACK_SECONDS",
+        str(DEFAULT_CURRENT_MATCH_ADMINLOG_LOOKBACK_SECONDS),
+        minimum=1,
+    )
+
+
+def get_current_match_adminlog_enabled() -> bool:
+    """Return whether a deployment should enable the dedicated current-match worker."""
+    return _read_bool_env(
+        "CURRENT_MATCH_ADMINLOG_ENABLED",
+        default=DEFAULT_CURRENT_MATCH_ADMINLOG_ENABLED,
     )
 
 
