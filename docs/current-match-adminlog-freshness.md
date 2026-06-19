@@ -18,105 +18,95 @@ Observed behavior from TASK-268 matched this design:
 
 ## Solution
 
-Restore the existing `rcon-historical-worker` deployment to the code path that already supports lightweight current-match ingestion:
+Add a dedicated lightweight worker:
 
-- module: `python -m app.rcon_historical_worker`
-- command:
-
-```text
-python -m app.rcon_historical_worker loop --capture-mode current-live --interval 5 --retries 0 --retry-delay 0
-```
-
+- module: `python -m app.rcon_current_match_worker`
 - scope: only trusted current-match servers
   - `comunidad-hispana-01`
   - `comunidad-hispana-02`
-- uses the same AdminLog ingestion and persistence path that already feeds `rcon_admin_log_events`
-- skips heavy historical materialization on each near-live loop
-- keeps the shared writer lock held only for short current-match ingestion windows
+- fetches recent AdminLog directly from existing configured RCON targets
+- reuses existing parsing and `persist_rcon_admin_log_entries(...)`
+- writes into the same `rcon_admin_log_events` table
+- relies on existing dedupe/idempotency for overlap-safe windows
 
-Deployment settings for the current-live worker:
+Default worker settings:
 
-- `HLL_RCON_CURRENT_MATCH_MODE=true`
-- `HLL_RCON_SKIP_HISTORICAL_MATERIALIZATION=true`
-- `HLL_RCON_CURRENT_MATCH_CAPTURE_INTERVAL_SECONDS=5`
-- `HLL_RCON_CURRENT_MATCH_WRITER_LOCK_TIMEOUT_SECONDS=4`
-- `HLL_RCON_HISTORICAL_CAPTURE_MAX_RETRIES=0`
-- `HLL_RCON_HISTORICAL_CAPTURE_RETRY_DELAY_SECONDS=0`
+- `CURRENT_MATCH_ADMINLOG_INTERVAL_SECONDS=10`
+- `CURRENT_MATCH_ADMINLOG_LOOKBACK_SECONDS=180`
+- `CURRENT_MATCH_ADMINLOG_ENABLED=false`
 
-The dedicated worker added in TASK-269 stays in the repository, but it is not the primary deployment fix and is not activated by this change.
+The worker is opt-in. This task does not change Compose to start it automatically.
 
 ## Design Notes
 
-This deployment change intentionally avoids:
+The worker intentionally avoids:
 
 - changing RCON hosts, ports or passwords
 - introducing a second AdminLog schema
-- changing `historical-runner`
+- reducing the heavy historical worker interval globally
 - pushing ingestion into `/api/current-match/*` request handlers
-- activating `python -m app.rcon_current_match_worker` in production
 
 Each iteration:
 
 1. filters configured RCON targets down to trusted current-match servers
-2. captures fresh live server state and recent AdminLog entries
+2. fetches recent AdminLog entries with a small overlap window
 3. persists through the existing idempotent storage path
-4. skips heavy historical match materialization for the current-live loop
+4. logs per-target counts for:
+   - `entries_seen`
+   - `events_inserted`
+   - `duplicate_events`
+   - `duration_ms`
 5. continues if one server fails
-
-The heavy historical/snapshot path remains the responsibility of `historical-runner` on its scheduled cadence.
 
 ## Run Commands
 
-One-shot validation using the same worker path:
+Local one-shot validation:
 
 ```powershell
 cd backend
-python -m app.rcon_historical_worker capture --capture-mode current-live
+python -m app.rcon_current_match_worker once
 ```
 
-Local near-live loop:
+Local loop:
 
 ```powershell
 cd backend
-python -m app.rcon_historical_worker loop --capture-mode current-live --interval 5 --retries 0 --retry-delay 0
+python -m app.rcon_current_match_worker loop --interval 10 --lookback-seconds 180
 ```
 
-Docker/Compose-style ad hoc command:
+Docker/Compose-style ad hoc command without changing deployment defaults:
 
 ```powershell
-docker compose run --rm rcon-historical-worker python -m app.rcon_historical_worker loop --capture-mode current-live --interval 5 --retries 0 --retry-delay 0
+docker compose run --rm backend python -m app.rcon_current_match_worker loop --interval 10 --lookback-seconds 180
 ```
 
-Expected runtime signals after deployment:
+Example service snippet for a future approved deployment:
 
-- `capture_mode: current-live`
-- `materialization_skipped: true`
-- `interval_seconds: 5`
-- no repeated heavy materialization every cycle
+```yaml
+current-match-adminlog-worker:
+  profiles: ["advanced"]
+  build:
+    context: ./backend
+  command: ["python", "-m", "app.rcon_current_match_worker", "loop"]
+  environment:
+    HLL_BACKEND_DATABASE_URL: ${HLL_BACKEND_DATABASE_URL}
+    HLL_BACKEND_RCON_TARGETS: ${HLL_BACKEND_RCON_TARGETS}
+    CURRENT_MATCH_ADMINLOG_ENABLED: ${CURRENT_MATCH_ADMINLOG_ENABLED:-false}
+    CURRENT_MATCH_ADMINLOG_INTERVAL_SECONDS: ${CURRENT_MATCH_ADMINLOG_INTERVAL_SECONDS:-10}
+    CURRENT_MATCH_ADMINLOG_LOOKBACK_SECONDS: ${CURRENT_MATCH_ADMINLOG_LOOKBACK_SECONDS:-180}
+```
+
+The snippet is documented only. It is not applied automatically by this task.
 
 ## Post-Deployment Validation
 
-Verify the current-live worker command and env:
+Watch worker logs for per-target counts and errors. The useful signals are:
 
-```bash
-docker inspect -f '{{.Path}} {{json .Args}}' hll-vietnam-rcon-historical-worker-1
-docker inspect -f '{{range .Config.Env}}{{println .}}{{end}}' hll-vietnam-rcon-historical-worker-1 | sort | grep -Ei 'CAPTURE|CURRENT|RCON|ADMIN|MATERIAL|INTERVAL|RETRY|LOOKBACK|LOCK'
-```
-
-Watch worker logs for:
-
-- `capture_mode: current-live`
-- `materialization_skipped: true`
-- `interval_seconds: 5`
-- `target_count: 2`
-- `comunidad-hispana-01`
-- `comunidad-hispana-02`
-
-Confirm the worker is not doing heavy historical materialization every 5 seconds and that the writer lock is not held for long periods:
-
-```bash
-docker exec -it hll-vietnam-backend-1 sh -lc 'ls -l /app/data/hll_vietnam_dev.writer.lock || true; cat /app/data/hll_vietnam_dev.writer.lock || true'
-```
+- `entries_seen`
+- `events_inserted`
+- `duplicate_events`
+- `target_key`
+- `duration_ms`
 
 Sample the public API every 10 seconds:
 
@@ -165,7 +155,6 @@ $playersBase = "https://comunidadhll.devzamode.es/api/current-match/players?serv
 
 Expected outcome after deployment:
 
-- new CRCON kills should appear in `/api/current-match/kills` within roughly `5-30` seconds
+- new CRCON kills should appear in `/api/current-match/kills` within roughly `10-30` seconds
 - `/api/current-match/players` should advance accordingly
 - the frontend should reflect it without further polling changes
-- `historical-runner` should remain responsible for hourly or scheduled heavy refresh work
