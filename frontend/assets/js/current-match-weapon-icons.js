@@ -342,12 +342,17 @@ const CURRENT_MATCH_RCON_WEAPON_ICON_ENTRIES = Object.freeze([
   ["Tetrarch", "tetrarch_black.svg"],
   ["TM-35 AT MINE", "tm35_at_mine_black.svg"],
   ["TOKAREV TT33", "tokarev_tt33_black.svg"],
-  ["UNKNOWN", "precision_strike_black.svg"],
   ["WALTHER P38", "walther_p38_black.svg"],
   ["Webley MK VI", "webley_revolver_black.svg"],
   ["ZIS-5 (Supply)", "zis5_supply_black.svg"],
   ["ZIS-5 (Transport)", "zis5_transport_black.svg"],
 ]);
+
+const CURRENT_MATCH_EXPLICIT_UNKNOWN_WEAPON = Object.freeze({
+  label: "UNKNOWN",
+  icon: "",
+  iconFile: "",
+});
 
 const CURRENT_MATCH_EXTRA_WEAPON_ALIASES = Object.freeze({
   "m1 bazooka": "BAZOOKA",
@@ -500,6 +505,8 @@ function buildCurrentMatchBlackWeaponLookup() {
       lookup[normalizedAlias] = lookup[normalizedWeapon];
     }
   });
+  lookup[normalizeCurrentMatchWeaponLookupKey("UNKNOWN")] = CURRENT_MATCH_EXPLICIT_UNKNOWN_WEAPON;
+  lookup[""] = CURRENT_MATCH_EXPLICIT_UNKNOWN_WEAPON;
   return Object.freeze(lookup);
 }
 
