@@ -105,10 +105,47 @@ def run_rcon_historical_capture_unlocked(
     admin_log_lookback_minutes = get_rcon_admin_log_lookback_minutes()
     captured_at = utc_now().isoformat().replace("+00:00", "Z")
     target_scope = target_key or "all-configured-rcon-targets"
-    run_id = start_rcon_historical_capture_run(
-        mode=resolved_capture_mode,
-        target_scope=target_scope,
-    )
+    try:
+        run_id = start_rcon_historical_capture_run(
+            mode=resolved_capture_mode,
+            target_scope=target_scope,
+        )
+    except RuntimeError as error:
+        if _is_historical_run_conflict(error, capture_mode=resolved_capture_mode):
+            return {
+                "status": "skipped",
+                "run_status": "skipped",
+                "captured_at": captured_at,
+                "target_scope": target_scope,
+                "capture_mode": resolved_capture_mode,
+                "materialization_skipped": resolved_skip_materialization,
+                "admin_log_lookback_minutes": admin_log_lookback_minutes,
+                "admin_log_events_seen": 0,
+                "admin_log_events_inserted": 0,
+                "duplicate_events": 0,
+                "samples_inserted": 0,
+                "targets": [],
+                "errors": [],
+                "admin_log_errors": [],
+                "materialization_result": {
+                    "status": "skipped",
+                    "reason": "already-running",
+                },
+                "storage_status": [],
+                "totals": {
+                    "targets_seen": 0,
+                    "samples_inserted": 0,
+                    "duplicate_samples": 0,
+                    "failed_targets": 0,
+                    "admin_log_events_seen": 0,
+                    "admin_log_events_inserted": 0,
+                    "admin_log_duplicate_events": 0,
+                    "admin_log_failed_targets": 0,
+                    "materialized_matches_inserted": 0,
+                    "materialized_matches_updated": 0,
+                },
+            }
+        raise
     stats = RconHistoricalCaptureStats()
     items: list[dict[str, object]] = []
     errors: list[dict[str, object]] = []
@@ -353,6 +390,12 @@ def _run_capture_with_retries(
                     sleep_seconds=retry_delay_seconds,
                 )
                 time.sleep(retry_delay_seconds)
+
+
+def _is_historical_run_conflict(error: RuntimeError, *, capture_mode: str) -> bool:
+    return capture_mode == CAPTURE_MODE_HISTORICAL and (
+        "already running" in str(error).lower()
+    )
 
 
 def _select_targets(target_key: str | None) -> list[object]:

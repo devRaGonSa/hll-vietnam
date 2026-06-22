@@ -108,12 +108,21 @@ def persist_rcon_admin_log_entries(
     target: Mapping[str, object],
     entries: list[dict[str, object]],
     db_path: Path | None = None,
+    ensure_storage: bool = True,
 ) -> dict[str, int]:
     """Persist raw and parsed AdminLog entries idempotently."""
     if use_postgres_rcon_storage(explicit_sqlite_path=db_path):
-        return _persist_rcon_admin_log_entries_postgres(target=target, entries=entries)
+        return _persist_rcon_admin_log_entries_postgres(
+            target=target,
+            entries=entries,
+            ensure_storage=ensure_storage,
+        )
 
-    resolved_path = initialize_rcon_admin_log_storage(db_path=db_path)
+    resolved_path = (
+        initialize_rcon_admin_log_storage(db_path=db_path)
+        if ensure_storage
+        else (db_path or get_storage_path())
+    )
     target_key = str(target.get("target_key") or target.get("external_server_id") or "")
     if not target_key:
         raise ValueError("target must include target_key or external_server_id")
@@ -1165,6 +1174,7 @@ def _persist_rcon_admin_log_entries_postgres(
     *,
     target: Mapping[str, object],
     entries: list[dict[str, object]],
+    ensure_storage: bool,
 ) -> dict[str, int]:
     from .postgres_rcon_storage import connect_postgres_compat
 
@@ -1175,7 +1185,7 @@ def _persist_rcon_admin_log_entries_postgres(
     external_server_id = target.get("external_server_id")
     inserted = 0
     duplicates = 0
-    with connect_postgres_compat() as connection:
+    with connect_postgres_compat(initialize=ensure_storage) as connection:
         for entry in entries:
             parsed = parse_rcon_admin_log_entry(entry)
             raw_message = str(parsed.get("raw_message") or "")

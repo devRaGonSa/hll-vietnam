@@ -760,6 +760,7 @@ class CurrentMatchPublicEndpointHardeningTests(unittest.TestCase):
                 "app.postgres_rcon_storage.connect_postgres_compat",
                 return_value=connection_scope,
             ) as connect_postgres,
+            patch("app.rcon_admin_log_materialization.materialize_rcon_admin_log") as materialize,
         ):
             result = rcon_admin_log_storage.list_current_match_kill_feed(
                 server_key="comunidad-hispana-01",
@@ -767,6 +768,7 @@ class CurrentMatchPublicEndpointHardeningTests(unittest.TestCase):
             )
 
         connect_postgres.assert_called_once_with(initialize=False)
+        materialize.assert_not_called()
         self.assertEqual(result["items"], [])
 
     def test_player_stats_postgres_read_only_does_not_initialize_storage(self) -> None:
@@ -783,6 +785,7 @@ class CurrentMatchPublicEndpointHardeningTests(unittest.TestCase):
                 "app.postgres_rcon_storage.connect_postgres_compat",
                 return_value=connection_scope,
             ) as connect_postgres,
+            patch("app.rcon_admin_log_materialization.materialize_rcon_admin_log") as materialize,
         ):
             result = rcon_admin_log_storage.list_current_match_player_stats(
                 server_key="comunidad-hispana-01",
@@ -790,6 +793,7 @@ class CurrentMatchPublicEndpointHardeningTests(unittest.TestCase):
             )
 
         connect_postgres.assert_called_once_with(initialize=False)
+        materialize.assert_not_called()
         self.assertEqual(result["items"], [])
         self.assertEqual(result["source"], "rcon-admin-log-current-match-summary")
 

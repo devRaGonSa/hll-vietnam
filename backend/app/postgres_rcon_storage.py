@@ -17,6 +17,9 @@ COMPETITIVE_WINDOW_GAP_SECONDS = 1800
 COMPETITIVE_MODE_PARTIAL = "partial"
 COMPETITIVE_MODE_APPROXIMATE = "approximate"
 COMPETITIVE_MODE_EXACT = "exact"
+RUNNING_HISTORICAL_CAPTURE_CONFLICT_MESSAGE = (
+    "historical materialization capture already running"
+)
 
 
 RCON_SCHEMA_SQL = """
@@ -50,6 +53,10 @@ CREATE TABLE IF NOT EXISTS rcon_historical_capture_runs (
     notes TEXT,
     created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_rcon_historical_single_running_historical
+ON rcon_historical_capture_runs(mode)
+WHERE status = 'running' AND mode = 'historical';
 
 CREATE TABLE IF NOT EXISTS rcon_historical_samples (
     id BIGSERIAL PRIMARY KEY,
@@ -475,14 +482,27 @@ def connect_postgres_compat(*, initialize: bool = True):
 def start_capture_run(*, mode: str, target_scope: str) -> int:
     initialize_postgres_rcon_storage()
     with connect_postgres() as connection:
-        row = connection.execute(
-            """
-            INSERT INTO rcon_historical_capture_runs (mode, status, target_scope, started_at)
-            VALUES (%s, 'running', %s, %s)
-            RETURNING id
-            """,
-            (mode, target_scope, _utc_now_iso()),
-        ).fetchone()
+        try:
+            row = connection.execute(
+                """
+                INSERT INTO rcon_historical_capture_runs (mode, status, target_scope, started_at)
+                VALUES (%s, 'running', %s, %s)
+                RETURNING id
+                """,
+                (mode, target_scope, _utc_now_iso()),
+            ).fetchone()
+        except Exception as error:
+            try:
+                import psycopg
+            except ImportError:
+                psycopg = None  # type: ignore[assignment]
+            if (
+                mode == "historical"
+                and psycopg is not None
+                and isinstance(error, psycopg.errors.UniqueViolation)
+            ):
+                raise RuntimeError(RUNNING_HISTORICAL_CAPTURE_CONFLICT_MESSAGE) from error
+            raise
     return int(row["id"])
 
 

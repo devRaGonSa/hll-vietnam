@@ -13,13 +13,14 @@ from .config import (
     get_current_match_adminlog_enabled,
     get_current_match_adminlog_interval_seconds,
     get_current_match_adminlog_lookback_seconds,
-    get_rcon_current_match_writer_lock_timeout_seconds,
 )
 from .rcon_admin_log_ingestion import fetch_recent_admin_log_entries, serialize_rcon_target
-from .rcon_admin_log_storage import persist_rcon_admin_log_entries
+from .rcon_admin_log_storage import (
+    initialize_rcon_admin_log_storage,
+    persist_rcon_admin_log_entries,
+)
 from .rcon_client import RconServerTarget, build_rcon_target_key, load_rcon_targets
 from .scoreboard_origins import list_trusted_public_scoreboard_origins
-from .writer_lock import backend_writer_lock, build_writer_lock_holder
 
 
 def list_current_match_trusted_targets() -> list[RconServerTarget]:
@@ -41,19 +42,17 @@ def run_current_match_adminlog_refresh_once(
     fetch_entries_fn: Callable[..., list[dict[str, object]]] = fetch_recent_admin_log_entries,
     persist_entries_fn: Callable[..., dict[str, int]] = persist_rcon_admin_log_entries,
     db_path: object = None,
+    ensure_storage: bool = True,
 ) -> dict[str, object]:
     """Refresh recent AdminLog rows once for trusted current-match targets."""
-    with backend_writer_lock(
-        holder=build_writer_lock_holder("app.rcon_current_match_worker once"),
-        timeout_seconds=get_rcon_current_match_writer_lock_timeout_seconds(),
-    ):
-        return run_current_match_adminlog_refresh_once_unlocked(
-            lookback_seconds=lookback_seconds,
-            targets=targets,
-            fetch_entries_fn=fetch_entries_fn,
-            persist_entries_fn=persist_entries_fn,
-            db_path=db_path,
-        )
+    return run_current_match_adminlog_refresh_once_unlocked(
+        lookback_seconds=lookback_seconds,
+        targets=targets,
+        fetch_entries_fn=fetch_entries_fn,
+        persist_entries_fn=persist_entries_fn,
+        db_path=db_path,
+        ensure_storage=ensure_storage,
+    )
 
 
 def run_current_match_adminlog_refresh_once_unlocked(
@@ -63,12 +62,11 @@ def run_current_match_adminlog_refresh_once_unlocked(
     fetch_entries_fn: Callable[..., list[dict[str, object]]] = fetch_recent_admin_log_entries,
     persist_entries_fn: Callable[..., dict[str, int]] = persist_rcon_admin_log_entries,
     db_path: object = None,
+    ensure_storage: bool = True,
 ) -> dict[str, object]:
-    """Refresh recent AdminLog rows once assuming the shared writer lock is already held."""
-    resolved_lookback_seconds = (
-        get_current_match_adminlog_lookback_seconds()
-        if lookback_seconds is None
-        else int(lookback_seconds)
+    """Refresh recent AdminLog rows once using idempotent event inserts only."""
+    resolved_lookback_seconds = _resolve_lookback_seconds(
+        lookback_seconds=lookback_seconds,
     )
     if resolved_lookback_seconds <= 0:
         raise ValueError("lookback_seconds must be positive.")
@@ -78,6 +76,8 @@ def run_current_match_adminlog_refresh_once_unlocked(
     if not selected_targets:
         raise RuntimeError("No trusted current-match RCON targets are configured.")
 
+    if ensure_storage:
+        initialize_rcon_admin_log_storage(db_path=resolved_db_path)
     timeout_seconds = None
     refreshed_at = datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
     items: list[dict[str, object]] = []
@@ -104,6 +104,7 @@ def run_current_match_adminlog_refresh_once_unlocked(
                 target=target_metadata,
                 entries=entries,
                 db_path=resolved_db_path,
+                ensure_storage=False,
             )
             duration_ms = round((time.perf_counter() - started) * 1000, 2)
             totals["entries_seen"] += int(delta.get("events_seen") or 0)
@@ -147,6 +148,7 @@ def run_current_match_adminlog_refresh_loop(
     *,
     interval_seconds: int | None = None,
     lookback_seconds: int | None = None,
+    lookback_minutes: int | None = None,
     max_runs: int | None = None,
 ) -> None:
     """Run the lightweight current-match AdminLog refresher in a loop."""
@@ -165,10 +167,9 @@ def run_current_match_adminlog_refresh_loop(
         "current-match-adminlog-worker-started",
         enabled=get_current_match_adminlog_enabled(),
         interval_seconds=resolved_interval_seconds,
-        lookback_seconds=(
-            get_current_match_adminlog_lookback_seconds()
-            if lookback_seconds is None
-            else int(lookback_seconds)
+        lookback_seconds=_resolve_lookback_seconds(
+            lookback_seconds=lookback_seconds,
+            lookback_minutes=lookback_minutes,
         ),
         targets=[
             {
@@ -179,11 +180,17 @@ def run_current_match_adminlog_refresh_loop(
             for target in list_current_match_trusted_targets()
         ],
     )
+    initialize_rcon_admin_log_storage()
     try:
         while max_runs is None or run_count < max_runs:
             run_count += 1
+            _emit_worker_event("current-match-adminlog-cycle-started", run=run_count)
             result = run_current_match_adminlog_refresh_once(
-                lookback_seconds=lookback_seconds,
+                lookback_seconds=_resolve_lookback_seconds(
+                    lookback_seconds=lookback_seconds,
+                    lookback_minutes=lookback_minutes,
+                ),
+                ensure_storage=False,
             )
             _emit_worker_event(
                 "current-match-adminlog-cycle-finished",
@@ -192,6 +199,11 @@ def run_current_match_adminlog_refresh_loop(
             )
             if max_runs is not None and run_count >= max_runs:
                 break
+            _emit_worker_event(
+                "current-match-adminlog-sleep-started",
+                run=run_count,
+                sleep_seconds=resolved_interval_seconds,
+            )
             time.sleep(resolved_interval_seconds)
     except KeyboardInterrupt:
         _emit_worker_event("current-match-adminlog-worker-stopped", reason="keyboard-interrupt")
@@ -219,6 +231,11 @@ def build_arg_parser() -> argparse.ArgumentParser:
         help="overlap-safe AdminLog lookback window in seconds",
     )
     parser.add_argument(
+        "--lookback-minutes",
+        type=int,
+        help="optional overlap-safe AdminLog lookback window in minutes",
+    )
+    parser.add_argument(
         "--max-runs",
         type=int,
         help="optional safety cap for loop mode",
@@ -230,10 +247,14 @@ def main(argv: Iterable[str] | None = None) -> int:
     parser = build_arg_parser()
     args = parser.parse_args(list(argv) if argv is not None else None)
     if args.mode == "once":
+        lookback_seconds = _resolve_lookback_seconds(
+            lookback_seconds=args.lookback_seconds,
+            lookback_minutes=args.lookback_minutes,
+        )
         print(
             json.dumps(
                 run_current_match_adminlog_refresh_once(
-                    lookback_seconds=args.lookback_seconds,
+                    lookback_seconds=lookback_seconds,
                 ),
                 indent=2,
             )
@@ -243,9 +264,24 @@ def main(argv: Iterable[str] | None = None) -> int:
     run_current_match_adminlog_refresh_loop(
         interval_seconds=args.interval,
         lookback_seconds=args.lookback_seconds,
+        lookback_minutes=args.lookback_minutes,
         max_runs=args.max_runs,
     )
     return 0
+
+
+def _resolve_lookback_seconds(
+    *,
+    lookback_seconds: int | None = None,
+    lookback_minutes: int | None = None,
+) -> int:
+    if lookback_minutes is not None:
+        if int(lookback_minutes) <= 0:
+            raise ValueError("lookback_minutes must be positive.")
+        return int(lookback_minutes) * 60
+    if lookback_seconds is None:
+        return get_current_match_adminlog_lookback_seconds()
+    return int(lookback_seconds)
 
 
 def _emit_worker_event(event: str, **fields: object) -> None:

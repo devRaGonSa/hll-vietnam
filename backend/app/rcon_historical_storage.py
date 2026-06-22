@@ -20,6 +20,9 @@ COMPETITIVE_WINDOW_GAP_SECONDS = 1800
 COMPETITIVE_MODE_PARTIAL = "partial"
 COMPETITIVE_MODE_APPROXIMATE = "approximate"
 COMPETITIVE_MODE_EXACT = "exact"
+RUNNING_HISTORICAL_CAPTURE_CONFLICT_MESSAGE = (
+    "historical materialization capture already running"
+)
 
 
 def initialize_rcon_historical_storage(
@@ -71,6 +74,10 @@ def initialize_rcon_historical_storage(
                 notes TEXT,
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
             );
+
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_rcon_historical_single_running_historical
+            ON rcon_historical_capture_runs(mode)
+            WHERE status = 'running' AND mode = 'historical';
 
             CREATE TABLE IF NOT EXISTS rcon_historical_samples (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -151,17 +158,22 @@ def start_rcon_historical_capture_run(
 
     resolved_path = initialize_rcon_historical_storage(db_path=db_path)
     with _connect(resolved_path) as connection:
-        cursor = connection.execute(
-            """
-            INSERT INTO rcon_historical_capture_runs (
-                mode,
-                status,
-                target_scope,
-                started_at
-            ) VALUES (?, 'running', ?, ?)
-            """,
-            (mode, target_scope, _utc_now_iso()),
-        )
+        try:
+            cursor = connection.execute(
+                """
+                INSERT INTO rcon_historical_capture_runs (
+                    mode,
+                    status,
+                    target_scope,
+                    started_at
+                ) VALUES (?, 'running', ?, ?)
+                """,
+                (mode, target_scope, _utc_now_iso()),
+            )
+        except sqlite3.IntegrityError as error:
+            if mode == "historical":
+                raise RuntimeError(RUNNING_HISTORICAL_CAPTURE_CONFLICT_MESSAGE) from error
+            raise
         return int(cursor.lastrowid)
 
 

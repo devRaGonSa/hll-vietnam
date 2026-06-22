@@ -155,6 +155,21 @@ class RconHistoricalWorkerTests(unittest.TestCase):
 
         self.assertEqual(seen["timeout_seconds"], 3.5)
 
+    def test_historical_capture_skips_when_previous_heavy_run_is_still_running(self) -> None:
+        with (
+            patch("app.rcon_historical_worker.initialize_rcon_historical_storage"),
+            patch("app.rcon_historical_worker._select_targets", return_value=[TARGET]),
+            patch(
+                "app.rcon_historical_worker.start_rcon_historical_capture_run",
+                side_effect=RuntimeError("historical materialization capture already running"),
+            ),
+        ):
+            payload = run_rcon_historical_capture_unlocked(capture_mode=CAPTURE_MODE_HISTORICAL)
+
+        self.assertEqual(payload["status"], "skipped")
+        self.assertEqual(payload["run_status"], "skipped")
+        self.assertEqual(payload["materialization_result"]["reason"], "already-running")
+
 
 @contextmanager
 def _temporary_env(**values: str):

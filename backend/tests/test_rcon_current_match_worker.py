@@ -14,6 +14,7 @@ from app.config import (
 )
 from app.rcon_current_match_worker import (
     list_current_match_trusted_targets,
+    run_current_match_adminlog_refresh_loop,
     run_current_match_adminlog_refresh_once_unlocked,
 )
 
@@ -76,7 +77,7 @@ class RconCurrentMatchWorkerTests(unittest.TestCase):
             fetch_calls.append((target.external_server_id, lookback_seconds, timeout_seconds))
             return [{"timestamp": "2026-06-18T18:00:00Z", "message": "[1 (1)] Killer(Allies) -> Victim(Axis) with Rifle"}]
 
-        def fake_persist(*, target, entries, db_path=None):
+        def fake_persist(*, target, entries, db_path=None, ensure_storage=True):
             persist_calls.append({"target": target, "entries": entries, "db_path": db_path})
             return {
                 "events_seen": len(entries),
@@ -94,7 +95,41 @@ class RconCurrentMatchWorkerTests(unittest.TestCase):
         self.assertEqual(fetch_calls, [("comunidad-hispana-01", 180, None)])
         self.assertEqual(len(persist_calls), 1)
         self.assertEqual(persist_calls[0]["target"]["target_key"], "comunidad-hispana-01")
+        self.assertEqual(persist_calls[0]["db_path"], None)
         self.assertEqual(result["totals"]["events_inserted"], 1)
+        self.assertEqual(result["status"], "ok")
+
+    def test_once_unlocked_initializes_storage_once_and_persists_without_repeated_ddl(self) -> None:
+        persist_calls: list[dict[str, object]] = []
+
+        def fake_fetch(target, *, lookback_seconds, timeout_seconds):
+            return [{"timestamp": "2026-06-18T18:00:00Z", "message": "[1 (1)] Killer(Allies) -> Victim(Axis) with Rifle"}]
+
+        def fake_persist(*, target, entries, db_path=None, ensure_storage=True):
+            persist_calls.append(
+                {
+                    "target": target,
+                    "entries": entries,
+                    "db_path": db_path,
+                    "ensure_storage": ensure_storage,
+                }
+            )
+            return {
+                "events_seen": len(entries),
+                "events_inserted": len(entries),
+                "duplicate_events": 0,
+            }
+
+        with patch("app.rcon_current_match_worker.initialize_rcon_admin_log_storage") as initialize:
+            result = run_current_match_adminlog_refresh_once_unlocked(
+                lookback_seconds=180,
+                targets=[TARGET_01],
+                fetch_entries_fn=fake_fetch,
+                persist_entries_fn=fake_persist,
+            )
+
+        initialize.assert_called_once_with(db_path=None)
+        self.assertEqual(persist_calls[0]["ensure_storage"], False)
         self.assertEqual(result["status"], "ok")
 
     def test_failing_target_does_not_block_other_target(self) -> None:
@@ -103,7 +138,7 @@ class RconCurrentMatchWorkerTests(unittest.TestCase):
                 raise RuntimeError("boom")
             return [{"timestamp": "2026-06-18T18:00:00Z", "message": "[1 (1)] Killer(Allies) -> Victim(Axis) with Rifle"}]
 
-        def fake_persist(*, target, entries, db_path=None):
+        def fake_persist(*, target, entries, db_path=None, ensure_storage=True):
             return {
                 "events_seen": len(entries),
                 "events_inserted": len(entries),
@@ -154,6 +189,44 @@ class RconCurrentMatchWorkerTests(unittest.TestCase):
         self.assertEqual(first["totals"]["duplicate_events"], 0)
         self.assertEqual(second["totals"]["events_inserted"], 0)
         self.assertEqual(second["totals"]["duplicate_events"], 1)
+
+    def test_loop_honors_max_runs(self) -> None:
+        results = [{"status": "ok"}, {"status": "ok"}]
+
+        with (
+            patch("app.rcon_current_match_worker.initialize_rcon_admin_log_storage") as initialize,
+            patch(
+                "app.rcon_current_match_worker.run_current_match_adminlog_refresh_once",
+                side_effect=results,
+            ) as run_once,
+            patch("app.rcon_current_match_worker.time.sleep") as sleep,
+        ):
+            run_current_match_adminlog_refresh_loop(
+                interval_seconds=5,
+                lookback_seconds=900,
+                max_runs=2,
+            )
+
+        initialize.assert_called_once_with()
+        self.assertEqual(run_once.call_count, 2)
+        self.assertEqual(sleep.call_count, 1)
+
+    def test_compose_nas_runs_split_live_worker_and_safe_historical_interval(self) -> None:
+        compose_path = os.path.join(
+            os.path.dirname(os.path.dirname(__file__)),
+            "..",
+            "deploy",
+            "portainer",
+            "docker-compose.nas.yml",
+        )
+        with open(compose_path, encoding="utf-8") as handle:
+            compose_text = handle.read()
+
+        self.assertIn("rcon-live-adminlog-worker:", compose_text)
+        self.assertIn("app.rcon_current_match_worker", compose_text)
+        self.assertIn('--lookback-minutes\n      - "15"', compose_text)
+        self.assertIn('HLL_RCON_HISTORICAL_CAPTURE_INTERVAL_SECONDS: ${HLL_RCON_HISTORICAL_CAPTURE_INTERVAL_SECONDS:-900}', compose_text)
+        self.assertNotIn('HLL_RCON_HISTORICAL_CAPTURE_INTERVAL_SECONDS: ${HLL_RCON_HISTORICAL_CAPTURE_INTERVAL_SECONDS:-2}', compose_text)
 
     def test_current_match_adminlog_config_defaults_and_overrides(self) -> None:
         with _temporary_env(
