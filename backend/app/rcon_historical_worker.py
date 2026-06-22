@@ -30,6 +30,7 @@ from .rcon_client import (
 )
 from .rcon_historical_storage import (
     finalize_rcon_historical_capture_run,
+    historical_capture_runtime_guard,
     initialize_rcon_historical_storage,
     list_rcon_historical_target_statuses,
     mark_rcon_historical_capture_failure,
@@ -99,27 +100,16 @@ def run_rcon_historical_capture_unlocked(
         capture_mode=capture_mode,
         skip_materialization=skip_materialization,
     )
-    initialize_rcon_historical_storage()
-    selected_targets = _select_targets(target_key)
-    selected_target_keys = {build_rcon_target_key(target) for target in selected_targets}
-    admin_log_lookback_minutes = get_rcon_admin_log_lookback_minutes()
-    captured_at = utc_now().isoformat().replace("+00:00", "Z")
-    target_scope = target_key or "all-configured-rcon-targets"
-    try:
-        run_id = start_rcon_historical_capture_run(
-            mode=resolved_capture_mode,
-            target_scope=target_scope,
-        )
-    except RuntimeError as error:
-        if _is_historical_run_conflict(error, capture_mode=resolved_capture_mode):
+    with historical_capture_runtime_guard(capture_mode=resolved_capture_mode) as guard_acquired:
+        if not guard_acquired:
             return {
                 "status": "skipped",
                 "run_status": "skipped",
-                "captured_at": captured_at,
-                "target_scope": target_scope,
+                "captured_at": utc_now().isoformat().replace("+00:00", "Z"),
+                "target_scope": target_key or "all-configured-rcon-targets",
                 "capture_mode": resolved_capture_mode,
                 "materialization_skipped": resolved_skip_materialization,
-                "admin_log_lookback_minutes": admin_log_lookback_minutes,
+                "admin_log_lookback_minutes": get_rcon_admin_log_lookback_minutes(),
                 "admin_log_events_seen": 0,
                 "admin_log_events_inserted": 0,
                 "duplicate_events": 0,
@@ -145,131 +135,140 @@ def run_rcon_historical_capture_unlocked(
                     "materialized_matches_updated": 0,
                 },
             }
-        raise
-    stats = RconHistoricalCaptureStats()
-    items: list[dict[str, object]] = []
-    errors: list[dict[str, object]] = []
-    admin_log_errors: list[dict[str, object]] = []
-    timeout_seconds = get_rcon_request_timeout_seconds()
+        initialize_rcon_historical_storage()
+        selected_targets = _select_targets(target_key)
+        selected_target_keys = {build_rcon_target_key(target) for target in selected_targets}
+        admin_log_lookback_minutes = get_rcon_admin_log_lookback_minutes()
+        captured_at = utc_now().isoformat().replace("+00:00", "Z")
+        target_scope = target_key or "all-configured-rcon-targets"
+        run_id = start_rcon_historical_capture_run(
+            mode=resolved_capture_mode,
+            target_scope=target_scope,
+        )
+        stats = RconHistoricalCaptureStats()
+        items: list[dict[str, object]] = []
+        errors: list[dict[str, object]] = []
+        admin_log_errors: list[dict[str, object]] = []
+        timeout_seconds = get_rcon_request_timeout_seconds()
 
-    try:
-        for target in selected_targets:
-            target_metadata = _serialize_target(target)
-            stats.targets_seen += 1
-            try:
-                sample = query_live_server_sample(
-                    target,
-                    timeout_seconds=timeout_seconds,
+        try:
+            for target in selected_targets:
+                target_metadata = _serialize_target(target)
+                stats.targets_seen += 1
+                try:
+                    sample = query_live_server_sample(
+                        target,
+                        timeout_seconds=timeout_seconds,
+                    )
+                    delta = persist_rcon_historical_sample(
+                        run_id=run_id,
+                        captured_at=captured_at,
+                        target=target_metadata,
+                        normalized_payload=sample["normalized"],
+                        raw_payload=sample["raw_session"],
+                    )
+                    stats.samples_inserted += int(delta["samples_inserted"])
+                    stats.duplicate_samples += int(delta["duplicate_samples"])
+                    items.append(
+                        {
+                            "target_key": target_metadata["target_key"],
+                            "external_server_id": target.external_server_id,
+                            "name": target.name,
+                            "host": target.host,
+                            "port": target.port,
+                            "timeout_seconds": timeout_seconds,
+                            "captured_at": captured_at,
+                            "sample_inserted": bool(delta["samples_inserted"]),
+                            "normalized": sample["normalized"],
+                        }
+                    )
+                except Exception as exc:  # noqa: BLE001 - controlled worker failures
+                    stats.failed_targets += 1
+                    mark_rcon_historical_capture_failure(
+                        run_id=run_id,
+                        target=target_metadata,
+                        error_message=_format_error_message(exc),
+                    )
+                    errors.append(_serialize_capture_error(target, exc, timeout_seconds=timeout_seconds))
+
+                admin_log_result = _ingest_target_admin_log(
+                    target_key=str(target_metadata["target_key"]),
+                    minutes=admin_log_lookback_minutes,
                 )
-                delta = persist_rcon_historical_sample(
-                    run_id=run_id,
-                    captured_at=captured_at,
+                _merge_admin_log_result(
+                    stats=stats,
+                    admin_log_errors=admin_log_errors,
                     target=target_metadata,
-                    normalized_payload=sample["normalized"],
-                    raw_payload=sample["raw_session"],
+                    result=admin_log_result,
                 )
-                stats.samples_inserted += int(delta["samples_inserted"])
-                stats.duplicate_samples += int(delta["duplicate_samples"])
-                items.append(
-                    {
-                        "target_key": target_metadata["target_key"],
-                        "external_server_id": target.external_server_id,
-                        "name": target.name,
-                        "host": target.host,
-                        "port": target.port,
-                        "timeout_seconds": timeout_seconds,
-                        "captured_at": captured_at,
-                        "sample_inserted": bool(delta["samples_inserted"]),
-                        "normalized": sample["normalized"],
-                    }
+
+            materialization_result = _run_materialization_if_enabled(
+                skip_materialization=resolved_skip_materialization
+            )
+            if not resolved_skip_materialization:
+                stats.materialized_matches_inserted = int(
+                    materialization_result.get("matches_materialized") or 0
                 )
-            except Exception as exc:  # noqa: BLE001 - controlled worker failures
-                stats.failed_targets += 1
-                mark_rcon_historical_capture_failure(
-                    run_id=run_id,
-                    target=target_metadata,
-                    error_message=_format_error_message(exc),
+                stats.materialized_matches_updated = int(
+                    materialization_result.get("matches_updated") or 0
                 )
-                errors.append(_serialize_capture_error(target, exc, timeout_seconds=timeout_seconds))
 
-            admin_log_result = _ingest_target_admin_log(
-                target_key=str(target_metadata["target_key"]),
-                minutes=admin_log_lookback_minutes,
+            status = "success" if not errors else ("partial" if items else "failed")
+            finalize_rcon_historical_capture_run(
+                run_id,
+                status=status,
+                targets_seen=stats.targets_seen,
+                samples_inserted=stats.samples_inserted,
+                duplicate_samples=stats.duplicate_samples,
+                failed_targets=stats.failed_targets,
+                notes=None if not errors else json.dumps(errors, separators=(",", ":")),
             )
-            _merge_admin_log_result(
-                stats=stats,
-                admin_log_errors=admin_log_errors,
-                target=target_metadata,
-                result=admin_log_result,
+        except Exception as exc:
+            finalize_rcon_historical_capture_run(
+                run_id,
+                status="failed",
+                targets_seen=stats.targets_seen,
+                samples_inserted=stats.samples_inserted,
+                duplicate_samples=stats.duplicate_samples,
+                failed_targets=max(1, stats.failed_targets),
+                notes=str(exc),
             )
+            raise
 
-        materialization_result = _run_materialization_if_enabled(
-            skip_materialization=resolved_skip_materialization
-        )
-        if not resolved_skip_materialization:
-            stats.materialized_matches_inserted = int(
-                materialization_result.get("matches_materialized") or 0
-            )
-            stats.materialized_matches_updated = int(
-                materialization_result.get("matches_updated") or 0
-            )
-
-        status = "success" if not errors else ("partial" if items else "failed")
-        finalize_rcon_historical_capture_run(
-            run_id,
-            status=status,
-            targets_seen=stats.targets_seen,
-            samples_inserted=stats.samples_inserted,
-            duplicate_samples=stats.duplicate_samples,
-            failed_targets=stats.failed_targets,
-            notes=None if not errors else json.dumps(errors, separators=(",", ":")),
-        )
-    except Exception as exc:
-        finalize_rcon_historical_capture_run(
-            run_id,
-            status="failed",
-            targets_seen=stats.targets_seen,
-            samples_inserted=stats.samples_inserted,
-            duplicate_samples=stats.duplicate_samples,
-            failed_targets=max(1, stats.failed_targets),
-            notes=str(exc),
-        )
-        raise
-
-    return {
-        "status": "ok" if items else "error",
-        "run_status": status,
-        "captured_at": captured_at,
-        "target_scope": target_scope,
-        "capture_mode": resolved_capture_mode,
-        "materialization_skipped": resolved_skip_materialization,
-        "admin_log_lookback_minutes": admin_log_lookback_minutes,
-        "admin_log_events_seen": stats.admin_log_events_seen,
-        "admin_log_events_inserted": stats.admin_log_events_inserted,
-        "duplicate_events": stats.admin_log_duplicate_events,
-        "samples_inserted": stats.samples_inserted,
-        "targets": items,
-        "errors": errors,
-        "admin_log_errors": admin_log_errors,
-        "materialization_result": materialization_result,
-        "storage_status": [
-            status
-            for status in list_rcon_historical_target_statuses()
-            if status.get("target_key") in selected_target_keys
-        ],
-        "totals": {
-            "targets_seen": stats.targets_seen,
-            "samples_inserted": stats.samples_inserted,
-            "duplicate_samples": stats.duplicate_samples,
-            "failed_targets": stats.failed_targets,
+        return {
+            "status": "ok" if items else "error",
+            "run_status": status,
+            "captured_at": captured_at,
+            "target_scope": target_scope,
+            "capture_mode": resolved_capture_mode,
+            "materialization_skipped": resolved_skip_materialization,
+            "admin_log_lookback_minutes": admin_log_lookback_minutes,
             "admin_log_events_seen": stats.admin_log_events_seen,
             "admin_log_events_inserted": stats.admin_log_events_inserted,
-            "admin_log_duplicate_events": stats.admin_log_duplicate_events,
-            "admin_log_failed_targets": stats.admin_log_failed_targets,
-            "materialized_matches_inserted": stats.materialized_matches_inserted,
-            "materialized_matches_updated": stats.materialized_matches_updated,
-        },
-    }
+            "duplicate_events": stats.admin_log_duplicate_events,
+            "samples_inserted": stats.samples_inserted,
+            "targets": items,
+            "errors": errors,
+            "admin_log_errors": admin_log_errors,
+            "materialization_result": materialization_result,
+            "storage_status": [
+                status
+                for status in list_rcon_historical_target_statuses()
+                if status.get("target_key") in selected_target_keys
+            ],
+            "totals": {
+                "targets_seen": stats.targets_seen,
+                "samples_inserted": stats.samples_inserted,
+                "duplicate_samples": stats.duplicate_samples,
+                "failed_targets": stats.failed_targets,
+                "admin_log_events_seen": stats.admin_log_events_seen,
+                "admin_log_events_inserted": stats.admin_log_events_inserted,
+                "admin_log_duplicate_events": stats.admin_log_duplicate_events,
+                "admin_log_failed_targets": stats.admin_log_failed_targets,
+                "materialized_matches_inserted": stats.materialized_matches_inserted,
+                "materialized_matches_updated": stats.materialized_matches_updated,
+            },
+        }
 
 
 def run_periodic_rcon_historical_capture(
@@ -390,12 +389,6 @@ def _run_capture_with_retries(
                     sleep_seconds=retry_delay_seconds,
                 )
                 time.sleep(retry_delay_seconds)
-
-
-def _is_historical_run_conflict(error: RuntimeError, *, capture_mode: str) -> bool:
-    return capture_mode == CAPTURE_MODE_HISTORICAL and (
-        "already running" in str(error).lower()
-    )
 
 
 def _select_targets(target_key: str | None) -> list[object]:

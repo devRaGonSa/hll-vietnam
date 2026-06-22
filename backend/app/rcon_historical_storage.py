@@ -7,7 +7,7 @@ import sqlite3
 from collections.abc import Mapping
 from collections.abc import Iterator
 from contextlib import closing, contextmanager
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from .config import get_storage_path, use_postgres_rcon_storage
@@ -23,6 +23,7 @@ COMPETITIVE_MODE_EXACT = "exact"
 RUNNING_HISTORICAL_CAPTURE_CONFLICT_MESSAGE = (
     "historical materialization capture already running"
 )
+HISTORICAL_RUNNING_STALE_TIMEOUT = timedelta(hours=6)
 
 
 def initialize_rcon_historical_storage(
@@ -74,10 +75,6 @@ def initialize_rcon_historical_storage(
                 notes TEXT,
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
             );
-
-            CREATE UNIQUE INDEX IF NOT EXISTS idx_rcon_historical_single_running_historical
-            ON rcon_historical_capture_runs(mode)
-            WHERE status = 'running' AND mode = 'historical';
 
             CREATE TABLE IF NOT EXISTS rcon_historical_samples (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -140,6 +137,7 @@ def initialize_rcon_historical_storage(
             ON rcon_historical_competitive_windows(target_id, last_seen_at DESC);
             """
         )
+        connection.execute("DROP INDEX IF EXISTS idx_rcon_historical_single_running_historical")
 
     return resolved_path
 
@@ -158,23 +156,60 @@ def start_rcon_historical_capture_run(
 
     resolved_path = initialize_rcon_historical_storage(db_path=db_path)
     with _connect(resolved_path) as connection:
-        try:
-            cursor = connection.execute(
+        if mode == "historical":
+            _mark_stale_historical_runs(connection)
+            active_running_row = connection.execute(
                 """
-                INSERT INTO rcon_historical_capture_runs (
-                    mode,
-                    status,
-                    target_scope,
-                    started_at
-                ) VALUES (?, 'running', ?, ?)
-                """,
-                (mode, target_scope, _utc_now_iso()),
-            )
-        except sqlite3.IntegrityError as error:
-            if mode == "historical":
-                raise RuntimeError(RUNNING_HISTORICAL_CAPTURE_CONFLICT_MESSAGE) from error
-            raise
+                SELECT id
+                FROM rcon_historical_capture_runs
+                WHERE mode = 'historical' AND status = 'running'
+                ORDER BY started_at DESC, id DESC
+                LIMIT 1
+                """
+            ).fetchone()
+            if active_running_row is not None:
+                raise RuntimeError(RUNNING_HISTORICAL_CAPTURE_CONFLICT_MESSAGE)
+        cursor = connection.execute(
+            """
+            INSERT INTO rcon_historical_capture_runs (
+                mode,
+                status,
+                target_scope,
+                started_at
+            ) VALUES (?, 'running', ?, ?)
+            """,
+            (mode, target_scope, _utc_now_iso()),
+        )
         return int(cursor.lastrowid)
+
+
+@contextmanager
+def historical_capture_runtime_guard(*, capture_mode: str, db_path: Path | None = None):
+    """Guard the heavy historical path without relying on a schema-level unique index."""
+    if capture_mode != "historical":
+        yield True
+        return
+
+    if use_postgres_rcon_storage(explicit_sqlite_path=db_path):
+        from .postgres_rcon_storage import postgres_historical_capture_advisory_guard
+
+        with postgres_historical_capture_advisory_guard() as acquired:
+            yield acquired
+        return
+
+    resolved_path = initialize_rcon_historical_storage(db_path=db_path)
+    with _connect(resolved_path) as connection:
+        _mark_stale_historical_runs(connection)
+        active_running_row = connection.execute(
+            """
+            SELECT id
+            FROM rcon_historical_capture_runs
+            WHERE mode = 'historical' AND status = 'running'
+            ORDER BY started_at DESC, id DESC
+            LIMIT 1
+            """
+        ).fetchone()
+    yield active_running_row is None
 
 
 def finalize_rcon_historical_capture_run(
@@ -1135,3 +1170,25 @@ def _calculate_duration_seconds(first_seen_at: str | None, last_seen_at: str | N
 
 def _utc_now_iso() -> str:
     return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+def _mark_stale_historical_runs(connection: sqlite3.Connection) -> None:
+    stale_before = (
+        datetime.now(timezone.utc) - HISTORICAL_RUNNING_STALE_TIMEOUT
+    ).isoformat().replace("+00:00", "Z")
+    connection.execute(
+        """
+        UPDATE rcon_historical_capture_runs
+        SET status = 'stale',
+            completed_at = ?,
+            notes = CASE
+                WHEN notes IS NULL OR notes = ''
+                    THEN 'auto-marked stale after runtime guard timeout'
+                ELSE notes
+            END
+        WHERE mode = 'historical'
+          AND status = 'running'
+          AND started_at < ?
+        """,
+        (_utc_now_iso(), stale_before),
+    )

@@ -1,7 +1,7 @@
 ---
 id: TASK-271
 title: Split RCON live ingestion from historical materialization
-status: in-progress
+status: done
 type: backend
 team: Backend Senior
 supporting_teams: ["Arquitecto Python"]
@@ -117,9 +117,63 @@ Validation completed:
 - `cd backend; python -m unittest tests.test_rcon_historical_worker`
 - `cd backend; python -m unittest tests.test_rcon_current_match_worker`
 
+Post-deploy hotfix note:
+
+- live AdminLog PostgreSQL startup now initializes only AdminLog tables instead of the full historical/materialization schema path
+- the old `idx_rcon_historical_single_running_historical` unique index is removed from schema bootstrap and dropped when present
+- PostgreSQL historical single-running protection now uses a runtime advisory lock on the heavy historical worker path
+- duplicate or stale historical `running` rows no longer crash the live worker startup path
+
 Follow-up intentionally left out of central scope:
 
 - `TEAM KILL` parser correctness remains a separate follow-up task unless handled later with a tiny isolated patch
+
+## Production Hotfix Root Cause
+
+The TASK-271 split originally added the PostgreSQL unique index
+`idx_rcon_historical_single_running_historical` as a schema-level historical
+single-running guard. Production already had more than one
+`rcon_historical_capture_runs` row with `mode='historical'`, so full PostgreSQL
+schema initialization attempted to create a unique index over non-unique
+existing data and failed with `psycopg.errors.UniqueViolation`.
+
+The live AdminLog worker called `initialize_rcon_admin_log_storage()` on startup.
+Before the hotfix, that PostgreSQL path delegated to full RCON schema bootstrap,
+so live AdminLog ingestion could crash because of historical capture-run state.
+
+## Production Hotfix Fix
+
+- Removed creation of `idx_rcon_historical_single_running_historical` from
+  runtime PostgreSQL schema SQL.
+- Added an idempotent `DROP INDEX IF EXISTS
+  idx_rcon_historical_single_running_historical` cleanup to full PostgreSQL
+  bootstrap.
+- Added `initialize_postgres_admin_log_storage()` so the live AdminLog worker
+  initializes only `rcon_admin_log_events` and profile snapshot tables.
+- Replaced PostgreSQL historical overlap protection with
+  `pg_try_advisory_lock()` on the heavy historical path only.
+- Kept SQLite historical overlap protection query-based with stale `running`
+  rows marked after the existing runtime timeout.
+
+## Production Hotfix Validation
+
+- Live worker startup is independent from duplicate or stale
+  `mode='historical'` capture rows.
+- The live worker persists AdminLog rows idempotently and does not call
+  `materialize_rcon_admin_log`.
+- The historical worker returns `skipped` with reason `already-running` when the
+  PostgreSQL advisory lock is unavailable.
+- Runtime schema code no longer creates
+  `idx_rcon_historical_single_running_historical`.
+
+## Remaining Risks
+
+- Existing stale PostgreSQL `running` rows remain historical audit data; they no
+  longer provide locking semantics and should be interpreted through worker
+  logs plus advisory-lock behavior.
+- Live freshness still depends on RCON AdminLog availability and credentials per
+  configured trusted target.
+- `TEAM KILL` AdminLog parser correctness remains a separate follow-up.
 
 ## Change Budget
 

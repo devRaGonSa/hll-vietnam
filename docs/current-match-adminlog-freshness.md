@@ -80,17 +80,27 @@ Operational behavior:
 - historical worker remains `python -m app.rcon_historical_worker loop`
 - it now runs on an explicit safe interval in Portainer instead of inheriting a too-fast runtime cadence
 - heavy materialization stays in the historical worker
-- a single-running-historical guard was added through the capture-run storage layer
+- the single-running-historical guard now uses a runtime lock instead of a schema-level unique index
+- PostgreSQL uses an advisory lock only around the heavy historical worker path
 - if a historical run is already active, the next historical attempt returns a skipped result with reason `already-running`
+- stale or duplicated old `mode='historical'` run rows no longer crash live worker startup and no longer block PostgreSQL schema bootstrap
 
 ### Schema and initialization behavior
 
 The hot live path was reduced in two places:
 
 - current-match API reads already use `ensure_storage=False`, so public `GET /api/current-match/kills` and `GET /api/current-match/players` do not request schema initialization on each read
-- the live AdminLog worker now initializes storage once at worker startup or once-mode execution, then persists with `ensure_storage=False`
+- the live AdminLog worker now initializes only the PostgreSQL AdminLog tables at startup or once-mode execution, then persists with `ensure_storage=False`
+- the full PostgreSQL bootstrap now removes the obsolete `idx_rcon_historical_single_running_historical` index instead of attempting to recreate it
 
 This removes obvious repeated PostgreSQL DDL/init from the live ingestion loop.
+
+TASK-271 production hotfix note:
+
+- the original split exposed a startup crash when production already contained duplicate historical capture rows
+- the crash came from schema-level creation of `idx_rcon_historical_single_running_historical`
+- historical single-running protection now uses a runtime PostgreSQL advisory lock on the heavy worker path
+- the live AdminLog worker remains independent from historical materialization and historical capture-run state
 
 ## Deployment Decision
 
@@ -206,9 +216,22 @@ Expected:
 
 - short cycles
 - per-target AdminLog counts
+- no traceback or `UniqueViolation`
+- no attempt to create `idx_rcon_historical_single_running_historical`
 - no `player_stats_seen 838k`
 - no `materialized_matches_updated` output every few seconds
 - no repeated deadlocks
+
+### 4a. Verify removed runtime index creation
+
+```powershell
+docker exec hll-vietnam-backend-1 sh -lc "grep -R \"idx_rcon_historical_single_running_historical\" -n /app/app || true"
+```
+
+Expected:
+
+- no runtime schema code creates the removed unique index
+- documentation or tests may still mention it as a removed regression string
 
 ### 5. Historical worker/materializer logs
 
@@ -329,7 +352,6 @@ This was intentionally not expanded into the central scope of the ingestion/mate
 
 Primary residual risks:
 
-- a stale historical `running` row can cause later heavy cycles to skip until an operator clears the stale state
 - if production has multiple unexpected worker replicas, logs should be reviewed after redeploy to confirm the split behaves as intended
 - live freshness still depends on RCON AdminLog availability per target
 

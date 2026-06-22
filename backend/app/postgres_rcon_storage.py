@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from collections.abc import Iterable, Mapping
+from collections.abc import Iterable, Iterator, Mapping
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from typing import Any
@@ -20,6 +20,10 @@ COMPETITIVE_MODE_EXACT = "exact"
 RUNNING_HISTORICAL_CAPTURE_CONFLICT_MESSAGE = (
     "historical materialization capture already running"
 )
+HISTORICAL_CAPTURE_ADVISORY_LOCK_KEY = 2710001
+DROP_LEGACY_HISTORICAL_GUARD_INDEX_SQL = """
+DROP INDEX IF EXISTS idx_rcon_historical_single_running_historical;
+"""
 
 
 RCON_SCHEMA_SQL = """
@@ -53,10 +57,6 @@ CREATE TABLE IF NOT EXISTS rcon_historical_capture_runs (
     notes TEXT,
     created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
-
-CREATE UNIQUE INDEX IF NOT EXISTS idx_rcon_historical_single_running_historical
-ON rcon_historical_capture_runs(mode)
-WHERE status = 'running' AND mode = 'historical';
 
 CREATE TABLE IF NOT EXISTS rcon_historical_samples (
     id BIGSERIAL PRIMARY KEY,
@@ -388,6 +388,59 @@ CREATE INDEX IF NOT EXISTS idx_rcon_scoreboard_candidates_server_end
 ON rcon_scoreboard_match_candidates(server_slug, ended_at DESC, started_at DESC);
 """
 
+POSTGRES_ADMIN_LOG_SCHEMA_SQL = """
+CREATE TABLE IF NOT EXISTS rcon_admin_log_events (
+    id BIGSERIAL PRIMARY KEY,
+    target_key TEXT NOT NULL,
+    external_server_id TEXT,
+    event_timestamp TEXT,
+    server_time BIGINT,
+    relative_time TEXT,
+    event_type TEXT NOT NULL,
+    raw_message TEXT NOT NULL,
+    canonical_message TEXT NOT NULL,
+    parsed_payload_json TEXT NOT NULL,
+    raw_entry_json TEXT NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE NULLS NOT DISTINCT(target_key, server_time, canonical_message)
+);
+
+CREATE TABLE IF NOT EXISTS rcon_player_profile_snapshots (
+    id BIGSERIAL PRIMARY KEY,
+    target_key TEXT NOT NULL,
+    external_server_id TEXT,
+    player_id TEXT NOT NULL,
+    player_name TEXT NOT NULL,
+    source_server_time BIGINT NOT NULL,
+    event_timestamp TEXT,
+    first_seen TEXT,
+    sessions INTEGER,
+    matches_played INTEGER,
+    play_time TEXT,
+    total_kills INTEGER,
+    total_deaths INTEGER,
+    teamkills_done INTEGER,
+    teamkills_received INTEGER,
+    kd_ratio DOUBLE PRECISION,
+    favorite_weapons_json TEXT NOT NULL DEFAULT '{}',
+    victims_json TEXT NOT NULL DEFAULT '{}',
+    nemesis_json TEXT NOT NULL DEFAULT '{}',
+    averages_json TEXT NOT NULL DEFAULT '{}',
+    sanctions_json TEXT NOT NULL DEFAULT '{}',
+    raw_content TEXT NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(target_key, player_id, source_server_time)
+);
+
+CREATE INDEX IF NOT EXISTS idx_rcon_admin_log_events_target_time
+ON rcon_admin_log_events(target_key, server_time DESC);
+CREATE INDEX IF NOT EXISTS idx_rcon_admin_log_events_type
+ON rcon_admin_log_events(event_type);
+CREATE INDEX IF NOT EXISTS idx_rcon_player_profile_snapshots_player
+ON rcon_player_profile_snapshots(target_key, player_id, source_server_time DESC);
+"""
+
 POSTGRES_ANNUAL_RANKING_SCHEMA_MIGRATION_SQL = """
 ALTER TABLE rcon_annual_ranking_snapshot_items
 ALTER COLUMN metric_value TYPE DOUBLE PRECISION USING metric_value::double precision;
@@ -437,9 +490,17 @@ def initialize_postgres_rcon_storage() -> None:
     """Create deterministic PostgreSQL schema for migrated RCON domains."""
     with connect_postgres() as connection:
         with connection.cursor() as cursor:
+            cursor.execute(DROP_LEGACY_HISTORICAL_GUARD_INDEX_SQL)
             cursor.execute(RCON_SCHEMA_SQL)
             cursor.execute(POSTGRES_ANNUAL_RANKING_SCHEMA_MIGRATION_SQL)
             cursor.execute(POSTGRES_RCON_MATCH_PLAYER_STATS_ACTIVE_TIME_MIGRATION_SQL)
+
+
+def initialize_postgres_admin_log_storage() -> None:
+    """Create only the PostgreSQL AdminLog structures used by the live worker."""
+    with connect_postgres() as connection:
+        with connection.cursor() as cursor:
+            cursor.execute(POSTGRES_ADMIN_LOG_SCHEMA_SQL)
 
 
 @contextmanager
@@ -479,30 +540,38 @@ def connect_postgres_compat(*, initialize: bool = True):
         yield PostgresCompatConnection(connection)
 
 
+@contextmanager
+def postgres_historical_capture_advisory_guard() -> Iterator[bool]:
+    """Hold one PostgreSQL advisory lock for the heavy historical capture path."""
+    with connect_postgres() as connection:
+        row = connection.execute(
+            "SELECT pg_try_advisory_lock(%s) AS acquired",
+            (HISTORICAL_CAPTURE_ADVISORY_LOCK_KEY,),
+        ).fetchone()
+        acquired = bool(row and row["acquired"])
+        if not acquired:
+            yield False
+            return
+        try:
+            yield True
+        finally:
+            connection.execute(
+                "SELECT pg_advisory_unlock(%s)",
+                (HISTORICAL_CAPTURE_ADVISORY_LOCK_KEY,),
+            )
+
+
 def start_capture_run(*, mode: str, target_scope: str) -> int:
     initialize_postgres_rcon_storage()
     with connect_postgres() as connection:
-        try:
-            row = connection.execute(
-                """
-                INSERT INTO rcon_historical_capture_runs (mode, status, target_scope, started_at)
-                VALUES (%s, 'running', %s, %s)
-                RETURNING id
-                """,
-                (mode, target_scope, _utc_now_iso()),
-            ).fetchone()
-        except Exception as error:
-            try:
-                import psycopg
-            except ImportError:
-                psycopg = None  # type: ignore[assignment]
-            if (
-                mode == "historical"
-                and psycopg is not None
-                and isinstance(error, psycopg.errors.UniqueViolation)
-            ):
-                raise RuntimeError(RUNNING_HISTORICAL_CAPTURE_CONFLICT_MESSAGE) from error
-            raise
+        row = connection.execute(
+            """
+            INSERT INTO rcon_historical_capture_runs (mode, status, target_scope, started_at)
+            VALUES (%s, 'running', %s, %s)
+            RETURNING id
+            """,
+            (mode, target_scope, _utc_now_iso()),
+        ).fetchone()
     return int(row["id"])
 
 

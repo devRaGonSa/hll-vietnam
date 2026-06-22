@@ -31,9 +31,9 @@ CURRENT_MATCH_PLAYER_EVENT_TYPES = (
 def initialize_rcon_admin_log_storage(*, db_path: Path | None = None) -> Path:
     """Create SQLite structures for parsed RCON AdminLog events."""
     if use_postgres_rcon_storage(explicit_sqlite_path=db_path):
-        from .postgres_rcon_storage import initialize_postgres_rcon_storage
+        from .postgres_rcon_storage import initialize_postgres_admin_log_storage
 
-        initialize_postgres_rcon_storage()
+        initialize_postgres_admin_log_storage()
         return get_storage_path()
 
     resolved_path = initialize_rcon_historical_storage(db_path=db_path)
