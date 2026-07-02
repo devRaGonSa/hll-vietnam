@@ -71,7 +71,7 @@ const LEADERBOARD_METRICS = Object.freeze([
     valueHeading: "Soporte",
     ratioHeading: "Soporte/partida",
     ratioMode: "support",
-    emptyMessage: "Sin datos historicos suficientes para mostrar este ranking de soporte.",
+    emptyMessage: "El ranking de soporte estara disponible cuando tengamos datos de puntuacion de soporte por jugador.",
   },
 ]);
 const DEFAULT_LEADERBOARD_METRIC = LEADERBOARD_METRICS[0].key;
