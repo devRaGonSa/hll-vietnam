@@ -28,3 +28,10 @@ backend/data/*.sqlite3-wal
 tmp/
 frontend/assets/img/weapons/black - copia/
 frontend/assets/img/weapons/black.zip
+.ai/
+
+/ai/
+/.ai/
+/tmp/
+/frontend/assets/img/weapons/black - copia/
+/frontend/assets/img/weapons/black.zip
