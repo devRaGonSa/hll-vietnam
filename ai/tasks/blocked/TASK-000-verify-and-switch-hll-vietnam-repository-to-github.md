@@ -1,7 +1,7 @@
 ---
 id: TASK-000
 title: Verify and switch HLL Vietnam repository source to GitHub
-status: pending
+status: blocked
 type: platform
 team: Arquitecto Python
 supporting_teams: ["PM"]
@@ -170,26 +170,68 @@ Confirmar además:
 
 ## Outcome
 
-Documentar en el resultado final:
+Resultado del preflight del 2026-07-29:
 
-- repositorio y proveedor iniciales;
-- remoto inicial;
-- repositorio y proveedor finales;
-- remoto final;
-- rama y upstream;
-- raíz y worktrees detectados;
-- checkout desde el que se procesa `ai/tasks/pending`;
-- referencias a Gitea, GitHub, GTA, JTA, repositorios antiguos o rutas absolutas encontradas;
-- cambios locales realizados en `.git/config`;
-- archivos versionados modificados;
-- comparación de historiales y commits exclusivos detectados;
-- commit creado y su SHA;
-- push realizado y destino;
-- validaciones ejecutadas;
-- ausencia de cambios de producto;
-- bloqueos o decisiones humanas pendientes.
+- Repositorio y proveedor iniciales/finales: checkout HLL Vietnam en Git, con
+  `origin` en GitHub y el remoto conservado `gitea` en Gitea. No se cambiaron
+  remotos porque `origin` ya apunta exactamente a
+  `https://github.com/devRaGonSa/hll-vietnam.git`.
+- Rama y upstream: `main` en
+  `5590987c0f441101059b9db54de15ff57964646d`, todavía con upstream
+  `gitea/main`. No se cambió a `origin/main` porque los historiales divergen.
+- Raíz y worktrees: `D:/Proyectos/HLL Vietnam`; solo se detectó el worktree
+  principal en esa ruta. `ai/tasks/pending` resuelve dentro de ese checkout.
+- Runner: `scripts/codex-runner.ps1` carga `ai-platform.json` y obtiene de él
+  la ruta relativa `ai/tasks/pending`. `ai-platform.json` usa rutas relativas
+  específicas de HLL Vietnam. Se observaron activos `ai-platform.exe run` y
+  `powershell -File scripts/codex-runner.ps1`; no se modificaron.
+- Referencias encontradas: `.git/config` conserva el remoto `gitea` hacia el
+  repositorio anterior `comunidadhll`, configura `origin` hacia
+  `devRaGonSa/hll-vietnam` y mantiene `main` siguiendo `gitea/main`. La propia
+  task contiene las referencias de auditoría a Gitea, GitHub y
+  `ai-dev-platform-template`. No se confirmó ninguna referencia incorrecta en
+  `ai-platform.json` ni en `scripts/codex-runner.ps1`.
+- Cambios en `.git/config`: ninguno. Los `fetch` solo actualizaron referencias
+  remotas.
+- Comparación después de `git fetch origin --prune` y
+  `git fetch gitea --prune`:
+  - `HEAD...origin/main`: 2 commits exclusivos locales y 10 exclusivos de
+    GitHub.
+  - `HEAD...gitea/main`: 1 commit exclusivo local y 0 exclusivos de Gitea.
+  - `origin/main...gitea/main`: 10 commits exclusivos de GitHub y 1 exclusivo
+    de Gitea.
+  - merge base de GitHub y Gitea:
+    `1f4bba38b1b11a354af7e7a7c8045882350ab964`.
+  - exclusivo de Gitea respecto de GitHub:
+    `006bfeba7d1a80b3b326e365e12ccdb9d107dc7d` (`HLL Vietnam V2`).
+  - exclusivo local adicional:
+    `5590987c0f441101059b9db54de15ff57964646d`
+    (`docs(tasks): add GitHub repository preflight gate`).
+  - exclusivos de GitHub: `06a8903`, `2d20d25`, `b0aad90`, `68eff3d`,
+    `b199fc2`, `efd8f76`, `c88a590`, `ef5c0d3`, `feea8dc` y `cda6d72`.
+- Archivos versionados modificados: únicamente esta task para registrar el
+  bloqueo y moverla de estado. No se modificaron archivos de producto.
+- Commit y push: no se creó commit ni se hizo push, porque cualquier
+  integración automática sería ambigua y está prohibida por esta task.
+- Validación ejecutada: raíz, estado, rama, upstream, remotos sanitizados,
+  URL exacta de `origin`, worktrees, `HEAD`, fetch de ambos remotos, conteos
+  left/right, relaciones de ancestros, merge bases y commits exclusivos.
+  `git ls-remote origin` terminó correctamente y confirmó `origin/main` en
+  `cda6d72b4b2ca244ffc5bab7e6289761a5a114eb`. `git diff --check` terminó
+  correctamente. `git diff --name-only` solo muestra la retirada de la task
+  de `ai/tasks/pending`; su copia bloqueada existe bajo `ai/tasks/blocked`,
+  ruta ignorada por la regla local `/ai/` de `.gitignore`.
+  Los tests de integración no son relevantes para este bloqueo de
+  configuración y no se ejecutaron.
+- Decisión humana necesaria: elegir cómo preservar e integrar en GitHub los
+  commits `006bfeb` y `5590987` frente a los 10 commits exclusivos de
+  `origin/main` (por ejemplo, mediante una integración revisada o una
+  reconstrucción explícita de la rama). Después de esa decisión se podrá
+  configurar `main` con upstream `origin/main`. No se debe hacer force push,
+  reset, rebase ni merge automático.
 
-Si el resultado no puede garantizar una migración segura y sin pérdida de commits, mover la task a `ai/tasks/blocked`, documentar la evidencia y no continuar.
+La migración no puede garantizarse sin pérdida o sobrescritura de historia,
+por lo que la task queda bloqueada y no se procesa ninguna task posterior.
 
 ## Change Budget
 
