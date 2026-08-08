@@ -1,7 +1,7 @@
 ---
 id: TASK-282
 title: Reconcile Gitea and GitHub histories without rewriting commits
-status: in-progress
+status: blocked
 type: platform
 team: Arquitecto Python
 supporting_teams: ["PM"]
@@ -134,7 +134,69 @@ Confirmar además:
 
 ## Outcome
 
-Pendiente. Esta task se crea para ejecutar una reconciliación revisada entre la historia preservada de Gitea y `origin/main` sin reescritura de commits ni cambio prematuro del upstream.
+Ejecución bloqueada durante la puerta de validación del 2026-08-08.
+
+- Estado inicial verificado después de `git fetch --all --prune`:
+  - `main`: `f52297055ddf76550f48d0d2315ed0232a9670ef`;
+  - `gitea/main`: `006bfeba7d1a80b3b326e365e12ccdb9d107dc7d`;
+  - `origin/main`: `cda6d72b4b2ca244ffc5bab7e6289761a5a114eb`;
+  - merge-base: `1f4bba38b1b11a354af7e7a7c8045882350ab964`;
+  - divergencia: cuatro commits exclusivos locales y diez exclusivos de
+    GitHub.
+- La topología coincidía con la documentada. `006bfeb`, `5590987`,
+  `3967b01`, `f522970` y `e18177f` eran ancestros de `main` cuando
+  correspondía; `e18177f` también era ancestro de `origin/main`.
+- Ramas de respaldo creadas y publicadas sin force push:
+  - `backup/local-main-before-github-reconcile-20260808` en `f522970`;
+  - `backup/gitea-main-before-github-reconcile-20260808` en `006bfeb`.
+- Rama de integración creada desde el `main` preservado:
+  `chore/reconcile-gitea-github-history`.
+- La transición de esta task a `in-progress` quedó registrada en
+  `b333d3d27b8e2603994ab185ade6ec86e092a61c`.
+- El merge normal `git merge --no-ff origin/main` terminó sin conflictos.
+  Commit de merge:
+  `dfb83d6f7f5732879446b9b441aede7473c9db8e`, con padres `b333d3d` y
+  `cda6d72`.
+- Comprobaciones posteriores de ancestros: `006bfeb`, `5590987`, `3967b01`,
+  `f522970` y `origin/main` devolvieron exit code `0` frente a `HEAD`.
+- `TASK-272` a `TASK-281` quedaron presentes una vez cada una en `pending`,
+  con `status: pending` y contenido idéntico a `origin/main`. No se ejecutaron,
+  editaron ni movieron.
+- `TASK-264`, `TASK-266`, `TASK-267` y `TASK-268`, y el resto de archivos
+  preexistentes en `in-progress`, `review`, `blocked` y `done`, conservaron su
+  contenido. Solo esta task cambió de estado.
+- Auditoría Git:
+  - `git diff --check`: exit code `0`;
+  - `git diff --check f522970..HEAD`: exit code `0`;
+  - `git fsck --full`: exit code `0`; solo informó objetos colgantes, sin
+    errores de integridad;
+  - la diferencia exclusiva local respecto de `origin/main` se limita a
+    `.gitignore` y a infraestructura/documentación bajo `ai/**`; no aporta
+    cambios en `backend`, `frontend` ni `scripts`.
+- Validación de proyecto:
+  - `python -m compileall backend/app`: correcta;
+  - `python -m unittest discover -s tests`: `130` tests en `17.820s`, con
+    `1` fallo y `2` errores;
+  - fallos reproducidos de forma aislada:
+    `test_cleanup_exception_is_logged_and_runner_continues`,
+    `test_public_scoreboard_fallback_used_only_without_rcon_activity` y
+    `test_recent_matches_prefer_materialized_rcon_over_scoreboard_fallback`;
+  - `scripts/run-integration-tests.ps1`: la validación historical UI pasó y
+    la validación Stats falló porque no encontró el formulario de ranking
+    anual esperado.
+- `git diff f522970..HEAD -- backend frontend scripts` no muestra cambios;
+  corregir estos fallos de la línea base ampliaría el alcance a producto y
+  está prohibido por esta task.
+- Los pushes de las ramas de respaldo dispararon dos runs del workflow
+  `codex-worker.yml`, pero ambos terminaron con `jobs: []`; no se ejecutó
+  Codex ni ninguna task.
+- No se usó reset, rebase, cherry-pick, squash, force push ni
+  `--allow-unrelated-histories`. No se cambiaron remotos ni el upstream de
+  `main`, que continúa en `gitea/main`.
+- Debido a que las validaciones obligatorias no están en verde, la rama de
+  integración no se publica y no se crea Pull Request. La reconciliación queda
+  preservada localmente y la task se bloquea para no ocultar los fallos ni
+  modificar producto fuera de alcance.
 
 ## Change Budget
 
