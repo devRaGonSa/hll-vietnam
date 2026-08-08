@@ -452,8 +452,61 @@ observó `NEW_RECONCILIATION_FAILURE`, `RESOLVED_BY_RECONCILIATION` ni
 - No se modificó `backend`, `frontend` ni `scripts`, ni se ejecutó ninguna task
   funcional.
 - Commit de inicio de lifecycle: `42dda20202eb54726a12686d7e785a03ad04b400`.
-- La validación Git final, la publicación, los workflows y la URL de la Pull
-  Request se registrarán en una actualización final de este Outcome.
+
+### Puerta Git, publicación y revisión humana
+
+Después de `git fetch origin --prune`, `origin/main` continuó exactamente en
+`cda6d72b4b2ca244ffc5bab7e6289761a5a114eb`. La puerta previa a publicación
+terminó así:
+
+- `git merge-base --is-ancestor` devolvió exit `0` para `006bfeb`, `5590987`,
+  `3967b01`, `f522970` y `origin/main` frente a `HEAD`;
+- `dfb83d6` conservó los padres `b333d3d` y `cda6d72`, por lo que sigue siendo
+  el merge normal ya auditado y no se recreó;
+- `git diff --check` y `git diff --check f522970..HEAD` devolvieron exit `0`;
+- `git fsck --full` devolvió exit `0`; informó únicamente objetos dangling y
+  ningún error de integridad;
+- los diffs de producto `f522970..dfb83d6` y `f522970..HEAD` siguieron vacíos;
+- TASK-272 a TASK-281 continuaron una vez cada una en `pending`, con blobs
+  idénticos a `origin/main`, y las tasks preexistentes en `in-progress`
+  permanecieron sin cambios.
+
+La rama `chore/reconcile-gitea-github-history` se publicó por primera vez en
+`origin` mediante push normal, sin force, en
+`560dd033f7f1e968015135e6601d955ee5253c09`. El commit documental que contiene
+este cierre avanza esa misma rama únicamente mediante fast-forward.
+
+El push disparó el run
+[`31269263769`](https://github.com/devRaGonSa/hll-vietnam/actions/runs/31269263769)
+de `.github/workflows/codex-worker.yml`. Terminó inmediatamente en `failure`
+al validar el workflow, con `jobs: 0`; no se inició Codex CLI, no se ejecutó
+ningún worker y no se procesó ninguna task pendiente.
+
+Se creó, sin fusionarla, la Pull Request lista para revisión humana:
+
+- URL: https://github.com/devRaGonSa/hll-vietnam/pull/10;
+- head: `chore/reconcile-gitea-github-history`;
+- base: `main`;
+- título: `chore: reconcile preserved Gitea history with GitHub main`;
+- estado observado: `open`, `draft: false`, `auto_merge: null`.
+
+La PR contiene la comparación baseline/reconciled, las firmas exactas bajo
+`Known pre-existing validation failures`, los comandos de reproducción y las
+salvaguardas de la reconciliación. `origin/main` no se modificó. El `main`
+local permanece en `f522970` y sigue `gitea/main`; el remoto `gitea` y las
+ramas de respaldo en `f522970` y `006bfeb` no se eliminaron ni modificaron.
+
+Los worktrees detached se retiraron con `git worktree remove` después de
+verificar sus rutas y estado limpio. Los logs quedaron solo bajo `tmp/`
+ignorado. Los commits creados antes de este cierre fueron:
+
+- `42dda20202eb54726a12686d7e785a03ad04b400` — inicio de TASK-283;
+- `560dd033f7f1e968015135e6601d955ee5253c09` — calificación de deuda baseline,
+  lifecycle de TASK-282/TASK-283 y creación pendiente de TASK-284.
+
+Decisión final: Caso A. TASK-282 y TASK-283 terminan en `review`; TASK-284
+permanece en `pending` sin ejecutar. No se ejecutó ninguna task distinta de
+TASK-283 ni ninguna task funcional.
 
 ## Change Budget
 

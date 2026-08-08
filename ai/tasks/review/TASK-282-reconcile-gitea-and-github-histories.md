@@ -227,8 +227,25 @@ seguimiento pendiente para corregir esa deuda y no se ejecutó dentro de esta
 reconciliación.
 
 La rama publicada, la comprobación de workflows y la URL de la Pull Request se
-registrarán en una actualización final después de superar la puerta Git de
-TASK-283.
+registran a continuación después de superar la puerta Git de TASK-283.
+
+### Final publication after qualification
+
+La conclusión histórica anterior de no publicar ni crear PR queda superada por
+la evidencia comparativa de TASK-283: los fallos son deuda baseline idéntica y
+no regresiones del merge. La puerta Git volvió a pasar para `006bfeb`,
+`5590987`, `3967b01`, `f522970` y `origin/main`; `git diff --check` pasó y
+`git fsck --full` terminó con exit `0`, únicamente con objetos dangling.
+
+La rama `chore/reconcile-gitea-github-history` se publicó normalmente en
+`origin` y se abrió, sin fusionarla, la PR
+https://github.com/devRaGonSa/hll-vietnam/pull/10 hacia `main`. El run de push
+https://github.com/devRaGonSa/hll-vietnam/actions/runs/31269263769 falló al
+validar el workflow con `jobs: 0`; no ejecutó Codex ni tasks pendientes.
+`origin/main` permanece en `cda6d72`, mientras que el `main` local sigue en
+`f522970` con upstream `gitea/main`. El remoto `gitea`, ambas ramas backup y
+TASK-272 a TASK-281 permanecen intactos. TASK-282 finaliza en `review` para la
+revisión humana de la reconciliación preservada.
 
 ## Change Budget
 
