@@ -1,7 +1,7 @@
 ---
 id: TASK-282
 title: Reconcile Gitea and GitHub histories without rewriting commits
-status: pending
+status: in-progress
 type: platform
 team: Arquitecto Python
 supporting_teams: ["PM"]
