@@ -1,7 +1,7 @@
 ---
 id: TASK-283
 title: Qualify baseline validation failures and complete repository reconciliation
-status: pending
+status: in-progress
 type: platform
 team: Arquitecto Python
 supporting_teams: ["Backend Senior", "Frontend Senior", "PM"]
