@@ -1,7 +1,7 @@
 ---
 id: TASK-283
 title: Qualify baseline validation failures and complete repository reconciliation
-status: in-progress
+status: review
 type: platform
 team: Arquitecto Python
 supporting_teams: ["Backend Senior", "Frontend Senior", "PM"]
@@ -339,19 +339,121 @@ Antes de cerrar:
 
 ## Outcome
 
-Pendiente. Debe documentar:
+Caso A aprobado el 2026-08-08: todos los fallos se reprodujeron con firma
+estable e idéntica en la baseline y en el merge. No existe ninguna regresión
+nueva atribuible a la reconciliación.
 
-- revisiones y comandos comparados;
-- intérprete, versión y entorno;
-- duración, total, skipped, failures y errors;
-- lista y firma exacta de cada fallo;
-- tabla comparativa y clasificación;
-- decisión Caso A o Caso B;
-- estado final de TASK-282 y TASK-283;
-- commits creados;
-- rama publicada y URL de PR, si procede;
-- cualquier task follow-up creada;
-- confirmación de que no se ejecutaron tasks funcionales.
+### Revisiones, preflight y entorno
+
+- baseline: `f52297055ddf76550f48d0d2315ed0232a9670ef`;
+- reconciled: `dfb83d6f7f5732879446b9b441aede7473c9db8e`;
+- checkout operativo inicial: `f6d724ed1c1a8bceab114f81fd2954cefa1d70e4`
+  en `chore/reconcile-gitea-github-history`, con árbol limpio;
+- `f522970`, `dfb83d6` y `339e59a` existen como commits;
+- `git diff --name-status f522970..dfb83d6 -- backend frontend scripts`:
+  vacío;
+- `git diff --stat f522970..dfb83d6 -- backend frontend scripts`: vacío;
+- worktrees detached:
+  `tmp/worktrees/task-283-baseline` y
+  `tmp/worktrees/task-283-reconciled`;
+- Python:
+  `3.13.14 (tags/v3.13.14:fd17997, Jun 10 2026, 13:03:48)` 64-bit;
+- intérprete común:
+  `C:/Users/Raúl/AppData/Local/Programs/Python/Python313/python.exe`;
+- plataforma: `Windows-10-10.0.19045-SP0`;
+- Git: `2.54.0.windows.1`;
+- no había entorno virtual del proyecto, variables `HLL_*` ni listener en
+  `127.0.0.1:8000` durante las validaciones.
+
+### Comparación completa
+
+Los comandos se ejecutaron en el mismo orden, con el mismo intérprete y sin
+paralelizar ambas revisiones:
+
+```powershell
+python -m compileall backend/app
+Push-Location backend
+python -m unittest discover -s tests
+Pop-Location
+powershell -ExecutionPolicy Bypass -File scripts/run-historical-ui-regression-tests.ps1
+powershell -ExecutionPolicy Bypass -File scripts/run-stats-validation.ps1
+powershell -ExecutionPolicy Bypass -File scripts/run-integration-tests.ps1
+```
+
+| Validation | `f522970` | `dfb83d6` | Same failure signature? |
+| --- | --- | --- | --- |
+| Python compileall | exit `0`, `0.362s` | exit `0`, `0.312s` | Sí; salida y archivos compilados idénticos |
+| Full unittest suite, run 1 | exit `1`; `130`, skipped `0`, failures `1`, errors `2`; `4.526s` internos | exit `1`; `130`, skipped `0`, failures `1`, errors `2`; `4.408s` internos | Sí; las tres firmas son idénticas |
+| Full unittest suite, run 2 | exit `1`; `130`, skipped `0`, failures `1`, errors `2`; `4.262s` internos | exit `1`; `130`, skipped `0`, failures `1`, errors `2`; `4.402s` internos | Sí; idéntica además a run 1 |
+| Historical UI | exit `0`, `0.524s`; passed | exit `0`, `0.518s`; passed | Sí; ambos pasan |
+| Stats, run 1 | exit `1`, `0.444s` | exit `1`, `0.442s` | Sí; `IDENTICAL_BASELINE_FAILURE` |
+| Stats, run 2 | exit `1`, `0.413s` | exit `1`, `0.408s` | Sí; idéntica además a run 1 |
+| Integration wrapper normalizado | exit `1`, `1.477s`; Historical pasa y Stats falla | exit `1`, `1.474s`; Historical pasa y Stats falla | Sí; `IDENTICAL_BASELINE_FAILURE` |
+
+Los primeros intentos del wrapper en worktrees nuevos encontraron diferencias
+solo de materialización local: en baseline faltaba primero
+`ai/tasks/in-progress`, en reconciled faltaba primero `ai/tasks/review` y,
+después, ambos necesitaron el marcador ignorado `ai/reports/.gitkeep`. Se
+registró la incidencia, se garantizó el mismo conjunto de seis carpetas del
+lifecycle y el mismo marcador vacío en ambos worktrees, sin cambios
+versionados, y se repitió el wrapper. La ejecución comparable alcanzó
+Historical y Stats con la misma firma en ambas revisiones.
+
+### Firmas exactas y repeticiones aisladas
+
+1. `FAIL` —
+   `test_historical_runner_maintenance.HistoricalRunnerMaintenanceTests.test_cleanup_exception_is_logged_and_runner_continues`:
+   `backend/tests/test_historical_runner_maintenance.py:112`,
+   `AssertionError: 'partial' != 'ok'`. La repetición aislada ejecutó un test,
+   terminó con exit `1` y reprodujo la misma firma en ambas revisiones.
+2. `ERROR` —
+   `test_rcon_materialization_pipeline.RconMaterializationPipelineTests.test_recent_matches_prefer_materialized_rcon_over_scoreboard_fallback`:
+   assertion funcional en
+   `backend/tests/test_rcon_materialization_pipeline.py:637`,
+   `AssertionError: 'public-scoreboard' != 'rcon'`, seguida durante el cleanup
+   del `TemporaryDirectory` iniciado en la línea `617` por
+   `PermissionError: [WinError 32]` sobre `historical.sqlite3`. La repetición
+   aislada ejecutó un test, terminó con exit `1` y reprodujo la misma firma.
+3. `ERROR` —
+   `test_rcon_materialization_pipeline.RconMaterializationPipelineTests.test_public_scoreboard_fallback_used_only_without_rcon_activity`:
+   `backend/tests/test_rcon_materialization_pipeline.py:682`,
+   `IndexError: list index out of range`, seguida durante el cleanup del
+   `TemporaryDirectory` iniciado en la línea `667` por el mismo
+   `PermissionError: [WinError 32]` sobre `historical.sqlite3`. La repetición
+   aislada ejecutó un test, terminó con exit `1` y reprodujo la misma firma.
+4. Stats — `scripts/run-stats-validation.ps1` comprueba en las líneas `64-65`
+   que `frontend/stats.html` contenga `id="stats-annual-form"`; el helper de la
+   línea `24` lanza `RuntimeException` con
+   `Stats page no longer exposes the annual ranking form.`. El fallo ocurre
+   antes del Python embebido, SQLite y el sondeo HTTP, y fue idéntico en las
+   cuatro ejecuciones comparadas.
+5. Wrapper — después de que Historical UI pasa, conserva el fallo Stats
+   anterior y añade en `scripts/run-integration-tests.ps1:9`
+   `Stats regression validation failed.`. Exit `1` y firma idéntica.
+
+Solo se normalizaron raíz del worktree, nombres aleatorios de `tempfile`,
+direcciones de objetos y duración. No se normalizaron nombre de test,
+excepción, assertion, línea, valores funcionales, `WinError` ni exit code.
+Todos los fallos quedan clasificados como `IDENTICAL_BASELINE_FAILURE`; no se
+observó `NEW_RECONCILIATION_FAILURE`, `RESOLVED_BY_RECONCILIATION` ni
+`ENVIRONMENTAL_OR_NONDETERMINISTIC` en la evidencia comparable.
+
+### Decisión y lifecycle
+
+- Los fallos son `baseline validation debt`; no se corrigieron dentro de esta
+  task.
+- TASK-282 deja de estar bloqueada por una supuesta regresión del merge y pasa
+  a `review` junto con TASK-283.
+- Se creó TASK-284 en `pending` como único seguimiento para corregir la deuda;
+  no se ejecutó.
+- `TASK-272` a `TASK-281` permanecen intactas y sin ejecutar en `pending`.
+- Las tasks preexistentes en `in-progress`, incluidas TASK-264, TASK-266,
+  TASK-267 y TASK-268, no se modificaron.
+- No se modificó `backend`, `frontend` ni `scripts`, ni se ejecutó ninguna task
+  funcional.
+- Commit de inicio de lifecycle: `42dda20202eb54726a12686d7e785a03ad04b400`.
+- La validación Git final, la publicación, los workflows y la URL de la Pull
+  Request se registrarán en una actualización final de este Outcome.
 
 ## Change Budget
 

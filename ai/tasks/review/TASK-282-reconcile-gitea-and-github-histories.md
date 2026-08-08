@@ -1,7 +1,7 @@
 ---
 id: TASK-282
 title: Reconcile Gitea and GitHub histories without rewriting commits
-status: blocked
+status: review
 type: platform
 team: Arquitecto Python
 supporting_teams: ["PM"]
@@ -197,6 +197,38 @@ Ejecución bloqueada durante la puerta de validación del 2026-08-08.
   integración no se publica y no se crea Pull Request. La reconciliación queda
   preservada localmente y la task se bloquea para no ocultar los fallos ni
   modificar producto fuera de alcance.
+
+### Qualification update from TASK-283
+
+TASK-283 reprodujo el 2026-08-08 las validaciones en worktrees detached de
+`f52297055ddf76550f48d0d2315ed0232a9670ef` y
+`dfb83d6f7f5732879446b9b441aede7473c9db8e`, con Python `3.13.14` y el mismo
+entorno. Los dos diffs de `backend`, `frontend` y `scripts` siguieron vacíos.
+
+- `compileall` pasó en ambas revisiones;
+- dos ejecuciones completas por revisión dieron `130` tests, skipped `0`,
+  `1 failure` y `2 errors`;
+- los tres tests fallidos conservaron nombre, categoría, assertion/excepción,
+  archivo/línea, salida funcional y exit code;
+- cada test se repitió aisladamente en ambas revisiones con la misma firma;
+- Historical UI pasó en ambas;
+- Stats repitió en ambas
+  `Stats page no longer exposes the annual ranking form.`;
+- el wrapper, tras recrear únicamente sus carpetas y marcador ignorados en los
+  worktrees temporales, pasó Historical y reprodujo el mismo fallo Stats y
+  `Stats regression validation failed.` en ambas revisiones.
+
+La clasificación es `IDENTICAL_BASELINE_FAILURE` para todos los fallos; no se
+detectó ninguna regresión nueva ni evidencia no determinista. Por tanto, el
+bloqueo de TASK-282 no procede del merge `dfb83d6` y queda sustituido por deuda
+de validación preexistente documentada. TASK-282 pasa a `review` sin corregir
+producto, recrear el merge ni reescribir historia. TASK-284 queda como único
+seguimiento pendiente para corregir esa deuda y no se ejecutó dentro de esta
+reconciliación.
+
+La rama publicada, la comprobación de workflows y la URL de la Pull Request se
+registrarán en una actualización final después de superar la puerta Git de
+TASK-283.
 
 ## Change Budget
 
