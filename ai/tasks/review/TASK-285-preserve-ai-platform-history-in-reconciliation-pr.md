@@ -1,7 +1,7 @@
 ---
 id: TASK-285
 title: Preserve AI Platform history in reconciliation PR
-status: in-progress
+status: review
 type: platform
 team: Arquitecto Python
 supporting_teams: ["PM"]
@@ -503,11 +503,57 @@ es Git, árbol canónico, lifecycle y PR.
 
 ## Outcome
 
-Pendiente. Debe registrar las métricas before/after de la PR, archivos
-normativos y tasks históricas restaurados, allowlist final, artefactos locales
-preservados, estado de `.gitignore`, controles de historia e integridad, SHA
-del commit correctivo, push, estado final de PR #10 y confirmación de que no se
-ejecutó ninguna otra task.
+Caso aprobado: se reparó la pérdida accidental de AI Platform en la rama de
+reconciliación sin modificar producto ni reescribir historia.
+
+- Rama: `chore/reconcile-gitea-github-history`.
+- HEAD local inicial: `c4bc23f64fe6e94b4d7576f0e5718333952d0f9c`.
+- HEAD remoto inicial de la rama de PR: `fd11f8e5548e3ebbb048647b9cc45da8305d571c`.
+- `origin/main`: `cda6d72b4b2ca244ffc5bab7e6289761a5a114eb`.
+- PR #10 antes de la reparación: 350 archivos, 1.156 inserciones, 35.106
+  eliminaciones; 345 eliminaciones accidentales bajo `ai/`.
+- Diff local inicial, incluida TASK-285: 351 archivos, 1.675 inserciones,
+  35.106 eliminaciones.
+- Se restauraron mecánicamente desde `origin/main` los 345 paths borrados de
+  `ai/` y se restauró `.gitignore` exactamente desde `origin/main`.
+- Commit correctivo: `90664d694b838fbd8e5ac87c6e9493466d234e26`
+  (`fix(platform): preserve AI Platform history in reconciliation`).
+- Tras el commit correctivo, el diff `origin/main...HEAD` contiene 5 archivos
+  añadidos, 1.668 inserciones y 0 eliminaciones; son exclusivamente TASK-000,
+  TASK-282, TASK-283, TASK-284 y TASK-285.
+- Los 355 blobs versionados bajo `ai/` en `origin/main` son byte-identical en
+  índice y worktree. Esto incluye `ai/repo-context.md`,
+  `ai/architecture-index.md`, `ai/task-template.md`, los 14 archivos de
+  `ai/orchestrator/` y los 317 archivos de `ai/tasks/done/`.
+- `ai/tasks/done/TASK-271-split-rcon-live-ingestion-from-historical-materialization.md`
+  existe y es byte-identical a `origin/main`.
+- TASK-272 a TASK-281 siguen en `pending`, con contenido byte-identical a
+  `origin/main`, y no se ejecutaron.
+- TASK-284 sigue en `pending`. TASK-000, TASK-282 y TASK-283 conservaron sus
+  rutas, estados y blobs de la rama.
+- Los seis artefactos locales no versionados (TASK-204, TASK-242 y TASK-264,
+  TASK-266, TASK-267, TASK-268) conservaron sus hashes SHA-256, no se
+  añadieron al índice y permanecen en el worktree.
+- `.gitignore` es byte-identical a `origin/main`; no contiene `/ai/` y
+  `ai/repo-context.md` ya no queda ignorado.
+- `git diff --check` y `git diff --check origin/main...HEAD` pasaron después
+  del commit. Antes del commit, `git diff --cached --check` contra el HEAD
+  antiguo mostró whitespace ya presente en ocho blobs canónicos de
+  `origin/main`; `git diff --cached --check origin/main --` pasó, demostrando
+  que TASK-285 no lo introdujo.
+- Los checks de ancestros para `006bfeb`, `5590987`, `3967b01`, `f522970` y
+  `origin/main` pasaron. Los padres de `dfb83d6` no cambiaron.
+- `git fsck --full` terminó con código 0; solo informó 86 objetos `dangling`,
+  sin errores de integridad.
+- `backend/`, `frontend/`, `scripts/` y `deploy/` no presentan diferencias de
+  TASK-285. No se ejecutaron tests de producto porque no hubo cambios de
+  producto; las validaciones aplicables fueron Git, árbol canónico, lifecycle
+  y PR.
+- Commits de lifecycle previos al cierre: `03dc80b2cddbe3e1cfba4f739e4bfcb1d46f5089`
+  y `537829778803d732d542e907dff2ceb7194aad52`.
+- Publicación y comprobación final de la PR: pendientes de registrar en un
+  segundo commit documental después del push normal, sin fusionar la PR.
+- No se ejecutó ni modificó ninguna task distinta de TASK-285.
 
 ## Change Budget
 
