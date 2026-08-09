@@ -1,7 +1,7 @@
 ---
 id: TASK-285
 title: Preserve AI Platform history in reconciliation PR
-status: pending
+status: in-progress
 type: platform
 team: Arquitecto Python
 supporting_teams: ["PM"]
