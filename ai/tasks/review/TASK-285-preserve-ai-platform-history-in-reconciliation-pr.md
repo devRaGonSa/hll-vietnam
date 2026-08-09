@@ -512,6 +512,8 @@ reconciliación sin modificar producto ni reescribir historia.
 - `origin/main`: `cda6d72b4b2ca244ffc5bab7e6289761a5a114eb`.
 - PR #10 antes de la reparación: 350 archivos, 1.156 inserciones, 35.106
   eliminaciones; 345 eliminaciones accidentales bajo `ai/`.
+- Clasificación inicial de la PR: 4 archivos añadidos, 345 borrados y 1
+  modificado; bajo `ai/`, 4 añadidos, 345 borrados y 0 modificados.
 - Diff local inicial, incluida TASK-285: 351 archivos, 1.675 inserciones,
   35.106 eliminaciones.
 - Se restauraron mecánicamente desde `origin/main` los 345 paths borrados de
@@ -534,6 +536,15 @@ reconciliación sin modificar producto ni reescribir historia.
 - Los seis artefactos locales no versionados (TASK-204, TASK-242 y TASK-264,
   TASK-266, TASK-267, TASK-268) conservaron sus hashes SHA-256, no se
   añadieron al índice y permanecen en el worktree.
+- Hashes preservados: TASK-204 `E082F71B07DE1B04DFA6795B56FD12479808AB7ECB494AF40C45B8940F05E00C`;
+  TASK-242 `B53AA2C361F90273AE4D77826FCC41AEDE024226DE10374D1DD9C4878A3F80B4`;
+  TASK-264 `412C79C59F234B90D50D0800C34C7B8581E3B9882D66ECA22606F8B00D2D8B07`;
+  TASK-266 `A8F5FAD01DBCF114179208F6B9AA742ED62DBB3168D6D249A607CCBD500B47A2`;
+  TASK-267 `A5DD66C07808C920AEDCE5ED53962E136FC944088707210EB3A7CE754D1F69E1`;
+  TASK-268 `0CCA90430F8381E7AFA22CCE4907BA00FA15E48A2A2F7F9FA28E860EE1F8E340`.
+- Se conserva la divergencia preexistente TASK-267: la versión histórica de
+  `origin/main` está en `done` y la versión local no rastreada sigue en
+  `in-progress`; TASK-285 no intentó resolver ese lifecycle.
 - `.gitignore` es byte-identical a `origin/main`; no contiene `/ai/` y
   `ai/repo-context.md` ya no queda ignorado.
 - `git diff --check` y `git diff --check origin/main...HEAD` pasaron después
@@ -551,8 +562,25 @@ reconciliación sin modificar producto ni reescribir historia.
   y PR.
 - Commits de lifecycle previos al cierre: `03dc80b2cddbe3e1cfba4f739e4bfcb1d46f5089`
   y `537829778803d732d542e907dff2ceb7194aad52`.
-- Publicación y comprobación final de la PR: pendientes de registrar en un
-  segundo commit documental después del push normal, sin fusionar la PR.
+- Commit de paso a review: `3e812ac580b5c4d81628ad91c5a76bbb89dacc40`.
+- Comandos de evidencia: `git diff --name-status origin/main...HEAD`,
+  `git diff --shortstat origin/main...HEAD`, `git diff --diff-filter=D
+  --name-only origin/main...HEAD -- ai`, `git diff --name-only
+  origin/main...HEAD -- backend frontend scripts deploy`, `git diff --check`,
+  `git fsck --full` y los cinco `git merge-base --is-ancestor` documentados.
+- Primer push normal completado: el remoto quedó en
+  `3e812ac580b5c4d81628ad91c5a76bbb89dacc40`.
+- PR #10 (`https://github.com/devRaGonSa/hll-vietnam/pull/10`) observada abierta,
+  no draft, no fusionada y `MERGEABLE`, con base `main`, head correcto, 5
+  archivos, 1.714 inserciones y 0 eliminaciones. Su diff final observado tenía
+  5 añadidos, 0 modificados y 0 borrados, todos bajo `ai/tasks/` y dentro de
+  la allowlist.
+- La descripción de PR #10 fue actualizada con la evidencia de preservación.
+- El workflow del primer push, run `31335634568`, terminó inmediatamente en
+  `failure` con cero jobs y sin logs; ningún worker ejecutó tasks. No se reparó
+  el workflow por estar fuera de alcance.
+- `main` conserva upstream `gitea/main`; el remoto Gitea y las ramas backup no
+  se modificaron. PR #10 no se fusionó.
 - No se ejecutó ni modificó ninguna task distinta de TASK-285.
 
 ## Change Budget
