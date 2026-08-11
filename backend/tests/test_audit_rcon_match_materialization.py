@@ -18,6 +18,7 @@ from scripts.audit_rcon_match_materialization import (
     canonicalize_admin_message,
     classify_parser_signature,
     count_ordered_boundary_pairs,
+    cutoff_tie_membership,
     derive_admin_matches,
     duration_seconds,
     ensure_read_only_sql,
@@ -360,6 +361,24 @@ def test_window_boundary_pairs_require_ordered_start_then_end() -> None:
         (base, 5, "match_end"),
     ]
     assert count_ordered_boundary_pairs(boundaries) == 1
+
+
+def test_cutoff_tie_requires_rows_on_both_sides_of_limit() -> None:
+    contained = [
+        {"last_seen_at": f"2026-01-{index:02d}", "display_name": "server"}
+        for index in range(1, 9)
+    ] + [
+        {"last_seen_at": "cutoff", "display_name": "server"},
+        {"last_seen_at": "cutoff", "display_name": "server"},
+        {"last_seen_at": "older", "display_name": "server"},
+    ]
+    assert cutoff_tie_membership(contained, limit=10) == (2, 0, False)
+
+    straddling = contained[:9] + [
+        {"last_seen_at": "cutoff", "display_name": "server"},
+        {"last_seen_at": "cutoff", "display_name": "server"},
+    ]
+    assert cutoff_tie_membership(straddling, limit=10) == (2, 1, True)
 
 
 def test_sqlite_readonly_adapter_does_not_change_snapshot(tmp_path: Path) -> None:
