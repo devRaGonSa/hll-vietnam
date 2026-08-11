@@ -1,7 +1,7 @@
 ---
 id: TASK-288
 title: Reproduce historical RCON forensics on production PostgreSQL
-status: pending
+status: in-progress
 type: research
 team: Analista
 supporting_teams: ["Arquitecto de Base de Datos", "Arquitecto Python", "Backend Senior"]
