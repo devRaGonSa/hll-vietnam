@@ -1,7 +1,7 @@
 ---
 id: TASK-287
 title: Audit historical match boundaries and player-stat inflation
-status: pending
+status: review
 type: research
 team: Analista
 supporting_teams: ["Backend Senior", "Arquitecto de Base de Datos", "Arquitecto Python"]
@@ -291,19 +291,48 @@ The task must not be marked complete with invented production counts. Integratio
 
 ## Outcome
 
-Complete this section with:
+### Audit result
 
-- data sources examined and the exact coverage period per server;
-- confirmed root causes and quantified impact;
-- rejected hypotheses and supporting evidence;
-- unresolved hypotheses and the evidence/access still needed;
-- missing, extra and ambiguous match counts over comparable coverage;
-- number of inflated matches and the rule/evidence used to identify them;
-- worst representative examples, with secrets and private data sanitized;
-- invariant and event-overlap results; and
-- recommended follow-up tasks in dependency order, without creating them.
+The forensic report is `docs/HISTORICAL_RCON_MATCH_BOUNDARY_AND_STAT_INFLATION_AUDIT.md`. A deterministic, aggregate-only read-only diagnostic and focused tests were added at `scripts/audit_rcon_match_materialization.py` and `backend/tests/test_audit_rcon_match_materialization.py`.
 
-Finish this task in `review`, not `done`, for ChatGPT orchestrator evaluation.
+#### Sources and coverage
+
+Production PostgreSQL was not accessible, so every production count and the reported approximately 300-kill production example remain **UNRESOLVED — production data not accessible in this run**. The representative local SQLite snapshot was examined directly with `mode=ro`, `PRAGMA query_only=ON`, a read transaction, and immutable mode for final runs; schema-initializing repository helpers were not used.
+
+- Comunidad Hispana #01: 90 AdminLog events from `2026-05-19T11:16:10.281Z` through `2026-05-20T21:16:46.467Z` by `event_timestamp`; server-time range `1779178245..1779311718`; created-at range `2026-05-19T11:16:11Z..2026-05-20T21:16:48Z`. The snapshot has 22 materialized rows, 24 competitive windows, and 8,730 complete persisted scoreboard windows spanning 2024-05-17 through 2026-05-25.
+- Comunidad Hispana #02: 21,152 AdminLog events from `2026-05-19T11:16:10.574Z` through `2026-05-20T23:21:45.816Z`; server-time range `1779108337..1779319250`; created-at range `2026-05-19T11:16:11Z..2026-05-20T23:21:48Z`. The snapshot has 36 materialized rows, 28 competitive windows, and 832 complete persisted scoreboard windows spanning 2025-11-04 through 2026-05-25.
+
+The full scoreboard totals and materialized totals are not directly comparable because coverage differs. Within explicit plausible-`server_time` overlap, #01 has 7 scoreboard games versus 5 complete RCON pairs; classifications are 4 exact, 1 partial/session-only, 2 without a selected RCON counterpart, and 1 RCON pair without a selected scoreboard counterpart. #02 has 17 versus 16; classifications are 10 exact, 0 partial/session-only, 7 without a selected RCON counterpart, and 6 RCON pairs without a selected scoreboard counterpart.
+
+#### Confirmed, rejected, and unresolved causes
+
+- Confirmed locally: one #02 orphan END/upper-only range; stale/open START lower-only ranges; independent overlapping range assignment; 2 #01 and 297 #02 explicit `TEAM KILL` rows classified `unknown`; and 7 #01 / 13 #02 persisted rows no longer derivable. Six stale bounded #02 rows share kills with complete ranges.
+- Probable/possible locally: map-only fallback suppression leaves 9 #01 and 14 #02 temporally distant omission candidates; acquisition loss is possible because of observed gaps and cadence/lookback design, but there is no worker poll ledger. The 1,800-second same-map extension is confirmed in code, but local multi-round loss is not proven: no competitive window contains more than one complete server-time boundary pair.
+- Rejected locally: the newest-100 limit excludes zero of the 52 windows; no unknown row resembles a missed START/END; all 5 #01 and 16 #02 both-bound matches pass both kill/death invariants.
+- Unresolved: all production frequencies, the concrete approximately 300-kill row, legitimate dedupe collision loss, deployed PostgreSQL constraint semantics, exact acquisition-loss counts, post-TASK-271 coverage, and whether every distant fallback candidate is one real match.
+
+#### Inflation, overlap, and stale rows
+
+Six #02 partial rows are confirmed inflated under the conservative rule “the current partial range spans at least two derived complete matches”; #01 has zero. The worst sanitized examples are `match-2d63a3461812`, `match-99de224345eb`, and `match-e3eee55a6498`, each with maximum player kills 208 and respectively 10,145, 10,145, and 9,908 selected kill events. No local row reaches approximately 300.
+
+#01 streams 38 eligible events: 2 map to zero ranges, 26 to exactly one, and 10 to multiple ranges (maximum multiplicity 3; no kill events). #02 streams 16,060: 71 to zero, 3,140 to one, and 12,849 to multiple ranges. Of 12,776 #02 kill events, 10,146 map to multiple rows; maximum multiplicity is 7. These counts are unique source event rows satisfying several predicates, not duplicate stored rows.
+
+Persisted/currently derivable/not-currently-derivable counts are 22/15/7 on #01 and 36/23/13 on #02. The six stale bounded #02 rows have a summed 37,995 selected kills, explicitly not a unique-kill count because the stale ranges overlap.
+
+#### Recommended order
+
+Review/reproduce TASK-287 on production read-only; incorporate canonical identity, epoch, degraded-state, and exclusive-assignment requirements into TASK-272; implement a dedicated historical boundary/match-instance repair; coordinate TASK-274 parser normalization; implement bounded materialization, temporal fallback, stale reconciliation, and acquisition checkpoints; perform a separately authorized shadow rebuild/rematerialization plus CRCON reconciliation; then continue TASK-273 and TASK-275 through TASK-281. TASK-273 and TASK-275–281 should wait for the historical boundary/identity decision. TASK-284 remains unrelated.
+
+#### Validation
+
+- `python -m compileall scripts`: passed.
+- Focused diagnostic tests: `16 passed`.
+- Two final read-only JSON runs were byte-identical with SHA-256 `544cf438a19f6393a60ad4471ca9308a50b2b6f149d935a64fa905c9a273d106`.
+- SQL allowlisting/rejection, explicit read-only transactions, privacy sanitation, target/date filtering, and unchanged temporary SQLite database hash/size/mtime are covered by focused tests.
+- Integration tests were not run because the diagnostic is isolated and does not modify an existing integration surface.
+- The main local SQLite database and WAL data/schema state did not change. The first exploratory read-only WAL connection refreshed only the pre-existing `.sqlite3-shm` reader metadata timestamp; final immutable runs left all database artifacts stable. No production data was contacted or mutated.
+
+TASK-287 finishes in `review`, not `done`, for orchestrator evaluation. No follow-up task was created or executed.
 
 ## Change Budget
 
