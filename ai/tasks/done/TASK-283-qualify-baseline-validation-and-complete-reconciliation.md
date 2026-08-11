@@ -1,7 +1,7 @@
 ---
 id: TASK-283
 title: Qualify baseline validation failures and complete repository reconciliation
-status: review
+status: done
 type: platform
 team: Arquitecto Python
 supporting_teams: ["Backend Senior", "Frontend Senior", "PM"]
@@ -507,6 +507,16 @@ ignorado. Los commits creados antes de este cierre fueron:
 Decisión final: Caso A. TASK-282 y TASK-283 terminan en `review`; TASK-284
 permanece en `pending` sin ejecutar. No se ejecutó ninguna task distinta de
 TASK-283 ni ninguna task funcional.
+
+### Resolución final mediante TASK-286
+
+La calificación comparativa anterior permanece vigente: los fallos observados
+son deuda baseline preexistente y no regresiones de la reconciliación. Tras la
+integración de la PR #10 y la migración del upstream local a `origin/main`, la
+revisión queda resuelta y TASK-283 finaliza en `done`.
+
+TASK-284 permanece en `pending`, intacta y sin ejecutar, como seguimiento
+exclusivo de esa deuda.
 
 ## Change Budget
 

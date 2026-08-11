@@ -1,7 +1,7 @@
 ---
 id: TASK-282
 title: Reconcile Gitea and GitHub histories without rewriting commits
-status: review
+status: done
 type: platform
 team: Arquitecto Python
 supporting_teams: ["PM"]
@@ -246,6 +246,18 @@ validar el workflow con `jobs: 0`; no ejecutó Codex ni tasks pendientes.
 `f522970` con upstream `gitea/main`. El remoto `gitea`, ambas ramas backup y
 TASK-272 a TASK-281 permanecen intactos. TASK-282 finaliza en `review` para la
 revisión humana de la reconciliación preservada.
+
+### Resolución final mediante TASK-286
+
+La reconciliación revisada fue aceptada e integrada mediante la PR #10 con el
+merge commit normal `151866825f0125477308a394f557bd63f32201d8`; el head
+reconciliado `a4fa5888bb122fdb5a9959426c0dc7b933e60ca9` quedó preservado como
+ancestro de GitHub `main`.
+
+TASK-286 actualizó el `main` local por fast-forward y lo dejó siguiendo
+`origin/main`, sin reescribir historia. El remoto `gitea`, las ramas de
+respaldo y la rama de reconciliación permanecen conservados. TASK-282 finaliza
+en `done`.
 
 ## Change Budget
 

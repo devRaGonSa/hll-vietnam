@@ -1,7 +1,7 @@
 ---
 id: TASK-000
 title: Verify and switch HLL Vietnam repository source to GitHub
-status: blocked
+status: done
 type: platform
 team: Arquitecto Python
 supporting_teams: ["PM"]
@@ -232,6 +232,19 @@ Resultado del preflight del 2026-07-29:
 
 La migración no puede garantizarse sin pérdida o sobrescritura de historia,
 por lo que la task queda bloqueada y no se procesa ninguna task posterior.
+
+### Resolución final mediante TASK-286
+
+El bloqueo anterior queda resuelto. TASK-282 reconcilió las historias
+preservadas sin reescribir commits; TASK-283 calificó los fallos como deuda
+baseline preexistente; TASK-285 restauró y preservó AI Platform; y la PR #10
+se integró en GitHub `main` mediante el merge commit normal
+`151866825f0125477308a394f557bd63f32201d8`.
+
+TASK-286 sincronizó el `main` local exclusivamente mediante fast-forward y
+cambió su upstream de `gitea/main` a `origin/main`. GitHub queda como upstream
+operativo y `gitea` se conserva sin cambios como remoto histórico y de
+respaldo. TASK-000 finaliza en `done`.
 
 ## Change Budget
 

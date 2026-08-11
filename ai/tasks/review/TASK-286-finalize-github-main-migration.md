@@ -1,7 +1,7 @@
 ---
 id: TASK-286
 title: Finalize GitHub main migration and repository upstream
-status: in-progress
+status: review
 type: platform
 team: Arquitecto Python
 supporting_teams: ["PM"]
@@ -439,28 +439,107 @@ producto.
 
 ## Outcome
 
-Pendiente. Debe registrar como mínimo:
+Caso aprobado. GitHub queda como fuente operativa principal y el remoto Gitea
+se conserva como referencia histórica y de respaldo.
 
-- SHA inicial del `main` local;
-- SHA inicial y final de `origin/main`;
-- resultado del ancestor check;
-- resultado de `git rev-list --left-right --count`;
-- resultado de `git merge --ff-only origin/main`;
-- upstream anterior;
-- upstream final;
-- URL del remoto Gitea preservada de forma sanitizada;
-- SHAs de las ramas backup y confirmación de su presencia en GitHub;
-- SHA y presencia de la rama de reconciliación;
-- tasks cerradas;
-- backlog pendiente preservado;
-- artefactos locales preexistentes preservados;
-- commit creado;
-- push realizado exclusivamente a GitHub;
-- resultado de `git diff --check`;
-- resultado de `git fsck --full`;
-- estado Git final;
-- confirmación de ausencia de cambios y tests de producto;
-- confirmación de que no se ejecutó ninguna otra task.
+### Estado inicial y sincronización
+
+- Rama inicial:
+  `chore/reconcile-gitea-github-history` en
+  `a4fa5888bb122fdb5a9959426c0dc7b933e60ca9`.
+- `main` local inicial:
+  `f52297055ddf76550f48d0d2315ed0232a9670ef`.
+- `origin/main` inicial tras `git fetch origin`:
+  `151866825f0125477308a394f557bd63f32201d8`.
+- `gitea/main` inicial tras `git fetch gitea`:
+  `006bfeba7d1a80b3b326e365e12ccdb9d107dc7d`.
+- PR #10 verificada como `MERGED`, con head
+  `a4fa5888bb122fdb5a9959426c0dc7b933e60ca9` y merge commit
+  `151866825f0125477308a394f557bd63f32201d8`.
+- `git merge-base --is-ancestor main origin/main`: exit `0`.
+- `git rev-list --left-right --count main...origin/main`: `0 24`; no existía
+  ningún commit exclusivo en el `main` local.
+- `git merge --ff-only origin/main`: exit `0`; `main` avanzó sin merge commit,
+  reset, rebase, cherry-pick ni reescritura hasta
+  `151866825f0125477308a394f557bd63f32201d8`.
+- `git diff --exit-code main origin/main`: exit `0` después del fast-forward.
+
+### Upstream y referencias preservadas
+
+- Upstream anterior de `main`: `gitea/main`.
+- Upstream final de `main`: `origin/main`.
+- URL fetch/push preservada de Gitea:
+  `https://rgonsal@git.devzamode.es/rgonsal/comunidadhll.git`.
+- Backup local y remoto
+  `backup/local-main-before-github-reconcile-20260808`:
+  `f52297055ddf76550f48d0d2315ed0232a9670ef`.
+- Backup local y remoto
+  `backup/gitea-main-before-github-reconcile-20260808`:
+  `006bfeba7d1a80b3b326e365e12ccdb9d107dc7d`.
+- Rama local y remota `chore/reconcile-gitea-github-history`:
+  `a4fa5888bb122fdb5a9959426c0dc7b933e60ca9`.
+- No se eliminó, renombró ni modificó Gitea, ninguna rama backup ni la rama de
+  reconciliación. No se hizo push a Gitea.
+
+### Historia, AI Platform y backlog
+
+- Los ancestor checks devolvieron exit `0` para `006bfeb`, `5590987`,
+  `3967b01`, `f522970`, `a4fa5888bb122fdb5a9959426c0dc7b933e60ca9`
+  y `151866825f0125477308a394f557bd63f32201d8` frente a `main`.
+- `ai/repo-context.md`, `ai/architecture-index.md` y `ai/task-template.md`
+  existen; `git check-ignore ai/repo-context.md` devolvió el exit `1`
+  esperado.
+- TASK-272 a TASK-281 permanecen una vez cada una en `pending`, con sus hashes
+  iniciales preservados y sin ejecución.
+- TASK-284 permanece en `pending`, sin ejecutar ni modificar; su blob
+  normalizado `f904c0ef3d35687e5d4b06a60a94069e68e5cfe0` coincide exactamente con
+  `HEAD` y `origin/main`, y su diff versionado está vacío.
+- TASK-000, TASK-282, TASK-283 y TASK-285 finalizan en `done`; su evidencia
+  histórica se conserva y solo se añade la resolución final.
+- TASK-286 finaliza en `review` para confirmación humana.
+
+### Archivos locales protegidos
+
+Antes del checkout se creó una copia externa con jerarquía relativa y hashes
+idénticos. Los hashes SHA-256 iniciales y verificados antes de iniciar el
+lifecycle fueron:
+
+- TASK-204:
+  `E082F71B07DE1B04DFA6795B56FD12479808AB7ECB494AF40C45B8940F05E00C`;
+- TASK-242:
+  `B53AA2C361F90273AE4D77826FCC41AEDE024226DE10374D1DD9C4878A3F80B4`;
+- TASK-264:
+  `412C79C59F234B90D50D0800C34C7B8581E3B9882D66ECA22606F8B00D2D8B07`;
+- TASK-266:
+  `A8F5FAD01DBCF114179208F6B9AA742ED62DBB3168D6D249A607CCBD500B47A2`;
+- TASK-267:
+  `A5DD66C07808C920AEDCE5ED53962E136FC944088707210EB3A7CE754D1F69E1`;
+- TASK-268:
+  `0CCA90430F8381E7AFA22CCE4907BA00FA15E48A2A2F7F9FA28E860EE1F8E340`;
+- TASK-286 antes del lifecycle:
+  `F4F051C82C98F2057085AA6AC9A334E60738551FCF929343E46F1096E24A9324`.
+
+Los seis archivos preexistentes permanecieron fuera del índice durante ambos
+commits y se verifican nuevamente después del push final.
+
+### Commits, pushes y validación
+
+- Commit de inicio:
+  `bea2d80c314a357876d474623cb48b37a3f663fa`
+  (`chore(tasks): start GitHub main migration finalization`).
+- Primer push normal a `origin/main`: exit `0`; no se usó force push.
+- El workflow `.github/workflows/codex-worker.yml`, run `31494064204`, terminó
+  en `failure` de parsing con `jobs: []`; no se ejecutó ningún worker ni task.
+- El commit de cierre contiene exclusivamente los lifecycle/Outcome de
+  TASK-000, TASK-282, TASK-283, TASK-285 y TASK-286 y se publica mediante push
+  normal a `origin/main`; su SHA y el resultado final se registran en el
+  informe operativo de esta ejecución.
+- Validación Git previa al cierre: `git diff --check` exit `0` y
+  `git fsck --full` exit `0`, con 87 objetos `dangling` y ningún error de
+  integridad. Ambas comprobaciones se repiten después del push final.
+- No se ejecutaron tests de producto porque no hubo cambios de producto. No
+  se modificaron `backend`, `frontend`, `scripts` ni `deploy`.
+- No se ejecutó ninguna task distinta de TASK-286.
 
 ## Change Budget
 

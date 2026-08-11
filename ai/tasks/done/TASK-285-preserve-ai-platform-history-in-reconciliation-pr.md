@@ -1,7 +1,7 @@
 ---
 id: TASK-285
 title: Preserve AI Platform history in reconciliation PR
-status: review
+status: done
 type: platform
 team: Arquitecto Python
 supporting_teams: ["PM"]
@@ -582,6 +582,17 @@ reconciliación sin modificar producto ni reescribir historia.
 - `main` conserva upstream `gitea/main`; el remoto Gitea y las ramas backup no
   se modificaron. PR #10 no se fusionó.
 - No se ejecutó ni modificó ninguna task distinta de TASK-285.
+
+### Resolución final mediante TASK-286
+
+La reparación de preservación fue integrada mediante la PR #10 después de
+verificar el head `a4fa5888bb122fdb5a9959426c0dc7b933e60ca9`, cinco paths
+autorizados y cero eliminaciones. GitHub `main` conserva la historia
+reconciliada y el árbol de AI Platform sin cambios de producto ni reescritura
+de commits.
+
+El remoto `gitea`, las ramas de respaldo y la rama de reconciliación
+permanecen conservados. TASK-285 finaliza en `done`.
 
 ## Change Budget
 
