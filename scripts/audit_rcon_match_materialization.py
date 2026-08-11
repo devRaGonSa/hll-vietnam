@@ -1337,8 +1337,26 @@ def audit_stats_and_toplists(
     return invariants, top, confirmed_inflated, partial_rows, public_rows
 
 
-def normalize_window_map(row: Mapping[str, object]) -> str:
+def normalize_window_map(row: Mapping[str, object]) -> str | None:
     return normalize_map_name(row.get("map_pretty_name") or row.get("map_name"))
+
+
+def cutoff_tie_membership(
+    rows: Sequence[Mapping[str, object]], limit: int = 100
+) -> tuple[int, int, bool]:
+    """Return cutoff-key counts inside/outside the limit and whether they straddle it."""
+    if limit <= 0 or len(rows) <= limit:
+        return 0, 0, False
+    cutoff_key = (rows[limit - 1].get("last_seen_at"), rows[limit - 1].get("display_name"))
+    inside = sum(
+        (row.get("last_seen_at"), row.get("display_name")) == cutoff_key
+        for row in rows[:limit]
+    )
+    outside = sum(
+        (row.get("last_seen_at"), row.get("display_name")) == cutoff_key
+        for row in rows[limit:]
+    )
+    return inside, outside, inside > 0 and outside > 0
 
 
 def audit_windows_and_stale(
@@ -1363,16 +1381,10 @@ def audit_windows_and_stale(
         row["server"] = resolver.resolve(row.get("target_key"), row.get("external_server_id"))
         row["normalized_map"] = normalize_window_map(row)
     top100 = rows[:100]
-    cutoff_tie = False
-    cutoff_tie_count = 0
-    if len(rows) > 100:
-        cutoff_key = (rows[99].get("last_seen_at"), rows[99].get("display_name"))
-        cutoff_tie_count = sum(
-            (row.get("last_seen_at"), row.get("display_name")) == cutoff_key for row in rows
-        )
-        cutoff_tie = cutoff_tie_count > 1
+    cutoff_tie_inside, cutoff_tie_outside, cutoff_tie = cutoff_tie_membership(rows)
+    cutoff_tie_count = cutoff_tie_inside + cutoff_tie_outside
 
-    existing: set[tuple[str, str]] = set()
+    existing: set[tuple[str, str | None]] = set()
     for match in persisted:
         if match.get("source_basis") == MATERIALIZED_SOURCE_END:
             existing.add(
@@ -1393,7 +1405,7 @@ def audit_windows_and_stale(
     suppressed_top: list[dict[str, object]] = []
     suppressed_all: list[dict[str, object]] = []
     derived_fallback: list[dict[str, object]] = []
-    derived_exact_by_map: dict[tuple[str, str], list[dict[str, object]]] = defaultdict(list)
+    derived_exact_by_map: dict[tuple[str, str | None], list[dict[str, object]]] = defaultdict(list)
     for match in derived:
         if bound_class(match) == "both_bounds":
             derived_exact_by_map[
@@ -1406,7 +1418,7 @@ def audit_windows_and_stale(
         slug: Counter() for slug in selected_servers
     }
     for index, row in enumerate(rows):
-        key = (str(row.get("target_key") or ""), str(row.get("normalized_map") or ""))
+        key = (str(row.get("target_key") or ""), row.get("normalized_map"))
         suppressed = key in existing
         if suppressed:
             suppressed_all.append(row)
@@ -1462,6 +1474,8 @@ def audit_windows_and_stale(
         "global_top100_size": len(top100),
         "global_top100_distribution": {},
         "cutoff_tie_candidate_count": cutoff_tie_count,
+        "cutoff_tie_inside_top100": cutoff_tie_inside,
+        "cutoff_tie_outside_top100": cutoff_tie_outside,
         "production_membership_ambiguous_at_cutoff": cutoff_tie,
         "by_server": {},
     }
