@@ -1,7 +1,7 @@
 ---
 id: TASK-292
 title: Consolidate current-match frontend on snapshot polling
-status: pending
+status: review
 type: frontend
 team: Frontend Senior
 supporting_teams: ["Backend Senior", "Experto en interfaz"]
@@ -438,6 +438,104 @@ Document:
 - the final modified-file list;
 - any backend contract blocker, as a blocker rather than an unplanned backend change;
 - any follow-up task that should be created instead of expanding this scope.
+
+### Implementation Result
+
+- Starting HLL commit: `b809648deb253f4b86c600b51fd600d8b939e7ad` on
+  `feature/task-292-current-match-snapshot-frontend`.
+- Transport resolution is implemented by the small browser/Node-compatible
+  `current-match-snapshot.js` runtime. Precedence is
+  `window.HLL_FRONTEND_CONFIG.currentMatchTransport`, then
+  `document.body.dataset.currentMatchTransport`, then `legacy`. Only `legacy`
+  and `snapshot` are accepted; an invalid explicit value emits a development
+  warning and safely selects `legacy`. The checked-in body selector is
+  `data-current-match-transport="legacy"`; no storage, query-string probing or
+  backend-source inference is used.
+- The frontend default remains `legacy`. Its three existing owners, endpoints,
+  guards and cadences remain available: summary every `30000 ms`, full bounded
+  killfeed every `1500 ms` and players every `3000 ms`.
+- Explicit snapshot mode starts none of those legacy owners. It starts one
+  settle-then-schedule controller at `2000 ms`, above TASK-291's `1500 ms`
+  cache TTL. The next `setTimeout` is created only in `finally` after the active
+  request settles. One in-flight promise is shared by concurrent refresh
+  opportunities, failures release it for retry, and unload stops scheduling and
+  prevents late responses from applying.
+- One snapshot cycle makes exactly one request to
+  `/api/current-match/snapshot?server=<slug>` and zero requests to
+  `/api/current-match`, `/api/current-match/kills` or
+  `/api/current-match/players`. Legacy mode makes no snapshot request. Focused
+  tests prove request counts and exclusive ownership.
+- One pure processing cycle adapts the same `match_id`, `version` and
+  `observed_at` into the existing summary, player and killfeed renderer shapes.
+  Mature map resolution, trusted scoreboard links, player deduplication/sort,
+  team colors, feed limits, row markup and weapon icon mapping remain in their
+  existing renderers. Unchanged versions avoid player-table and killfeed DOM
+  replacement while countdown and observation metadata continue locally.
+- Summary mapping covers server identity, map/layer/mode, start, score, team and
+  total counts, capacity, remaining time, observed time, identity/version and
+  degraded metadata. Missing values remain `null`/unavailable rather than
+  becoming fake zeroes. Player mapping covers IDs/names, team, K/D/TK,
+  deaths-by-TK, favorite weapon, score dimensions, unit/role/level/status and
+  observation time. Kill mapping converts opaque `cursor` to existing
+  `event_id`, timestamp to the validated event time, nested killer/victim data,
+  weapon, teamkill and match identity.
+- Kill reconciliation keys on the opaque match-scoped cursor, not timestamp.
+  The first window renders once, unchanged windows do not duplicate, new events
+  append once, equal timestamps with different cursors remain distinct, order
+  stays chronological and the browser window remains capped at 18 before the
+  existing responsive visible limits apply.
+- A true logical match change is detected from match ID plus stable
+  server/start/layer evidence, resets previous events/cursors/countdown and
+  applies the new snapshot without mixing page areas. An `ephemeral ->
+  canonical` change with equal stable evidence is classified as identity
+  stabilization: incompatible cursor state is replaced from the canonical
+  window, but the page is not pre-cleared or flashed as a new actual game.
+- For a truncated server window, continuity continues only when the last cursor
+  remains present. If it is absent, the local window is deterministically
+  replaced by the retained server window, rendered once and marked through the
+  existing state line; no missing event is invented.
+- Snapshot `remaining_seconds` plus `observed_at` form a local deadline. A
+  one-second display timer performs no HTTP request; every snapshot safely
+  rebases drift, corrections within two seconds avoid jitter, true match changes
+  force reset and unavailable values preserve an existing same-match basis
+  rather than coercing `null` to zero.
+- Successful degraded same-match snapshots preserve prior trustworthy non-null
+  summary/player/feed values where the degraded response lacks them, while
+  exposing the existing degraded state. Transient request failures retain the
+  bounded in-memory last-good snapshot, mark the current state unavailable and
+  continue snapshot retries. HTTP 503 follows the same explicit snapshot path
+  and never starts legacy transport.
+- Frontend testing uses Node 22's built-in `node:test` and pure/controller seams;
+  no package manifest, DOM library or dependency was added. Result: `22/22`
+  focused tests passed. Syntax checks passed for
+  `current-match-snapshot.js`, `partida-actual.js` and the focused test file.
+- Backend contract regressions passed unchanged: TASK-291
+  `tests.test_crcon_current_match` ran 33 tests, TASK-290
+  `tests.test_crcon_adapter_foundation` ran 26 tests and legacy
+  `tests.test_current_match_payload` ran 13 tests. No additional frontend
+  integration runner is configured for this repository scope.
+- Structural request cadence changes only in explicit snapshot mode: legacy
+  remains three independent streams (`30000/1500/3000 ms`); snapshot uses one
+  non-overlapping `2000 ms` stream plus a local no-network one-second countdown.
+  No production bandwidth, CPU or memory savings are claimed.
+- Final tracked scope is the TASK-292 lifecycle file,
+  `frontend/partida-actual.html`, `frontend/assets/js/partida-actual.js`, the new
+  `frontend/assets/js/current-match-snapshot.js` runtime and
+  `frontend/tests/current-match-snapshot.test.js`. CSS, backend, deploy,
+  Compose, Dockerfiles, runtime configuration and dependencies are unchanged.
+- The normal line budget is exceeded because the isolated runtime and 22-case
+  regression harness make transport ownership, adapters, transition semantics,
+  truncation, countdown and failure behavior deterministic without adding a
+  framework. The change remains within five cohesive tracked paths.
+- No SSH, Portainer, production, real CRCON/PostgreSQL/RCON, credentials,
+  deployment or service restart was accessed. TASK-272 through TASK-281,
+  TASK-284, resolved TASK-287 through TASK-291 and the six protected local task
+  files were not modified or executed.
+- No backend contract blocker was found. Future rollout remains blocked on a
+  separately authorized deployment task deliberately pairing backend
+  `HLL_CURRENT_MATCH_SOURCE=crcon` with frontend
+  `currentMatchTransport=snapshot` only after real CRCON bindings and local or
+  deployment-handoff validation exist.
 
 ## Lifecycle
 

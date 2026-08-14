@@ -13,6 +13,8 @@ const CURRENT_MATCH_KILL_FEED_LIMIT = 18;
 const CURRENT_MATCH_KILL_FEED_VISIBLE_LIMIT_DESKTOP = 12;
 const CURRENT_MATCH_KILL_FEED_VISIBLE_LIMIT_MEDIUM = 6;
 const CURRENT_MATCH_KILL_FEED_VISIBLE_LIMIT_MOBILE = 5;
+const CURRENT_MATCH_SNAPSHOT_RUNTIME =
+  globalThis.HLL_VIETNAM_CURRENT_MATCH_SNAPSHOT;
 
 document.addEventListener("DOMContentLoaded", () => {
   const params = new URLSearchParams(window.location.search);
@@ -42,6 +44,40 @@ document.addEventListener("DOMContentLoaded", () => {
   configureOptionalLinks(nodes, serverSlug);
   const killFeedState = initializeKillFeed(nodes);
   const playerStatsState = initializePlayerStats(nodes);
+  const transport = CURRENT_MATCH_SNAPSHOT_RUNTIME.resolveCurrentMatchTransport({
+    config: window.HLL_FRONTEND_CONFIG,
+    dataset: document.body.dataset,
+    warn: (message) => console.warn(message),
+  });
+  const controller = CURRENT_MATCH_SNAPSHOT_RUNTIME.startSelectedTransport({
+    transport,
+    startLegacy: () =>
+      startLegacyCurrentMatchTransport({
+        backendBaseUrl,
+        serverSlug,
+        nodes,
+        killFeedState,
+        playerStatsState,
+      }),
+    startSnapshot: () =>
+      startSnapshotCurrentMatchTransport({
+        backendBaseUrl,
+        serverSlug,
+        nodes,
+        killFeedState,
+        playerStatsState,
+      }),
+  });
+  window.addEventListener("beforeunload", () => controller?.stop?.(), { once: true });
+});
+
+function startLegacyCurrentMatchTransport({
+  backendBaseUrl,
+  serverSlug,
+  nodes,
+  killFeedState,
+  playerStatsState,
+}) {
   let currentMatchRefreshInFlight = false;
   const refreshCurrentMatch = async () => {
     if (currentMatchRefreshInFlight) {
@@ -84,16 +120,131 @@ document.addEventListener("DOMContentLoaded", () => {
   void refreshCurrentMatch();
   void refreshKillFeed();
   void refreshPlayerStats();
-  window.setInterval(() => {
-    void refreshCurrentMatch();
-  }, CURRENT_MATCH_POLL_INTERVAL_MS);
-  window.setInterval(() => {
-    void refreshKillFeed();
-  }, CURRENT_MATCH_KILL_FEED_POLL_INTERVAL_MS);
-  window.setInterval(() => {
-    void refreshPlayerStats();
-  }, CURRENT_MATCH_PLAYER_STATS_POLL_INTERVAL_MS);
-});
+  const timers = [
+    window.setInterval(() => {
+      void refreshCurrentMatch();
+    }, CURRENT_MATCH_POLL_INTERVAL_MS),
+    window.setInterval(() => {
+      void refreshKillFeed();
+    }, CURRENT_MATCH_KILL_FEED_POLL_INTERVAL_MS),
+    window.setInterval(() => {
+      void refreshPlayerStats();
+    }, CURRENT_MATCH_PLAYER_STATS_POLL_INTERVAL_MS),
+  ];
+  return {
+    stop() {
+      timers.forEach((timer) => window.clearInterval(timer));
+    },
+  };
+}
+
+function startSnapshotCurrentMatchTransport({
+  backendBaseUrl,
+  serverSlug,
+  nodes,
+  killFeedState,
+  playerStatsState,
+}) {
+  let snapshotState = CURRENT_MATCH_SNAPSHOT_RUNTIME.createSnapshotTransportState();
+  const poller = CURRENT_MATCH_SNAPSHOT_RUNTIME.createSnapshotPoller({
+    intervalMs: CURRENT_MATCH_SNAPSHOT_RUNTIME.SNAPSHOT_POLL_INTERVAL_MS,
+    request: async () => {
+      const payload = await fetchJson(
+        `${backendBaseUrl}/api/current-match/snapshot?server=${encodeURIComponent(serverSlug)}`,
+      );
+      return payload?.data || {};
+    },
+    applySnapshot: (snapshot) => {
+      const result = CURRENT_MATCH_SNAPSHOT_RUNTIME.processCurrentMatchSnapshot(
+        snapshotState,
+        snapshot,
+        { killLimit: CURRENT_MATCH_KILL_FEED_LIMIT },
+      );
+      snapshotState = result.state;
+      const summary = {
+        ...result.summary,
+        public_scoreboard_url: CURRENT_MATCH_SCOREBOARDS[result.summary.server_slug] || null,
+        remaining_match_time_seconds: result.countdownSeconds,
+      };
+      const countdownNeedsMarkup =
+        Number.isFinite(Number(result.countdownSeconds)) &&
+        Number(result.countdownSeconds) > 0 &&
+        !document.getElementById("current-match-remaining-time");
+      if (!result.unchangedVersion || countdownNeedsMarkup) {
+        renderCurrentMatch(summary, nodes);
+      } else {
+        updateSnapshotLiveMetadata(summary);
+      }
+      if (!result.unchangedVersion) {
+        renderPlayerStats(result.players, nodes, playerStatsState);
+        renderKillFeed(result.killFeed, nodes, killFeedState);
+      }
+      renderSnapshotFreshness(snapshot, nodes, result);
+    },
+    handleError: (error) => {
+      snapshotState = CURRENT_MATCH_SNAPSHOT_RUNTIME.recordSnapshotFailure(snapshotState, {
+        status: error?.status || null,
+      });
+      renderSnapshotFailure(nodes, snapshotState, error);
+    },
+  });
+  const countdownTimer = window.setInterval(() => {
+    const seconds = CURRENT_MATCH_SNAPSHOT_RUNTIME.getCountdownSeconds(
+      snapshotState.countdownBasis,
+    );
+    updateSnapshotCountdown(seconds);
+  }, 1000);
+  void poller.start();
+  return {
+    stop() {
+      poller.stop();
+      window.clearInterval(countdownTimer);
+    },
+  };
+}
+
+function updateSnapshotLiveMetadata(summary) {
+  updateSnapshotCountdown(summary.remaining_match_time_seconds);
+  const updatedAt = document.getElementById("current-match-updated-at");
+  if (updatedAt) {
+    updatedAt.textContent = formatTimestamp(summary.captured_at || summary.updated_at);
+  }
+}
+
+function updateSnapshotCountdown(seconds) {
+  const node = document.getElementById("current-match-remaining-time");
+  if (node && Number.isFinite(Number(seconds))) {
+    node.textContent = formatDuration(seconds);
+  }
+}
+
+function renderSnapshotFreshness(snapshot, nodes, result) {
+  if (snapshot.degraded) {
+    nodes.note.textContent = "Lectura coherente recibida con datos parciales.";
+    setState(nodes.state, "La partida esta disponible en estado degradado.", true);
+  } else {
+    nodes.note.textContent = "Lectura coherente de partida recibida.";
+    nodes.state.hidden = true;
+  }
+  if (result.resynchronized) {
+    setState(nodes.feedState, "El feed se ha resincronizado con la ventana reciente.");
+  }
+}
+
+function renderSnapshotFailure(nodes, snapshotState, error) {
+  const unavailable = Number(error?.status) === 503;
+  const message = unavailable
+    ? "El snapshot de partida no esta disponible temporalmente."
+    : "No se pudo actualizar el snapshot de partida.";
+  nodes.note.textContent = snapshotState.lastGoodSnapshot
+    ? "Se conserva la ultima lectura coherente visible."
+    : "Esperando una lectura coherente disponible.";
+  setState(nodes.state, message, true);
+  if (!snapshotState.lastGoodSnapshot) {
+    setState(nodes.feedState, "El feed de combate no esta disponible.", true);
+    setState(nodes.playerStatsState, "Las estadisticas en vivo no estan disponibles.", true);
+  }
+}
 
 async function loadCurrentMatch({ backendBaseUrl, serverSlug, nodes }) {
   try {
@@ -872,14 +1023,18 @@ function toStatNumber(value) {
 }
 
 function formatStatNumber(value) {
-  return Number.isFinite(Number(value)) ? String(Number(value)) : "0";
+  if (value === null || value === undefined || value === "") {
+    return "No disponible";
+  }
+  return Number.isFinite(Number(value)) ? String(Number(value)) : "No disponible";
 }
 
-function renderCompactMeta(label, value) {
+function renderCompactMeta(label, value, valueId = "") {
+  const idAttribute = valueId ? ` id="${escapeHtml(valueId)}"` : "";
   return `
     <article>
       <span>${escapeHtml(label)}</span>
-      <strong>${escapeHtml(value)}</strong>
+      <strong${idAttribute}>${escapeHtml(value)}</strong>
     </article>
   `;
 }
@@ -890,6 +1045,9 @@ function formatStatus(value) {
   }
   if (value === "offline") {
     return "Offline";
+  }
+  if (value === "degraded") {
+    return "Datos parciales";
   }
   return "No disponible";
 }
@@ -922,23 +1080,31 @@ function renderLiveScoreboard(data, { mapName, serverName }) {
     : "Marcador no disponible";
   const scoreClass = scoreKnown ? "" : " current-match-scoreboard-message";
   const metadata = [
-    ["Servidor", serverName],
-    ["Mapa", mapName],
-    ["Modo", formatGameMode(data.game_mode)],
+    ["Servidor", serverName, ""],
+    ["Mapa", mapName, ""],
+    ["Modo", formatGameMode(data.game_mode), ""],
   ];
   if (data.started_at) {
-    metadata.push(["Inicio", formatTimestamp(data.started_at)]);
+    metadata.push(["Inicio", formatTimestamp(data.started_at), ""]);
   }
   const remainingTime = Number(data.remaining_match_time_seconds);
   if (Number.isFinite(remainingTime) && remainingTime > 0) {
-    metadata.push(["Tiempo restante", formatDuration(remainingTime)]);
+    metadata.push([
+      "Tiempo restante",
+      formatDuration(remainingTime),
+      "current-match-remaining-time",
+    ]);
   }
   const matchTime = Number(data.match_time_seconds);
   if (Number.isFinite(matchTime) && matchTime > 0) {
-    metadata.push(["Tiempo de partida", formatDuration(matchTime)]);
+    metadata.push(["Tiempo de partida", formatDuration(matchTime), ""]);
   }
-  metadata.push(["Jugadores", formatPlayerCount(data)]);
-  metadata.push(["Actualizado", formatTimestamp(data.captured_at || data.updated_at)]);
+  metadata.push(["Jugadores", formatPlayerCount(data), ""]);
+  metadata.push([
+    "Actualizado",
+    formatTimestamp(data.captured_at || data.updated_at),
+    "current-match-updated-at",
+  ]);
 
   return `
     <section class="historical-scoreboard-layout" aria-label="Marcador en vivo">
@@ -953,7 +1119,7 @@ function renderLiveScoreboard(data, { mapName, serverName }) {
         ${renderLiveSide("historical-scoreboard-side--axis", "Eje", "./assets/img/factions/germany.webp")}
       </div>
       <div class="historical-scoreboard-layout__meta">
-        ${metadata.map(([label, value]) => renderCompactMeta(label, value)).join("")}
+        ${metadata.map(([label, value, valueId]) => renderCompactMeta(label, value, valueId)).join("")}
       </div>
     </section>
   `;
@@ -1122,7 +1288,9 @@ function setOptionalHidden(node, hidden) {
 async function fetchJson(url) {
   const response = await fetch(url);
   if (!response.ok) {
-    throw new Error(`Request failed with ${response.status}`);
+    const error = new Error(`Request failed with ${response.status}`);
+    error.status = response.status;
+    throw error;
   }
   return response.json();
 }
