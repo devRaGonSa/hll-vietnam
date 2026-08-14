@@ -1,7 +1,7 @@
 ---
 id: TASK-288
 title: Reproduce historical RCON forensics on production PostgreSQL
-status: pending
+status: obsolete
 type: research
 team: Analista
 supporting_teams: ["Arquitecto de Base de Datos", "Arquitecto Python", "Backend Senior"]
@@ -195,6 +195,59 @@ Record:
 - the recommended TASK-272 contract changes and next implementation dependency order without executing or editing those tasks.
 
 TASK-288 must finish in `review`, not `done`. TASK-287 must remain in `review` until a separate orchestrator closure decision.
+
+### Blocked: authorized production access unavailable
+
+TASK-288 could not reach the production PostgreSQL evidence surface with the
+authorization available to this execution:
+
+- the configured production SSH target was identified through the existing
+  local SSH configuration and the SSH transport reached its authentication
+  boundary;
+- authentication was rejected with `Permission denied
+  (publickey,password)` before any remote command, container command or
+  database connection was executed;
+- the local SSH directory contained no usable private key and no SSH agent was
+  available;
+- the Codex in-app browser had no existing authenticated tab, and an existing
+  Chrome session was not available to this execution, so no already-authorized
+  Portainer console could be used;
+- the production DSN environment-variable presence, deployed application
+  revision, PostgreSQL version, database/schema identifiers and read-only
+  transaction state therefore could not be inspected; and
+- no SQLite fallback was used and no forensic result was inferred without
+  production PostgreSQL evidence.
+
+Safe continuation requires either an authorized SSH key/session for the
+configured production host or an already-authenticated Portainer console that
+can expose the existing backend execution environment without printing the DSN
+or changing the deployment. The diagnostic must still enforce `REPEATABLE READ
+READ ONLY` and verify `transaction_read_only = on` before analytical queries.
+
+Local preflight completed without changing the reviewed diagnostic:
+
+- `python scripts/audit_rcon_match_materialization.py --help` passed;
+- the 17 focused diagnostic tests passed using the existing isolated pytest
+  runtime because the system Python environment does not include pytest; and
+- `python -m compileall scripts` passed.
+
+No production database authentication occurred. No DDL, query, materialization,
+cache population, checkpoint advancement, worker/container restart, deployment
+change or intentional row mutation occurred. No production report was created.
+TASK-287 remains in `review`; TASK-272 through TASK-281 and TASK-284 were not
+edited or executed. TASK-288 is blocked pending safe authorized production
+access.
+
+### Obsolete rationale
+
+> Superseded by the CRCON-first stateless architecture decision. HLL
+> Vietnam-owned production PostgreSQL forensic reproduction is no longer
+> required because gameplay persistence/materialization will be removed
+> rather than repaired.
+
+The preceding blocker evidence is preserved as execution history. TASK-289
+authorized this lifecycle decision without reconnecting to SSH, Portainer,
+production or any database.
 
 ## Change Budget
 
