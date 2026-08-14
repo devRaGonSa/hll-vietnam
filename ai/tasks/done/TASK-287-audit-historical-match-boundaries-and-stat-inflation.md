@@ -1,7 +1,7 @@
 ---
 id: TASK-287
 title: Audit historical match boundaries and player-stat inflation
-status: review
+status: done
 type: research
 team: Analista
 supporting_teams: ["Backend Senior", "Arquitecto de Base de Datos", "Arquitecto Python"]
@@ -334,7 +334,12 @@ Review/reproduce TASK-287 on production read-only; incorporate canonical identit
 - `git diff --check`: passed. `git diff --name-only` and `git status --short` were inspected; the task scope is limited to this lifecycle file, the audit report, the isolated diagnostic, and its focused tests.
 - No production module, persisted database, or secret was modified. TASK-272–281 and TASK-284 were neither modified nor executed. The six pre-existing untracked TASK-204/242/264/266/267/268 files remained unstaged and byte-identical to their recorded pre-task hashes.
 
-TASK-287 finishes in `review`, not `done`, for orchestrator evaluation. No follow-up task was created or executed.
+TASK-287 was accepted by the TASK-289 architecture review and finishes in
+`done`. Its forensic findings—especially overlapping/unbounded event ranges,
+stale materializations and duplicated gameplay persistence—motivated removal
+of HLL Vietnam-owned historical persistence in favor of the CRCON-first
+stateless architecture. No production inference was added and the original
+forensic evidence remains unchanged. No follow-up task was created or executed.
 
 ## Change Budget
 

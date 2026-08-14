@@ -1,7 +1,7 @@
 ---
 id: TASK-289
 title: Design CRCON-first stateless HLL Vietnam architecture
-status: pending
+status: done
 type: research
 team: Arquitecto Python
 supporting_teams: ["Arquitecto de Base de Datos", "Backend Senior", "Frontend Senior", "Analista", "PM"]
@@ -600,6 +600,36 @@ Record:
   mutation occurred.
 
 TASK-289 must finish in `review`, not `done`, for architectural approval.
+
+### Architecture outcome
+
+- HLL reference: `9a86fbffb99d8919e1232ae513319426acd6d708`.
+- Official CRCON reference: `MarechJ/hll_rcon_tool` `master` at
+  `4cf1e7e2fa691d849eaf85abb7065010e13f28e4`, inspected 2026-08-14.
+- Selected Target A: one stateless HLL container serving static frontend and
+  `/api`, with bounded memory caches and read-only CRCON API/PostgreSQL access.
+- Current maximum Portainer structure (six services, two named volumes and
+  three workers) becomes one HLL service, zero HLL gameplay volumes and zero
+  HLL workers/scheduled jobs after the strangler migration.
+- All 36 GET endpoint surfaces and all 16 explicit frontend HTTP call sites
+  (14 endpoint patterns) were inventoried. Capability, persistence, service, module, cache, security,
+  failure, compatibility, testing, rollback and phased-decommission decisions
+  are recorded in the two required architecture documents.
+- TASK-272 through TASK-281, local TASK-264/266/267/268 and TASK-284 were
+  classified without modification or execution. No follow-up task files or IDs
+  were created.
+- TASK-287 was accepted into `done`; TASK-288 was made `obsolete` with its
+  blocker history preserved and the exact authorized rationale recorded.
+- Validation was documentation/lifecycle-only. Integration tests were not
+  required because no runtime or product implementation changed.
+- No SSH, Portainer, production system, production database or secret was
+  accessed. No product code, deployment, Compose, schema, database, runtime
+  configuration or persisted data was changed.
+
+### Final acceptance
+
+The orchestrator accepted the CRCON-first stateless architecture and authorized
+proceeding to the adapter-foundation implementation phase.
 
 ## Change Budget
 
