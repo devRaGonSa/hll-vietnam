@@ -1,7 +1,7 @@
 ---
 id: TASK-289
 title: Design CRCON-first stateless HLL Vietnam architecture
-status: review
+status: done
 type: research
 team: Arquitecto Python
 supporting_teams: ["Arquitecto de Base de Datos", "Backend Senior", "Frontend Senior", "Analista", "PM"]
@@ -625,6 +625,11 @@ TASK-289 must finish in `review`, not `done`, for architectural approval.
 - No SSH, Portainer, production system, production database or secret was
   accessed. No product code, deployment, Compose, schema, database, runtime
   configuration or persisted data was changed.
+
+### Final acceptance
+
+The orchestrator accepted the CRCON-first stateless architecture and authorized
+proceeding to the adapter-foundation implementation phase.
 
 ## Change Budget
 
