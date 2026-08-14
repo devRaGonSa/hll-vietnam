@@ -23,7 +23,7 @@ from .config import (
     get_crcon_database_url,
 )
 from .crcon import CrconApiClient, CrconDatabase, TtlCache
-from .crcon.database import CrconCurrentMap, CrconMatchLogEvent
+from .crcon.database import CrconCurrentMap, CrconMatchCombatStats, CrconMatchLogEvent
 from .normalizers import normalize_map_name
 from .scoreboard_origins import get_trusted_public_scoreboard_origin
 
@@ -183,6 +183,7 @@ class CurrentMatchSnapshot:
     summary: CurrentMatchSummary
     players: tuple[CurrentPlayer, ...]
     kills: tuple[KillEvent, ...]
+    killfeed_truncated: bool
     version: str
     observed_at: datetime
     source_states: tuple[CurrentMatchSourceState, ...]
@@ -210,6 +211,7 @@ class CurrentMatchSnapshot:
             "axis_count": self.summary.axis_count,
             "players": [player.to_dict() for player in self.players],
             "kills": [event.to_dict() for event in self.kills],
+            "killfeed_truncated": self.killfeed_truncated,
             "version": self.version,
             "observed_at": _iso(self.observed_at),
             "sources": [state.to_dict() for state in self.source_states],
@@ -325,10 +327,19 @@ class CurrentMatchSnapshotService:
                 raise CurrentMatchCursorError(
                     "Kill cursor belongs to a different current match."
                 )
+            cursor_position = (cursor_time, cursor_id)
+            if snapshot.killfeed_truncated and (
+                not snapshot.kills
+                or cursor_position
+                < (snapshot.kills[0].timestamp, snapshot.kills[0].position_id)
+            ):
+                raise CurrentMatchCursorError(
+                    "Kill cursor predates the retained current-match feed window."
+                )
             return tuple(
                 event
                 for event in snapshot.kills
-                if (event.timestamp, event.position_id) > (cursor_time, cursor_id)
+                if (event.timestamp, event.position_id) > cursor_position
             )[:limit]
         return snapshot.kills[-limit:]
 
@@ -379,8 +390,10 @@ class CurrentMatchSnapshotService:
         public = _parse_public_info(public_info)
         current_map: CrconCurrentMap | None = None
         event_rows: tuple[CrconMatchLogEvent, ...] = ()
+        combat_rows: tuple[CrconMatchCombatStats, ...] = ()
         map_query_available = False
-        logs_available = False
+        feed_available = False
+        combat_available = False
         database_reasons: list[str] = []
         database = None
 
@@ -437,9 +450,20 @@ class CurrentMatchSnapshotService:
                     for event in queried_events
                     if started_at <= _ensure_utc(event.event_time) <= observed_at
                 )
-                logs_available = True
+                feed_available = True
             except Exception:
-                database_reasons.append("crcon-event-log-unavailable")
+                database_reasons.append("crcon-event-feed-unavailable")
+            try:
+                combat_rows = database.aggregate_match_combat_stats(
+                    server_number=binding.server_number,
+                    started_at=started_at,
+                    ended_at=observed_at,
+                )
+                combat_available = True
+            except Exception:
+                database_reasons.append("crcon-combat-aggregate-unavailable")
+        elif "event_logs" not in binding.capabilities:
+            database_reasons.append("crcon-event-logs-disabled")
 
         live_rows = _live_stat_rows(live_stats)
         team_index = _build_live_team_index(live_rows)
@@ -450,8 +474,18 @@ class CurrentMatchSnapshotService:
         )
         players, disagreement = _build_players(
             live_rows,
-            event_rows,
-            logs_available=logs_available,
+            combat_rows,
+            combat_available=combat_available,
+        )
+        total_combat_events = sum(
+            max(0, row.kills) + max(0, row.teamkills) for row in combat_rows
+        )
+        killfeed_truncated = (
+            combat_available and total_combat_events > len(kill_events)
+        ) or (
+            not combat_available
+            and feed_available
+            and len(event_rows) >= self._event_limit
         )
 
         degraded_reasons = list(dict.fromkeys(api_reasons + database_reasons))
@@ -464,9 +498,9 @@ class CurrentMatchSnapshotService:
             source="crcon-database",
             status=(
                 CurrentMatchSourceStatus.FRESH
-                if current_map is not None and logs_available
+                if current_map is not None and feed_available and combat_available
                 else CurrentMatchSourceStatus.DEGRADED
-                if map_query_available or logs_available
+                if map_query_available or feed_available or combat_available
                 else CurrentMatchSourceStatus.UNAVAILABLE
             ),
             observed_at=observed_at,
@@ -495,6 +529,7 @@ class CurrentMatchSnapshotService:
             summary=summary,
             players=players,
             kills=kill_events,
+            killfeed_truncated=killfeed_truncated,
             version="",
             observed_at=observed_at,
             source_states=source_states,
@@ -610,6 +645,7 @@ def legacy_kills_projection(
             "scope": snapshot.match_id,
             "confidence": "degraded" if snapshot.degraded else "fresh",
             "stale_events_filtered": 0,
+            "truncated_before": snapshot.killfeed_truncated,
             "items": [
                 {
                     "event_id": event.cursor,
@@ -840,9 +876,9 @@ def _build_kill_events(
 
 def _build_players(
     live_rows: Sequence[Mapping[str, object]],
-    event_rows: Sequence[CrconMatchLogEvent],
+    combat_rows: Sequence[CrconMatchCombatStats],
     *,
-    logs_available: bool,
+    combat_available: bool,
 ) -> tuple[tuple[CurrentPlayer, ...], bool]:
     builders: dict[str, dict[str, object]] = {}
     api_totals: dict[str, tuple[int | None, int | None, int | None]] = {}
@@ -864,10 +900,10 @@ def _build_players(
             "offense": _integer(row.get("offense")),
             "defense": _integer(row.get("defense")),
             "support": _integer(row.get("support")),
-            "kills": 0 if logs_available else None,
-            "deaths": 0 if logs_available else None,
-            "teamkills": 0 if logs_available else None,
-            "deaths_by_teamkill": 0 if logs_available else None,
+            "kills": 0 if combat_available else None,
+            "deaths": 0 if combat_available else None,
+            "teamkills": 0 if combat_available else None,
+            "deaths_by_teamkill": 0 if combat_available else None,
             "weapons": Counter(),
         }
         api_totals[key] = (
@@ -876,34 +912,19 @@ def _build_players(
             _integer(row.get("teamkills")),
         )
 
-    if logs_available:
-        seen_ids: set[int] = set()
-        for event in sorted(event_rows, key=lambda item: (_ensure_utc(item.event_time), item.id)):
-            if event.id in seen_ids or event.type not in {"KILL", "TEAM KILL"}:
-                continue
-            seen_ids.add(event.id)
-            killer = _ensure_player_builder(
+    if combat_available:
+        for stats in combat_rows:
+            player = _ensure_player_builder(
                 builders,
-                event.player1_id,
-                event.player1_name,
-                logs_available=True,
+                stats.player_id,
+                stats.player_name,
+                combat_available=True,
             )
-            victim = _ensure_player_builder(
-                builders,
-                event.player2_id,
-                event.player2_name,
-                logs_available=True,
-            )
-            if event.type == "KILL":
-                killer["kills"] = int(killer["kills"]) + 1
-                victim["deaths"] = int(victim["deaths"]) + 1
-            else:
-                killer["teamkills"] = int(killer["teamkills"]) + 1
-                victim["deaths_by_teamkill"] = int(victim["deaths_by_teamkill"]) + 1
-            if event.weapon:
-                weapons = killer["weapons"]
-                assert isinstance(weapons, Counter)
-                weapons[event.weapon] += 1
+            player["kills"] = stats.kills
+            player["deaths"] = stats.deaths
+            player["teamkills"] = stats.teamkills
+            player["deaths_by_teamkill"] = stats.deaths_by_teamkill
+            player["weapons"] = Counter(dict(stats.weapon_counts))
 
     disagreement = False
     players: list[CurrentPlayer] = []
@@ -917,7 +938,7 @@ def _build_players(
             else None
         )
         api_values = api_totals.get(key)
-        if logs_available and api_values is not None:
+        if combat_available and api_values is not None:
             canonical = (
                 builder["kills"],
                 builder["deaths"],
@@ -950,7 +971,7 @@ def _ensure_player_builder(
     player_id: str | None,
     name: str | None,
     *,
-    logs_available: bool,
+    combat_available: bool,
 ) -> dict[str, object]:
     resolved_name = name or "Unknown player"
     key = _player_key(player_id, resolved_name)
@@ -969,10 +990,10 @@ def _ensure_player_builder(
         "offense": None,
         "defense": None,
         "support": None,
-        "kills": 0 if logs_available else None,
-        "deaths": 0 if logs_available else None,
-        "teamkills": 0 if logs_available else None,
-        "deaths_by_teamkill": 0 if logs_available else None,
+        "kills": 0 if combat_available else None,
+        "deaths": 0 if combat_available else None,
+        "teamkills": 0 if combat_available else None,
+        "deaths_by_teamkill": 0 if combat_available else None,
         "weapons": Counter(),
     }
     builders[key] = builder
@@ -1043,6 +1064,7 @@ def _snapshot_version(snapshot: CurrentMatchSnapshot) -> str:
         },
         "players": [player.to_dict() for player in snapshot.players],
         "newest_cursor": newest_cursor,
+        "killfeed_truncated": snapshot.killfeed_truncated,
         "sources": [
             [state.source, state.status.value, state.reason]
             for state in snapshot.source_states

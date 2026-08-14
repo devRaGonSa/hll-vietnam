@@ -327,6 +327,7 @@ class CrconDatabaseTests(unittest.TestCase):
         self.assertEqual(
             public_names,
             {
+                "aggregate_match_combat_stats",
                 "configured",
                 "find_current_map",
                 "list_match_log_events",

@@ -647,13 +647,16 @@ Record during execution:
   fields and `get_live_game_stats` for current-match player enrichment.
   `get_live_scoreboard` was inspected but not selected because upstream states
   that its session statistics reset on disconnect rather than match start.
-- Added only two capability-specific CRCON database reads: `find_current_map`
+- Added three capability-specific CRCON database reads: `find_current_map`
   selects at most two open `map_history` candidates by server, exact
   case-insensitive layer and a 180-second start tolerance, rejecting ambiguous
-  results; `list_match_log_events` selects at most 500 `KILL`/`TEAM KILL` rows
-  bounded by server and match start/observation end, ordered by
-  `(event_time ASC, id ASC)`. Both retain TASK-290 read-only transactions,
-  timeouts, rollback/close and sanitized errors; no arbitrary SQL API exists.
+  results; `aggregate_match_combat_stats` covers the complete server/start/end
+  interval and returns compact per-player K/D/TK/deaths-by-TK and normal-kill
+  weapon aggregates; `list_match_log_events` selects the newest 500
+  `KILL`/`TEAM KILL` rows ordered by `(event_time DESC, id DESC)` before the HLL
+  domain restores chronological order. All retain TASK-290 read-only
+  transactions, timeouts, rollback/close and sanitized errors; no arbitrary
+  SQL API exists.
 - Source selection is `HLL_CURRENT_MATCH_SOURCE=legacy|crcon`, with absent
   configuration resolving to `legacy` and invalid values rejected. Per-server
   synthetic/testable binding uses `HLL_CRCON_CURRENT_MATCH_BINDINGS` JSON for
@@ -674,13 +677,18 @@ Record during execution:
 - Kill cursors are deterministic `kc1.<base64url(canonical-json)>` values whose
   JSON contains match ID, UTC event timestamp and unique CRCON event ID. They
   distinguish equal timestamps, continue only the same match and return a safe
-  4xx through the route facade when malformed or cross-match.
-- Bounded log events are the canonical source for kills, deaths, teamkills,
-  deaths by teamkill and weapon counts. `KILL` increments killer kills and
-  victim deaths; `TEAM KILL` increments killer teamkills and victim
-  deaths-by-teamkill. Live API enriches team/unit/role/level/status and score
-  dimensions. API K/D/TK disagreement is reported as degraded and never summed
-  with log totals; unavailable logs produce `null`, not fabricated zeros.
+  4xx through the route facade when malformed or cross-match. When the recent
+  feed is truncated, a same-match cursor older than its earliest retained
+  `(event_time, id)` also returns an explicit safe 4xx instead of silently
+  skipping omitted events.
+- Complete DB aggregates, not the bounded feed, are canonical for player kills,
+  deaths, teamkills, deaths by teamkill and normal-kill weapons. `KILL`
+  increments killer kills, victim deaths and the normal weapon counter;
+  `TEAM KILL` increments killer teamkills and victim deaths-by-teamkill but not
+  normal deaths or weapons, matching pinned CRCON semantics. Live API enriches
+  team/unit/role/level/status and score dimensions. API K/D/TK disagreement is
+  reported as degraded and never summed with aggregate totals; unavailable
+  aggregates produce `null`, not fabricated zeros.
 - Snapshot versions are `sv1.<first-24-hex(sha256(canonical-json))>` over match
   identity, stable summary/map/score/player counts, player state, newest kill
   cursor and source/degraded state. `observed_at` and volatile remaining time
@@ -701,10 +709,10 @@ Record during execution:
   pinned to the accepted revision; no production names, URLs, credentials or
   raw logs were used.
 - `python -m compileall backend/app`: passed. Focused
-  `tests.test_crcon_current_match`: 30 tests passed. TASK-290 foundation:
+  `tests.test_crcon_current_match`: 33 tests passed. TASK-290 foundation:
   26 tests passed. Existing `tests.test_current_match_payload`: 13 tests passed.
-  Combined focused run: 69 tests passed.
-- Full backend discovery ran 186 tests and retained the exact TASK-284 baseline
+  Combined focused run: 72 tests passed.
+- Full backend discovery ran 190 tests and retained the exact TASK-284 baseline
   of 1 failure and 3 errors: historical maintenance expected `ok` rather than
   `partial`, two RCON/public-scoreboard materialization cases plus Windows
   SQLite cleanup, and the missing optional `pytest` import in the audit module.

@@ -2,7 +2,8 @@ from __future__ import annotations
 
 import json
 import os
-from datetime import UTC, datetime
+from collections import Counter
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from threading import Event, Lock, Thread
 import unittest
@@ -14,9 +15,11 @@ from app.crcon.api import CrconApiClient
 from app.crcon.cache import TtlCache
 from app.crcon.database import (
     CURRENT_MAP_MATCH_SQL,
+    MATCH_COMBAT_AGGREGATE_SQL,
     MATCH_LOG_EVENTS_SQL,
     CrconCurrentMap,
     CrconDatabase,
+    CrconMatchCombatStats,
     CrconMatchLogEvent,
 )
 from app.current_match import (
@@ -77,6 +80,89 @@ def _events() -> tuple[CrconMatchLogEvent, ...]:
     )
 
 
+def _aggregate_events(
+    events: tuple[CrconMatchLogEvent, ...],
+    *,
+    started_at: datetime = datetime(2026, 8, 14, 8, 0, tzinfo=UTC),
+    ended_at: datetime = NOW,
+) -> tuple[CrconMatchCombatStats, ...]:
+    builders: dict[str, dict[str, object]] = {}
+    seen_ids: set[int] = set()
+
+    def player(player_id: str | None, name: str | None) -> dict[str, object]:
+        resolved_name = name or "Unknown player"
+        key = f"id:{player_id}" if player_id else f"name:{resolved_name.casefold()}"
+        return builders.setdefault(
+            key,
+            {
+                "player_id": player_id,
+                "player_name": resolved_name,
+                "kills": 0,
+                "deaths": 0,
+                "teamkills": 0,
+                "deaths_by_teamkill": 0,
+                "weapons": Counter(),
+            },
+        )
+
+    for event in events:
+        event_time = event.event_time.astimezone(UTC)
+        if (
+            event.id in seen_ids
+            or event.type not in {"KILL", "TEAM KILL"}
+            or not started_at <= event_time <= ended_at
+        ):
+            continue
+        seen_ids.add(event.id)
+        killer = player(event.player1_id, event.player1_name)
+        victim = player(event.player2_id, event.player2_name)
+        if event.type == "KILL":
+            killer["kills"] = int(killer["kills"]) + 1
+            victim["deaths"] = int(victim["deaths"]) + 1
+            if event.weapon:
+                weapons = killer["weapons"]
+                assert isinstance(weapons, Counter)
+                weapons[event.weapon] += 1
+        else:
+            killer["teamkills"] = int(killer["teamkills"]) + 1
+            victim["deaths_by_teamkill"] = int(victim["deaths_by_teamkill"]) + 1
+
+    rows: list[CrconMatchCombatStats] = []
+    for key in sorted(builders):
+        builder = builders[key]
+        weapons = builder["weapons"]
+        assert isinstance(weapons, Counter)
+        rows.append(
+            CrconMatchCombatStats(
+                player_id=builder["player_id"],
+                player_name=str(builder["player_name"]),
+                kills=int(builder["kills"]),
+                deaths=int(builder["deaths"]),
+                teamkills=int(builder["teamkills"]),
+                deaths_by_teamkill=int(builder["deaths_by_teamkill"]),
+                weapon_counts=tuple(sorted(weapons.items())),
+            )
+        )
+    return tuple(rows)
+
+
+def _many_events(count: int = 600) -> tuple[CrconMatchLogEvent, ...]:
+    timestamp = datetime(2026, 8, 14, 8, 10, tzinfo=UTC)
+    return tuple(
+        CrconMatchLogEvent(
+            id=1000 + index,
+            event_time=timestamp,
+            type="KILL",
+            player1_name="Fixture Alpha",
+            player1_id="synthetic-player-alpha",
+            player2_name="Fixture Bravo",
+            player2_id="synthetic-player-bravo",
+            weapon="SYNTHETIC_RIFLE",
+        )
+        for index in range(count)
+    )
+
+
 def _binding(
     slug: str = "comunidad-hispana-01",
     *,
@@ -132,8 +218,10 @@ class _FakeDatabase:
         self.events = _events() if events is None else events
         self.map_error: Exception | None = None
         self.event_error: Exception | None = None
+        self.aggregate_error: Exception | None = None
         self.map_calls: list[dict[str, object]] = []
         self.event_calls: list[dict[str, object]] = []
+        self.aggregate_calls: list[dict[str, object]] = []
 
     def find_current_map(self, **kwargs: object) -> CrconCurrentMap | None:
         self.map_calls.append(dict(kwargs))
@@ -145,7 +233,41 @@ class _FakeDatabase:
         self.event_calls.append(dict(kwargs))
         if self.event_error:
             raise self.event_error
-        return self.events
+        started_at = kwargs["started_at"]
+        ended_at = kwargs["ended_at"]
+        limit = int(kwargs["limit"])
+        assert isinstance(started_at, datetime)
+        assert isinstance(ended_at, datetime)
+        bounded = (
+            event
+            for event in self.events
+            if event.type in {"KILL", "TEAM KILL"}
+            and started_at <= event.event_time.astimezone(UTC) <= ended_at
+        )
+        return tuple(
+            sorted(
+                bounded,
+                key=lambda event: (event.event_time.astimezone(UTC), event.id),
+                reverse=True,
+            )[:limit]
+        )
+
+    def aggregate_match_combat_stats(
+        self, **kwargs: object
+    ) -> tuple[CrconMatchCombatStats, ...]:
+        self.aggregate_calls.append(dict(kwargs))
+        error = self.aggregate_error or self.event_error
+        if error:
+            raise error
+        started_at = kwargs["started_at"]
+        ended_at = kwargs["ended_at"]
+        assert isinstance(started_at, datetime)
+        assert isinstance(ended_at, datetime)
+        return _aggregate_events(
+            self.events,
+            started_at=started_at,
+            ended_at=ended_at,
+        )
 
 
 class _FakeClock:
@@ -273,15 +395,37 @@ class CrconCurrentMatchAdapterTests(unittest.TestCase):
             ended_at=NOW,
             limit=50,
         )
+        combat = database.aggregate_match_combat_stats(
+            server_number=7,
+            started_at=datetime(2026, 8, 14, 8, 0, tzinfo=UTC),
+            ended_at=NOW,
+        )
         self.assertEqual(current_map.id, 9002)
-        self.assertEqual([event.id for event in events], [410, 411])
+        self.assertEqual([event.id for event in events], [411, 410])
+        self.assertEqual((combat[0].kills, combat[0].teamkills), (1, 1))
+        self.assertEqual(combat[0].weapon_counts, (("SYNTHETIC_RIFLE", 1),))
         self.assertIn("ORDER BY start DESC, id DESC", connections[0].statements[-1][0])
-        self.assertIn("ORDER BY logs.event_time ASC, logs.id ASC", connections[1].statements[-1][0])
+        self.assertIn("ORDER BY logs.event_time DESC, logs.id DESC", connections[1].statements[-1][0])
         self.assertEqual(connections[1].statements[-1][1][-1], 50)
+        self.assertIn("ORDER BY totals.player_key ASC", connections[2].statements[-1][0])
+        self.assertNotIn("LIMIT", connections[2].statements[-1][0])
+        self.assertIn("WHERE type = 'KILL'", connections[2].statements[-1][0])
+        self.assertEqual(
+            connections[2].statements[-1][1],
+            (
+                "7",
+                datetime(2026, 8, 14, 8, 0, tzinfo=UTC),
+                NOW,
+                ["KILL", "TEAM KILL"],
+            ),
+        )
         self.assertTrue(all(connection.rolled_back and connection.closed for connection in connections))
 
     def test_new_sql_surface_contains_no_mutation_statement(self) -> None:
-        sql = f"{CURRENT_MAP_MATCH_SQL}\n{MATCH_LOG_EVENTS_SQL}".upper()
+        sql = (
+            f"{CURRENT_MAP_MATCH_SQL}\n{MATCH_LOG_EVENTS_SQL}\n"
+            f"{MATCH_COMBAT_AGGREGATE_SQL}"
+        ).upper()
         for keyword in (
             "INSERT",
             "UPDATE",
@@ -361,6 +505,57 @@ class CurrentMatchSnapshotTests(unittest.TestCase):
         snapshot = _service(_FakeApi(), database).get_snapshot(_binding().server_slug)
         self.assertEqual([event.position_id for event in snapshot.kills], [410, 411, 412])
 
+    def test_more_than_500_events_use_complete_aggregate_and_newest_feed(self) -> None:
+        clock = _FakeClock()
+        database = _FakeDatabase(events=_many_events())
+        service = _service(_FakeApi(), database, clock=clock)
+
+        first = service.get_snapshot(_binding().server_slug)
+        players = {player.name: player for player in first.players}
+        self.assertEqual(len(first.kills), 500)
+        self.assertEqual(first.kills[0].position_id, 1100)
+        self.assertEqual(first.kills[-1].position_id, 1599)
+        self.assertEqual(
+            [event.position_id for event in first.kills[:3]],
+            [1100, 1101, 1102],
+        )
+        self.assertTrue(first.killfeed_truncated)
+        self.assertEqual(players["Fixture Alpha"].kills, 600)
+        self.assertEqual(players["Fixture Bravo"].deaths, 600)
+        self.assertEqual(
+            players["Fixture Alpha"].weapon_counts,
+            (("SYNTHETIC_RIFLE", 600),),
+        )
+        self.assertEqual(database.event_calls[0]["limit"], 500)
+        self.assertNotIn("limit", database.aggregate_calls[0])
+
+        database.events = _many_events(601)
+        clock.tick(2)
+        second = service.get_snapshot(_binding().server_slug)
+        self.assertEqual(second.kills[-1].position_id, 1600)
+        self.assertNotEqual(first.version, second.version)
+
+    def test_same_match_cursor_before_truncated_same_timestamp_window_is_rejected(self) -> None:
+        service = _service(_FakeApi(), _FakeDatabase(events=_many_events()))
+        snapshot = service.get_snapshot(_binding().server_slug)
+        old_cursor = encode_kill_cursor(
+            snapshot.match_id,
+            snapshot.kills[0].timestamp,
+            snapshot.kills[0].position_id - 1,
+        )
+        with self.assertRaisesRegex(CurrentMatchCursorError, "predates"):
+            service.project_kills(snapshot, since_cursor=old_cursor, limit=100)
+
+        continued = service.project_kills(
+            snapshot,
+            since_cursor=snapshot.kills[0].cursor,
+            limit=2,
+        )
+        self.assertEqual(
+            [event.position_id for event in continued],
+            [snapshot.kills[0].position_id + 1, snapshot.kills[0].position_id + 2],
+        )
+
     def test_cursor_continues_same_match_and_rejects_malformed_or_old_match(self) -> None:
         service = _service(_FakeApi(), _FakeDatabase())
         snapshot = service.get_snapshot(_binding().server_slug)
@@ -389,8 +584,10 @@ class CurrentMatchSnapshotTests(unittest.TestCase):
         charlie = players["Fixture Charlie"]
         self.assertEqual((alpha.kills, alpha.deaths, alpha.teamkills), (1, 1, 1))
         self.assertEqual((bravo.kills, bravo.deaths, bravo.teamkills), (1, 1, 0))
-        self.assertEqual(charlie.deaths_by_teamkill, 1)
-        self.assertEqual(alpha.favorite_weapon, "SYNTHETIC_GRENADE")
+        self.assertEqual((charlie.deaths, charlie.deaths_by_teamkill), (0, 1))
+        self.assertEqual(alpha.favorite_weapon, "SYNTHETIC_RIFLE")
+        self.assertEqual(alpha.weapon_counts, (("SYNTHETIC_RIFLE", 1),))
+        self.assertNotIn("SYNTHETIC_GRENADE", dict(alpha.weapon_counts))
         self.assertIn("crcon-api-log-combat-disagreement", snapshot.degraded_reasons)
 
     def test_version_is_stable_for_identical_material_and_changes_with_score(self) -> None:
@@ -445,7 +642,8 @@ class CurrentMatchSnapshotTests(unittest.TestCase):
         snapshot = _service(_FakeApi(), database).get_snapshot(_binding().server_slug)
         self.assertTrue(snapshot.degraded)
         self.assertIn("crcon-map-history-unavailable", snapshot.degraded_reasons)
-        self.assertIn("crcon-event-log-unavailable", snapshot.degraded_reasons)
+        self.assertIn("crcon-event-feed-unavailable", snapshot.degraded_reasons)
+        self.assertIn("crcon-combat-aggregate-unavailable", snapshot.degraded_reasons)
         self.assertIsNone(snapshot.players[0].kills)
 
     def test_map_history_failure_does_not_hide_available_bounded_logs(self) -> None:
@@ -603,6 +801,25 @@ class CurrentMatchRouteAndCompatibilityTests(unittest.TestCase):
         self.assertEqual(int(status), 400)
         self.assertEqual(response["status"], "error")
 
+    def test_truncated_crcon_kill_cursor_returns_stable_400(self) -> None:
+        service = _service(_FakeApi(), _FakeDatabase(events=_many_events()))
+        snapshot = service.get_snapshot(_binding().server_slug)
+        old_cursor = encode_kill_cursor(
+            snapshot.match_id,
+            snapshot.kills[0].timestamp,
+            snapshot.kills[0].position_id - 1,
+        )
+        with (
+            patch.dict(os.environ, {"HLL_CURRENT_MATCH_SOURCE": "crcon"}, clear=False),
+            patch.object(payloads, "get_current_match_snapshot_service", return_value=service),
+        ):
+            status, response = resolve_get_payload(
+                "/api/current-match/kills"
+                f"?server=comunidad-hispana-01&limit=20&since_event_id={old_cursor}"
+            )
+        self.assertEqual(int(status), 400)
+        self.assertEqual(response["status"], "error")
+
     def test_crcon_compatibility_routes_share_one_cached_snapshot(self) -> None:
         api = _FakeApi()
         service = _service(api, _FakeDatabase())
@@ -700,19 +917,23 @@ class _RecordingConnection:
                     )
                 ]
             )
-        if "FROM LOG_LINES" in normalized:
+        if normalized.startswith("WITH BOUNDED_EVENTS"):
             return _Cursor(
                 many=[
                     (
-                        410,
-                        datetime(2026, 8, 14, 8, 4, 1, tzinfo=UTC),
-                        "KILL",
-                        "Fixture Alpha",
                         "synthetic-player-alpha",
-                        "Fixture Bravo",
-                        "synthetic-player-bravo",
-                        "SYNTHETIC_RIFLE",
-                    ),
+                        "Fixture Alpha",
+                        1,
+                        1,
+                        1,
+                        0,
+                        {"SYNTHETIC_RIFLE": 1},
+                    )
+                ]
+            )
+        if "FROM LOG_LINES" in normalized:
+            return _Cursor(
+                many=[
                     (
                         411,
                         datetime(2026, 8, 14, 8, 4, 1, tzinfo=UTC),
@@ -722,6 +943,16 @@ class _RecordingConnection:
                         "Fixture Charlie",
                         "synthetic-player-charlie",
                         "SYNTHETIC_GRENADE",
+                    ),
+                    (
+                        410,
+                        datetime(2026, 8, 14, 8, 4, 1, tzinfo=UTC),
+                        "KILL",
+                        "Fixture Alpha",
+                        "synthetic-player-alpha",
+                        "Fixture Bravo",
+                        "synthetic-player-bravo",
+                        "SYNTHETIC_RIFLE",
                     ),
                 ]
             )
