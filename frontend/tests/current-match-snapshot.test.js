@@ -272,6 +272,149 @@ test("ephemeral to canonical stabilization replaces cursor state without a new-m
   assert.deepEqual(second.killFeed.items.map((event) => event.event_id), ["kc1.canonical"]);
 });
 
+test("identity stabilization accepts an identical start time", () => {
+  const previous = snapshot({ match_id: "em1.same", identity_kind: "ephemeral" });
+  const next = snapshot({ match_id: "cm1.same", identity_kind: "canonical" });
+  assert.equal(snapshotRuntime.isIdentityStabilization(previous, next), true);
+});
+
+test("identity stabilization accepts a one-second start difference", () => {
+  const previous = snapshot({ match_id: "em1.same", identity_kind: "ephemeral" });
+  const next = snapshot({
+    match_id: "cm1.same",
+    identity_kind: "canonical",
+    started_at: "2026-08-14T08:00:01Z",
+  });
+  assert.equal(snapshotRuntime.isIdentityStabilization(previous, next), true);
+});
+
+test("identity stabilization accepts TASK-291 map-history start tolerance", () => {
+  const previous = snapshot({ match_id: "em1.same", identity_kind: "ephemeral" });
+  for (const startedAt of ["2026-08-14T08:02:59Z", "2026-08-14T08:03:00Z"]) {
+    const next = snapshot({
+      match_id: "cm1.same",
+      identity_kind: "canonical",
+      started_at: startedAt,
+    });
+    assert.equal(snapshotRuntime.isIdentityStabilization(previous, next), true);
+    assert.equal(snapshotRuntime.classifySnapshotTransition(previous, next), "identity-stabilized");
+  }
+  assert.equal(snapshotRuntime.CURRENT_MATCH_IDENTITY_START_TOLERANCE_MS, 180000);
+});
+
+test("identity stabilization rejects a start difference above 180 seconds", () => {
+  const previous = snapshot({ match_id: "em1.same", identity_kind: "ephemeral" });
+  const next = snapshot({
+    match_id: "cm1.same",
+    identity_kind: "canonical",
+    started_at: "2026-08-14T08:03:01Z",
+  });
+  assert.equal(snapshotRuntime.isIdentityStabilization(previous, next), false);
+  assert.equal(snapshotRuntime.classifySnapshotTransition(previous, next), "new-match");
+});
+
+test("identity stabilization rejects a different layer", () => {
+  const previous = snapshot({ match_id: "em1.same", identity_kind: "ephemeral" });
+  const next = snapshot({
+    match_id: "cm1.same",
+    identity_kind: "canonical",
+    layer: "synthetic_desert_warfare",
+  });
+  assert.equal(snapshotRuntime.isIdentityStabilization(previous, next), false);
+});
+
+test("identity stabilization rejects a different server", () => {
+  const previous = snapshot({ match_id: "em1.same", identity_kind: "ephemeral" });
+  const next = snapshot({
+    server: "comunidad-hispana-02",
+    server_slug: "comunidad-hispana-02",
+    match_id: "cm1.same",
+    identity_kind: "canonical",
+  });
+  assert.equal(snapshotRuntime.isIdentityStabilization(previous, next), false);
+});
+
+test("identity stabilization rejects missing or malformed starts", () => {
+  for (const [previousStartedAt, nextStartedAt] of [
+    ["2026-08-14T08:00:00Z", null],
+    ["2026-08-14T08:00:00Z", "not-a-timestamp"],
+    [null, "2026-08-14T08:00:00Z"],
+    ["not-a-timestamp", "2026-08-14T08:00:00Z"],
+  ]) {
+    const previous = snapshot({
+      match_id: "em1.same",
+      identity_kind: "ephemeral",
+      started_at: previousStartedAt,
+    });
+    const next = snapshot({
+      match_id: "cm1.same",
+      identity_kind: "canonical",
+      started_at: nextStartedAt,
+    });
+    assert.equal(snapshotRuntime.isIdentityStabilization(previous, next), false);
+  }
+});
+
+test("canonical-to-canonical changes never count as identity stabilization", () => {
+  const previous = snapshot({ match_id: "cm1.old", identity_kind: "canonical" });
+  const next = snapshot({ match_id: "cm1.new", identity_kind: "canonical" });
+  assert.equal(snapshotRuntime.isIdentityStabilization(previous, next), false);
+});
+
+test("opaque equal-time cursors retain authoritative server order", () => {
+  const result = snapshotRuntime.processCurrentMatchSnapshot(
+    snapshotRuntime.createSnapshotTransportState(),
+    snapshot({
+      kills: [kill("kc1.zulu"), kill("kc1.alpha"), kill("kc1.middle")],
+    }),
+  );
+  assert.deepEqual(
+    result.killFeed.items.map((event) => event.event_id),
+    ["kc1.zulu", "kc1.alpha", "kc1.middle"],
+  );
+  assert.deepEqual(
+    [...result.killFeed.items]
+      .sort(snapshotRuntime.compareKillFeedEvents)
+      .map((event) => event.event_id),
+    ["kc1.zulu", "kc1.alpha", "kc1.middle"],
+  );
+  assert.equal(new Set(result.killFeed.items.map((event) => event.event_id)).size, 3);
+});
+
+test("a later poll does not reorder opaque equal-time cursors", () => {
+  const orderedKills = [kill("kc1.zulu"), kill("kc1.alpha"), kill("kc1.middle")];
+  const first = snapshotRuntime.processCurrentMatchSnapshot(
+    snapshotRuntime.createSnapshotTransportState(),
+    snapshot({ kills: orderedKills }),
+  );
+  const second = snapshotRuntime.processCurrentMatchSnapshot(
+    first.state,
+    snapshot({ version: "sv1.two", kills: orderedKills }),
+  );
+  assert.deepEqual(
+    second.killFeed.items.map((event) => event.event_id),
+    ["kc1.zulu", "kc1.alpha", "kc1.middle"],
+  );
+});
+
+test("a new equal-time event appends in authoritative server order", () => {
+  const first = snapshotRuntime.processCurrentMatchSnapshot(
+    snapshotRuntime.createSnapshotTransportState(),
+    snapshot({ kills: [kill("kc1.zulu"), kill("kc1.alpha")] }),
+  );
+  const second = snapshotRuntime.processCurrentMatchSnapshot(
+    first.state,
+    snapshot({
+      version: "sv1.two",
+      kills: [kill("kc1.zulu"), kill("kc1.alpha"), kill("kc1.able")],
+    }),
+  );
+  assert.deepEqual(
+    second.killFeed.items.map((event) => event.event_id),
+    ["kc1.zulu", "kc1.alpha", "kc1.able"],
+  );
+});
+
 test("a truncated window without the previous cursor resynchronizes deterministically", () => {
   const first = snapshotRuntime.processCurrentMatchSnapshot(
     snapshotRuntime.createSnapshotTransportState(),
@@ -287,6 +430,47 @@ test("a truncated window without the previous cursor resynchronizes deterministi
   );
   assert.equal(second.resynchronized, true);
   assert.deepEqual(second.killFeed.items.map((event) => event.event_id), ["kc1.retained"]);
+});
+
+test("a truncated resync preserves authoritative equal-time server order", () => {
+  const first = snapshotRuntime.processCurrentMatchSnapshot(
+    snapshotRuntime.createSnapshotTransportState(),
+    snapshot({ kills: [kill("kc1.old")] }),
+  );
+  const second = snapshotRuntime.processCurrentMatchSnapshot(
+    first.state,
+    snapshot({
+      version: "sv1.new-window",
+      killfeed_truncated: true,
+      kills: [kill("kc1.zulu"), kill("kc1.alpha"), kill("kc1.middle")],
+    }),
+  );
+  assert.equal(second.resynchronized, true);
+  assert.deepEqual(
+    second.killFeed.items.map((event) => event.event_id),
+    ["kc1.zulu", "kc1.alpha", "kc1.middle"],
+  );
+});
+
+test("legacy missing statistics retain the historical zero display", () => {
+  for (const value of [null, undefined, "", "invalid"]) {
+    assert.equal(snapshotRuntime.formatStatNumber(value), "0");
+  }
+});
+
+test("snapshot missing statistics use the explicit unavailable display", () => {
+  for (const value of [null, undefined, "", "invalid"]) {
+    assert.equal(snapshotRuntime.formatStatNumber(value, "No disponible"), "No disponible");
+  }
+});
+
+test("normal numeric statistics render identically for both transports", () => {
+  for (const value of [0, 4, "12"]) {
+    assert.equal(
+      snapshotRuntime.formatStatNumber(value),
+      snapshotRuntime.formatStatNumber(value, "No disponible"),
+    );
+  }
 });
 
 test("countdown initializes, progresses locally and preserves small drift", () => {

@@ -176,7 +176,9 @@ function startSnapshotCurrentMatchTransport({
         updateSnapshotLiveMetadata(summary);
       }
       if (!result.unchangedVersion) {
-        renderPlayerStats(result.players, nodes, playerStatsState);
+        renderPlayerStats(result.players, nodes, playerStatsState, {
+          missingStatValue: "No disponible",
+        });
         renderKillFeed(result.killFeed, nodes, killFeedState);
       }
       renderSnapshotFreshness(snapshot, nodes, result);
@@ -521,6 +523,9 @@ function getKillFeedEventIdKey(event) {
 }
 
 function getKillFeedSemanticKey(event) {
+  if (event?._snapshot_event) {
+    return "";
+  }
   const parts = [
     event?.server_time,
     event?.event_timestamp,
@@ -589,15 +594,7 @@ function getKillFeedVisibleLimit() {
 }
 
 function compareKillFeedEvents(left, right) {
-  const leftTime = Number(left.server_time);
-  const rightTime = Number(right.server_time);
-  if (Number.isFinite(leftTime) && Number.isFinite(rightTime) && leftTime !== rightTime) {
-    return leftTime - rightTime;
-  }
-  return (
-    String(left.event_timestamp || "").localeCompare(String(right.event_timestamp || "")) ||
-    String(left.event_id || "").localeCompare(String(right.event_id || ""))
-  );
+  return CURRENT_MATCH_SNAPSHOT_RUNTIME.compareKillFeedEvents(left, right);
 }
 
 function renderKillFeedColumns(events) {
@@ -712,7 +709,7 @@ function renderKillFeedWeaponIcon(weapon) {
   `;
 }
 
-function renderPlayerStats(data, nodes, state) {
+function renderPlayerStats(data, nodes, state, { missingStatValue = "0" } = {}) {
   const items = Array.isArray(data.items)
     ? sortPlayerStats(dedupeCurrentMatchPlayerStats(data.items))
     : [];
@@ -745,7 +742,7 @@ function renderPlayerStats(data, nodes, state) {
     )
     .join("|");
   if (signature !== state.visibleSignature) {
-    nodes.playerStatsShell.innerHTML = renderPlayerStatsTable(items);
+    nodes.playerStatsShell.innerHTML = renderPlayerStatsTable(items, { missingStatValue });
     state.visibleSignature = signature;
   }
   nodes.playerStatsShell.hidden = false;
@@ -967,7 +964,7 @@ function sortPlayerStats(items) {
   );
 }
 
-function renderPlayerStatsTable(items) {
+function renderPlayerStatsTable(items, { missingStatValue = "0" } = {}) {
   return `
     <table class="historical-table historical-table--players">
       <thead>
@@ -982,13 +979,13 @@ function renderPlayerStatsTable(items) {
         </tr>
       </thead>
       <tbody>
-        ${items.map(renderPlayerStatsRow).join("")}
+        ${items.map((item) => renderPlayerStatsRow(item, { missingStatValue })).join("")}
       </tbody>
     </table>
   `;
 }
 
-function renderPlayerStatsRow(item) {
+function renderPlayerStatsRow(item, { missingStatValue = "0" } = {}) {
   const team = getPlayerTeamDisplay(item.team);
   return `
     <tr class="historical-player-row historical-player-row--${team.key}">
@@ -998,10 +995,10 @@ function renderPlayerStatsRow(item) {
           ${escapeHtml(team.label)}
         </span>
       </td>
-      <td>${escapeHtml(formatStatNumber(item.kills))}</td>
-      <td>${escapeHtml(formatStatNumber(item.deaths))}</td>
-      <td>${escapeHtml(formatStatNumber(item.teamkills))}</td>
-      <td>${escapeHtml(formatStatNumber(item.deaths_by_teamkill))}</td>
+      <td>${escapeHtml(formatStatNumber(item.kills, missingStatValue))}</td>
+      <td>${escapeHtml(formatStatNumber(item.deaths, missingStatValue))}</td>
+      <td>${escapeHtml(formatStatNumber(item.teamkills, missingStatValue))}</td>
+      <td>${escapeHtml(formatStatNumber(item.deaths_by_teamkill, missingStatValue))}</td>
       <td>${escapeHtml(item.favorite_weapon || "No disponible")}</td>
     </tr>
   `;
@@ -1022,11 +1019,8 @@ function toStatNumber(value) {
   return Number.isFinite(Number(value)) ? Number(value) : 0;
 }
 
-function formatStatNumber(value) {
-  if (value === null || value === undefined || value === "") {
-    return "No disponible";
-  }
-  return Number.isFinite(Number(value)) ? String(Number(value)) : "No disponible";
+function formatStatNumber(value, missingValue = "0") {
+  return CURRENT_MATCH_SNAPSHOT_RUNTIME.formatStatNumber(value, missingValue);
 }
 
 function renderCompactMeta(label, value, valueId = "") {

@@ -10,6 +10,7 @@
   const LEGACY_TRANSPORT = "legacy";
   const SNAPSHOT_TRANSPORT = "snapshot";
   const SNAPSHOT_POLL_INTERVAL_MS = 2000;
+  const CURRENT_MATCH_IDENTITY_START_TOLERANCE_MS = 180 * 1000;
 
   function resolveCurrentMatchTransport({ config, dataset, warn } = {}) {
     const configured = config || {};
@@ -68,17 +69,37 @@
     if (previousSnapshot.match_id === nextSnapshot?.match_id) {
       return "same-match";
     }
-    const previousFingerprint = getLogicalMatchFingerprint(previousSnapshot);
-    const nextFingerprint = getLogicalMatchFingerprint(nextSnapshot);
-    if (
-      previousSnapshot.identity_kind === "ephemeral" &&
-      nextSnapshot?.identity_kind === "canonical" &&
-      previousFingerprint &&
-      previousFingerprint === nextFingerprint
-    ) {
+    if (isIdentityStabilization(previousSnapshot, nextSnapshot)) {
       return "identity-stabilized";
     }
     return "new-match";
+  }
+
+  function isIdentityStabilization(previousSnapshot, nextSnapshot) {
+    if (
+      previousSnapshot?.identity_kind !== "ephemeral" ||
+      nextSnapshot?.identity_kind !== "canonical"
+    ) {
+      return false;
+    }
+    const previousServer = normalizeValue(
+      previousSnapshot.server_slug || previousSnapshot.server,
+    );
+    const nextServer = normalizeValue(nextSnapshot.server_slug || nextSnapshot.server);
+    const previousMap = normalizeValue(previousSnapshot.layer || previousSnapshot.map);
+    const nextMap = normalizeValue(nextSnapshot.layer || nextSnapshot.map);
+    const previousStartedAt = Date.parse(previousSnapshot.started_at || "");
+    const nextStartedAt = Date.parse(nextSnapshot.started_at || "");
+    return Boolean(
+      previousServer &&
+        previousServer === nextServer &&
+        previousMap &&
+        previousMap === nextMap &&
+        Number.isFinite(previousStartedAt) &&
+        Number.isFinite(nextStartedAt) &&
+        Math.abs(previousStartedAt - nextStartedAt) <=
+          CURRENT_MATCH_IDENTITY_START_TOLERANCE_MS,
+    );
   }
 
   function processCurrentMatchSnapshot(
@@ -271,6 +292,8 @@
           weapon: event.weapon ?? null,
           is_teamkill: Boolean(event.teamkill),
           match_id: event.match_id || snapshot?.match_id || "",
+          _snapshot_event: true,
+          _snapshot_order: event._snapshot_order,
         };
       }),
       version: snapshot?.version || "",
@@ -383,7 +406,9 @@
 
   function normalizeSnapshotKills(kills) {
     return Array.isArray(kills)
-      ? kills.filter((event) => Boolean(getSnapshotKillKey(event)))
+      ? kills
+          .filter((event) => Boolean(getSnapshotKillKey(event)))
+          .map((event, index) => ({ ...event, _snapshot_order: index }))
       : [];
   }
 
@@ -403,10 +428,50 @@
   }
 
   function compareSnapshotKills(left, right) {
-    return (
-      String(left?.timestamp || "").localeCompare(String(right?.timestamp || "")) ||
-      getSnapshotKillKey(left).localeCompare(getSnapshotKillKey(right))
+    const timestampOrder = String(left?.timestamp || "").localeCompare(
+      String(right?.timestamp || ""),
     );
+    if (timestampOrder !== 0) {
+      return timestampOrder;
+    }
+    return Number(left?._snapshot_order) - Number(right?._snapshot_order);
+  }
+
+  function compareAdaptedSnapshotKillOrder(left, right) {
+    if (!left?._snapshot_event || !right?._snapshot_event) {
+      return null;
+    }
+    const leftOrder = Number(left._snapshot_order);
+    const rightOrder = Number(right._snapshot_order);
+    if (!Number.isFinite(leftOrder) || !Number.isFinite(rightOrder)) {
+      return 0;
+    }
+    return leftOrder - rightOrder;
+  }
+
+  function compareKillFeedEvents(left, right) {
+    const leftTime = Number(left?.server_time);
+    const rightTime = Number(right?.server_time);
+    if (Number.isFinite(leftTime) && Number.isFinite(rightTime) && leftTime !== rightTime) {
+      return leftTime - rightTime;
+    }
+    const timestampOrder = String(left?.event_timestamp || "").localeCompare(
+      String(right?.event_timestamp || ""),
+    );
+    if (timestampOrder !== 0) {
+      return timestampOrder;
+    }
+    const snapshotOrder = compareAdaptedSnapshotKillOrder(left, right);
+    return snapshotOrder === null
+      ? String(left?.event_id || "").localeCompare(String(right?.event_id || ""))
+      : snapshotOrder;
+  }
+
+  function formatStatNumber(value, missingValue = "0") {
+    if (value === null || value === undefined || value === "") {
+      return missingValue;
+    }
+    return Number.isFinite(Number(value)) ? String(Number(value)) : missingValue;
   }
 
   function normalizeValue(value) {
@@ -417,17 +482,22 @@
     LEGACY_TRANSPORT,
     SNAPSHOT_TRANSPORT,
     SNAPSHOT_POLL_INTERVAL_MS,
+    CURRENT_MATCH_IDENTITY_START_TOLERANCE_MS,
     resolveCurrentMatchTransport,
     startSelectedTransport,
     createSnapshotTransportState,
     getLogicalMatchFingerprint,
     classifySnapshotTransition,
+    isIdentityStabilization,
     processCurrentMatchSnapshot,
     recordSnapshotFailure,
     preserveDegradedSnapshotFields,
     adaptSnapshotSummary,
     adaptSnapshotPlayers,
     adaptSnapshotKillFeed,
+    compareAdaptedSnapshotKillOrder,
+    compareKillFeedEvents,
+    formatStatNumber,
     rebaseCountdown,
     getCountdownSeconds,
     createSnapshotPoller,

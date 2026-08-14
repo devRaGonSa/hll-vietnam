@@ -480,16 +480,24 @@ Document:
   `event_id`, timestamp to the validated event time, nested killer/victim data,
   weapon, teamkill and match identity.
 - Kill reconciliation keys on the opaque match-scoped cursor, not timestamp.
-  The first window renders once, unchanged windows do not duplicate, new events
-  append once, equal timestamps with different cursors remain distinct, order
-  stays chronological and the browser window remains capped at 18 before the
-  existing responsive visible limits apply.
+  The cursor is used only for identity/deduplication and is never decoded or
+  used as an ordering key. Timestamp remains the primary chronological key;
+  equal-time snapshot events retain the authoritative relative array order
+  supplied by the backend across later polls, new equal-time events and
+  truncated-window resynchronization. Snapshot events bypass the legacy
+  semantic fallback dedupe so distinct cursors remain distinct, while legacy
+  ordering and deduplication behavior are unchanged. The browser window remains
+  capped at 18 before the existing responsive visible limits apply.
 - A true logical match change is detected from match ID plus stable
   server/start/layer evidence, resets previous events/cursors/countdown and
-  applies the new snapshot without mixing page areas. An `ephemeral ->
-  canonical` change with equal stable evidence is classified as identity
-  stabilization: incompatible cursor state is replaced from the canonical
-  window, but the page is not pre-cleared or flashed as a new actual game.
+  applies the new snapshot without mixing page areas. An explicit `ephemeral ->
+  canonical` predicate follows TASK-291 semantics: normalized server and
+  layer/map must match, both start timestamps must parse, and their absolute
+  difference must be at most `180000 ms`. Zero, one, 179 and 180 seconds are
+  accepted; larger differences, missing/malformed timestamps, server/layer
+  differences and canonical-to-canonical changes are true new matches.
+  Stabilization still replaces incompatible cursor state from the canonical
+  window without a visual new-match signal.
 - For a truncated server window, continuity continues only when the last cursor
   remains present. If it is absent, the local window is deterministically
   replaced by the retained server window, rendered once and marked through the
@@ -505,8 +513,13 @@ Document:
   bounded in-memory last-good snapshot, mark the current state unavailable and
   continue snapshot retries. HTTP 503 follows the same explicit snapshot path
   and never starts legacy transport.
+- Legacy player-stat formatting has been restored independently of snapshot
+  rendering. The formatter defaults missing, empty or invalid legacy values to
+  the historical `0`; snapshot rendering explicitly supplies `No disponible`.
+  Normal numeric values render identically in both transports and no global
+  mutable display mode is used.
 - Frontend testing uses Node 22's built-in `node:test` and pure/controller seams;
-  no package manifest, DOM library or dependency was added. Result: `22/22`
+  no package manifest, DOM library or dependency was added. Result: `37/37`
   focused tests passed. Syntax checks passed for
   `current-match-snapshot.js`, `partida-actual.js` and the focused test file.
 - Backend contract regressions passed unchanged: TASK-291
@@ -523,7 +536,7 @@ Document:
   `frontend/assets/js/current-match-snapshot.js` runtime and
   `frontend/tests/current-match-snapshot.test.js`. CSS, backend, deploy,
   Compose, Dockerfiles, runtime configuration and dependencies are unchanged.
-- The normal line budget is exceeded because the isolated runtime and 22-case
+- The normal line budget is exceeded because the isolated runtime and 37-case
   regression harness make transport ownership, adapters, transition semantics,
   truncation, countdown and failure behavior deterministic without adding a
   framework. The change remains within five cohesive tracked paths.
