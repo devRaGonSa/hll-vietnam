@@ -1,0 +1,35 @@
+{
+  "result": {
+    "current_map": {
+      "map": "synthetic_forest_warfare",
+      "start": "2026-08-14T08:00:00Z"
+    },
+    "next_map": {
+      "map": "synthetic_valley_offensive",
+      "start": null
+    },
+    "player_count": 54,
+    "max_player_count": 100,
+    "player_count_by_team": {
+      "allied": 28,
+      "axis": 26
+    },
+    "score": {
+      "allied": 3,
+      "axis": 2
+    },
+    "cap_flips": null,
+    "match_time": 5400,
+    "time_remaining": 1875.0,
+    "vote_status": null,
+    "name": {
+      "name": "Synthetic Local Server",
+      "short_name": "SYN",
+      "public_stats_port": null,
+      "public_stats_port_https": null
+    },
+    "config": {}
+  },
+  "failed": false,
+  "command": "get_public_info"
+}

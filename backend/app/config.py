@@ -18,6 +18,11 @@ DEFAULT_HISTORICAL_CRCON_TIMEOUT_SECONDS = 15.0
 DEFAULT_HISTORICAL_CRCON_DETAIL_WORKERS = 8
 DEFAULT_HISTORICAL_CRCON_REQUEST_RETRIES = 3
 DEFAULT_HISTORICAL_CRCON_RETRY_DELAY_SECONDS = 0.5
+DEFAULT_CRCON_API_TIMEOUT_SECONDS = 5.0
+DEFAULT_CRCON_DATABASE_CONNECT_TIMEOUT_SECONDS = 5
+DEFAULT_CRCON_DATABASE_STATEMENT_TIMEOUT_MS = 5000
+DEFAULT_CRCON_DATABASE_LOCK_TIMEOUT_MS = 1000
+DEFAULT_CRCON_CONTRACT_REVISION = "4cf1e7e2fa691d849eaf85abb7065010e13f28e4"
 DEFAULT_HISTORICAL_REFRESH_INTERVAL_SECONDS = 1800
 DEFAULT_HISTORICAL_REFRESH_OVERLAP_HOURS = 12
 DEFAULT_HISTORICAL_SNAPSHOT_REFRESH_INTERVAL_SECONDS = 900
@@ -120,6 +125,65 @@ def get_database_url() -> str | None:
         return None
     normalized_url = configured_url.strip()
     return normalized_url or None
+
+
+def get_crcon_api_base_url() -> str | None:
+    """Return the optional external CRCON API origin for the dormant adapter."""
+    configured_url = os.getenv("HLL_CRCON_API_BASE_URL")
+    if configured_url is None:
+        return None
+    normalized_url = configured_url.strip()
+    return normalized_url or None
+
+
+def get_crcon_api_timeout_seconds() -> float:
+    """Return the hard timeout for the external CRCON API client."""
+    return _read_float_env(
+        "HLL_CRCON_API_TIMEOUT_SECONDS",
+        str(DEFAULT_CRCON_API_TIMEOUT_SECONDS),
+        minimum=0.001,
+    )
+
+
+def get_crcon_database_url() -> str | None:
+    """Return the optional read-only CRCON PostgreSQL URL, separate from HLL storage."""
+    configured_url = os.getenv("HLL_CRCON_DATABASE_URL")
+    if configured_url is None:
+        return None
+    normalized_url = configured_url.strip()
+    return normalized_url or None
+
+
+def get_crcon_database_connect_timeout_seconds() -> int:
+    """Return the external CRCON PostgreSQL connection timeout."""
+    return _read_int_env(
+        "HLL_CRCON_DATABASE_CONNECT_TIMEOUT_SECONDS",
+        str(DEFAULT_CRCON_DATABASE_CONNECT_TIMEOUT_SECONDS),
+        minimum=1,
+    )
+
+
+def get_crcon_database_statement_timeout_ms() -> int:
+    """Return the maximum duration for one CRCON read statement."""
+    return _read_int_env(
+        "HLL_CRCON_DATABASE_STATEMENT_TIMEOUT_MS",
+        str(DEFAULT_CRCON_DATABASE_STATEMENT_TIMEOUT_MS),
+        minimum=1,
+    )
+
+
+def get_crcon_database_lock_timeout_ms() -> int:
+    """Return the maximum wait for a lock during a CRCON read."""
+    return _read_int_env(
+        "HLL_CRCON_DATABASE_LOCK_TIMEOUT_MS",
+        str(DEFAULT_CRCON_DATABASE_LOCK_TIMEOUT_MS),
+        minimum=0,
+    )
+
+
+def get_crcon_contract_revision() -> str:
+    """Return fixture/reference metadata; runtime compatibility uses probes."""
+    return DEFAULT_CRCON_CONTRACT_REVISION
 
 
 def use_postgres_rcon_storage(*, explicit_sqlite_path: Path | None = None) -> bool:
