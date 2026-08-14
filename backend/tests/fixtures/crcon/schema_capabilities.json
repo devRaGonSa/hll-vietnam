@@ -1,0 +1,13 @@
+{
+  "source_commit": "4cf1e7e2fa691d849eaf85abb7065010e13f28e4",
+  "tables": {
+    "steam_id_64": ["id", "steam_id_64", "steam_id", "created"],
+    "player_soldier": ["id", "playersteamid_id", "eos_id", "name", "level", "platform", "clan_tag", "updated"],
+    "player_names": ["id", "playersteamid_id", "name", "created", "last_seen"],
+    "player_sessions": ["id", "playersteamid_id", "start", "end", "created", "server_number", "server_name"],
+    "log_lines": ["id", "version", "creation_time", "event_time", "type", "player1_name", "player1_steamid", "player2_name", "player2_steamid", "weapon", "raw", "content", "server", "game"],
+    "map_history": ["id", "creation_time", "start", "end", "server_number", "map_name", "result", "game_layout", "cap_flips", "match_time", "game"],
+    "player_stats": ["id", "playersteamid_id", "map_id", "name", "kills", "deaths", "teamkills", "time_seconds", "combat", "offense", "defense", "support", "weapons"],
+    "server_counts": ["id", "server_number", "creation_time", "datapoint_time", "map_id", "count", "vip_count"]
+  }
+}

@@ -1,7 +1,7 @@
 ---
 id: TASK-290
 title: Build CRCON adapter foundation and local fixtures
-status: pending
+status: done
 type: backend
 team: Arquitecto Python
 supporting_teams: ["Arquitecto de Base de Datos", "Backend Senior"]
@@ -465,6 +465,71 @@ TASK-290 is complete only when future tasks can consume a stable internal
 foundation for CRCON HTTP, strictly read-only CRCON PostgreSQL, capability
 probing, bounded memory caching and safe optional configuration without knowing
 legacy HLL persistence internals.
+
+### Implementation result
+
+- Starting HLL commit: `23de30d430bb6eadc44c141e1a8f3246c9e95d8c`.
+- Pinned upstream inspected read-only: `https://github.com/MarechJ/hll_rcon_tool`,
+  branch `master`, commit `4cf1e7e2fa691d849eaf85abb7065010e13f28e4`.
+- Added the isolated `backend/app/crcon/` package with `models.py` for immutable
+  foundation metadata/errors, `api.py` for the three verified GET operations,
+  `database.py` for capability-only read access, `capabilities.py` for the
+  schema contract, `cache.py` for bounded LRU-TTL caching and `__init__.py` for
+  the supported internal surface.
+- The HTTP client implements `get_public_info`, `get_scoreboard_maps` and
+  `get_map_scoreboard` with strict unauthenticated base-URL validation,
+  standard-library query encoding, a hard timeout, zero retries by default and
+  at most one optional retry. Authentication is injected as headers. Errors
+  suppress exception causes and never include headers, authenticated URLs or
+  raw responses.
+- New optional configuration is separate from legacy HLL storage:
+  `HLL_CRCON_API_BASE_URL`, `HLL_CRCON_API_TIMEOUT_SECONDS`,
+  `HLL_CRCON_DATABASE_URL`,
+  `HLL_CRCON_DATABASE_CONNECT_TIMEOUT_SECONDS`,
+  `HLL_CRCON_DATABASE_STATEMENT_TIMEOUT_MS` and
+  `HLL_CRCON_DATABASE_LOCK_TIMEOUT_MS`. Contract metadata remains the pinned
+  reference constant; missing settings do not affect legacy startup.
+- PostgreSQL connections request `default_transaction_read_only=on`, start
+  with `BEGIN READ ONLY`, verify `SHOW transaction_read_only` equals `on`, set
+  application/connect/statement/lock limits, and always roll back and close.
+  Verification failure is closed with a sanitized `CrconDatabaseError`. The
+  public adapter exposes only configuration state and the fixed capability
+  probe; it has no arbitrary-SQL or mutation method.
+- Capability states are `SUPPORTED`, `UNAVAILABLE` and `INCOMPATIBLE`, reported
+  independently for live state, historical maps, historical player stats,
+  event logs, player identities/names, player sessions and server-count
+  history. The probe uses fixed information-schema reads for verified columns
+  in `steam_id_64`, `player_soldier`, `player_names`, `player_sessions`,
+  `log_lines`, `map_history`, `player_stats` and `server_counts`.
+- The process-local cache is thread-safe, monotonic-clock based, lazily expires
+  entries, accepts explicit maximum size/default or per-entry TTL, evicts
+  deterministically by LRU and supports invalidation/clear without disk or a
+  cleanup thread. Request coalescing was deliberately deferred to the
+  current-match migration because it would widen this generic foundation.
+- Added five synthetic JSON fixtures: public info, scoreboard map list, map
+  scoreboard detail, schema capabilities and source/sanitation metadata. They
+  use invented identities and contain no credentials, production URLs,
+  community player data or raw production logs.
+- `python -m compileall backend/app`: passed.
+- `python -m unittest tests.test_crcon_adapter_foundation`: 26 tests passed.
+- Secondary `python -m unittest discover -s tests`: 157 tests ran with the
+  pre-existing TASK-284 baseline of 1 failure and 3 errors. The identical
+  signatures were the historical-runner maintenance status assertion, both
+  RCON/public-scoreboard fallback cases plus Windows SQLite cleanup, and the
+  absent system `pytest` import required by the audit module. No baseline fix
+  was attempted.
+- The source-only mutation scan found zero occurrences of executable mutation
+  SQL. `git diff --check` passed. Routes, payloads, frontend, deployment,
+  Compose, Dockerfiles, requirements, database files and runtime secrets are
+  unchanged.
+- Existing HLL persistence, AdminLog/materialization, workers, snapshots,
+  scoreboard provider and RCON client remain intact and unmodified. No public
+  endpoint was migrated.
+- No real upstream request, production database, credential, SSH, Portainer or
+  production system was accessed. TASK-272 through TASK-281 and TASK-284 were
+  not executed or edited, and no follow-up task was created.
+- Orchestrator acceptance: PR #14 was reviewed and the CRCON adapter foundation
+  was accepted as the implementation base for the first consumer migration.
 
 ## Change Budget
 

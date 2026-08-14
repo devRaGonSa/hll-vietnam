@@ -1,0 +1,42 @@
+{
+  "result": {
+    "page": 1,
+    "page_size": 2,
+    "total": 2,
+    "maps": [
+      {
+        "map": {
+          "id": "synthetic_forest_warfare",
+          "map": "synthetic_forest",
+          "game_mode": "warfare"
+        },
+        "id": 9002,
+        "creation_time": "2026-08-14T08:00:01Z",
+        "start": "2026-08-14T08:00:00Z",
+        "end": null,
+        "server_number": 7,
+        "player_stats": [],
+        "result": null
+      },
+      {
+        "map": {
+          "id": "synthetic_valley_offensive",
+          "map": "synthetic_valley",
+          "game_mode": "offensive"
+        },
+        "id": 9001,
+        "creation_time": "2026-08-14T06:00:01Z",
+        "start": "2026-08-14T06:00:00Z",
+        "end": "2026-08-14T07:30:00Z",
+        "server_number": 7,
+        "player_stats": [],
+        "result": {
+          "allied": 5,
+          "axis": 2
+        }
+      }
+    ]
+  },
+  "failed": false,
+  "command": "get_scoreboard_maps"
+}
