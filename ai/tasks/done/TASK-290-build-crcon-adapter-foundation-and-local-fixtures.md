@@ -1,7 +1,7 @@
 ---
 id: TASK-290
 title: Build CRCON adapter foundation and local fixtures
-status: review
+status: done
 type: backend
 team: Arquitecto Python
 supporting_teams: ["Arquitecto de Base de Datos", "Backend Senior"]
@@ -528,6 +528,8 @@ legacy HLL persistence internals.
 - No real upstream request, production database, credential, SSH, Portainer or
   production system was accessed. TASK-272 through TASK-281 and TASK-284 were
   not executed or edited, and no follow-up task was created.
+- Orchestrator acceptance: PR #14 was reviewed and the CRCON adapter foundation
+  was accepted as the implementation base for the first consumer migration.
 
 ## Change Budget
 
