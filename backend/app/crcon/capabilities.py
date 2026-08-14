@@ -56,6 +56,7 @@ CAPABILITY_SCHEMA: Mapping[CrconCapability, Mapping[str, frozenset[str]]] = {
                 "game",
             }
         ),
+        "steam_id_64": frozenset({"id", "steam_id_64"}),
     },
     CrconCapability.PLAYER_IDENTITIES: {
         "steam_id_64": frozenset({"id", "steam_id_64"}),

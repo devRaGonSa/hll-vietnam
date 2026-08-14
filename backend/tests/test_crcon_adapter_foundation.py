@@ -324,7 +324,15 @@ class CrconDatabaseTests(unittest.TestCase):
 
     def test_no_public_arbitrary_sql_or_mutation_method_exists(self) -> None:
         public_names = {name for name in dir(CrconDatabase) if not name.startswith("_")}
-        self.assertEqual(public_names, {"configured", "probe_capabilities"})
+        self.assertEqual(
+            public_names,
+            {
+                "configured",
+                "find_current_map",
+                "list_match_log_events",
+                "probe_capabilities",
+            },
+        )
 
 
 class CrconCapabilityTests(unittest.TestCase):
@@ -489,7 +497,12 @@ class CrconConfigurationTests(unittest.TestCase):
 class CrconFixtureTests(unittest.TestCase):
     def test_every_fixture_loads_and_has_expected_contract_fields(self) -> None:
         expected = {
+            "current_map_rows.json",
+            "current_match_log_events.json",
+            "db_lag_current_match.json",
+            "live_game_stats.json",
             "metadata.json",
+            "match_transition.json",
             "public_info.json",
             "scoreboard_maps.json",
             "map_scoreboard.json",

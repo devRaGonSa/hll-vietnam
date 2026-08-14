@@ -1,7 +1,7 @@
 ---
 id: TASK-291
 title: Implement CRCON-first coherent current-match snapshot
-status: pending
+status: review
 type: backend
 team: Backend Senior
 supporting_teams: ["Arquitecto Python", "Arquitecto de Base de Datos"]
@@ -636,6 +636,97 @@ Record during execution:
   unchanged; and
 - confirmation that no SSH, Portainer, production or credential access
   occurred.
+
+### Implementation result
+
+- Starting HLL commit: `189255c55c9e4f1e9c34e8237d9bd39aa7d034ec`.
+  The pinned upstream checkout was verified read-only at
+  `MarechJ/hll_rcon_tool`, branch `master`, commit
+  `4cf1e7e2fa691d849eaf85abb7065010e13f28e4`.
+- Selected CRCON API methods are `get_public_info` for canonical live summary
+  fields and `get_live_game_stats` for current-match player enrichment.
+  `get_live_scoreboard` was inspected but not selected because upstream states
+  that its session statistics reset on disconnect rather than match start.
+- Added only two capability-specific CRCON database reads: `find_current_map`
+  selects at most two open `map_history` candidates by server, exact
+  case-insensitive layer and a 180-second start tolerance, rejecting ambiguous
+  results; `list_match_log_events` selects at most 500 `KILL`/`TEAM KILL` rows
+  bounded by server and match start/observation end, ordered by
+  `(event_time ASC, id ASC)`. Both retain TASK-290 read-only transactions,
+  timeouts, rollback/close and sanitized errors; no arbitrary SQL API exists.
+- Source selection is `HLL_CURRENT_MATCH_SOURCE=legacy|crcon`, with absent
+  configuration resolving to `legacy` and invalid values rejected. Per-server
+  synthetic/testable binding uses `HLL_CRCON_CURRENT_MATCH_BINDINGS` JSON for
+  slug, API origin, `server_number`, optional API headers, optional per-binding
+  DB URL and enabled capabilities; `HLL_CRCON_DATABASE_URL` remains the shared
+  DB fallback. CRCON failures never invoke the legacy implementation.
+- `backend/app/current_match.py` owns `CurrentMatchSnapshot`,
+  `CurrentMatchSummary`, `CurrentPlayer`, `KillEvent`,
+  `CurrentMatchSourceState`, `CrconCurrentMatchBinding`, the coherent snapshot
+  service, serializers, cursor/version logic and compact per-server
+  single-flight primitive. Domain/public objects contain no raw CRCON rows,
+  log text or payload objects.
+- Canonical identity is `cm1.<base64url(map_history.id)>`. When API map/start is
+  ahead of `map_history`, ephemeral identity is
+  `em1.<first-24-hex(sha256(server_slug + NUL + UTC-start + NUL + layer))>`.
+  Canonical replacement changes identity/version, overwrites the server cache
+  and makes old match-scoped cursors incompatible; no mapping is persisted.
+- Kill cursors are deterministic `kc1.<base64url(canonical-json)>` values whose
+  JSON contains match ID, UTC event timestamp and unique CRCON event ID. They
+  distinguish equal timestamps, continue only the same match and return a safe
+  4xx through the route facade when malformed or cross-match.
+- Bounded log events are the canonical source for kills, deaths, teamkills,
+  deaths by teamkill and weapon counts. `KILL` increments killer kills and
+  victim deaths; `TEAM KILL` increments killer teamkills and victim
+  deaths-by-teamkill. Live API enriches team/unit/role/level/status and score
+  dimensions. API K/D/TK disagreement is reported as degraded and never summed
+  with log totals; unavailable logs produce `null`, not fabricated zeros.
+- Snapshot versions are `sv1.<first-24-hex(sha256(canonical-json))>` over match
+  identity, stable summary/map/score/player counts, player state, newest kill
+  cursor and source/degraded state. `observed_at` and volatile remaining time
+  are returned but excluded from the version material so identical meaningful
+  state remains stable.
+- `TtlCache` is configured for 1.5 seconds and at most 8 per-server entries.
+  The per-server single-flight permits one refresh per miss, shares the same
+  result/error with waiters, removes failed flights for retry, keeps servers
+  independent and creates no thread, worker, queue or persistence.
+- Added `GET /api/current-match/snapshot?server=<slug>`. In default legacy mode,
+  the three existing routes execute their original bodies. In explicit CRCON
+  mode, summary, kills and players are compatibility projections of the same
+  cached/coalesced `CurrentMatchSnapshot`, retaining frontend-required fields.
+  API/DB partial failures produce explicit fresh/degraded/unavailable source
+  states; both unavailable returns HTTP 503 without automatic fallback.
+- Added five sanitized synthetic fixtures for live game stats, current/open map
+  rows, bounded log events, match transition and DB-lag identity. Metadata stays
+  pinned to the accepted revision; no production names, URLs, credentials or
+  raw logs were used.
+- `python -m compileall backend/app`: passed. Focused
+  `tests.test_crcon_current_match`: 30 tests passed. TASK-290 foundation:
+  26 tests passed. Existing `tests.test_current_match_payload`: 13 tests passed.
+  Combined focused run: 69 tests passed.
+- Full backend discovery ran 186 tests and retained the exact TASK-284 baseline
+  of 1 failure and 3 errors: historical maintenance expected `ok` rather than
+  `partial`, two RCON/public-scoreboard materialization cases plus Windows
+  SQLite cleanup, and the missing optional `pytest` import in the audit module.
+  No new failure signature was introduced and no baseline fix was attempted.
+- Source SQL mutation scanning found no executable mutation statement; only the
+  focused negative-test keyword allowlist matched. Frontend, deploy, Compose,
+  Dockerfiles and requirements are unchanged. Legacy HLL storage, AdminLog,
+  workers, materializers, snapshots, scoreboard provider and direct RCON remain
+  present and are not called by CRCON mode.
+- No SSH, Portainer, production CRCON/PostgreSQL/RCON, credentials, deployment,
+  restart or real network/database test access occurred. TASK-272 through
+  TASK-281, TASK-284 and resolved TASK-287 through TASK-290 were not edited or
+  executed; protected local tasks stayed unstaged.
+- A later deployment handoff must obtain through a user-operated read-only
+  console: per-server CRCON API origins and authentication-header scheme;
+  `server_number` bindings; dedicated read-only PostgreSQL DSN/role/TLS and
+  schema grants; capability-probe results; observed API/log/map-history lag;
+  and measured request/query budgets. No production value is assumed here.
+- The normal change budget is exceeded only by the cohesive domain/service,
+  fixed adapter reads, compatibility facade, five contract fixtures and focused
+  safety/concurrency tests required for this first vertical consumer. No new
+  dependency or unrelated product scope was added.
 
 ## Lifecycle
 
