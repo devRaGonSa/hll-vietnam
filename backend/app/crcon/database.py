@@ -2,13 +2,16 @@
 
 from __future__ import annotations
 
+import json
 import sys
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Iterator, Mapping
 from contextlib import contextmanager
+from dataclasses import dataclass
+from datetime import datetime, timedelta
 from typing import Any
 
 from .capabilities import PROBED_TABLES, build_capability_report
-from .models import CrconCapabilityReport, CrconDatabaseError
+from .models import CrconCapabilityReport, CrconDatabaseError, CrconUnavailableError
 
 
 APPLICATION_NAME = "hll-vietnam-bff"
@@ -19,6 +22,166 @@ WHERE table_schema = current_schema()
   AND table_name = ANY(%s)
 ORDER BY table_name, ordinal_position
 """
+CURRENT_MAP_MATCH_SQL = """
+SELECT id, start, end, server_number, map_name, result
+FROM map_history
+WHERE server_number = %s
+  AND end IS NULL
+  AND lower(map_name) = lower(%s)
+  AND start >= %s
+  AND start <= %s
+ORDER BY start DESC, id DESC
+LIMIT 2
+"""
+CURRENT_OPEN_MAP_SQL = """
+SELECT id, start, end, server_number, map_name, result
+FROM map_history
+WHERE server_number = %s
+  AND end IS NULL
+ORDER BY start DESC, id DESC
+LIMIT 2
+"""
+MATCH_LOG_EVENTS_SQL = """
+SELECT
+    logs.id,
+    logs.event_time,
+    logs.type,
+    logs.player1_name,
+    player1.steam_id_64 AS player1_id,
+    logs.player2_name,
+    player2.steam_id_64 AS player2_id,
+    logs.weapon
+FROM log_lines AS logs
+LEFT JOIN steam_id_64 AS player1 ON player1.id = logs.player1_steamid
+LEFT JOIN steam_id_64 AS player2 ON player2.id = logs.player2_steamid
+WHERE logs.server = %s
+  AND logs.event_time >= %s
+  AND logs.event_time <= %s
+  AND logs.type = ANY(%s)
+ORDER BY logs.event_time DESC, logs.id DESC
+LIMIT %s
+"""
+MATCH_COMBAT_AGGREGATE_SQL = """
+WITH bounded_events AS (
+    SELECT
+        logs.type,
+        logs.player1_name,
+        player1.steam_id_64 AS player1_id,
+        logs.player2_name,
+        player2.steam_id_64 AS player2_id,
+        logs.weapon
+    FROM log_lines AS logs
+    LEFT JOIN steam_id_64 AS player1 ON player1.id = logs.player1_steamid
+    LEFT JOIN steam_id_64 AS player2 ON player2.id = logs.player2_steamid
+    WHERE logs.server = %s
+      AND logs.event_time >= %s
+      AND logs.event_time <= %s
+      AND logs.type = ANY(%s)
+),
+player_facts AS (
+    SELECT
+        CASE
+            WHEN NULLIF(player1_id, '') IS NOT NULL THEN 'id:' || player1_id
+            ELSE 'name:' || lower(COALESCE(NULLIF(btrim(player1_name), ''), 'Unknown player'))
+        END AS player_key,
+        NULLIF(player1_id, '') AS player_id,
+        COALESCE(NULLIF(btrim(player1_name), ''), 'Unknown player') AS player_name,
+        CASE WHEN type = 'KILL' THEN 1 ELSE 0 END AS kills,
+        0 AS deaths,
+        CASE WHEN type = 'TEAM KILL' THEN 1 ELSE 0 END AS teamkills,
+        0 AS deaths_by_teamkill
+    FROM bounded_events
+    UNION ALL
+    SELECT
+        CASE
+            WHEN NULLIF(player2_id, '') IS NOT NULL THEN 'id:' || player2_id
+            ELSE 'name:' || lower(COALESCE(NULLIF(btrim(player2_name), ''), 'Unknown player'))
+        END AS player_key,
+        NULLIF(player2_id, '') AS player_id,
+        COALESCE(NULLIF(btrim(player2_name), ''), 'Unknown player') AS player_name,
+        0 AS kills,
+        CASE WHEN type = 'KILL' THEN 1 ELSE 0 END AS deaths,
+        0 AS teamkills,
+        CASE WHEN type = 'TEAM KILL' THEN 1 ELSE 0 END AS deaths_by_teamkill
+    FROM bounded_events
+),
+player_totals AS (
+    SELECT
+        player_key,
+        max(player_id) AS player_id,
+        max(player_name) AS player_name,
+        sum(kills)::bigint AS kills,
+        sum(deaths)::bigint AS deaths,
+        sum(teamkills)::bigint AS teamkills,
+        sum(deaths_by_teamkill)::bigint AS deaths_by_teamkill
+    FROM player_facts
+    GROUP BY player_key
+),
+weapon_totals AS (
+    SELECT
+        CASE
+            WHEN NULLIF(player1_id, '') IS NOT NULL THEN 'id:' || player1_id
+            ELSE 'name:' || lower(COALESCE(NULLIF(btrim(player1_name), ''), 'Unknown player'))
+        END AS player_key,
+        weapon,
+        count(*)::bigint AS weapon_count
+    FROM bounded_events
+    WHERE type = 'KILL'
+      AND NULLIF(btrim(weapon), '') IS NOT NULL
+    GROUP BY player_key, weapon
+),
+weapon_maps AS (
+    SELECT
+        player_key,
+        jsonb_object_agg(weapon, weapon_count ORDER BY weapon) AS weapon_counts
+    FROM weapon_totals
+    GROUP BY player_key
+)
+SELECT
+    totals.player_id,
+    totals.player_name,
+    totals.kills,
+    totals.deaths,
+    totals.teamkills,
+    totals.deaths_by_teamkill,
+    COALESCE(weapons.weapon_counts, '{}'::jsonb) AS weapon_counts
+FROM player_totals AS totals
+LEFT JOIN weapon_maps AS weapons USING (player_key)
+ORDER BY totals.player_key ASC
+"""
+
+
+@dataclass(frozen=True, slots=True)
+class CrconCurrentMap:
+    id: int
+    start: datetime
+    end: datetime | None
+    server_number: int
+    map_name: str
+    result: dict[str, int] | None
+
+
+@dataclass(frozen=True, slots=True)
+class CrconMatchLogEvent:
+    id: int
+    event_time: datetime
+    type: str
+    player1_name: str | None
+    player1_id: str | None
+    player2_name: str | None
+    player2_id: str | None
+    weapon: str | None
+
+
+@dataclass(frozen=True, slots=True)
+class CrconMatchCombatStats:
+    player_id: str | None
+    player_name: str
+    kills: int
+    deaths: int
+    teamkills: int
+    deaths_by_teamkill: int
+    weapon_counts: tuple[tuple[str, int], ...]
 
 Connector = Callable[..., Any]
 
@@ -72,6 +235,104 @@ class CrconDatabase:
             database_configured=True,
             api_configured=api_configured,
         )
+
+    def find_current_map(
+        self,
+        *,
+        server_number: int,
+        map_name: str | None,
+        started_at: datetime | None,
+        tolerance_seconds: int = 180,
+    ) -> CrconCurrentMap | None:
+        """Return one unambiguous open map matching current API state."""
+        self._require_configured()
+        if server_number <= 0:
+            raise ValueError("server_number must be positive.")
+        if tolerance_seconds < 0 or tolerance_seconds > 900:
+            raise ValueError("tolerance_seconds must be between zero and 900.")
+
+        normalized_map = str(map_name or "").strip()
+        with self._read_only_connection() as connection:
+            if normalized_map and started_at is not None:
+                tolerance = timedelta(seconds=tolerance_seconds)
+                cursor = connection.execute(
+                    CURRENT_MAP_MATCH_SQL,
+                    (
+                        server_number,
+                        normalized_map,
+                        started_at - tolerance,
+                        started_at + tolerance,
+                    ),
+                )
+            else:
+                cursor = connection.execute(CURRENT_OPEN_MAP_SQL, (server_number,))
+            rows = cursor.fetchall()
+
+        if len(rows) != 1:
+            return None
+        return _current_map_row(rows[0])
+
+    def list_match_log_events(
+        self,
+        *,
+        server_number: int,
+        started_at: datetime,
+        ended_at: datetime,
+        limit: int = 500,
+    ) -> tuple[CrconMatchLogEvent, ...]:
+        """Read the newest bounded current-match combat window, newest first."""
+        self._require_configured()
+        if server_number <= 0:
+            raise ValueError("server_number must be positive.")
+        if ended_at < started_at:
+            raise ValueError("ended_at must not precede started_at.")
+        if limit < 1 or limit > 500:
+            raise ValueError("limit must be between one and 500.")
+
+        with self._read_only_connection() as connection:
+            cursor = connection.execute(
+                MATCH_LOG_EVENTS_SQL,
+                (
+                    str(server_number),
+                    started_at,
+                    ended_at,
+                    ["KILL", "TEAM KILL"],
+                    limit,
+                ),
+            )
+            rows = cursor.fetchall()
+        return tuple(_match_log_event_row(row) for row in rows)
+
+    def aggregate_match_combat_stats(
+        self,
+        *,
+        server_number: int,
+        started_at: datetime,
+        ended_at: datetime,
+    ) -> tuple[CrconMatchCombatStats, ...]:
+        """Aggregate complete bounded current-match combat without raw-row materialization."""
+        self._require_configured()
+        if server_number <= 0:
+            raise ValueError("server_number must be positive.")
+        if ended_at < started_at:
+            raise ValueError("ended_at must not precede started_at.")
+
+        with self._read_only_connection() as connection:
+            cursor = connection.execute(
+                MATCH_COMBAT_AGGREGATE_SQL,
+                (
+                    str(server_number),
+                    started_at,
+                    ended_at,
+                    ["KILL", "TEAM KILL"],
+                ),
+            )
+            rows = cursor.fetchall()
+        return tuple(_match_combat_stats_row(row) for row in rows)
+
+    def _require_configured(self) -> None:
+        if not self.configured:
+            raise CrconUnavailableError("CRCON database is not configured.")
 
     @contextmanager
     def _read_only_connection(self) -> Iterator[Any]:
@@ -137,3 +398,107 @@ def _schema_row(row: object) -> tuple[str, str]:
     if isinstance(row, (tuple, list)) and len(row) >= 2:
         return str(row[0]), str(row[1])
     raise CrconDatabaseError("CRCON schema probe returned an unexpected row.")
+
+
+def _current_map_row(row: object) -> CrconCurrentMap:
+    if isinstance(row, dict):
+        values = (
+            row.get("id"),
+            row.get("start"),
+            row.get("end"),
+            row.get("server_number"),
+            row.get("map_name"),
+            row.get("result"),
+        )
+    elif isinstance(row, (tuple, list)) and len(row) >= 6:
+        values = tuple(row[:6])
+    else:
+        raise CrconDatabaseError("CRCON current map query returned an unexpected row.")
+    map_id, start, end, server_number, map_name, result = values
+    if not isinstance(start, datetime):
+        raise CrconDatabaseError("CRCON current map query returned an invalid timestamp.")
+    normalized_result = dict(result) if isinstance(result, dict) else None
+    return CrconCurrentMap(
+        id=int(map_id),
+        start=start,
+        end=end if isinstance(end, datetime) else None,
+        server_number=int(server_number),
+        map_name=str(map_name),
+        result=normalized_result,
+    )
+
+
+def _match_log_event_row(row: object) -> CrconMatchLogEvent:
+    if isinstance(row, dict):
+        values = (
+            row.get("id"),
+            row.get("event_time"),
+            row.get("type"),
+            row.get("player1_name"),
+            row.get("player1_id"),
+            row.get("player2_name"),
+            row.get("player2_id"),
+            row.get("weapon"),
+        )
+    elif isinstance(row, (tuple, list)) and len(row) >= 8:
+        values = tuple(row[:8])
+    else:
+        raise CrconDatabaseError("CRCON event query returned an unexpected row.")
+    event_id, event_time, event_type, p1_name, p1_id, p2_name, p2_id, weapon = values
+    if not isinstance(event_time, datetime):
+        raise CrconDatabaseError("CRCON event query returned an invalid timestamp.")
+    return CrconMatchLogEvent(
+        id=int(event_id),
+        event_time=event_time,
+        type=str(event_type),
+        player1_name=str(p1_name) if p1_name is not None else None,
+        player1_id=str(p1_id) if p1_id is not None else None,
+        player2_name=str(p2_name) if p2_name is not None else None,
+        player2_id=str(p2_id) if p2_id is not None else None,
+        weapon=str(weapon) if weapon is not None else None,
+    )
+
+
+def _match_combat_stats_row(row: object) -> CrconMatchCombatStats:
+    if isinstance(row, dict):
+        values = (
+            row.get("player_id"),
+            row.get("player_name"),
+            row.get("kills"),
+            row.get("deaths"),
+            row.get("teamkills"),
+            row.get("deaths_by_teamkill"),
+            row.get("weapon_counts"),
+        )
+    elif isinstance(row, (tuple, list)) and len(row) >= 7:
+        values = tuple(row[:7])
+    else:
+        raise CrconDatabaseError("CRCON combat aggregate returned an unexpected row.")
+    player_id, player_name, kills, deaths, teamkills, deaths_by_teamkill, raw_weapons = values
+    if isinstance(raw_weapons, str):
+        try:
+            raw_weapons = json.loads(raw_weapons)
+        except json.JSONDecodeError:
+            raise CrconDatabaseError(
+                "CRCON combat aggregate returned invalid weapon counts."
+            ) from None
+    if raw_weapons is None:
+        raw_weapons = {}
+    if not isinstance(raw_weapons, Mapping):
+        raise CrconDatabaseError("CRCON combat aggregate returned invalid weapon counts.")
+    weapon_counts = tuple(
+        sorted(
+            (str(weapon), int(count))
+            for weapon, count in raw_weapons.items()
+            if str(weapon).strip() and int(count) > 0
+        )
+    )
+    return CrconMatchCombatStats(
+        player_id=str(player_id) if player_id is not None else None,
+        player_name=str(player_name or "Unknown player"),
+        kills=int(kills),
+        deaths=int(deaths),
+        teamkills=int(teamkills),
+        deaths_by_teamkill=int(deaths_by_teamkill),
+        weapon_counts=weapon_counts,
+    )

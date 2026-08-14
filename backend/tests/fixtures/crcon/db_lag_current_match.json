@@ -1,0 +1,17 @@
+{
+  "source_commit": "4cf1e7e2fa691d849eaf85abb7065010e13f28e4",
+  "public_info": {
+    "current_map": {
+      "map": "synthetic_river_offensive",
+      "start": "2026-08-14T09:30:00Z"
+    },
+    "player_count": 18,
+    "max_player_count": 100,
+    "player_count_by_team": {"allied": 9, "axis": 9},
+    "score": {"allied": 0, "axis": 0},
+    "time_remaining": 5300,
+    "name": {"name": "Synthetic Local Server"}
+  },
+  "matching_map_history_row": null,
+  "identity_kind": "ephemeral"
+}

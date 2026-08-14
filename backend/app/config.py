@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 from pathlib import Path
 
@@ -23,6 +24,7 @@ DEFAULT_CRCON_DATABASE_CONNECT_TIMEOUT_SECONDS = 5
 DEFAULT_CRCON_DATABASE_STATEMENT_TIMEOUT_MS = 5000
 DEFAULT_CRCON_DATABASE_LOCK_TIMEOUT_MS = 1000
 DEFAULT_CRCON_CONTRACT_REVISION = "4cf1e7e2fa691d849eaf85abb7065010e13f28e4"
+DEFAULT_CURRENT_MATCH_SOURCE = "legacy"
 DEFAULT_HISTORICAL_REFRESH_INTERVAL_SECONDS = 1800
 DEFAULT_HISTORICAL_REFRESH_OVERLAP_HOURS = 12
 DEFAULT_HISTORICAL_SNAPSHOT_REFRESH_INTERVAL_SECONDS = 900
@@ -184,6 +186,85 @@ def get_crcon_database_lock_timeout_ms() -> int:
 def get_crcon_contract_revision() -> str:
     """Return fixture/reference metadata; runtime compatibility uses probes."""
     return DEFAULT_CRCON_CONTRACT_REVISION
+
+
+def get_current_match_source() -> str:
+    """Select the current-match backend explicitly; rollback is config-only."""
+    source = os.getenv("HLL_CURRENT_MATCH_SOURCE", DEFAULT_CURRENT_MATCH_SOURCE)
+    normalized = str(source or "").strip().lower()
+    if normalized not in {"legacy", "crcon"}:
+        raise ValueError(
+            "HLL_CURRENT_MATCH_SOURCE must be either 'legacy' or 'crcon'."
+        )
+    return normalized
+
+
+def get_crcon_current_match_bindings() -> tuple[dict[str, object], ...]:
+    """Return validated per-server CRCON bindings without requiring them in legacy mode."""
+    raw_bindings = os.getenv("HLL_CRCON_CURRENT_MATCH_BINDINGS")
+    if raw_bindings is None or not raw_bindings.strip():
+        return ()
+    try:
+        parsed = json.loads(raw_bindings)
+    except json.JSONDecodeError:
+        raise ValueError(
+            "HLL_CRCON_CURRENT_MATCH_BINDINGS must be a JSON object."
+        ) from None
+    if not isinstance(parsed, dict):
+        raise ValueError("HLL_CRCON_CURRENT_MATCH_BINDINGS must be a JSON object.")
+
+    allowed_capabilities = {"live_state", "historical_maps", "event_logs"}
+    bindings: list[dict[str, object]] = []
+    for raw_slug, raw_binding in parsed.items():
+        slug = str(raw_slug or "").strip()
+        if not slug or not isinstance(raw_binding, dict):
+            raise ValueError("Every CRCON current-match binding must have a server slug.")
+        api_base_url = str(raw_binding.get("api_base_url") or "").strip()
+        try:
+            server_number = int(raw_binding.get("server_number"))
+        except (TypeError, ValueError):
+            raise ValueError(
+                "Every CRCON current-match binding needs a positive server_number."
+            ) from None
+        if not api_base_url or server_number <= 0:
+            raise ValueError(
+                "Every CRCON current-match binding needs an API origin and positive server_number."
+            )
+
+        raw_headers = raw_binding.get("api_headers", {})
+        if not isinstance(raw_headers, dict) or any(
+            not isinstance(key, str) or not isinstance(value, str)
+            for key, value in raw_headers.items()
+        ):
+            raise ValueError("CRCON binding api_headers must contain string pairs.")
+
+        raw_capabilities = raw_binding.get(
+            "capabilities",
+            ["live_state", "historical_maps", "event_logs"],
+        )
+        if not isinstance(raw_capabilities, list):
+            raise ValueError("CRCON binding capabilities must be a JSON list.")
+        capabilities = tuple(str(value).strip() for value in raw_capabilities)
+        if not capabilities or any(
+            capability not in allowed_capabilities for capability in capabilities
+        ):
+            raise ValueError("CRCON binding contains an unsupported capability.")
+
+        raw_database_url = raw_binding.get("database_url")
+        database_url = (
+            str(raw_database_url).strip() if raw_database_url is not None else None
+        )
+        bindings.append(
+            {
+                "server_slug": slug,
+                "api_base_url": api_base_url,
+                "server_number": server_number,
+                "database_url": database_url or None,
+                "api_headers": dict(raw_headers),
+                "capabilities": capabilities,
+            }
+        )
+    return tuple(bindings)
 
 
 def use_postgres_rcon_storage(*, explicit_sqlite_path: Path | None = None) -> bool:

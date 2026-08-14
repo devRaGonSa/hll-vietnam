@@ -13,6 +13,7 @@ from .models import CrconApiError
 
 
 PUBLIC_INFO_ENDPOINT = "/api/get_public_info"
+LIVE_GAME_STATS_ENDPOINT = "/api/get_live_game_stats"
 SCOREBOARD_MAPS_ENDPOINT = "/api/get_scoreboard_maps"
 MAP_SCOREBOARD_ENDPOINT = "/api/get_map_scoreboard"
 USER_AGENT = "HLL-Vietnam-CRCON-BFF/0.1"
@@ -48,6 +49,10 @@ class CrconApiClient:
 
     def get_public_info(self) -> dict[str, object]:
         return self._get_dict(PUBLIC_INFO_ENDPOINT)
+
+    def get_live_game_stats(self) -> dict[str, object]:
+        """Return the verified current-match player/stat snapshot."""
+        return self._get_dict(LIVE_GAME_STATS_ENDPOINT)
 
     def get_scoreboard_maps(
         self,

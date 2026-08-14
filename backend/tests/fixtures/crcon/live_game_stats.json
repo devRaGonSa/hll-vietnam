@@ -1,0 +1,40 @@
+{
+  "result": {
+    "snapshot_timestamp": "2026-08-14T08:15:00Z",
+    "refresh_interval_sec": 5,
+    "stats": [
+      {
+        "player_id": "synthetic-player-alpha",
+        "player": "Fixture Alpha",
+        "team": "allies",
+        "status": "online",
+        "level": 42,
+        "combat": 120,
+        "offense": 80,
+        "defense": 20,
+        "support": 30,
+        "kills": 99,
+        "deaths": 99,
+        "teamkills": 4,
+        "units": [{"team": 1, "squad": 3, "role": 2}]
+      },
+      {
+        "player_id": "synthetic-player-bravo",
+        "player": "Fixture Bravo",
+        "team": "axis",
+        "status": "online",
+        "level": 17,
+        "combat": 90,
+        "offense": 35,
+        "defense": 55,
+        "support": 12,
+        "kills": 0,
+        "deaths": 2,
+        "teamkills": 0,
+        "units": [{"team": 2, "squad": 4, "role": 5}]
+      }
+    ]
+  },
+  "failed": false,
+  "command": "get_live_game_stats"
+}

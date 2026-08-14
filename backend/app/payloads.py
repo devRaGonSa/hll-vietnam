@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 import re
 
 from .config import (
+    get_current_match_source,
     get_historical_data_source_kind,
     get_live_data_source_kind,
     get_refresh_interval_seconds,
@@ -47,6 +48,14 @@ from .historical_storage import (
     list_recent_historical_matches,
     list_weekly_leaderboard,
     list_weekly_top_kills,
+)
+from .current_match import (
+    CurrentMatchUnavailableError,
+    get_current_match_snapshot_service,
+    legacy_kills_projection,
+    legacy_players_projection,
+    legacy_summary_projection,
+    snapshot_payload,
 )
 from .rcon_historical_read_model import get_rcon_historical_match_detail
 from .rcon_annual_rankings import get_annual_ranking_snapshot
@@ -257,6 +266,9 @@ def build_current_match_payload(*, server_slug: str) -> dict[str, object]:
     origin = get_trusted_public_scoreboard_origin(server_slug)
     if origin is None:
         raise ValueError("Unsupported current match server.")
+    if get_current_match_source() == "crcon":
+        snapshot = get_current_match_snapshot_service().get_snapshot(origin.slug)
+        return legacy_summary_projection(snapshot)
 
     sample = _query_current_match_rcon_sample(origin.slug)
     if sample is not None:
@@ -419,6 +431,15 @@ def build_current_match_kill_feed_payload(
     origin = get_trusted_public_scoreboard_origin(server_slug)
     if origin is None:
         raise ValueError("Unsupported current match server.")
+    if get_current_match_source() == "crcon":
+        service = get_current_match_snapshot_service()
+        snapshot = service.get_snapshot(origin.slug)
+        events = service.project_kills(
+            snapshot,
+            since_cursor=since_event_id,
+            limit=limit,
+        )
+        return legacy_kills_projection(snapshot, events)
     try:
         feed = list_current_match_kill_feed(
             server_key=origin.slug,
@@ -450,6 +471,9 @@ def build_current_match_player_stats_payload(*, server_slug: str) -> dict[str, o
     origin = get_trusted_public_scoreboard_origin(server_slug)
     if origin is None:
         raise ValueError("Unsupported current match server.")
+    if get_current_match_source() == "crcon":
+        snapshot = get_current_match_snapshot_service().get_snapshot(origin.slug)
+        return legacy_players_projection(snapshot)
     try:
         stats = list_current_match_player_stats(
             server_key=origin.slug,
@@ -472,6 +496,19 @@ def build_current_match_player_stats_payload(*, server_slug: str) -> dict[str, o
             **stats,
         },
     }
+
+
+def build_current_match_snapshot_payload(*, server_slug: str) -> dict[str, object]:
+    """Return the canonical coherent snapshot only in explicit CRCON mode."""
+    origin = get_trusted_public_scoreboard_origin(server_slug)
+    if origin is None:
+        raise ValueError("Unsupported current match server.")
+    if get_current_match_source() != "crcon":
+        raise CurrentMatchUnavailableError(
+            "CRCON current-match mode is not selected."
+        )
+    snapshot = get_current_match_snapshot_service().get_snapshot(origin.slug)
+    return snapshot_payload(snapshot)
 
 
 def _empty_current_match_kill_feed_payload() -> dict[str, object]:

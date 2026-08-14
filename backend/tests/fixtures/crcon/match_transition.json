@@ -1,0 +1,18 @@
+{
+  "source_commit": "4cf1e7e2fa691d849eaf85abb7065010e13f28e4",
+  "previous": {
+    "id": 9002,
+    "start": "2026-08-14T08:00:00Z",
+    "map_name": "synthetic_forest_warfare"
+  },
+  "next": {
+    "id": 9003,
+    "start": "2026-08-14T09:30:00Z",
+    "map_name": "synthetic_river_offensive"
+  },
+  "expected": {
+    "identity_changes": true,
+    "version_changes": true,
+    "old_cursor_resets": true
+  }
+}

@@ -1,0 +1,29 @@
+{
+  "source_commit": "4cf1e7e2fa691d849eaf85abb7065010e13f28e4",
+  "rows": [
+    {
+      "id": 9002,
+      "start": "2026-08-14T08:00:00Z",
+      "end": null,
+      "server_number": 7,
+      "map_name": "synthetic_forest_warfare",
+      "result": null
+    },
+    {
+      "id": 9001,
+      "start": "2026-08-14T06:00:00Z",
+      "end": "2026-08-14T07:30:00Z",
+      "server_number": 7,
+      "map_name": "synthetic_valley_offensive",
+      "result": {"Allied": 5, "Axis": 2}
+    },
+    {
+      "id": 8999,
+      "start": "2026-08-14T07:59:30Z",
+      "end": null,
+      "server_number": 8,
+      "map_name": "conflicting_latest_map_warfare",
+      "result": null
+    }
+  ]
+}

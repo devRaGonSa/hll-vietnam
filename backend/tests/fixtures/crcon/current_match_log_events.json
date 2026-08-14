@@ -1,0 +1,36 @@
+{
+  "source_commit": "4cf1e7e2fa691d849eaf85abb7065010e13f28e4",
+  "match_start": "2026-08-14T08:00:00Z",
+  "events": [
+    {
+      "id": 410,
+      "event_time": "2026-08-14T08:04:01Z",
+      "type": "KILL",
+      "player1_name": "Fixture Alpha",
+      "player1_id": "synthetic-player-alpha",
+      "player2_name": "Fixture Bravo",
+      "player2_id": "synthetic-player-bravo",
+      "weapon": "SYNTHETIC_RIFLE"
+    },
+    {
+      "id": 411,
+      "event_time": "2026-08-14T08:04:01Z",
+      "type": "TEAM KILL",
+      "player1_name": "Fixture Alpha",
+      "player1_id": "synthetic-player-alpha",
+      "player2_name": "Fixture Charlie",
+      "player2_id": "synthetic-player-charlie",
+      "weapon": "SYNTHETIC_GRENADE"
+    },
+    {
+      "id": 412,
+      "event_time": "2026-08-14T08:05:10Z",
+      "type": "KILL",
+      "player1_name": "Fixture Bravo",
+      "player1_id": "synthetic-player-bravo",
+      "player2_name": "Fixture Alpha",
+      "player2_id": "synthetic-player-alpha",
+      "weapon": "SYNTHETIC_SMG"
+    }
+  ]
+}

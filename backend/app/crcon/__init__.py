@@ -2,7 +2,12 @@
 
 from .api import CrconApiClient
 from .cache import TtlCache
-from .database import CrconDatabase
+from .database import (
+    CrconCurrentMap,
+    CrconDatabase,
+    CrconMatchCombatStats,
+    CrconMatchLogEvent,
+)
 from .models import (
     CRCON_CONTRACT_REVISION,
     CRCON_REFERENCE_BRANCH,
@@ -31,9 +36,12 @@ __all__ = [
     "CrconCapabilityStatus",
     "CrconDatabase",
     "CrconDatabaseError",
+    "CrconCurrentMap",
     "CrconError",
     "CrconSchemaIncompatibleError",
     "CrconSourceMetadata",
+    "CrconMatchCombatStats",
+    "CrconMatchLogEvent",
     "CrconUnavailableError",
     "TtlCache",
 ]
