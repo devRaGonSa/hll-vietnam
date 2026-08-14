@@ -1,7 +1,7 @@
 ---
 id: TASK-291
 title: Implement CRCON-first coherent current-match snapshot
-status: review
+status: done
 type: backend
 team: Backend Senior
 supporting_teams: ["Arquitecto Python", "Arquitecto de Base de Datos"]
@@ -736,18 +736,26 @@ Record during execution:
   safety/concurrency tests required for this first vertical consumer. No new
   dependency or unrelated product scope was added.
 
+### Final acceptance
+
+- Orchestrator review accepted the coherent CRCON-first current-match backend.
+- The initial 500-event aggregation defect and TEAM KILL weapon semantics were
+  corrected and revalidated before merge.
+- Legacy remains the default configuration-level rollback path.
+- Frontend migration is intentionally deferred to later explicitly scoped work.
+
 ## Lifecycle
 
 During execution:
 
 ```text
-pending -> in-progress -> review
+pending -> in-progress -> review -> done
 ```
 
-Use a dedicated branch such as
-`feature/task-291-crcon-current-match-snapshot`. Open a draft PR. Do not mark
-TASK-291 done automatically, merge the PR, enable auto-merge or delete the
-source branch.
+Implementation used `feature/task-291-crcon-current-match-snapshot` and opened
+a draft PR. Final orchestrator acceptance explicitly authorized the transition
+from review to done and a normal merge commit while preserving the source
+branch.
 
 ## Change Budget
 
