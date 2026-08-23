@@ -8,6 +8,8 @@ from unittest.mock import MagicMock, patch
 from app import payloads
 from app import rcon_admin_log_storage
 from app.api.payloads import build_current_match_payload
+from app.api.payloads import current_match as current_match_payloads
+from app.api.payloads import servers as server_payloads
 from app.rcon_admin_log_storage import list_current_match_player_stats, persist_rcon_admin_log_entries
 from app.rcon_client import RconServerTarget
 from app.api.routes import resolve_get_payload
@@ -625,7 +627,7 @@ class CurrentMatchPublicEndpointHardeningTests(unittest.TestCase):
 
     def test_kill_feed_degrades_when_admin_log_read_fails(self) -> None:
         with patch.object(
-            payloads,
+            current_match_payloads,
             "list_current_match_kill_feed",
             side_effect=TimeoutError("read timed out"),
         ):
@@ -643,7 +645,7 @@ class CurrentMatchPublicEndpointHardeningTests(unittest.TestCase):
 
     def test_player_stats_degrades_when_admin_log_read_fails(self) -> None:
         with patch.object(
-            payloads,
+            current_match_payloads,
             "list_current_match_player_stats",
             side_effect=RuntimeError("no such table: rcon_admin_log_events"),
         ):
@@ -689,8 +691,8 @@ class CurrentMatchPublicEndpointHardeningTests(unittest.TestCase):
         )
 
         with (
-            patch.object(payloads, "list_latest_snapshots", return_value=[]),
-            patch.object(payloads, "get_live_data_source", return_value=fake_live_source),
+            patch.object(server_payloads, "list_latest_snapshots", return_value=[]),
+            patch.object(server_payloads, "get_live_data_source", return_value=fake_live_source),
         ):
             result = payloads.build_servers_payload()
 
@@ -707,8 +709,8 @@ class CurrentMatchPublicEndpointHardeningTests(unittest.TestCase):
         fake_live_source = _FakeLiveSource(collect_error=TimeoutError("RCON timed out"))
 
         with (
-            patch.object(payloads, "list_latest_snapshots", return_value=[]),
-            patch.object(payloads, "get_live_data_source", return_value=fake_live_source),
+            patch.object(server_payloads, "list_latest_snapshots", return_value=[]),
+            patch.object(server_payloads, "get_live_data_source", return_value=fake_live_source),
         ):
             result = payloads.build_servers_payload()
 
@@ -733,8 +735,8 @@ class CurrentMatchPublicEndpointHardeningTests(unittest.TestCase):
         fake_live_source = _FakeLiveSource(collect_error=RuntimeError("live source down"))
 
         with (
-            patch.object(payloads, "list_latest_snapshots", return_value=[stale_snapshot]),
-            patch.object(payloads, "get_live_data_source", return_value=fake_live_source),
+            patch.object(server_payloads, "list_latest_snapshots", return_value=[stale_snapshot]),
+            patch.object(server_payloads, "get_live_data_source", return_value=fake_live_source),
         ):
             result = payloads.build_servers_payload()
 
@@ -800,8 +802,8 @@ class CurrentMatchPublicEndpointHardeningTests(unittest.TestCase):
 
 def _build_with_rcon_sample(sample: dict[str, object]) -> dict[str, object]:
     with (
-        patch("app.api.payloads.load_rcon_targets", return_value=(TARGET,)),
-        patch("app.api.payloads.query_live_server_sample", return_value=sample),
+        patch("app.api.payloads.current_match.load_rcon_targets", return_value=(TARGET,)),
+        patch("app.api.payloads.current_match.query_live_server_sample", return_value=sample),
     ):
         payload = build_current_match_payload(server_slug="comunidad-hispana-01")
     return payload["data"]
@@ -812,9 +814,9 @@ def _build_with_snapshot_fallback(
     item: dict[str, object],
 ) -> dict[str, object]:
     with (
-        patch("app.api.payloads._query_current_match_rcon_sample", return_value=None),
+        patch("app.api.payloads.current_match._query_current_match_rcon_sample", return_value=None),
         patch(
-            "app.api.payloads.build_servers_payload",
+            "app.api.payloads.current_match._build_legacy_servers_payload",
             return_value={
                 "status": "ok",
                 "data": {

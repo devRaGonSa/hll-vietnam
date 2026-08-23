@@ -367,25 +367,31 @@ class AggregatePayloadSelectionTests(unittest.TestCase):
             os.environ, {"HLL_HISTORICAL_AGGREGATE_SOURCE": "crcon"}, clear=False
         )
         self.environment.start()
-        self.service = patch(
-            "app.api.payloads.get_historical_aggregate_service",
+        self.ranking_service = patch(
+            "app.api.payloads.rankings.get_historical_aggregate_service",
             return_value=_PayloadService(),
         )
-        self.service.start()
+        self.ranking_service.start()
+        self.player_service = patch(
+            "app.api.payloads.players.get_historical_aggregate_service",
+            return_value=_PayloadService(),
+        )
+        self.player_service.start()
         self.search_service = patch(
-            "app.api.payloads.get_crcon_player_search_service",
+            "app.api.payloads.players.get_crcon_player_search_service",
             return_value=_PlayerSearchPayloadService(),
         )
         self.search_service.start()
 
     def tearDown(self) -> None:
         self.search_service.stop()
-        self.service.stop()
+        self.player_service.stop()
+        self.ranking_service.stop()
         self.environment.stop()
 
     def test_all_public_aggregate_builders_delegate_without_legacy_fallback(self) -> None:
         with patch(
-            "app.api.payloads.search_rcon_materialized_players",
+            "app.api.payloads.players.search_rcon_materialized_players",
             side_effect=AssertionError("legacy fallback used"),
         ):
             search = payloads.build_stats_player_search_payload(query="Player")

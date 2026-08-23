@@ -4,7 +4,7 @@ import unittest
 from datetime import UTC, datetime, timedelta
 from unittest.mock import patch
 
-from app import payloads
+from app.api.payloads import servers as payloads
 from app.crcon.dto import CrconMapRef, CrconPublicInfo, CrconScore
 from app.services.servers import CrconServerListService, build_crcon_server_list_payload
 from app.server_targets import ServerTarget, ServerTargetRegistry

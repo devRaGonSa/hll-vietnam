@@ -8,45 +8,57 @@ from datetime import datetime, timezone
 from urllib.parse import parse_qs, urlparse
 
 from ..services.current_match import CurrentMatchCursorError, CurrentMatchUnavailableError
-from .payloads import (
-    build_global_ranking_payload,
-    build_stats_player_profile_payload,
-    build_community_payload,
+from .payloads.current_match import (
     build_current_match_kill_feed_payload,
     build_current_match_player_stats_payload,
     build_current_match_payload,
     build_current_match_snapshot_payload,
-    build_discord_payload,
+)
+from .payloads.history import (
+    build_historical_match_detail_payload,
+    build_historical_server_summary_payload,
+    build_recent_historical_matches_payload,
+    build_recent_historical_matches_snapshot_payload,
+)
+from .payloads.players import (
+    build_historical_player_profile_payload,
+    build_stats_player_profile_payload,
+    build_stats_player_search_payload,
+)
+from .payloads.product_features import (
     build_elo_mmr_leaderboard_payload,
     build_elo_mmr_player_payload,
-    build_error_payload,
-    build_health_payload,
-    build_annual_ranking_snapshot_payload,
-    build_historical_leaderboard_payload,
-    build_historical_match_detail_payload,
     build_monthly_mvp_payload,
     build_monthly_mvp_v2_payload,
-    build_monthly_leaderboard_payload,
-    build_monthly_leaderboard_snapshot_payload,
     build_monthly_mvp_snapshot_payload,
     build_monthly_mvp_v2_snapshot_payload,
     build_player_event_payload,
     build_player_event_snapshot_payload,
+)
+from .payloads.rankings import (
+    build_annual_ranking_snapshot_payload,
+    build_global_ranking_payload,
+    build_historical_leaderboard_payload,
     build_historical_server_summary_snapshot_payload,
-    build_historical_player_profile_payload,
-    build_historical_server_summary_payload,
     build_leaderboard_snapshot_payload,
-    build_recent_historical_matches_snapshot_payload,
-    build_recent_historical_matches_payload,
+    build_monthly_leaderboard_payload,
+    build_monthly_leaderboard_snapshot_payload,
+    build_weekly_leaderboard_payload,
+    build_weekly_leaderboard_snapshot_payload,
+    build_weekly_top_kills_payload,
+)
+from .payloads.servers import (
     build_server_detail_history_payload,
     build_server_history_payload,
     build_server_latest_payload,
     build_servers_payload,
+)
+from .payloads.static import (
+    build_community_payload,
+    build_discord_payload,
+    build_error_payload,
+    build_health_payload,
     build_trailer_payload,
-    build_weekly_leaderboard_snapshot_payload,
-    build_weekly_leaderboard_payload,
-    build_weekly_top_kills_payload,
-    build_stats_player_search_payload,
 )
 from ..scoreboard_origins import get_trusted_public_scoreboard_origin
 from ..config import get_historical_aggregate_source

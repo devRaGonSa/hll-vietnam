@@ -7,7 +7,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from unittest.mock import patch
 
-from app import payloads
+from app.api.payloads import current_match as payloads
 from app.crcon.dto import (
     CrconHistoricalMap,
     CrconMapPage,

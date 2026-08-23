@@ -1,8 +1,9 @@
 # CRCON-first legacy dependency ledger
 
 Evidence date: 2026-08-23. Scope: repository readers, writers and declared
-Compose jobs after the TASK-304 structural audit. This is a code/configuration audit; it is not a
-deployment observation and it authorizes no shutdown or deletion.
+Compose jobs after the TASK-305 API facade extraction. This is a
+code/configuration audit; it is not a deployment observation and it authorizes
+no shutdown or deletion.
 
 ## Status vocabulary
 
@@ -21,10 +22,10 @@ deployment observation and it authorizes no shutdown or deletion.
 
 | Family | Canonical selector | CRCON reader | Legacy reader | Audit status |
 | --- | --- | --- | --- | --- |
-| Server cards | `HLL_SERVER_LIST_SOURCE=legacy\|crcon` | `services/servers.py` / `get_public_info` | `api/payloads.py`, `storage.py`, live collectors | `MIGRATED`, legacy `ROLLBACK_ONLY` |
-| Current match | `HLL_CURRENT_MATCH_SOURCE=legacy\|crcon\|shadow` | `services/current_match.py`: single snapshot using public info + live stats + native log stream | AdminLog/current-match materializations | `MIGRATED`, legacy `ROLLBACK_ONLY` |
-| Match list/detail | `HLL_HISTORICAL_MATCH_SOURCE=legacy\|crcon` | `services/history.py` / scoreboard maps + map scoreboard | `historical_storage.py`, displayed snapshots, materialized matches | `MIGRATED`, legacy `ROLLBACK_ONLY` |
-| Summary/rankings/profile/search | `HLL_HISTORICAL_AGGREGATE_SOURCE=legacy\|crcon` | `services/historical_aggregates.py` plus `services/player_search.py`; read-only CRCON PostgreSQL except authenticated REST search | ranking/player/snapshot materializations | `MIGRATED`; runtime verification incomplete |
+| Server cards | `HLL_SERVER_LIST_SOURCE=legacy\|crcon` | `services/servers.py` / `get_public_info` | `api/payloads/servers.py`, `storage.py`, live collectors | `MIGRATED`, legacy `ROLLBACK_ONLY` |
+| Current match | `HLL_CURRENT_MATCH_SOURCE=legacy\|crcon\|shadow` | `services/current_match.py`: single snapshot using public info + live stats + native log stream | `api/payloads/current_match.py`, AdminLog/current-match materializations | `MIGRATED`, legacy `ROLLBACK_ONLY` |
+| Match list/detail | `HLL_HISTORICAL_MATCH_SOURCE=legacy\|crcon` | `services/history.py` / scoreboard maps + map scoreboard | `api/payloads/history.py`, `historical_storage.py`, displayed snapshots, materialized matches | `MIGRATED`, legacy `ROLLBACK_ONLY` |
+| Summary/rankings/profile/search | `HLL_HISTORICAL_AGGREGATE_SOURCE=legacy\|crcon` | `services/historical_aggregates.py` plus `services/player_search.py`; read-only CRCON PostgreSQL except authenticated REST search | `api/payloads/rankings.py`, `api/payloads/players.py`, ranking/player/snapshot materializations | `MIGRATED`; runtime verification incomplete |
 
 ## Application-owned storage
 
@@ -105,11 +106,11 @@ it does not mean deployment is authorized.
 | Elo/MMR | not migrated | retain/replace/retire decision | active explicit endpoints | `PRODUCT_DECISION_REQUIRED` |
 | All legacy writers/storage | partial replacements only | zero-reader runtime proof absent | multiple rollback/product readers | `NOT_READY` |
 
-## Writer-disable gate after TASK-304
+## Writer-disable gate after TASK-305
 
-The audit is **not READY** for a writer-disable task. TASK-304 moved code and
-removed only proven compatibility/search dead code; it does not authorize a
-shutdown specification. The exact blockers
+The audit is **not READY** for a writer-disable task. TASK-305 reorganized only
+the API contract facade and removed three proven-unreferenced private helpers;
+it does not authorize a shutdown specification. The exact blockers
 are:
 
 1. configure canonical targets/bindings and a server-side Bearer API key with

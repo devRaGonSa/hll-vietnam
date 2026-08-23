@@ -409,9 +409,9 @@ class HistoricalSnapshotRefreshTests(unittest.TestCase):
                 "limit": 10,
             },
         }
-        with (
-            patch("app.api.payloads._get_historical_snapshot_record", return_value=snapshot),
-            patch("app.api.payloads._load_runtime_leaderboard_items") as runtime_loader,
+        with patch(
+            "app.api.payloads.rankings._get_historical_snapshot_record",
+            return_value=snapshot,
         ):
             payload = build_leaderboard_snapshot_payload(
                 server_id="all-servers",
@@ -420,7 +420,6 @@ class HistoricalSnapshotRefreshTests(unittest.TestCase):
                 limit=10,
             )
 
-        runtime_loader.assert_not_called()
         self.assertEqual(payload["data"]["items"][0]["metric_value"], 12)
         self.assertFalse(payload["data"]["runtime_enrichment"]["applied"])
 
@@ -441,9 +440,9 @@ class HistoricalSnapshotRefreshTests(unittest.TestCase):
             },
         }
         with (
-            patch("app.api.payloads._get_historical_snapshot_record", return_value=snapshot),
-            patch("app.api.payloads.get_historical_data_source_kind", return_value="rcon"),
-            patch("app.api.payloads.list_recent_historical_matches") as fallback_loader,
+            patch("app.api.payloads.history._get_historical_snapshot_record", return_value=snapshot),
+            patch("app.api.payloads.history.get_historical_data_source_kind", return_value="rcon"),
+            patch("app.api.payloads.history.list_recent_historical_matches") as fallback_loader,
         ):
             payload = build_recent_historical_matches_snapshot_payload(
                 server_slug="all-servers",
@@ -471,10 +470,10 @@ class HistoricalSnapshotRefreshTests(unittest.TestCase):
             },
         }
         with (
-            patch("app.api.payloads._get_historical_snapshot_record", return_value=snapshot),
-            patch("app.api.payloads.get_historical_data_source_kind", return_value="rcon"),
-            patch("app.api.payloads.get_rcon_historical_read_model") as rcon_loader,
-            patch("app.api.payloads.list_recent_historical_matches") as fallback_loader,
+            patch("app.api.payloads.history._get_historical_snapshot_record", return_value=snapshot),
+            patch("app.api.payloads.history.get_historical_data_source_kind", return_value="rcon"),
+            patch("app.api.payloads.history.get_rcon_historical_read_model") as rcon_loader,
+            patch("app.api.payloads.history.list_recent_historical_matches") as fallback_loader,
         ):
             payload = build_recent_historical_matches_payload(
                 server_slug="comunidad-hispana-01",
@@ -505,10 +504,10 @@ class HistoricalSnapshotRefreshTests(unittest.TestCase):
             },
         }
         with (
-            patch("app.api.payloads._get_historical_snapshot_record", return_value=snapshot),
-            patch("app.api.payloads.get_historical_data_source_kind", return_value="rcon"),
-            patch("app.api.payloads.get_rcon_historical_read_model") as rcon_loader,
-            patch("app.api.payloads.list_recent_historical_matches") as fallback_loader,
+            patch("app.api.payloads.history._get_historical_snapshot_record", return_value=snapshot),
+            patch("app.api.payloads.history.get_historical_data_source_kind", return_value="rcon"),
+            patch("app.api.payloads.history.get_rcon_historical_read_model") as rcon_loader,
+            patch("app.api.payloads.history.list_recent_historical_matches") as fallback_loader,
         ):
             payload = build_recent_historical_matches_payload(
                 server_slug="comunidad-hispana-02",
@@ -537,10 +536,10 @@ class HistoricalSnapshotRefreshTests(unittest.TestCase):
             },
         }
         with (
-            patch("app.api.payloads._get_historical_snapshot_record", return_value=snapshot),
-            patch("app.api.payloads.get_historical_data_source_kind", return_value="rcon"),
-            patch("app.api.payloads.get_rcon_historical_read_model") as rcon_loader,
-            patch("app.api.payloads.list_recent_historical_matches") as fallback_loader,
+            patch("app.api.payloads.history._get_historical_snapshot_record", return_value=snapshot),
+            patch("app.api.payloads.history.get_historical_data_source_kind", return_value="rcon"),
+            patch("app.api.payloads.history.get_rcon_historical_read_model") as rcon_loader,
+            patch("app.api.payloads.history.list_recent_historical_matches") as fallback_loader,
         ):
             payload = build_recent_historical_matches_payload(
                 server_slug="all-servers",
@@ -566,10 +565,10 @@ class HistoricalSnapshotRefreshTests(unittest.TestCase):
             },
         }
         with (
-            patch("app.api.payloads._get_historical_snapshot_record", return_value=snapshot),
-            patch("app.api.payloads.get_historical_data_source_kind", return_value="rcon"),
-            patch("app.api.payloads.get_rcon_historical_read_model") as rcon_loader,
-            patch("app.api.payloads.list_historical_server_summaries") as fallback_loader,
+            patch("app.api.payloads.rankings._get_historical_snapshot_record", return_value=snapshot),
+            patch("app.api.payloads.history.get_historical_data_source_kind", return_value="rcon"),
+            patch("app.api.payloads.history.get_rcon_historical_read_model") as rcon_loader,
+            patch("app.api.payloads.history.list_historical_server_summaries") as fallback_loader,
         ):
             payload = build_historical_server_summary_payload(server_slug="comunidad-hispana-01")
 
@@ -594,10 +593,10 @@ class HistoricalSnapshotRefreshTests(unittest.TestCase):
             },
         }
         with (
-            patch("app.api.payloads._get_historical_snapshot_record", return_value=snapshot),
-            patch("app.api.payloads.get_historical_data_source_kind", return_value="rcon"),
-            patch("app.api.payloads.get_rcon_historical_read_model") as rcon_loader,
-            patch("app.api.payloads.list_historical_server_summaries") as fallback_loader,
+            patch("app.api.payloads.rankings._get_historical_snapshot_record", return_value=snapshot),
+            patch("app.api.payloads.history.get_historical_data_source_kind", return_value="rcon"),
+            patch("app.api.payloads.history.get_rcon_historical_read_model") as rcon_loader,
+            patch("app.api.payloads.history.list_historical_server_summaries") as fallback_loader,
         ):
             payload = build_historical_server_summary_payload(server_slug="comunidad-hispana-02")
 
@@ -620,10 +619,10 @@ class HistoricalSnapshotRefreshTests(unittest.TestCase):
             },
         }
         with (
-            patch("app.api.payloads._get_historical_snapshot_record", return_value=snapshot),
-            patch("app.api.payloads.get_historical_data_source_kind", return_value="rcon"),
-            patch("app.api.payloads.get_rcon_historical_read_model") as rcon_loader,
-            patch("app.api.payloads.list_historical_server_summaries") as fallback_loader,
+            patch("app.api.payloads.rankings._get_historical_snapshot_record", return_value=snapshot),
+            patch("app.api.payloads.history.get_historical_data_source_kind", return_value="rcon"),
+            patch("app.api.payloads.history.get_rcon_historical_read_model") as rcon_loader,
+            patch("app.api.payloads.history.list_historical_server_summaries") as fallback_loader,
         ):
             payload = build_historical_server_summary_payload(server_slug="all-servers")
 

@@ -11,7 +11,7 @@ from unittest.mock import MagicMock, patch
 
 from websocket import WebSocketBadStatusException, WebSocketTimeoutException
 
-from app import payloads
+from app.api.payloads import current_match as payloads
 from app import main as backend_main
 from app.config import get_crcon_log_stream_tokens
 from app.crcon.cache import TtlCache

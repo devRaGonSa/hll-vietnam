@@ -1,7 +1,8 @@
 # HLL Vietnam code structure
 
-Audit date: 2026-08-23. TASK-304 is a structural refactor only: public URLs,
-payload contracts, source selectors and runtime behavior remain unchanged.
+Audit date: 2026-08-23. TASK-304 established the primary packages and TASK-305
+split the API payload facade by public domain. Public URLs, payload contracts,
+source selectors and runtime behavior remain unchanged.
 
 ## Dependency direction
 
@@ -93,7 +94,7 @@ No module remains `UNKNOWN` after the static, route, frontend, Compose,
 documentation and dynamic-entrypoint audit. A known classification does not
 imply deletion safety.
 
-## TASK-304 implemented tree
+## Implemented tree after TASK-305
 
 ```text
 backend/app/
@@ -101,7 +102,16 @@ backend/app/
   config.py
   api/
     routes.py             # unchanged URL dispatcher
-    payloads.py           # compatibility facade; audited hotspot
+    payloads/
+      __init__.py         # stable compatibility exports only
+      common.py           # displayed-snapshot/fallback metadata
+      current_match.py    # CRCON/legacy/shadow current-match contracts
+      history.py          # recent match/detail/summary contracts
+      players.py          # player search/profile contracts
+      product_features.py # MVP/player-event/Elo contracts pending decisions
+      rankings.py         # ranking/leaderboard/aggregate contracts
+      servers.py          # CRCON/legacy server-card and snapshot contracts
+      static.py           # health/community/trailer/Discord/error contracts
     serializers.py        # pure shared JSON compatibility mapping
   domain/
     identity.py
@@ -139,13 +149,27 @@ the tree look cleaner while obscuring those mixed ownership boundaries.
 ## API and frontend contracts
 
 `api/routes.py` remains a URL dispatcher with no SQL, CRCON parsing or
-historical reconstruction. All existing URLs remain unchanged. Pure timestamp,
-scope, ranking-value and snapshot-source serializers moved to
-`api/serializers.py`; this reduced the payload facade from 2,990 to 2,904 lines.
-`api/payloads.py` still mixes orchestration and rollback selection and is the
-largest remaining structural hotspot. Domain-by-domain extraction should be a
-contract-focused follow-up because current tests patch its compatibility seams
-directly.
+historical reconstruction. All existing URLs remain unchanged. Routes now
+import canonical builders from the domain payload modules. Existing consumers
+may continue to use `from app.api.payloads import ...` through the 98-line
+`payloads/__init__.py` compatibility surface.
+
+TASK-305 replaced the 2,904-line `api/payloads.py` monolith with domain modules.
+`current_match.py` depends one-way on the legacy server-card helper;
+`history.py` depends one-way on the ranking server-summary contract; and both
+history/ranking/product modules share only the focused `common.py` snapshot
+metadata helpers. No reverse dependency or circular import is present.
+
+Legacy fallback helpers remain private and visibly named in the public domain
+that selects them. A separate `legacy.py` was rejected because it would split
+each selector from its paired public contract and introduce avoidable cross-
+module coupling. Undecided MVP, player-event and Elo routes are isolated in
+`product_features.py` and remain `PRODUCT_DECISION_REQUIRED`.
+
+`api/serializers.py` remains a cohesive 107-line module for pure timestamps,
+opaque server IDs, ranking values and source display. Splitting it would create
+trivial files without improving dependency direction. Player IDs are passed
+through as opaque strings in all extracted modules.
 
 The frontend already has one script per page plus small shared current-match
 and map helpers. A future low-risk grouping could use `pages/` and `utils/`, but
@@ -158,7 +182,10 @@ moving all scripts would change every HTML import for little backend benefit.
 - Add application orchestration to `services/`.
 - Add CRCON endpoint/DTO/repository behavior to `crcon/`; never modify CRCON
   itself from this repository.
-- Add request validation and compatibility serialization under `api/`.
+- Add URL parsing and request validation to `api/routes.py`; add public contract
+  assembly to the owning `api/payloads/<domain>.py` module; add only pure shared
+  compatibility mapping to `api/serializers.py`; keep use-case logic in
+  `services/` and CRCON transport/schema behavior in `crcon/`.
 - Keep one-off diagnostics as explicit documented module entrypoints.
 - Do not add new application-owned persistence for CRCON-first readers.
 - Do not place MVP, player-events or Elo/MMR under `legacy/` until a product
@@ -171,9 +198,9 @@ moving all scripts would change every HTML import for little backend benefit.
   extraction to `domain/current_match.py` should be behavior-neutral.
 - `services/history.py` uses the legacy `ALL_SERVERS_SLUG` constant. TASK-304
   removes that reverse dependency by making the canonical scope local/shared.
-- `api/payloads.py` is a compatibility facade with direct legacy storage imports.
-  CRCON-first execution is selector-gated, but the file is not a clean service
-  boundary.
+- Payload modules still invoke legacy storage on explicit rollback paths.
+  CRCON-first execution remains selector-gated; isolating the underlying mixed
+  storage/workers is deferred until rollback and product decisions permit it.
 - `server_targets.py` combines target value objects with environment-backed
   loading. Splitting it is deferred to avoid a one-file micro-package and broad
   configuration churn.
@@ -189,6 +216,7 @@ requests, scheduler/worker calls, every Compose variant, scripts, documented
 | `crcon/database.py` | `SAFE_DELETE` | temporary re-export only; all consumers now import `repository.py` or `postgres_repository.py`; no route, frontend, worker, Compose or documented command; deleted |
 | `CrconDatabase` alias | `SAFE_DELETE` | test-only compatibility name after direct imports were updated; no production or operational reference; deleted |
 | PostgreSQL `PLAYER_NAME_SEARCH_SQL`, name-index probe, exact-ID wrapper and related escape helper | `SAFE_DELETE` | removed from `CrconReadRepository` in TASK-303; no production caller, route, frontend, rollback path, worker, Compose or docs; REST `get_players_history` is canonical; deleted with tests that only asserted the obsolete surface |
+| Three private payload helpers (`_leaderboard_snapshot_items_need_playtime_enrichment`, `_load_runtime_leaderboard_items`, `_is_snapshot_stale`) | `SAFE_DELETE` | no production, route, frontend, worker, dynamic-entrypoint or documentation caller after extraction; the runtime leaderboard loader was referenced only by a test asserting it was not called; removed in TASK-305 |
 | A2S/collector/snapshot stack | `LEGACY_ROLLBACK_REQUIRED` | `/api/servers` legacy selector and explicit latest/history routes still read it |
 | historical/RCON materializers and stores | `MIGRATED_BUT_ROLLBACK_ONLY` plus mixed product dependencies | immediate selectors and active derived features still require them; retained |
 | parity observer | `DYNAMIC_ENTRYPOINT` | bounded documented tool retained at `app.observe_current_match_parity`; no waiting or behavioral change performed |

@@ -113,7 +113,7 @@ class HistoricalSourceSelectorTests(unittest.TestCase):
                 os.environ, {"HLL_HISTORICAL_MATCH_SOURCE": "legacy"}, clear=True
             ),
             patch(
-                "app.api.payloads._build_recent_historical_matches_legacy_snapshot_payload",
+                "app.api.payloads.history._build_recent_historical_matches_legacy_snapshot_payload",
                 return_value=sentinel,
             ) as legacy,
         ):
@@ -131,11 +131,11 @@ class HistoricalSourceSelectorTests(unittest.TestCase):
                 os.environ, {"HLL_HISTORICAL_MATCH_SOURCE": "crcon"}, clear=True
             ),
             patch(
-                "app.api.payloads.build_crcon_recent_matches_payload",
+                "app.api.payloads.history.build_crcon_recent_matches_payload",
                 return_value=list_sentinel,
             ) as list_builder,
             patch(
-                "app.api.payloads.build_crcon_match_detail_payload",
+                "app.api.payloads.history.build_crcon_match_detail_payload",
                 return_value=detail_sentinel,
             ) as detail_builder,
         ):

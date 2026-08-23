@@ -298,13 +298,13 @@ class PlayerSearchPayloadSelectionTests(unittest.TestCase):
         }
         with (
             patch.dict(os.environ, {"HLL_HISTORICAL_AGGREGATE_SOURCE": "crcon"}),
-            patch("app.api.payloads.get_crcon_player_search_service", return_value=service),
+            patch("app.api.payloads.players.get_crcon_player_search_service", return_value=service),
             patch(
-                "app.api.payloads.get_historical_aggregate_service",
+                "app.api.payloads.players.get_historical_aggregate_service",
                 side_effect=AssertionError("PostgreSQL search used"),
             ),
             patch(
-                "app.api.payloads.search_rcon_materialized_players",
+                "app.api.payloads.players.search_rcon_materialized_players",
                 side_effect=AssertionError("legacy search used"),
             ),
         ):
@@ -316,7 +316,7 @@ class PlayerSearchPayloadSelectionTests(unittest.TestCase):
         with (
             patch.dict(os.environ, {"HLL_HISTORICAL_AGGREGATE_SOURCE": "legacy"}),
             patch(
-                "app.api.payloads.search_rcon_materialized_players",
+                "app.api.payloads.players.search_rcon_materialized_players",
                 return_value={
                     "query": "Player",
                     "server_id": None,
@@ -325,7 +325,7 @@ class PlayerSearchPayloadSelectionTests(unittest.TestCase):
                 },
             ),
             patch(
-                "app.api.payloads.get_crcon_player_search_service",
+                "app.api.payloads.players.get_crcon_player_search_service",
                 side_effect=AssertionError("CRCON search used"),
             ),
         ):

@@ -9,7 +9,7 @@ from threading import Event, Lock, Thread
 import unittest
 from unittest.mock import MagicMock, patch
 
-from app import payloads
+from app.api.payloads import current_match as payloads
 from app.config import (
     get_crcon_current_match_bindings,
     get_current_match_source,

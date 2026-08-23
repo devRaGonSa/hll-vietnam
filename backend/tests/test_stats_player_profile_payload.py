@@ -105,7 +105,7 @@ class StatsPlayerProfilePayloadTests(unittest.TestCase):
 
     def test_build_stats_player_profile_payload_exposes_ready_real_kpm_and_external_links(self) -> None:
         with patch(
-            "app.api.payloads.get_rcon_materialized_player_stats",
+            "app.api.payloads.players.get_rcon_materialized_player_stats",
             return_value={
                 "player_id": "76561198000000000",
                 "player_name": "Steam Player",
@@ -160,7 +160,7 @@ class StatsPlayerProfilePayloadTests(unittest.TestCase):
 
     def test_build_stats_player_profile_payload_keeps_kpm_null_when_connection_intervals_are_missing(self) -> None:
         with patch(
-            "app.api.payloads.get_rcon_materialized_player_stats",
+            "app.api.payloads.players.get_rcon_materialized_player_stats",
             return_value={
                 "player_id": "epic-player-id",
                 "player_name": "Epic Player",
