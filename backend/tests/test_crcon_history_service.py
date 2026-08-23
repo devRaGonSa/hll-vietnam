@@ -423,7 +423,7 @@ class HistoricalRouteCompatibilityTests(unittest.TestCase):
     def test_recent_route_validates_and_forwards_page(self) -> None:
         sentinel = {"status": "ok", "data": {}}
         with patch(
-            "app.api.routes.build_recent_historical_matches_snapshot_payload",
+            "app.api.routes.history.build_recent_historical_matches_snapshot_payload",
             return_value=sentinel,
         ) as builder:
             status, payload = resolve_get_payload(

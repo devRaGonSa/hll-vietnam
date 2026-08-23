@@ -1,7 +1,7 @@
 # CRCON-first legacy dependency ledger
 
 Evidence date: 2026-08-23. Scope: repository readers, writers and declared
-Compose jobs after the TASK-305 API facade extraction. This is a
+Compose jobs after the TASK-306 route-dispatch extraction. This is a
 code/configuration audit; it is not a deployment observation and it authorizes
 no shutdown or deletion.
 
@@ -26,6 +26,12 @@ no shutdown or deletion.
 | Current match | `HLL_CURRENT_MATCH_SOURCE=legacy\|crcon\|shadow` | `services/current_match.py`: single snapshot using public info + live stats + native log stream | `api/payloads/current_match.py`, AdminLog/current-match materializations | `MIGRATED`, legacy `ROLLBACK_ONLY` |
 | Match list/detail | `HLL_HISTORICAL_MATCH_SOURCE=legacy\|crcon` | `services/history.py` / scoreboard maps + map scoreboard | `api/payloads/history.py`, `historical_storage.py`, displayed snapshots, materialized matches | `MIGRATED`, legacy `ROLLBACK_ONLY` |
 | Summary/rankings/profile/search | `HLL_HISTORICAL_AGGREGATE_SOURCE=legacy\|crcon` | `services/historical_aggregates.py` plus `services/player_search.py`; read-only CRCON PostgreSQL except authenticated REST search | `api/payloads/rankings.py`, `api/payloads/players.py`, ranking/player/snapshot materializations | `MIGRATED`; runtime verification incomplete |
+
+Public route ownership is now explicit under `api/routes/`: `servers.py`,
+`current_match.py`, `history.py`, `players.py` and `rankings.py` align with the
+reader families above. `product_features.py` owns only the retained
+product-decision routes. `routes/__init__.py` remains the sole application
+entrypoint and changes no selector or rollback classification.
 
 ## Application-owned storage
 
@@ -106,11 +112,11 @@ it does not mean deployment is authorized.
 | Elo/MMR | not migrated | retain/replace/retire decision | active explicit endpoints | `PRODUCT_DECISION_REQUIRED` |
 | All legacy writers/storage | partial replacements only | zero-reader runtime proof absent | multiple rollback/product readers | `NOT_READY` |
 
-## Writer-disable gate after TASK-305
+## Writer-disable gate after TASK-306
 
-The audit is **not READY** for a writer-disable task. TASK-305 reorganized only
-the API contract facade and removed three proven-unreferenced private helpers;
-it does not authorize a shutdown specification. The exact blockers
+The audit is **not READY** for a writer-disable task. TASK-306 reorganized only
+GET route matching/validation and removed one monolith-only internal route
+table; it does not authorize a shutdown specification. The exact blockers
 are:
 
 1. configure canonical targets/bindings and a server-side Bearer API key with

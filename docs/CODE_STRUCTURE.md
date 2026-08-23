@@ -1,8 +1,9 @@
 # HLL Vietnam code structure
 
-Audit date: 2026-08-23. TASK-304 established the primary packages and TASK-305
-split the API payload facade by public domain. Public URLs, payload contracts,
-source selectors and runtime behavior remain unchanged.
+Audit date: 2026-08-23. TASK-304 established the primary packages, TASK-305
+split the API payload facade and TASK-306 split route dispatch by public
+domain. Public URLs, payload contracts, source selectors and runtime behavior
+remain unchanged.
 
 ## Dependency direction
 
@@ -101,7 +102,16 @@ backend/app/
   main.py                 # HTTP lifecycle
   config.py
   api/
-    routes.py             # unchanged URL dispatcher
+    routes/
+      __init__.py         # stable resolver and explicit ordered registry
+      common.py           # shared route result and identical query parsers
+      current_match.py    # four current-match transports
+      history.py          # recent/detail/legacy summary routes
+      players.py          # exact search before dynamic opaque player ID
+      product_features.py # MVP/player-event/Elo routes pending decisions
+      rankings.py         # ranking/leaderboard/aggregate routes
+      servers.py          # exact server routes before dynamic history
+      static.py           # health and static community routes
     payloads/
       __init__.py         # stable compatibility exports only
       common.py           # displayed-snapshot/fallback metadata
@@ -148,11 +158,24 @@ the tree look cleaner while obscuring those mixed ownership boundaries.
 
 ## API and frontend contracts
 
-`api/routes.py` remains a URL dispatcher with no SQL, CRCON parsing or
-historical reconstruction. All existing URLs remain unchanged. Routes now
-import canonical builders from the domain payload modules. Existing consumers
-may continue to use `from app.api.payloads import ...` through the 98-line
-`payloads/__init__.py` compatibility surface.
+The former 584-line `api/routes.py` is now a routes package with no SQL, CRCON
+parsing or historical reconstruction. `routes/__init__.py` retains the stable
+`resolve_get_payload(path)` import and dispatches through an explicit immutable
+registry in this order: static, servers, current match, players, rankings,
+history and product features. `main.py`, scripts and external callers therefore
+need no import change or domain knowledge.
+
+All 37 existing URLs remain unchanged. Each router uses the same
+`(HTTPStatus | None, payload)` result contract and imports its canonical TASK-305
+payload domain directly. Exact player search precedes the dynamic opaque
+player-ID route, and exact server history precedes per-server dynamic history.
+`routes/common.py` centralizes only the byte-for-byte-equivalent limit, page and
+year parsers; domain-specific validation and exact error text remain with their
+route owner. No regex construction, dynamic discovery or mutable request state
+was added.
+
+Existing consumers may continue to use `from app.api.payloads import ...`
+through the 98-line `payloads/__init__.py` compatibility surface.
 
 TASK-305 replaced the 2,904-line `api/payloads.py` monolith with domain modules.
 `current_match.py` depends one-way on the legacy server-card helper;
@@ -182,10 +205,12 @@ moving all scripts would change every HTML import for little backend benefit.
 - Add application orchestration to `services/`.
 - Add CRCON endpoint/DTO/repository behavior to `crcon/`; never modify CRCON
   itself from this repository.
-- Add URL parsing and request validation to `api/routes.py`; add public contract
-  assembly to the owning `api/payloads/<domain>.py` module; add only pure shared
-  compatibility mapping to `api/serializers.py`; keep use-case logic in
-  `services/` and CRCON transport/schema behavior in `crcon/`.
+- Add URL matching and request validation to the owning
+  `api/routes/<domain>.py` router, then register a new domain explicitly in
+  `api/routes/__init__.py` only when needed. Add public contract assembly to the
+  matching `api/payloads/<domain>.py` module; add only pure shared compatibility
+  mapping to `api/serializers.py`; keep use-case logic in `services/` and CRCON
+  transport/schema behavior in `crcon/`.
 - Keep one-off diagnostics as explicit documented module entrypoints.
 - Do not add new application-owned persistence for CRCON-first readers.
 - Do not place MVP, player-events or Elo/MMR under `legacy/` until a product
@@ -217,6 +242,7 @@ requests, scheduler/worker calls, every Compose variant, scripts, documented
 | `CrconDatabase` alias | `SAFE_DELETE` | test-only compatibility name after direct imports were updated; no production or operational reference; deleted |
 | PostgreSQL `PLAYER_NAME_SEARCH_SQL`, name-index probe, exact-ID wrapper and related escape helper | `SAFE_DELETE` | removed from `CrconReadRepository` in TASK-303; no production caller, route, frontend, rollback path, worker, Compose or docs; REST `get_players_history` is canonical; deleted with tests that only asserted the obsolete surface |
 | Three private payload helpers (`_leaderboard_snapshot_items_need_playtime_enrichment`, `_load_runtime_leaderboard_items`, `_is_snapshot_stale`) | `SAFE_DELETE` | no production, route, frontend, worker, dynamic-entrypoint or documentation caller after extraction; the runtime leaderboard loader was referenced only by a test asserting it was not called; removed in TASK-305 |
+| Monolith-only `GET_ROUTES` mixed static/server table | `SAFE_DELETE` | internal to the replaced dispatcher, with no external import/reference; static routes and `/api/servers` now have explicit domain ownership and the 37-route matrix proves one owner each |
 | A2S/collector/snapshot stack | `LEGACY_ROLLBACK_REQUIRED` | `/api/servers` legacy selector and explicit latest/history routes still read it |
 | historical/RCON materializers and stores | `MIGRATED_BUT_ROLLBACK_ONLY` plus mixed product dependencies | immediate selectors and active derived features still require them; retained |
 | parity observer | `DYNAMIC_ENTRYPOINT` | bounded documented tool retained at `app.observe_current_match_parity`; no waiting or behavioral change performed |
