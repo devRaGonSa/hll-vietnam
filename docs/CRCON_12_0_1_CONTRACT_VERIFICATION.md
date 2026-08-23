@@ -3,15 +3,134 @@
 ## Decision
 
 The seven prioritized HTTP endpoints are supported for HLL on CRCON 12.0.1.
-HLLV and the deployed PostgreSQL schema remain unverified. TASK-295 therefore
-separates the decisions: `/api/servers` can use the verified public-info API,
-while current-match remains in shadow evaluation until live/final parity,
-especially kills, has enough real-match evidence. Neither path depends on a
-CRCON PostgreSQL connection.
+Server-list and current-match REST transport have real HLL runtime evidence;
+current-match parity remains `INSUFFICIENT_EVIDENCE` by explicit product-owner
+acceptance and is not a prerequisite for local development. Historical
+list/detail have real upstream endpoint evidence but not a full application
+service run with canonical local ServerTargets. The authenticated Log Stream,
+player search and deployed PostgreSQL read paths remain unverified because the
+required authorized local configuration is absent. HLLV remains unverified.
 
-No CRCON, RCON, PostgreSQL, Redis, service or deployment state was changed.
-Only anonymous GET requests to already trusted public scoreboard targets and a
-read-only checkout of the official CRCON tag were used.
+TASK-307 performed no CRCON, RCON, PostgreSQL, Redis, service or deployment
+mutation. It used existing sanitized evidence, local fixtures/tests and a local
+HTTP fail-closed smoke. No real identity was retained.
+
+## TASK-307 runtime-readiness evidence
+
+### Canonical configuration availability
+
+On 2026-08-23 the current process had no non-empty value for
+`HLL_SERVER_TARGETS`, `HLL_CRCON_CURRENT_MATCH_BINDINGS`,
+`HLL_CRCON_LOG_STREAM_TOKENS` or `HLL_CRCON_DATABASE_URL`. The four public
+source selectors were also absent and therefore retained their safe `legacy`
+defaults outside the explicit smoke process. Only variable presence was
+inspected; no deployment file or alternate credential source was searched.
+
+Consequences:
+
+- no new external REST request was eligible under a configured ServerTarget;
+- no authenticated `get_players_history` or `ws/logs` request was eligible;
+- no PostgreSQL connection, `SHOW`, schema query or `EXPLAIN` was eligible;
+- HLLV had no authorized target and remains entirely `UNVERIFIED`.
+
+### Runtime capability matrix
+
+`CONTRACT_VERIFIED` means the application DTO/service contract is covered by
+the pinned v12.0.1 source/fixtures. It is deliberately separate from a real
+full-stack runtime result.
+
+| Game | Capability | Implemented | Contract verified | Runtime verified | Auth required | Blocker |
+| --- | --- | --- | --- | --- | --- | --- |
+| HLL | `server_list` | YES | YES | VERIFIED (TASK-298 real HLL) | NO | none for the reader |
+| HLL | `current_match_summary` | YES | YES | VERIFIED transport; parity status retained separately | NO | none for local cutover; parity is `INSUFFICIENT_EVIDENCE`, not a blocker |
+| HLL | `current_match_players` | YES | YES | VERIFIED transport; parity status retained separately | NO | same as summary |
+| HLL | `current_match_stats` | YES | YES | VERIFIED transport; typed K/D/TK post-fix probe | NO | same as summary |
+| HLL | `current_match_killfeed` | YES | YES | CONFIGURATION_REQUIRED | Bearer + `api.can_view_structured_logs` | token and enabled upstream Log Stream absent |
+| HLL | `historical_match_list` | YES | YES | UNVERIFIED full application chain | NO on verified targets | canonical ServerTarget/binding absent; upstream endpoint itself was verified |
+| HLL | `historical_match_detail` | YES | YES | UNVERIFIED full application chain | NO on verified targets | canonical ServerTarget/binding absent; upstream endpoint itself was verified |
+| HLL | `player_search` | YES | YES | AUTH_UNAVAILABLE | Bearer + `api.can_view_player_history` | authorized aligned binding absent |
+| HLL | `server_summary` | YES | YES | AUTH_UNAVAILABLE | SELECT-only PostgreSQL role | authorized DSN, target scope and deployed schema absent |
+| HLL | `rankings` | YES | YES | AUTH_UNAVAILABLE | SELECT-only PostgreSQL role | same database evidence gap |
+| HLL | `player_aggregate_profile` | YES | YES | AUTH_UNAVAILABLE | SELECT-only PostgreSQL role | same database evidence gap |
+| HLLV | every capability above | YES where shared implementation applies | NO real HLLV contract | UNVERIFIED | capability-dependent | no real authorized HLLV target or runtime evidence |
+
+### Local complete-stack fail-closed smoke
+
+A temporary backend was started on loopback with all four selectors explicitly
+set to `crcon` and with no target, token or DSN configured. No global default
+was changed. Sanitized results were:
+
+| Route family | Result | Legacy fallback |
+| --- | --- | --- |
+| `/api/servers` | HTTP 200 compatibility envelope, zero items, CRCON selected | `false` |
+| current-match snapshot | HTTP 503 explicit CRCON unavailable error | none |
+| historical recent list | HTTP 200, `found=false`, degraded reason `historical-target-not-configured` | `false` |
+| historical detail | HTTP 200, `found=false`, explicit `historical-target-not-configured` reason | `false` |
+| player search | HTTP 200, `UNAVAILABLE`, zero items, no enabled CRCON player-history target | none |
+| ranking | HTTP 200, `UNVERIFIED_SCHEMA`, `server-target-not-configured` | `false` |
+| server summary | HTTP 200 compatibility envelope with `UNVERIFIED_SCHEMA` | none |
+| player profile | HTTP 200, `UNVERIFIED_SCHEMA`, `server-target-not-configured` | none |
+
+This proves selector isolation and explicit non-success states, not upstream
+runtime availability. No legacy reader was invoked to turn a CRCON failure into
+a success.
+
+### PostgreSQL runtime, schema and query plans
+
+`CRCON_DB_SCHEMA_SOURCE=VERIFIED_12_0_1` remains supported by the pinned models.
+`CRCON_DB_DEPLOYED_SCHEMA=UNVERIFIED` and `CRCON_DB_RUNTIME=AUTH_UNAVAILABLE`.
+Without an explicitly authorized SELECT-only DSN, TASK-307 did not execute
+`SHOW transaction_read_only`, role/privilege metadata, schema metadata,
+aggregate data, `map_history.game` queries or `EXPLAIN`.
+
+The following distinctions therefore remain mandatory:
+
+| Concern | Source/code evidence | Deployed runtime evidence |
+| --- | --- | --- |
+| role is SELECT-only | deployment requirement documented | UNVERIFIED |
+| transaction is read-only | repository executes `BEGIN READ ONLY` then `SHOW transaction_read_only` | UNVERIFIED |
+| tables, columns, types and nullability | verified against pinned v12.0.1 models | UNVERIFIED |
+| indexes, FKs and unique constraints | verified against pinned v12.0.1 models | UNVERIFIED |
+| `player_stats.map_id -> map_history.id` | VERIFIED_SOURCE | UNVERIFIED_DEPLOYED |
+| unique player+map relation | VERIFIED_SOURCE | UNVERIFIED_DEPLOYED |
+| `map_history.server_number` and integer `game` | VERIFIED_SOURCE (`1=HLL`, `2=HLLV`) | UNVERIFIED_DEPLOYED_VALUES |
+| opaque canonical `player_id`, nullable explicit `steam_id` | VERIFIED_SOURCE | UNVERIFIED_DEPLOYED |
+
+No deployed query-plan classification can honestly be issued without
+`EXPLAIN`. The source unique index makes exact opaque-ID lookup
+`INDEX_OK_SOURCE_ONLY`; source indexes make bounded server summary, ranking and
+player aggregate queries plausible, but their deployed status remains
+`UNVERIFIED`, not `INDEX_OK` or `ACCEPTABLE`.
+
+### Load-protection verification
+
+The application safeguards are locally verified by code and focused tests:
+
+| Safeguard | Verified local behavior |
+| --- | --- |
+| database pool | default 2 connections; validated range 1-8 |
+| transaction safety | every repository checkout starts `BEGIN READ ONLY` and verifies read-only state |
+| timeouts | default connect 5s, statement 5000ms, lock 1000ms |
+| public bounds | route limit 1-100; page 1-1000; player search 1-100 |
+| caches | server list 2s; current match 1.5s; history list 30s/detail 3600s; aggregates bounded 60s/300s TTL |
+| load behavior | no load test, full-table export or stress test performed |
+
+### Final TASK-307 status matrix
+
+| Status | Decision |
+| --- | --- |
+| `CRCON_REST_RUNTIME_HLL` | `PARTIAL` |
+| `CRCON_LOG_STREAM_RUNTIME_HLL` | `CONFIGURATION_REQUIRED` |
+| `CRCON_DB_SCHEMA_SOURCE` | `VERIFIED_12_0_1` |
+| `CRCON_DB_DEPLOYED_SCHEMA` | `UNVERIFIED` |
+| `CRCON_DB_RUNTIME` | `AUTH_UNAVAILABLE` |
+| `SERVER_SUMMARY_RUNTIME` | `UNVERIFIED` |
+| `RANKINGS_RUNTIME` | `UNVERIFIED` |
+| `PLAYER_PROFILE_RUNTIME` | `UNVERIFIED` |
+| `PLAYER_SEARCH_RUNTIME` | `AUTH_UNAVAILABLE` |
+| `CURRENT_MATCH_HLL` | `INSUFFICIENT_EVIDENCE` (retained; non-blocking for local development) |
+| `CURRENT_MATCH_HLLV` | `UNVERIFIED` |
+| `LEGACY_WRITER_DISABLE_READINESS` | `NOT_READY` |
 
 ## Verified version and targets
 
