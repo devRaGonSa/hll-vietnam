@@ -1,7 +1,7 @@
 # CRCON-first legacy dependency ledger
 
 Evidence date: 2026-08-23. Scope: repository readers, writers and declared
-Compose jobs after TASK-303. This is a code/configuration audit; it is not a
+Compose jobs after the TASK-304 structural audit. This is a code/configuration audit; it is not a
 deployment observation and it authorizes no shutdown or deletion.
 
 ## Status vocabulary
@@ -21,10 +21,10 @@ deployment observation and it authorizes no shutdown or deletion.
 
 | Family | Canonical selector | CRCON reader | Legacy reader | Audit status |
 | --- | --- | --- | --- | --- |
-| Server cards | `HLL_SERVER_LIST_SOURCE=legacy\|crcon` | `server_service.py` / `get_public_info` | `payloads.py`, `storage.py`, live collectors | `MIGRATED`, legacy `ROLLBACK_ONLY` |
-| Current match | `HLL_CURRENT_MATCH_SOURCE=legacy\|crcon\|shadow` | single snapshot: public info + live stats + native log stream | AdminLog/current-match materializations | `MIGRATED`, legacy `ROLLBACK_ONLY` |
-| Match list/detail | `HLL_HISTORICAL_MATCH_SOURCE=legacy\|crcon` | `history_service.py` / scoreboard maps + map scoreboard | `historical_storage.py`, displayed snapshots, materialized matches | `MIGRATED`, legacy `ROLLBACK_ONLY` |
-| Summary/rankings/profile/search | `HLL_HISTORICAL_AGGREGATE_SOURCE=legacy\|crcon` | read-only CRCON PostgreSQL except search; search is authenticated `get_players_history` | ranking/player/snapshot materializations | `MIGRATED`; runtime verification incomplete |
+| Server cards | `HLL_SERVER_LIST_SOURCE=legacy\|crcon` | `services/servers.py` / `get_public_info` | `api/payloads.py`, `storage.py`, live collectors | `MIGRATED`, legacy `ROLLBACK_ONLY` |
+| Current match | `HLL_CURRENT_MATCH_SOURCE=legacy\|crcon\|shadow` | `services/current_match.py`: single snapshot using public info + live stats + native log stream | AdminLog/current-match materializations | `MIGRATED`, legacy `ROLLBACK_ONLY` |
+| Match list/detail | `HLL_HISTORICAL_MATCH_SOURCE=legacy\|crcon` | `services/history.py` / scoreboard maps + map scoreboard | `historical_storage.py`, displayed snapshots, materialized matches | `MIGRATED`, legacy `ROLLBACK_ONLY` |
+| Summary/rankings/profile/search | `HLL_HISTORICAL_AGGREGATE_SOURCE=legacy\|crcon` | `services/historical_aggregates.py` plus `services/player_search.py`; read-only CRCON PostgreSQL except authenticated REST search | ranking/player/snapshot materializations | `MIGRATED`; runtime verification incomplete |
 
 ## Application-owned storage
 
@@ -64,7 +64,7 @@ tables. The row below covers both where both exist.
 | `rcon_annual_ranking_snapshot_items` | same annual readers | annual ranking generator | direct CRCON DB annual query | `ROLLBACK_ONLY` |
 | `player_search_index` | only `search_rcon_materialized_players` on legacy selector | historical runner / `refresh_player_search_index` | authenticated `get_players_history` | `ROLLBACK_ONLY`; no CRCON-mode production reader |
 | `player_period_stats` | legacy player profile | historical runner / `refresh_player_period_stats` | read-only CRCON DB profile aggregates | `ROLLBACK_ONLY` |
-| deprecated CRCON DB player-search helpers (`PLAYER_NAME_SEARCH_SQL`, exact-ID helper) | no production call site or repository-protocol method after TASK-303; definitions/tests only | none | authenticated `get_players_history` | `DEAD_CANDIDATE`; remove in a later cleanup only after rollback policy is settled |
+| deprecated CRCON DB player-search helpers (`PLAYER_NAME_SEARCH_SQL`, exact-ID helper) | none after complete TASK-304 reference audit | none | authenticated `get_players_history` | `DECOMMISSIONED` locally as `SAFE_DELETE`; no storage was changed |
 | `elo_mmr_player_ratings` | Elo leaderboard/player endpoints | Elo rebuild | none approved | `PRODUCT_DECISION_REQUIRED` |
 | `elo_mmr_match_results` | Elo rebuild/checkpoint logic | Elo rebuild | none approved | `PRODUCT_DECISION_REQUIRED` |
 | `elo_mmr_monthly_rankings` | Elo public endpoints | Elo rebuild | none approved | `PRODUCT_DECISION_REQUIRED` |
@@ -85,7 +85,7 @@ tables. The row below covers both where both exist.
 | database maintenance | historical runner when enabled; default 12h in JTA config | deletes bounded old materialized/AdminLog/server snapshots | retained tables | `ACTIVE_REQUIRED`; it is not a replacement writer |
 | scoreboard candidate backfill | manual bounded CLI | candidate table | legacy match correlation only | `ROLLBACK_ONLY` |
 | CRCON native Log Stream consumers | backend startup only in current-match `crcon|shadow` | process memory only | CRCON current-match kill feed | `MIGRATED`; not a legacy writer |
-| TASK-298 parity observer | manual bounded CLI only | optional sanitized evidence file | no product reader | `DEAD_CANDIDATE` operationally; preserved unchanged for later validation |
+| TASK-298 parity observer | manual bounded `app.observe_current_match_parity` CLI only | optional sanitized evidence file | no product reader | preserved in place for later validation; TASK-298 remains `INSUFFICIENT_EVIDENCE` and TASK-304 performs no waiting |
 
 ## Readiness matrix
 
@@ -105,10 +105,11 @@ it does not mean deployment is authorized.
 | Elo/MMR | not migrated | retain/replace/retire decision | active explicit endpoints | `PRODUCT_DECISION_REQUIRED` |
 | All legacy writers/storage | partial replacements only | zero-reader runtime proof absent | multiple rollback/product readers | `NOT_READY` |
 
-## TASK-304 gate
+## Writer-disable gate after TASK-304
 
-The audit is **not READY** for a writer-disable task. Therefore TASK-303 does
-not create or authorize a TASK-304 shutdown specification. The exact blockers
+The audit is **not READY** for a writer-disable task. TASK-304 moved code and
+removed only proven compatibility/search dead code; it does not authorize a
+shutdown specification. The exact blockers
 are:
 
 1. configure canonical targets/bindings and a server-side Bearer API key with
@@ -121,5 +122,5 @@ are:
 5. prove zero active readers per candidate writer/table in the intended runtime
    configuration.
 
-No writer was stopped, no table or artifact was deleted, and no Compose or
-deployment file was changed by TASK-303.
+No writer was stopped, no table, gameplay database or snapshot artifact was
+deleted, and no Compose or deployment runtime behavior was changed by TASK-304.

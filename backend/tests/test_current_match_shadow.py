@@ -16,7 +16,7 @@ from app.crcon.dto import (
     parse_map_scoreboard,
     parse_scoreboard_maps,
 )
-from app.current_match import (
+from app.services.current_match import (
     CurrentMatchSnapshot,
     CurrentMatchSummary,
     CurrentPlayer,
@@ -24,7 +24,7 @@ from app.current_match import (
     legacy_players_projection,
     legacy_summary_projection,
 )
-from app.current_match_shadow import (
+from app.services.current_match_shadow import (
     FinalMatchVerifier,
     ParityClassification,
     compare_current_match,

@@ -122,7 +122,7 @@ from pathlib import Path
 
 sys.path.insert(0, "backend")
 
-from app.routes import resolve_get_payload
+from app.api.routes import resolve_get_payload
 from app.config import use_postgres_rcon_storage
 import app.postgres_rcon_storage as postgres_rcon_storage
 import app.historical_runner as historical_runner

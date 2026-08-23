@@ -7,7 +7,7 @@ from http import HTTPStatus
 from datetime import datetime, timezone
 from urllib.parse import parse_qs, urlparse
 
-from .current_match import CurrentMatchCursorError, CurrentMatchUnavailableError
+from ..services.current_match import CurrentMatchCursorError, CurrentMatchUnavailableError
 from .payloads import (
     build_global_ranking_payload,
     build_stats_player_profile_payload,
@@ -48,9 +48,9 @@ from .payloads import (
     build_weekly_top_kills_payload,
     build_stats_player_search_payload,
 )
-from .scoreboard_origins import get_trusted_public_scoreboard_origin
-from .config import get_historical_aggregate_source
-from .server_targets import load_server_targets
+from ..scoreboard_origins import get_trusted_public_scoreboard_origin
+from ..config import get_historical_aggregate_source
+from ..server_targets import load_server_targets
 
 RANKING_METRICS = {
     "kills",

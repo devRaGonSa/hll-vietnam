@@ -18,7 +18,7 @@ Clasificación de viabilidad: **no viable sin nueva fuente** (para confirmación
 
 - `backend/app/rcon_client.py`
 - `backend/app/providers/rcon_provider.py`
-- `backend/app/payloads.py`
+- `backend/app/api/payloads.py`
 - `backend/app/rcon_admin_log_parser.py`
 - `backend/app/rcon_admin_log_storage.py`
 - `backend/app/rcon_historical_worker.py`

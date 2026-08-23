@@ -21,7 +21,7 @@ from app.crcon.dto import (
     parse_scoreboard_maps,
 )
 from app.crcon.models import CrconApiError
-from app.history_service import (
+from app.services.history import (
     HistoricalMatchDetail,
     HistoryBinding,
     HistoryMatchNotFoundError,
@@ -29,7 +29,7 @@ from app.history_service import (
     build_crcon_match_detail_payload,
     build_crcon_recent_matches_payload,
 )
-from app.routes import resolve_get_payload
+from app.api.routes import resolve_get_payload
 from app.server_targets import ServerTarget
 
 
@@ -113,7 +113,7 @@ class HistoricalSourceSelectorTests(unittest.TestCase):
                 os.environ, {"HLL_HISTORICAL_MATCH_SOURCE": "legacy"}, clear=True
             ),
             patch(
-                "app.payloads._build_recent_historical_matches_legacy_snapshot_payload",
+                "app.api.payloads._build_recent_historical_matches_legacy_snapshot_payload",
                 return_value=sentinel,
             ) as legacy,
         ):
@@ -131,11 +131,11 @@ class HistoricalSourceSelectorTests(unittest.TestCase):
                 os.environ, {"HLL_HISTORICAL_MATCH_SOURCE": "crcon"}, clear=True
             ),
             patch(
-                "app.payloads.build_crcon_recent_matches_payload",
+                "app.api.payloads.build_crcon_recent_matches_payload",
                 return_value=list_sentinel,
             ) as list_builder,
             patch(
-                "app.payloads.build_crcon_match_detail_payload",
+                "app.api.payloads.build_crcon_match_detail_payload",
                 return_value=detail_sentinel,
             ) as detail_builder,
         ):
@@ -423,7 +423,7 @@ class HistoricalRouteCompatibilityTests(unittest.TestCase):
     def test_recent_route_validates_and_forwards_page(self) -> None:
         sentinel = {"status": "ok", "data": {}}
         with patch(
-            "app.routes.build_recent_historical_matches_snapshot_payload",
+            "app.api.routes.build_recent_historical_matches_snapshot_payload",
             return_value=sentinel,
         ) as builder:
             status, payload = resolve_get_payload(

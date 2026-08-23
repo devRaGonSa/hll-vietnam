@@ -19,7 +19,7 @@ This proposal is based on:
 - `docs/historical-data-quality-notes.md`
 - `backend/app/historical_models.py`
 - `backend/app/historical_storage.py`
-- `backend/app/payloads.py`
+- `backend/app/api/payloads.py`
 
 The design assumes the existing monthly window already used by the backend:
 

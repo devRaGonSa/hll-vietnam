@@ -20,7 +20,7 @@ Code reviewed:
 - `backend/app/rcon_admin_log_storage.py`
 - `backend/app/rcon_admin_log_materialization.py`
 - `backend/app/rcon_annual_rankings.py`
-- `backend/app/routes.py`
+- `backend/app/api/routes.py`
 - `backend/tests/test_rcon_materialization_pipeline.py`
 
 ## What Works Already

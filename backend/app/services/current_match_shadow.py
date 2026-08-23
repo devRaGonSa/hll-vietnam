@@ -13,10 +13,10 @@ from enum import StrEnum
 from threading import Lock
 from typing import Protocol
 
-from .crcon.dto import CrconMapPage, CrconMapScoreboard
+from ..crcon.dto import CrconMapPage, CrconMapScoreboard
 from .current_match import CurrentMatchSnapshot, CurrentPlayer
-from .normalizers import normalize_map_name
-from .server_targets import ServerTarget
+from ..normalizers import normalize_map_name
+from ..server_targets import ServerTarget
 
 
 LOGGER = logging.getLogger(__name__)

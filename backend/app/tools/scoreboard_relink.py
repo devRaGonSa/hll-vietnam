@@ -7,9 +7,9 @@ import json
 from collections.abc import Iterable
 from pathlib import Path
 
-from .rcon_admin_log_materialization import list_materialized_rcon_matches
-from .rcon_historical_read_model import build_materialized_scoreboard_correlation_input
-from .rcon_scoreboard_correlation import resolve_rcon_scoreboard_correlation
+from ..rcon_admin_log_materialization import list_materialized_rcon_matches
+from ..rcon_historical_read_model import build_materialized_scoreboard_correlation_input
+from ..rcon_scoreboard_correlation import resolve_rcon_scoreboard_correlation
 
 
 DEFAULT_LIMIT = 500

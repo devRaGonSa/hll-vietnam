@@ -23,8 +23,8 @@ from app.rcon_historical_storage import start_rcon_historical_capture_run
 from app.rcon_historical_read_model import get_rcon_historical_match_detail
 from app.rcon_admin_log_materialization import materialize_rcon_admin_log
 from app.rcon_admin_log_storage import persist_rcon_admin_log_entries
-from app.rcon_scoreboard_relink import relink_materialized_matches
-from app.scoreboard_correlation_diagnostics import inspect_materialized_match_correlation
+from app.tools.scoreboard_relink import relink_materialized_matches
+from app.tools.scoreboard_correlation_diagnostics import inspect_materialized_match_correlation
 
 
 class PersistedScoreboardMatchLinkTests(unittest.TestCase):

@@ -4,10 +4,11 @@
 
 HLL Vietnam is a community website repository for a Spanish-speaking Discord community centered on the future game HLL Vietnam.
 
-The current implementation is intentionally small:
+The implementation began as a small foundation and now includes:
 
 - a static landing page in `frontend/`
-- a reserved Python backend space in `backend/`
+- a functional Python backend in `backend/` with selectable CRCON-first readers
+  and legacy rollback
 - documentation in `docs/`
 - an AI task orchestration layer in `ai/`
 
@@ -16,7 +17,8 @@ This repository is in foundation stage. The objective is to grow in a controlled
 ## Current Product State
 
 - Frontend: static HTML, CSS and vanilla JavaScript
-- Backend: not implemented yet, but planned in Python
+- Backend: Python HTTP API with explicit `api/`, `services/`, `crcon/`,
+  `domain/` and `tools/` package boundaries
 - AI Platform: integrated to coordinate planning and task execution
 - Product goal in current phase: maintain a clean landing and repository structure
 - Default deployment: `backend` + `frontend`; historical workers are advanced/manual only.
@@ -59,8 +61,17 @@ This is the live product surface in the current phase. Keep changes conservative
 - `backend/README.md`
 - `backend/requirements.txt`
 - `backend/app/__init__.py`
+- `backend/app/api/`
+- `backend/app/services/`
+- `backend/app/crcon/`
+- `backend/app/domain/`
+- `backend/app/tools/`
 
-This area is a reserved foundation for the future Python backend. Do not add functional services unless explicitly requested by task.
+This is the functional backend. New public use cases belong in `services/`,
+request/JSON compatibility in `api/`, and CRCON transport/schema code in
+`crcon/`. The mixed flat historical/RCON/storage modules remain rollback or
+product-decision code until a dedicated task can isolate them safely. See
+`docs/CODE_STRUCTURE.md`.
 
 ### AI Platform
 

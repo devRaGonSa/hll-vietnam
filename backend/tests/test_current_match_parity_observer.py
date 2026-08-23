@@ -13,13 +13,13 @@ from app.crcon.dto import (
     CrconMapScoreboard,
     CrconPlayerMatchStats,
 )
-from app.current_match import (
+from app.services.current_match import (
     CurrentMatchSnapshot,
     CurrentMatchSummary,
     CurrentPlayer,
     MatchIdentityKind,
 )
-from app.current_match_shadow import FinalMatchVerifier
+from app.services.current_match_shadow import FinalMatchVerifier
 from app.domain import PlayerId, PlayerIdentity
 from app.observe_current_match_parity import (
     CurrentMatchParityObserver,

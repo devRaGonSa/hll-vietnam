@@ -10,17 +10,19 @@ from datetime import UTC, datetime
 from threading import Lock
 from typing import Any
 
-from .config import (
+from ..config import (
     get_crcon_api_timeout_seconds,
     get_crcon_current_match_bindings,
 )
-from .crcon.api import CrconApiClient
-from .crcon.cache import TtlCache
-from .crcon.dto import CrconHistoricalMap, CrconMapPage, CrconMapScoreboard
-from .crcon.models import CrconApiError
-from .historical_storage import ALL_SERVERS_SLUG
-from .player_external_profiles import build_external_player_profile_fields
-from .server_targets import ServerTarget, load_server_targets
+from ..crcon.api import CrconApiClient
+from ..crcon.cache import TtlCache
+from ..crcon.dto import CrconHistoricalMap, CrconMapPage, CrconMapScoreboard
+from ..crcon.models import CrconApiError
+from ..player_external_profiles import build_external_player_profile_fields
+from ..server_targets import ServerTarget, load_server_targets
+
+
+ALL_SERVERS_SLUG = "all-servers"
 
 
 MAX_PAGE_SIZE = 100

@@ -24,7 +24,7 @@ from app.crcon.log_stream import (
     CrconLogStreamWindow,
     parse_log_stream_payload,
 )
-from app.current_match import (
+from app.services.current_match import (
     CrconCurrentMatchBinding,
     CurrentMatchSnapshotService,
     decode_stream_kill_cursor,

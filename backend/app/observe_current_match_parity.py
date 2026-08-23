@@ -18,14 +18,14 @@ from typing import Any
 from .config import get_crcon_api_timeout_seconds, get_crcon_current_match_bindings
 from .crcon import CrconApiClient
 from .crcon.dto import CrconLiveGameStats
-from .current_match import (
+from .services.current_match import (
     CrconCurrentMatchBinding,
     CurrentMatchSnapshot,
     CurrentMatchSnapshotService,
     CurrentPlayer,
 )
-from .current_match_shadow import FinalMatchParityReport, FinalMatchVerifier
-from .payloads import (
+from .services.current_match_shadow import FinalMatchParityReport, FinalMatchVerifier
+from .api.payloads import (
     _build_legacy_current_match_payload,
     _build_legacy_current_match_player_stats_payload,
 )

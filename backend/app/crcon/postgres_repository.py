@@ -183,14 +183,6 @@ JOIN steam_id_64 AS identities ON identities.id = stats.playersteamid_id
 WHERE identities.steam_id_64 = %s
   AND maps.server_number = %s
 """
-PLAYER_NAME_INDEX_SQL = """
-SELECT indexdef
-FROM pg_indexes
-WHERE schemaname = current_schema()
-  AND tablename = 'player_names'
-ORDER BY indexname
-"""
-
 SERVER_AGGREGATE_SQL = """
 WITH scoped_maps AS (
     SELECT id, start, "end", map_name
@@ -299,53 +291,6 @@ LEFT JOIN LATERAL (
       AND maps."end" IS NOT NULL
 ) AS latest ON true
 WHERE ranked.player_id = %s
-"""
-
-PLAYER_NAME_SEARCH_SQL = """
-WITH candidates AS (
-    SELECT DISTINCT ON (names.playersteamid_id)
-           names.playersteamid_id, names.name
-    FROM player_names AS names
-    WHERE names.name ILIKE %s ESCAPE '\\'
-    ORDER BY names.playersteamid_id, names.last_seen DESC, names.id DESC
-    LIMIT %s
-), aggregate_rows AS (
-    SELECT identities.steam_id_64 AS player_id,
-           candidates.name AS player_name,
-           identities.steam_id, soldier.eos_id, soldier.platform,
-           count(DISTINCT stats.map_id)::bigint AS matches_played,
-           COALESCE(max(stats.kills), 0)::bigint AS record_kills,
-           COALESCE(sum(stats.kills), 0)::bigint AS kills,
-           COALESCE(sum(stats.deaths), 0)::bigint AS deaths,
-           COALESCE(sum(stats.teamkills), 0)::bigint AS teamkills,
-           COALESCE(sum(stats.deaths_by_tk), 0)::bigint AS deaths_by_teamkill,
-           COALESCE(sum(stats.time_seconds), 0)::bigint AS time_seconds,
-           COALESCE(sum(stats.combat), 0)::bigint AS combat,
-           COALESCE(sum(stats.offense), 0)::bigint AS offense,
-           COALESCE(sum(stats.defense), 0)::bigint AS defense,
-           COALESCE(sum(stats.support), 0)::bigint AS support,
-           COALESCE(sum(stats.vehicle_kills), 0)::bigint AS vehicle_kills,
-           COALESCE(sum(stats.vehicles_destroyed), 0)::bigint AS vehicles_destroyed,
-           max(maps."end") AS last_seen_at,
-           array_agg(DISTINCT maps.server_number ORDER BY maps.server_number) AS servers_seen
-    FROM candidates
-    JOIN steam_id_64 AS identities ON identities.id = candidates.playersteamid_id
-    LEFT JOIN player_soldier AS soldier ON soldier.playersteamid_id = identities.id
-    JOIN player_stats AS stats ON stats.playersteamid_id = identities.id
-    JOIN map_history AS maps ON maps.id = stats.map_id
-    WHERE maps.server_number = ANY(%s)
-      AND maps.game = %s
-      AND maps."end" IS NOT NULL
-    GROUP BY identities.id, identities.steam_id_64, identities.steam_id,
-             soldier.eos_id, soldier.platform, candidates.name
-)
-SELECT player_id, player_name, steam_id, eos_id, platform, matches_played,
-       record_kills, kills, deaths, teamkills, deaths_by_teamkill, time_seconds,
-       combat, offense, defense, support, vehicle_kills, vehicles_destroyed,
-       last_seen_at, servers_seen, NULL::bigint AS kills_ranking_position
-FROM aggregate_rows
-ORDER BY lower(player_name), player_id
-LIMIT %s
 """
 
 Connector = Callable[..., Any]
@@ -622,63 +567,6 @@ LIMIT %s OFFSET %s
             row = connection.execute(PLAYER_PROFILE_SQL, params).fetchone()
         return _player_profile_row(row) if row is not None else None
 
-    def find_player_by_exact_id(
-        self,
-        *,
-        player_id: str,
-        scopes: tuple[CrconServerScope, ...],
-        limit: int,
-    ) -> tuple[CrconPlayerProfileAggregate, ...]:
-        """Deprecated TASK-303 helper; public exact-ID fallback now uses REST."""
-        if limit < 1 or limit > 100:
-            raise ValueError("limit must be between one and 100.")
-        item = self.get_player_profile_aggregate(
-            player_id=player_id,
-            scopes=scopes,
-            started_at=None,
-            ended_at=None,
-        )
-        return (item,) if item is not None else ()
-
-    def supports_indexed_player_name_search(self) -> bool:
-        """Deprecated TASK-303 diagnostic; require an index before substring ILIKE."""
-        self._require_configured()
-        with self._read_only_connection() as connection:
-            rows = connection.execute(PLAYER_NAME_INDEX_SQL).fetchall()
-        for row in rows:
-            value = _row_values(row, ("indexdef",))[0]
-            definition = str(value or "").lower()
-            if (
-                ("gin_trgm_ops" in definition or "gist_trgm_ops" in definition)
-                and "name" in definition
-            ):
-                return True
-        return False
-
-    def search_players_by_name(
-        self,
-        *,
-        query: str,
-        scopes: tuple[CrconServerScope, ...],
-        limit: int,
-    ) -> tuple[CrconPlayerProfileAggregate, ...]:
-        """Deprecated TASK-303 helper; public search now uses CRCON REST."""
-        if limit < 1 or limit > 100:
-            raise ValueError("limit must be between one and 100.")
-        normalized = str(query or "").strip()
-        if not normalized:
-            raise ValueError("query is required.")
-        if not self.supports_indexed_player_name_search():
-            raise CrconDatabaseError("CRCON player name search is performance blocked.")
-        server_numbers, game = _scope_query_values(scopes)
-        pattern = f"%{_escape_like(normalized)}%"
-        with self._read_only_connection() as connection:
-            rows = connection.execute(
-                PLAYER_NAME_SEARCH_SQL,
-                (pattern, limit, list(server_numbers), game, limit),
-            ).fetchall()
-        return tuple(_player_profile_row(row) for row in rows)
-
     def close(self) -> None:
         """Close idle pooled runtime connections; injected test connections are not pooled."""
         if self._pool is not None:
@@ -829,10 +717,6 @@ def _scope_query_values(
     game = games.pop()
     game_number = 1 if game == "hll" else 2
     return tuple(sorted({scope.server_number for scope in scopes})), game_number
-
-
-def _escape_like(value: str) -> str:
-    return value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
 
 
 def _aggregate_query_params(

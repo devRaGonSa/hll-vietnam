@@ -18,15 +18,15 @@ from ..config import (
 )
 from ..server_targets import ServerTarget, load_server_targets
 from ..player_external_profiles import build_external_player_profile_fields
-from .cache import TtlCache
-from .models import (
+from ..crcon.cache import TtlCache
+from ..crcon.models import (
     CrconAggregateState,
     CrconCapability,
     CrconCapabilityStatus,
     CrconDatabaseError,
 )
-from .postgres_repository import PostgresCrconRepository
-from .repository import CrconReadRepository, CrconServerScope, resolve_server_scope
+from ..crcon.postgres_repository import PostgresCrconRepository
+from ..crcon.repository import CrconReadRepository, CrconServerScope, resolve_server_scope
 
 
 ALL_SERVER_KEYS = {"", "all", "all-servers"}

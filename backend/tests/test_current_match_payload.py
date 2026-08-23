@@ -7,10 +7,10 @@ from unittest.mock import MagicMock, patch
 
 from app import payloads
 from app import rcon_admin_log_storage
-from app.payloads import build_current_match_payload
+from app.api.payloads import build_current_match_payload
 from app.rcon_admin_log_storage import list_current_match_player_stats, persist_rcon_admin_log_entries
 from app.rcon_client import RconServerTarget
-from app.routes import resolve_get_payload
+from app.api.routes import resolve_get_payload
 
 
 TARGET = RconServerTarget(
@@ -800,8 +800,8 @@ class CurrentMatchPublicEndpointHardeningTests(unittest.TestCase):
 
 def _build_with_rcon_sample(sample: dict[str, object]) -> dict[str, object]:
     with (
-        patch("app.payloads.load_rcon_targets", return_value=(TARGET,)),
-        patch("app.payloads.query_live_server_sample", return_value=sample),
+        patch("app.api.payloads.load_rcon_targets", return_value=(TARGET,)),
+        patch("app.api.payloads.query_live_server_sample", return_value=sample),
     ):
         payload = build_current_match_payload(server_slug="comunidad-hispana-01")
     return payload["data"]
@@ -812,9 +812,9 @@ def _build_with_snapshot_fallback(
     item: dict[str, object],
 ) -> dict[str, object]:
     with (
-        patch("app.payloads._query_current_match_rcon_sample", return_value=None),
+        patch("app.api.payloads._query_current_match_rcon_sample", return_value=None),
         patch(
-            "app.payloads.build_servers_payload",
+            "app.api.payloads.build_servers_payload",
             return_value={
                 "status": "ok",
                 "data": {

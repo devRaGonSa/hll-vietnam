@@ -27,6 +27,11 @@ Community website repository with a static landing in the current phase and a pl
 
 - `backend/`
 - `backend/app/`
+- `backend/app/api/`: HTTP route dispatch and compatibility serializers
+- `backend/app/services/`: CRCON-first application use cases
+- `backend/app/crcon/`: CRCON 12.0.1 transport, DTOs and read-only repositories
+- `backend/app/domain/`: infrastructure-free value objects
+- `backend/app/tools/`: documented local diagnostics and one-off commands
 
 ### AI Platform
 
@@ -70,6 +75,8 @@ Community website repository with a static landing in the current phase and a pl
 - The table/job reader-writer inventory and shutdown gates are documented in
   `docs/CRCON_FIRST_LEGACY_DEPENDENCY_LEDGER.md`. No legacy writer is currently
   `SHUTDOWN_READY`.
+- The practical package boundaries, complete module classification and
+  follow-up violations are documented in `docs/CODE_STRUCTURE.md`.
 
 - Discord and game server data remain in planning phase until sources, limits and security are validated.
 - Initial dynamic data should come from controlled backend placeholders, not direct frontend calls to external services.

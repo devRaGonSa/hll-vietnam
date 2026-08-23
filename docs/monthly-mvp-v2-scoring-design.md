@@ -20,7 +20,7 @@ This proposal is based on:
 - `backend/app/monthly_mvp.py`
 - `backend/app/player_event_aggregates.py`
 - `backend/app/historical_snapshots.py`
-- `backend/app/payloads.py`
+- `backend/app/api/payloads.py`
 
 ## Design Position
 

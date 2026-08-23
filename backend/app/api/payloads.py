@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 import re
 
-from .config import (
+from ..config import (
     get_current_match_source,
     get_historical_aggregate_source,
     get_historical_data_source_kind,
@@ -14,9 +14,9 @@ from .config import (
     get_refresh_interval_seconds,
     get_server_list_source,
 )
-from .crcon.aggregate_service import get_historical_aggregate_service
-from .crcon.player_search_service import get_crcon_player_search_service
-from .data_sources import (
+from ..services.historical_aggregates import get_historical_aggregate_service
+from ..services.player_search import get_crcon_player_search_service
+from ..data_sources import (
     LIVE_SOURCE_A2S,
     SOURCE_KIND_PUBLIC_SCOREBOARD,
     SOURCE_KIND_RCON,
@@ -27,8 +27,8 @@ from .data_sources import (
     get_live_data_source,
     get_rcon_historical_read_model,
 )
-from .historical_snapshot_storage import get_historical_snapshot
-from .historical_snapshots import (
+from ..historical_snapshot_storage import get_historical_snapshot
+from ..historical_snapshots import (
     DEFAULT_MONTHLY_SNAPSHOT_WINDOW,
     DEFAULT_SNAPSHOT_WINDOW,
     DEFAULT_WEEKLY_SNAPSHOT_WINDOW,
@@ -44,7 +44,7 @@ from .historical_snapshots import (
     SNAPSHOT_TYPE_SERVER_SUMMARY,
     SNAPSHOT_TYPE_WEEKLY_LEADERBOARD,
 )
-from .historical_storage import (
+from ..historical_storage import (
     ALL_SERVERS_SLUG,
     get_historical_match_detail,
     get_historical_player_profile,
@@ -54,7 +54,7 @@ from .historical_storage import (
     list_weekly_leaderboard,
     list_weekly_top_kills,
 )
-from .current_match import (
+from ..services.current_match import (
     CurrentMatchUnavailableError,
     get_current_match_snapshot_service,
     legacy_kills_projection,
@@ -62,29 +62,40 @@ from .current_match import (
     legacy_summary_projection,
     snapshot_payload,
 )
-from .current_match_shadow import (
+from ..services.current_match_shadow import (
     compare_current_match,
     get_final_match_verifier,
     store_current_match_parity,
 )
-from .rcon_historical_read_model import get_rcon_historical_match_detail
-from .rcon_annual_rankings import get_annual_ranking_snapshot
-from .rcon_historical_leaderboards import (
+from ..rcon_historical_read_model import get_rcon_historical_match_detail
+from ..rcon_annual_rankings import get_annual_ranking_snapshot
+from ..rcon_historical_leaderboards import (
     get_latest_ranking_snapshot,
     is_ranking_runtime_fallback_enabled,
     list_rcon_materialized_leaderboard,
 )
-from .rcon_historical_player_stats import search_rcon_materialized_players
-from .rcon_historical_player_stats import get_rcon_materialized_player_stats
-from .normalizers import normalize_map_name
-from .rcon_client import load_rcon_targets, query_live_server_sample
-from .rcon_admin_log_storage import list_current_match_kill_feed, list_current_match_player_stats
-from .scoreboard_origins import get_trusted_public_scoreboard_origin
-from .storage import list_latest_snapshots, list_server_history, list_snapshot_history
-from .server_service import build_crcon_server_list_payload, get_crcon_server_list_service
-from .history_service import (
+from ..rcon_historical_player_stats import search_rcon_materialized_players
+from ..rcon_historical_player_stats import get_rcon_materialized_player_stats
+from ..normalizers import normalize_map_name
+from ..rcon_client import load_rcon_targets, query_live_server_sample
+from ..rcon_admin_log_storage import list_current_match_kill_feed, list_current_match_player_stats
+from ..scoreboard_origins import get_trusted_public_scoreboard_origin
+from ..storage import list_latest_snapshots, list_server_history, list_snapshot_history
+from ..services.servers import build_crcon_server_list_payload, get_crcon_server_list_service
+from ..services.history import (
     build_crcon_match_detail_payload,
     build_crcon_recent_matches_payload,
+)
+from .serializers import (
+    coerce_public_metric_value as _coerce_public_metric_value,
+    normalize_global_ranking_items as _normalize_global_ranking_items,
+    normalize_public_server_id as _normalize_public_server_id,
+    serialize_public_server_id as _serialize_public_server_id,
+    snapshot_player_count_quality as _snapshot_player_count_quality,
+    snapshot_player_count_source as _snapshot_player_count_source,
+    source_when_present as _source_when_present,
+    to_iso_or_none as _to_iso_or_none,
+    utc_timestamp_now as _utc_timestamp_now,
 )
 
 PUBLIC_SERVER_STATUS_TIMEOUT_SECONDS = 2.5
@@ -695,103 +706,6 @@ def _query_current_match_rcon_sample(server_slug: str) -> dict[str, object] | No
         return query_live_server_sample(target)
     except Exception:  # noqa: BLE001 - fall back to the existing live snapshot read
         return None
-
-
-def _utc_timestamp_now() -> str:
-    return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
-
-
-def _to_iso_or_none(value: object) -> str | None:
-    if value is None:
-        return None
-    if isinstance(value, datetime):
-        parsed = value
-    elif isinstance(value, str) and value.strip():
-        try:
-            parsed = datetime.fromisoformat(value.strip().replace("Z", "+00:00"))
-        except ValueError:
-            return None
-    else:
-        return None
-    if parsed.tzinfo is None:
-        parsed = parsed.replace(tzinfo=timezone.utc)
-    return parsed.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
-
-
-def _normalize_public_server_id(server_id: str | None) -> str:
-    normalized = str(server_id or "").strip().lower()
-    if not normalized or normalized == "all":
-        return ALL_SERVERS_SLUG
-    return str(server_id).strip()
-
-
-def _serialize_public_server_id(server_id: object) -> str:
-    normalized = str(server_id or "").strip()
-    if not normalized or normalized == ALL_SERVERS_SLUG:
-        return "all"
-    return normalized
-
-
-def _normalize_global_ranking_items(items: object) -> list[dict[str, object]]:
-    normalized_items: list[dict[str, object]] = []
-    for item in items if isinstance(items, list) else []:
-        if not isinstance(item, dict):
-            continue
-        matches_considered = int(item.get("matches_considered") or 0)
-        kills = int(item.get("kills") or 0)
-        normalized_items.append(
-            {
-                "ranking_position": int(item.get("ranking_position") or 0),
-                "player_id": item.get("player_id"),
-                "player_name": item.get("player_name"),
-                "metric_value": _coerce_public_metric_value(item.get("metric_value")),
-                "matches_considered": matches_considered,
-                "kills": kills,
-                "deaths": int(item.get("deaths") or 0),
-                "teamkills": int(item.get("teamkills") or 0),
-                "kd_ratio": float(item.get("kd_ratio") or 0.0),
-                "kills_per_match": float(
-                    item.get("kills_per_match")
-                    if item.get("kills_per_match") is not None
-                    else round(kills / matches_considered, 2) if matches_considered else 0.0
-                ),
-            }
-        )
-    return normalized_items
-
-
-def _coerce_public_metric_value(value: object) -> int | float:
-    try:
-        numeric = float(value or 0)
-    except (TypeError, ValueError):
-        return 0
-    if numeric.is_integer():
-        return int(numeric)
-    return round(numeric, 2)
-
-
-def _source_when_present(*values: object, source: str) -> str | None:
-    return source if any(value is not None for value in values) else None
-
-
-def _snapshot_player_count_quality(item: dict[str, object] | None) -> str | None:
-    if item is None or item.get("players") is None:
-        return None
-    if item.get("snapshot_origin") == "real-rcon":
-        return "rcon-session-unverified"
-    if item.get("snapshot_origin") == "real-a2s":
-        return "a2s-query"
-    return "snapshot-unverified"
-
-
-def _snapshot_player_count_source(item: dict[str, object] | None) -> str | None:
-    if item is None or item.get("players") is None:
-        return None
-    if item.get("snapshot_origin") == "real-rcon":
-        return "rcon-session"
-    if item.get("snapshot_origin") == "real-a2s":
-        return "a2s"
-    return "live-server-snapshot"
 
 
 def build_error_payload(message: str) -> dict[str, str]:

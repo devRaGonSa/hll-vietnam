@@ -27,11 +27,11 @@ from app.crcon import (
     CrconApiError,
     CrconCapability,
     CrconCapabilityStatus,
-    CrconDatabase,
     CrconDatabaseError,
     TtlCache,
 )
 from app.crcon.capabilities import CAPABILITY_SCHEMA, build_capability_report
+from app.crcon.postgres_repository import PostgresCrconRepository
 
 
 FIXTURE_DIR = Path(__file__).parent / "fixtures" / "crcon"
@@ -246,7 +246,7 @@ class CrconApiClientTests(unittest.TestCase):
 
 class CrconDatabaseTests(unittest.TestCase):
     def test_missing_dsn_reports_database_capabilities_unavailable(self) -> None:
-        report = CrconDatabase(
+        report = PostgresCrconRepository(
             dsn=None,
             connect_timeout_seconds=2,
             statement_timeout_ms=1000,
@@ -270,7 +270,7 @@ class CrconDatabaseTests(unittest.TestCase):
             connect_calls.append((args, kwargs))
             return connection
 
-        report = CrconDatabase(
+        report = PostgresCrconRepository(
             dsn="postgresql://fixture.invalid/local",
             connect_timeout_seconds=3,
             statement_timeout_ms=2500,
@@ -292,7 +292,7 @@ class CrconDatabaseTests(unittest.TestCase):
 
     def test_read_only_off_fails_closed_and_cleans_up(self) -> None:
         connection = _Connection(read_only="off")
-        database = CrconDatabase(
+        database = PostgresCrconRepository(
             dsn="postgresql://fixture.invalid/local",
             connect_timeout_seconds=2,
             statement_timeout_ms=1000,
@@ -310,7 +310,7 @@ class CrconDatabaseTests(unittest.TestCase):
         def connector(*_args, **_kwargs):
             raise RuntimeError(secret_dsn)
 
-        database = CrconDatabase(
+        database = PostgresCrconRepository(
             dsn=secret_dsn,
             connect_timeout_seconds=2,
             statement_timeout_ms=1000,
@@ -324,14 +324,15 @@ class CrconDatabaseTests(unittest.TestCase):
         self.assertIsNone(raised.exception.__cause__)
 
     def test_no_public_arbitrary_sql_or_mutation_method_exists(self) -> None:
-        public_names = {name for name in dir(CrconDatabase) if not name.startswith("_")}
+        public_names = {
+            name for name in dir(PostgresCrconRepository) if not name.startswith("_")
+        }
         self.assertEqual(
             public_names,
             {
                 "aggregate_match_combat_stats",
                 "close",
                 "configured",
-                "find_player_by_exact_id",
                 "find_current_map",
                 "get_player_aggregate",
                 "get_player_profile_aggregate",
@@ -339,8 +340,6 @@ class CrconDatabaseTests(unittest.TestCase):
                 "list_rankings",
                 "list_match_log_events",
                 "probe_capabilities",
-                "search_players_by_name",
-                "supports_indexed_player_name_search",
             },
         )
 

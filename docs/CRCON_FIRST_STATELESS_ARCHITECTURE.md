@@ -98,7 +98,7 @@ No genuinely database-owned non-game product configuration was found. Community,
 
 ## 7. Full endpoint inventory
 
-All routes are GET. `A` means CRCON API, `B` CRCON PostgreSQL, and `C` optional direct RCON. Builder names refer to `backend/app/payloads.py`.
+All routes are GET. `A` means CRCON API, `B` CRCON PostgreSQL, and `C` optional direct RCON. Builder names refer to `backend/app/api/payloads.py`.
 
 | Path; query | Frontend | Current builder/source | Target; cache | Compatibility / decision / difficulty |
 | --- | --- | --- | --- | --- |

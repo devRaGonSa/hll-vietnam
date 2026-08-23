@@ -11,7 +11,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from app.historical_storage import upsert_historical_match
-from app.payloads import build_recent_historical_matches_payload
+from app.api.payloads import build_recent_historical_matches_payload
 from app.rcon_historical_player_stats import (
     get_rcon_materialized_player_stats,
     initialize_player_period_stats_storage,

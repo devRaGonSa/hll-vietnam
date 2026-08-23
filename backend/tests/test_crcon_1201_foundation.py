@@ -14,11 +14,11 @@ from app.crcon import (
     CrconCapability,
     CrconCapabilityStatus,
     CrconContractStatus,
-    CrconDatabase,
     CrconServerScope,
 )
 from app.crcon.capabilities import build_capability_report, get_api_contract_status
 from app.crcon.postgres_repository import PLAYER_AGGREGATE_SQL
+from app.crcon.postgres_repository import PostgresCrconRepository
 from app.domain import PlayerIdentity, player_id_from
 from app.player_external_profiles import build_external_player_profile_fields
 from app.rcon_client import load_rcon_targets
@@ -296,7 +296,7 @@ class Crcon1201ApiContractTests(unittest.TestCase):
 class CrconReadRepositoryTests(unittest.TestCase):
     def test_player_aggregate_is_select_only_and_server_scoped(self) -> None:
         connection = _AggregateConnection((4, 42, 100, 50, 900, 80, 70, 60, 5, 3))
-        repository = CrconDatabase(
+        repository = PostgresCrconRepository(
             dsn="postgresql://fixture.invalid/crcon",
             connect_timeout_seconds=2,
             statement_timeout_ms=1000,

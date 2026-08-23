@@ -52,7 +52,7 @@ Desde la carpeta `backend/`, se puede arrancar localmente con:
 python -m app.main
 ```
 
-Ese comando usa imports relativos de paquete (`from .routes import ...`), por lo
+Ese comando usa imports relativos de paquete (`from .api.routes import ...`), por lo
 que la forma soportada de arranque es por modulo y no ejecutando el archivo como
 script suelto.
 
@@ -157,7 +157,7 @@ variable, la ejecucion local mantiene fallback SQLite para esos dominios.
 Diagnostico rapido del backend activo:
 
 ```powershell
-python -m app.storage_diagnostics
+python -m app.tools.storage_diagnostics
 ```
 
 La salida lista el backend RCON activo, counts de las tablas migradas, la ultima
@@ -1618,18 +1618,18 @@ Migracion idempotente:
 
 ```powershell
 cd backend
-python -m app.sqlite_to_postgres_migration
-python -m app.storage_diagnostics
+python -m app.tools.sqlite_to_postgres_migration
+python -m app.tools.storage_diagnostics
 ```
 
-La salida JSON de `sqlite_to_postgres_migration` lista rutas fuente, dominios y
+La salida JSON de `tools.sqlite_to_postgres_migration` lista rutas fuente, dominios y
 tablas migradas, filas leidas, insertadas, actualizadas, omitidas y errores.
 La migracion conserva `external_match_id`, IDs legacy y `match_key` RCON para
 que URLs de detalle existentes sigan resolviendo. Tambien copia candidatos y
 URLs seguras de scoreboard; no vuelve a activar filas visibles de
 `comunidad-hispana-03`.
 
-Paridad minima a revisar en `storage_diagnostics`:
+Paridad minima a revisar en `tools.storage_diagnostics`:
 
 - `admin_log_events`, `materialized_matches`, `player_stats`
 - `public_scoreboard_historical_matches`

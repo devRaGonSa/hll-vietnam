@@ -16,7 +16,7 @@ Target endpoints:
 ## Environment And Method
 
 - Backend HTTP server was not running on `http://127.0.0.1:8000` during the audit.
-- Request timing was measured in-process through `app.routes.resolve_get_payload(...)`.
+- Request timing was measured in-process through `app.api.routes.resolve_get_payload(...)`.
 - SQL timing was measured by instrumenting the SQLite read connections used by:
   - `backend/app/rcon_historical_leaderboards.py`
   - `backend/app/rcon_historical_player_stats.py`
@@ -237,8 +237,8 @@ Repository and task context:
 - `Get-Content ai/orchestrator/database-architect.md`
 
 Relevant code inspection:
-- `Get-Content backend/app/routes.py`
-- `Get-Content backend/app/payloads.py`
+- `Get-Content backend/app/api/routes.py`
+- `Get-Content backend/app/api/payloads.py`
 - `Get-Content backend/app/rcon_historical_leaderboards.py`
 - `Get-Content backend/app/rcon_historical_player_stats.py`
 - `Get-Content backend/app/rcon_annual_rankings.py`

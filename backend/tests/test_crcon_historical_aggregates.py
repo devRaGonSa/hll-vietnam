@@ -9,10 +9,9 @@ from unittest.mock import patch
 
 from app import payloads
 from app.config import get_historical_aggregate_source
-from app.crcon.aggregate_service import HistoricalAggregateService, build_window
+from app.services.historical_aggregates import HistoricalAggregateService, build_window
 from app.crcon.capabilities import build_capability_report
 from app.crcon.postgres_repository import (
-    PLAYER_NAME_SEARCH_SQL,
     RANKING_AGGREGATE_CTE,
     RANKING_METRIC_SQL,
     SERVER_AGGREGATE_SQL,
@@ -25,7 +24,7 @@ from app.crcon.repository import (
     CrconServerScope,
 )
 from app.server_targets import ServerTarget
-from app.routes import resolve_get_payload
+from app.api.routes import resolve_get_payload
 
 
 def _target(key: str, number: int, game: str = "hll") -> ServerTarget:
@@ -69,9 +68,6 @@ class _Repository:
 
     def __init__(self) -> None:
         self.calls: list[tuple[str, object]] = []
-        self.exact = ()
-        self.name_index = False
-        self.name_results = ()
         self.profile = _profile()
         self.summary = CrconServerAggregate(
             3,
@@ -109,18 +105,6 @@ class _Repository:
                 100, 20, 30, 40, 2, 1, 0, 1, 20.0, 1, 3,
             ),
         )
-
-    def find_player_by_exact_id(self, **kwargs):
-        self.calls.append(("exact", kwargs))
-        return self.exact
-
-    def supports_indexed_player_name_search(self):
-        self.calls.append(("index", None))
-        return self.name_index
-
-    def search_players_by_name(self, **kwargs):
-        self.calls.append(("name", kwargs))
-        return self.name_results
 
     def get_player_profile_aggregate(self, **kwargs):
         self.calls.append(("profile", kwargs))
@@ -240,14 +224,11 @@ class HistoricalAggregateServiceTests(unittest.TestCase):
                 get_historical_aggregate_source()
 
     def test_sql_is_bounded_scoped_and_contains_no_mutation(self) -> None:
-        sql = "\n".join(
-            [SERVER_AGGREGATE_SQL, RANKING_AGGREGATE_CTE, PLAYER_NAME_SEARCH_SQL]
-        ).upper()
+        sql = "\n".join([SERVER_AGGREGATE_SQL, RANKING_AGGREGATE_CTE]).upper()
         self.assertIn("COUNT(DISTINCT STATS.MAP_ID)", sql)
         self.assertIn("SERVER_NUMBER = ANY(%S)", sql)
         self.assertIn("GAME = %S", sql)
         self.assertIn('"END" < %S', sql)
-        self.assertIn("LIMIT %S", sql)
         for keyword in ("INSERT ", "UPDATE ", "DELETE ", "CREATE ", "ALTER ", "DROP "):
             self.assertNotIn(keyword, sql)
         self.assertEqual(RANKING_METRIC_SQL["kills"], "kills")
@@ -387,12 +368,12 @@ class AggregatePayloadSelectionTests(unittest.TestCase):
         )
         self.environment.start()
         self.service = patch(
-            "app.payloads.get_historical_aggregate_service",
+            "app.api.payloads.get_historical_aggregate_service",
             return_value=_PayloadService(),
         )
         self.service.start()
         self.search_service = patch(
-            "app.payloads.get_crcon_player_search_service",
+            "app.api.payloads.get_crcon_player_search_service",
             return_value=_PlayerSearchPayloadService(),
         )
         self.search_service.start()
@@ -404,7 +385,7 @@ class AggregatePayloadSelectionTests(unittest.TestCase):
 
     def test_all_public_aggregate_builders_delegate_without_legacy_fallback(self) -> None:
         with patch(
-            "app.payloads.search_rcon_materialized_players",
+            "app.api.payloads.search_rcon_materialized_players",
             side_effect=AssertionError("legacy fallback used"),
         ):
             search = payloads.build_stats_player_search_payload(query="Player")

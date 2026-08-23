@@ -71,7 +71,7 @@ import sys
 sys.path.insert(0, "backend")
 
 from app.config import get_historical_data_source_kind
-from app.routes import resolve_get_payload
+from app.api.routes import resolve_get_payload
 
 status, payload = resolve_get_payload("/health")
 if status is None or payload.get("status") != "ok":

@@ -179,7 +179,7 @@ Riesgo:
 
 #### Ranking publico
 
-Archivos: `backend/app/payloads.py`, `backend/app/rcon_historical_leaderboards.py`, `backend/app/rcon_annual_rankings.py`
+Archivos: `backend/app/api/payloads.py`, `backend/app/rcon_historical_leaderboards.py`, `backend/app/rcon_annual_rankings.py`
 
 Hallazgos:
 
@@ -221,7 +221,7 @@ Riesgo:
 
 #### Historical endpoints
 
-Archivo: `backend/app/payloads.py`
+Archivo: `backend/app/api/payloads.py`
 
 Hallazgos:
 
@@ -234,7 +234,7 @@ Riesgo:
 
 #### Current match
 
-Archivo: `backend/app/payloads.py`
+Archivo: `backend/app/api/payloads.py`
 
 Hallazgos:
 
@@ -376,8 +376,8 @@ Puntos concretos:
 | Pri | Hallazgo | Impacto | Evidencia | Archivo | Propuesta | Riesgo | Validacion |
 |---|---|---|---|---|---|---|---|
 | P0 | `ranking.js` bloquea la carga principal detras de `/health` y no protege carreras | UI lenta o bloqueada aunque `/api/ranking` responda en <200 ms | Flujo `refreshBackendHealth() -> loadRanking()` y ausencia de `AbortController/currentRequestId` | `frontend/assets/js/ranking.js` | Separar health del dato principal y usar cancelacion o requestId | Bajo | medir `response_received_at -> render_completed_at` |
-| P0 | `/api/current-match` consulta RCON directo en request publico | Rompe la regla arquitectonica y puede introducir latencia o fragilidad externa | `_query_current_match_rcon_sample()` se ejecuta antes del fallback a snapshot | `backend/app/payloads.py` | Crear read model live publico y mover la consulta RCON al runner | Medio | endpoint debe seguir respondiendo sin tocar RCON |
-| P1 | `/api/ranking` weekly/monthly mantiene fallback runtime sobre tablas materializadas | Riesgo de latencia creciente y scans | `build_global_ranking_payload()` cae a `list_rcon_materialized_leaderboard()` | `backend/app/payloads.py` | Desactivar fallback runtime en publico tras completar snapshot coverage | Medio | requests solo con `read_model=ranking-snapshot` |
+| P0 | `/api/current-match` consulta RCON directo en request publico | Rompe la regla arquitectonica y puede introducir latencia o fragilidad externa | `_query_current_match_rcon_sample()` se ejecuta antes del fallback a snapshot | `backend/app/api/payloads.py` | Crear read model live publico y mover la consulta RCON al runner | Medio | endpoint debe seguir respondiendo sin tocar RCON |
+| P1 | `/api/ranking` weekly/monthly mantiene fallback runtime sobre tablas materializadas | Riesgo de latencia creciente y scans | `build_global_ranking_payload()` cae a `list_rcon_materialized_leaderboard()` | `backend/app/api/payloads.py` | Desactivar fallback runtime en publico tras completar snapshot coverage | Medio | requests solo con `read_model=ranking-snapshot` |
 | P1 | `stats.js` tambien bloquea por `/health` el ranking anual inicial | Latencia percibida innecesaria | `refreshBackendHealth()` llama `loadAnnualRanking()` despues de `/health` | `frontend/assets/js/stats.js` | Cargar anual directo y tratar `/health` como señal secundaria | Bajo | anual visible sin depender de health |
 | P1 | Search de jugadores puede caer a runtime costoso | Picos de latencia en busqueda | `search_rcon_materialized_players()` con fallback runtime | `backend/app/rcon_historical_player_stats.py` | Endurecer cobertura de `player_search_index` y alertar si falta | Bajo | `fallback_used=false` sostenido |
 | P1 | Perfil de jugador puede caer a runtime y recomponer rankings semanales/mensuales | Respuestas lentas y carga de DB | `get_rcon_materialized_player_stats()` | `backend/app/rcon_historical_player_stats.py` | Exigir `player_period_stats` actualizado antes de publicar | Medio | `read_model=player-period-stats` |

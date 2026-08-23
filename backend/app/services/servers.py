@@ -9,12 +9,12 @@ from datetime import UTC, datetime
 from threading import Lock
 from typing import Protocol
 
-from .config import get_crcon_api_timeout_seconds, get_server_targets_payload
-from .crcon import CrconApiClient
-from .crcon.dto import CrconPublicInfo
-from .normalizers import normalize_map_name
-from .scoreboard_origins import get_trusted_public_scoreboard_origin
-from .server_targets import ServerTarget, ServerTargetRegistry, load_server_targets
+from ..config import get_crcon_api_timeout_seconds, get_server_targets_payload
+from ..crcon import CrconApiClient
+from ..crcon.dto import CrconPublicInfo
+from ..normalizers import normalize_map_name
+from ..scoreboard_origins import get_trusted_public_scoreboard_origin
+from ..server_targets import ServerTarget, ServerTargetRegistry, load_server_targets
 
 
 SERVER_LIST_CACHE_TTL_SECONDS = 2.0

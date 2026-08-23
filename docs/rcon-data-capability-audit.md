@@ -19,7 +19,7 @@ No se implementa ninguna tabla, ruta, scoring ni captura adicional.
 - `backend/app/rcon_client.py`
 - `backend/app/providers/rcon_provider.py`
 - `backend/app/data_sources.py`
-- `backend/app/payloads.py`
+- `backend/app/api/payloads.py`
 - `backend/README.md`
 - `docs/historical-crcon-source-discovery.md`
 - `docs/monthly-player-ranking-data-audit.md`

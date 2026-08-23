@@ -18,17 +18,20 @@ from app.config import (
 from app.crcon.api import CrconApiClient
 from app.crcon.cache import TtlCache
 from app.crcon.dto import parse_live_game_stats
-from app.crcon.database import (
+from app.crcon.postgres_repository import (
     CURRENT_MAP_MATCH_SQL,
     MATCH_COMBAT_AGGREGATE_SQL,
     MATCH_LOG_EVENTS_SQL,
+    PostgresCrconRepository,
+)
+from app.crcon.repository import (
     CrconCurrentMap,
-    CrconDatabase,
     CrconMatchCombatStats,
     CrconMatchLogEvent,
     CrconServerScope,
 )
-from app.current_match import (
+
+from app.services.current_match import (
     CURRENT_MATCH_CACHE_MAX_ENTRIES,
     CURRENT_MATCH_CACHE_TTL_SECONDS,
     CrconCurrentMatchBinding,
@@ -42,7 +45,7 @@ from app.current_match import (
     get_current_match_snapshot_service,
 )
 from app.server_targets import ServerTarget
-from app.routes import resolve_get_payload
+from app.api.routes import resolve_get_payload
 
 
 FIXTURE_DIR = Path(__file__).resolve().parent / "fixtures" / "crcon"
@@ -467,8 +470,8 @@ class CrconCurrentMatchAdapterTests(unittest.TestCase):
                 {"HLL_CRCON_CURRENT_MATCH_BINDINGS": json.dumps(configured)},
                 clear=False,
             ),
-            patch("app.current_match._runtime_service", None),
-            patch("app.current_match._runtime_fingerprint", None),
+            patch("app.services.current_match._runtime_service", None),
+            patch("app.services.current_match._runtime_fingerprint", None),
         ):
             service = get_current_match_snapshot_service()
 
@@ -545,7 +548,7 @@ class CrconCurrentMatchAdapterTests(unittest.TestCase):
             connections.append(connection)
             return connection
 
-        database = CrconDatabase(
+        database = PostgresCrconRepository(
             dsn="postgresql://fixture.invalid/crcon",
             connect_timeout_seconds=2,
             statement_timeout_ms=1000,

@@ -1,10 +1,11 @@
 """Minimal bootstrap package for the HLL Vietnam Python backend."""
 
 from .config import get_allowed_origins, get_bind_address
+from .api import payloads
+from .api.payloads import build_health_payload
+from .api.routes import resolve_get_payload
 from .main import create_server, run
 from .normalizers import normalize_a2s_server_info, normalize_server_record
-from .payloads import build_health_payload
-from .routes import resolve_get_payload
 from .snapshots import build_server_snapshot, build_snapshot_batch, utc_now
 from .storage import initialize_storage, persist_snapshot_batch
 
@@ -52,6 +53,7 @@ __all__ = [
     "normalize_a2s_server_info",
     "normalize_server_record",
     "persist_snapshot_batch",
+    "payloads",
     "query_server_info",
     "resolve_get_payload",
     "run",

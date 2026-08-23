@@ -2,12 +2,6 @@
 
 from .api import CrconApiClient
 from .cache import TtlCache
-from .database import (
-    CrconCurrentMap,
-    CrconDatabase,
-    CrconMatchCombatStats,
-    CrconMatchLogEvent,
-)
 from .dto import (
     CRCON_MAP_HISTORY_DEFAULT_MAX_ENTRIES,
     CrconApiDocumentation,
@@ -47,6 +41,9 @@ from .models import (
 )
 from .postgres_repository import PostgresCrconRepository
 from .repository import (
+    CrconCurrentMap,
+    CrconMatchCombatStats,
+    CrconMatchLogEvent,
     CrconPlayerAggregate,
     CrconPlayerProfileAggregate,
     CrconRankingRow,
@@ -72,7 +69,6 @@ __all__ = [
     "CrconCapabilityResult",
     "CrconCapabilityStatus",
     "CrconContractStatus",
-    "CrconDatabase",
     "CrconDatabaseError",
     "CrconEncounter",
     "CrconEndpointDocumentation",

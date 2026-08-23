@@ -15,13 +15,13 @@ correlation diagnostics.
 2. Scan existing materialized RCON matches against those candidates:
 
    ```powershell
-   docker compose exec backend python -m app.rcon_scoreboard_relink --server comunidad-hispana-02
+   docker compose exec backend python -m app.tools.scoreboard_relink --server comunidad-hispana-02
    ```
 
 3. Inspect one match correlation:
 
    ```powershell
-   docker compose exec backend python -m app.scoreboard_correlation_diagnostics --server comunidad-hispana-02 --match comunidad-hispana-02:1779310451:1779315851:foywarfare
+   docker compose exec backend python -m app.tools.scoreboard_correlation_diagnostics --server comunidad-hispana-02 --match comunidad-hispana-02:1779310451:1779315851:foywarfare
    ```
 
 4. Verify the detail endpoint used by the match page:

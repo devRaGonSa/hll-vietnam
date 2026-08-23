@@ -204,7 +204,7 @@ path migrado y siguen cubriendo fallback publico o caches locales:
 La correlacion de URL publica en detalle usa primero candidatos PostgreSQL
 confiables cuando existan y puede seguir leyendo filas `historical_*`
 persistidas en SQLite durante la transicion. El diagnostico operativo se expone
-con `python -m app.storage_diagnostics`.
+con `python -m app.tools.storage_diagnostics`.
 
 ## Decision 018: PostgreSQL phase 2 for displayed historical data
 
@@ -221,8 +221,8 @@ La migracion se ejecuta de forma idempotente con:
 
 ```powershell
 cd backend
-python -m app.sqlite_to_postgres_migration
-python -m app.storage_diagnostics
+python -m app.tools.sqlite_to_postgres_migration
+python -m app.tools.storage_diagnostics
 ```
 
 El comando conserva IDs y `external_match_id` del scoreboard publico, claves
@@ -237,7 +237,7 @@ Permanecen fuera de phase 2:
 - checkpoints y runs operativos del import publico que no aparecen en frontend
 - Elo/MMR pausado y oculto en la UI actual
 
-`app.storage_diagnostics` muestra conteos PostgreSQL, ultimas partidas
+`app.tools.storage_diagnostics` muestra conteos PostgreSQL, ultimas partidas
 materializadas, ultimos `match_end`, dominios restantes y un resumen de paridad
 para verificar la migracion antes de retirar fuentes legacy.
 

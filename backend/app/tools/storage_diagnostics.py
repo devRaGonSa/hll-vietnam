@@ -6,10 +6,10 @@ import json
 import sqlite3
 from contextlib import closing
 
-from .config import get_database_url, get_storage_path, use_postgres_rcon_storage
-from .rcon_admin_log_materialization import summarize_rcon_materialization_status
-from .rcon_admin_log_storage import initialize_rcon_admin_log_storage
-from .sqlite_utils import connect_sqlite_readonly
+from ..config import get_database_url, get_storage_path, use_postgres_rcon_storage
+from ..rcon_admin_log_materialization import summarize_rcon_materialization_status
+from ..rcon_admin_log_storage import initialize_rcon_admin_log_storage
+from ..sqlite_utils import connect_sqlite_readonly
 
 
 MIGRATED_RCON_TABLES = (
@@ -27,8 +27,8 @@ MIGRATED_RCON_TABLES = (
 def build_storage_diagnostics() -> dict[str, object]:
     """Return one JSON-safe diagnostic payload for the migrated domains."""
     if use_postgres_rcon_storage():
-        from .postgres_rcon_storage import count_migrated_tables
-        from .postgres_display_storage import table_counts
+        from ..postgres_rcon_storage import count_migrated_tables
+        from ..postgres_display_storage import table_counts
 
         rcon_counts = count_migrated_tables()
         displayed_counts = table_counts()
@@ -107,7 +107,7 @@ def build_storage_diagnostics() -> dict[str, object]:
         },
         "migration_parity_summary": {
             "available": backend == "postgresql",
-            "source_command": "python -m app.sqlite_to_postgres_migration",
+            "source_command": "python -m app.tools.sqlite_to_postgres_migration",
             "displayed_historical_storage": (
                 "postgresql" if backend == "postgresql" else "sqlite-or-file-fallback"
             ),
@@ -132,7 +132,7 @@ def _count_sqlite_tables() -> dict[str, int]:
 
 
 def _postgres_external_player_id_diagnostics() -> dict[str, object]:
-    from .postgres_rcon_storage import connect_postgres
+    from ..postgres_rcon_storage import connect_postgres
 
     with connect_postgres() as connection:
         row = connection.execute(

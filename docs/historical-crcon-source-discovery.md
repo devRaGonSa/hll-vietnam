@@ -237,7 +237,7 @@ El repositorio ya tenia una pista correcta en la landing al enlazar ambos scoreb
 
 Tambien se detecto un rastro de implementacion previa no reutilizable:
 
-- `backend/app/payloads.py` importa `.historical_storage` para un flujo de `weekly_top_kills`
+- `backend/app/api/payloads.py` importa `.historical_storage` para un flujo de `weekly_top_kills`
 - el archivo `backend/app/historical_storage.py` no existe
 
 Ese estado confirma que cualquier intento previo de ranking historico no debe considerarse base valida para la siguiente fase. La nueva fase debe reconstruirse desde la fuente CRCON JSON documentada aqui.

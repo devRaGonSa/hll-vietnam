@@ -8,12 +8,12 @@ from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 from .config import get_allowed_origins, get_bind_address
-from .current_match import (
+from .services.current_match import (
     start_current_match_log_streams,
     stop_current_match_log_streams,
 )
-from .payloads import build_error_payload
-from .routes import resolve_get_payload
+from .api.payloads import build_error_payload
+from .api.routes import resolve_get_payload
 
 
 class HealthHandler(BaseHTTPRequestHandler):

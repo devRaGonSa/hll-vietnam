@@ -12,9 +12,9 @@ from typing import Any
 
 from ..config import get_crcon_api_timeout_seconds, get_crcon_current_match_bindings
 from ..server_targets import ServerTarget, load_server_targets
-from .api import CrconApiClient
-from .dto import CrconPlayerHistoryEntry
-from .models import (
+from ..crcon.api import CrconApiClient
+from ..crcon.dto import CrconPlayerHistoryEntry
+from ..crcon.models import (
     CrconApiAuthenticationError,
     CrconApiError,
     CrconPlayerHistoryState,

@@ -155,7 +155,7 @@ Esto evita duplicar lógica entre SQLite y Postgres y reduce riesgo al soportar 
 ### Ajuste de esquema en migración real (futuro)
 
 - Incluir las tablas en `backend/app/postgres_rcon_storage.py` dentro de `RCON_SCHEMA_SQL` cuando corresponda.
-- Añadir a `RCON_TABLES` en `backend/app/sqlite_to_postgres_migration.py` solo en fase de migración real.
+- Añadir a `RCON_TABLES` en `backend/app/tools/sqlite_to_postgres_migration.py` solo en fase de migración real.
 
 ## 7. Política de generación
 
@@ -207,4 +207,3 @@ GET /api/stats/rankings/annual?year=<year>&server_id=<server-or-all>&metric=kill
 - No se modifica `frontend/assets/js/partida-actual.js`.
 - No se toca `frontend/assets/img/clans/bxb.png`.
 - No se reintroduce Comunidad Hispana #03.
-
