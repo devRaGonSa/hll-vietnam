@@ -35,7 +35,8 @@ from app.crcon.capabilities import CAPABILITY_SCHEMA, build_capability_report
 
 
 FIXTURE_DIR = Path(__file__).parent / "fixtures" / "crcon"
-PINNED_COMMIT = "4cf1e7e2fa691d849eaf85abb7065010e13f28e4"
+PINNED_COMMIT = "17c5880684cc419b27ef2bcca0dc439dfd623eae"
+LEGACY_FIXTURE_COMMIT = "4cf1e7e2fa691d849eaf85abb7065010e13f28e4"
 
 
 class _Response:
@@ -132,7 +133,7 @@ class CrconApiClientTests(unittest.TestCase):
 
         result = client.get_public_info()
 
-        self.assertEqual(result["player_count"], 54)
+        self.assertEqual(result.player_count, 54)
         self.assertEqual(calls[0][1], 2.5)
         self.assertEqual(calls[0][0].full_url, "https://fixture.invalid/crcon/api/get_public_info")
         self.assertEqual(calls[0][0].get_header("User-agent"), "HLL-Vietnam-CRCON-BFF/0.1")
@@ -155,8 +156,8 @@ class CrconApiClientTests(unittest.TestCase):
         maps = client.get_scoreboard_maps(page=2, limit=25, server_number=7)
         detail = client.get_map_scoreboard(map_id=9001)
 
-        self.assertEqual(maps["total"], 2)
-        self.assertEqual(detail["id"], 9001)
+        self.assertEqual(maps.total, 2)
+        self.assertEqual(detail.match.map_id, "9001")
         self.assertEqual(
             parse_qs(urlsplit(urls[0]).query),
             {"page": ["2"], "limit": ["25"], "server_number": ["7"]},
@@ -171,7 +172,7 @@ class CrconApiClientTests(unittest.TestCase):
             calls += 1
             if calls == 1:
                 raise URLError("synthetic transient failure")
-            return _Response({"result": {"ok": True}, "failed": False})
+            return _Response(_load_fixture("public_info.json"))
 
         client = CrconApiClient(
             base_url="https://fixture.invalid",
@@ -179,7 +180,7 @@ class CrconApiClientTests(unittest.TestCase):
             retries=1,
             transport=transport,
         )
-        self.assertTrue(client.get_public_info()["ok"])
+        self.assertEqual(client.get_public_info().player_count, 54)
         self.assertEqual(calls, 2)
         with self.assertRaises(ValueError):
             CrconApiClient(
@@ -277,7 +278,7 @@ class CrconDatabaseTests(unittest.TestCase):
             connector=connector,
         ).probe_capabilities(api_configured=True)
 
-        self.assertEqual(len(report.supported), len(CrconCapability))
+        self.assertEqual(len(report.supported), len(CrconCapability) - 2)
         self.assertEqual(connect_calls[0][1]["connect_timeout"], 3)
         self.assertEqual(connect_calls[0][1]["application_name"], "hll-vietnam-bff")
         options = connect_calls[0][1]["options"]
@@ -328,10 +329,18 @@ class CrconDatabaseTests(unittest.TestCase):
             public_names,
             {
                 "aggregate_match_combat_stats",
+                "close",
                 "configured",
+                "find_player_by_exact_id",
                 "find_current_map",
+                "get_player_aggregate",
+                "get_player_profile_aggregate",
+                "get_server_aggregate",
+                "list_rankings",
                 "list_match_log_events",
                 "probe_capabilities",
+                "search_players_by_name",
+                "supports_indexed_player_name_search",
             },
         )
 
@@ -343,7 +352,30 @@ class CrconCapabilityTests(unittest.TestCase):
             database_configured=True,
             api_configured=True,
         )
-        self.assertEqual(report.supported, frozenset(CrconCapability))
+        self.assertEqual(
+            report.supported,
+            frozenset(
+                capability
+                for capability in CrconCapability
+                if capability
+                not in {
+                    CrconCapability.LIVE_STATE,
+                    CrconCapability.EVENT_LOGS,
+                }
+            ),
+        )
+        self.assertEqual(
+            report.get(CrconCapability.EVENT_LOGS).status,
+            CrconCapabilityStatus.UNKNOWN,
+        )
+        self.assertEqual(
+            report.get(CrconCapability.PLAYER_AGGREGATES).status,
+            CrconCapabilityStatus.SUPPORTED,
+        )
+        self.assertEqual(
+            report.get(CrconCapability.LIVE_STATE).status,
+            CrconCapabilityStatus.UNKNOWN,
+        )
 
     def test_missing_table_only_marks_dependent_capability_unavailable(self) -> None:
         schema = _complete_schema()
@@ -523,7 +555,7 @@ class CrconFixtureTests(unittest.TestCase):
         metadata = _load_fixture("metadata.json")
         self.assertEqual(metadata["repository"], "https://github.com/MarechJ/hll_rcon_tool")
         self.assertEqual(metadata["branch"], "master")
-        self.assertEqual(metadata["commit"], PINNED_COMMIT)
+        self.assertEqual(metadata["commit"], LEGACY_FIXTURE_COMMIT)
         self.assertIs(metadata["sanitized"], True)
 
     def test_fixtures_contain_no_obvious_secret_or_production_patterns(self) -> None:

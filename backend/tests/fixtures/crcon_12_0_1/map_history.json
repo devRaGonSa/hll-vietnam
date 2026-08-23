@@ -1,0 +1,16 @@
+{
+  "source": "sanitized_real",
+  "verified_version": "12.0.1",
+  "verified_game": "hll",
+  "verification_status": "supported",
+  "result": [
+    {"name": "synthetic_forest_warfare", "start": 1787313600, "end": null, "guessed": false, "player_stats": {"opaque-player-001": {"combat": 120, "p_combat": 120, "offense": 80, "p_offense": 80, "defense": 20, "p_defense": 20, "support": 30, "p_support": 30, "vehicle_kills": 0, "p_vehicle_kills": 0, "vehicles_destroyed": 0, "p_vehicles_destroyed": 0, "kills_and_assists": 3, "p_kills_and_assists": 3, "deaths_and_redeploys": 2, "p_deaths_and_redeploys": 2, "p_unit": {"ts": 0, "team": 1, "squad": 2, "role": 3}, "units": [{"ts": 0, "team": 1, "squad": 2, "role": 3}], "level": 42, "p_coord": {"x": 0.0, "y": 0.0, "z": 0.0}, "has_spawned": true, "names": ["Synthetic Player One"], "status": "online"}}, "game_layout": {"requested": [], "set": []}, "cap_flips": [{"allied_score": 3, "axis_score": 2, "ts": 1200}], "match_time": 5400},
+    {"name": "synthetic_valley_offensive", "start": 1787308200, "end": 1787313600, "guessed": false, "player_stats": {}, "game_layout": {"requested": [], "set": []}, "cap_flips": [], "match_time": 5400}
+  ],
+  "command": "get_map_history",
+  "arguments": {},
+  "failed": false,
+  "error": null,
+  "forwards_results": null,
+  "version": "v12.0.1"
+}

@@ -63,6 +63,14 @@ Community website repository with a static landing in the current phase and a pl
 
 ## Current Integration Direction
 
+- CRCON 12.0.1 is the selectable source for server cards, current-match
+  snapshot, historical match browsing and cross-match aggregates. Current
+  player search uses authenticated `get_players_history`; aggregate profiles
+  remain read-only PostgreSQL. All selectors retain `legacy` rollback.
+- The table/job reader-writer inventory and shutdown gates are documented in
+  `docs/CRCON_FIRST_LEGACY_DEPENDENCY_LEDGER.md`. No legacy writer is currently
+  `SHUTDOWN_READY`.
+
 - Discord and game server data remain in planning phase until sources, limits and security are validated.
 - Initial dynamic data should come from controlled backend placeholders, not direct frontend calls to external services.
 - The technical plan for these integrations is documented in `docs/discord-and-server-data-plan.md`.

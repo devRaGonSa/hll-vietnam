@@ -13,10 +13,12 @@ def build_external_player_profile_fields(
     *,
     player_id: object = None,
     steam_id: object = None,
+    eos_id: object = None,
+    platform: object = None,
 ) -> dict[str, object]:
-    """Expose external profile links only when a captured identifier is safe."""
+    """Expose links only from explicit platform metadata, never opaque player_id."""
 
-    steam_id_64 = normalize_steam_id_64(steam_id) or normalize_steam_id_64(player_id)
+    steam_id_64 = normalize_steam_id_64(steam_id)
     if steam_id_64:
         return {
             "steam_id_64": steam_id_64,
@@ -29,11 +31,12 @@ def build_external_player_profile_fields(
             },
         }
 
-    epic_id = normalize_epic_id(player_id)
+    epic_id = normalize_epic_id(eos_id)
     if epic_id:
         return {
+            "eos_id": epic_id,
             "epic_id": epic_id,
-            "platform": "epic",
+            "platform": str(platform or "eos").strip().lower() or "eos",
             "external_profile_links": {
                 "hellor": f"https://hellor.pro/player/{epic_id}",
                 "hll_records": f"https://hllrecords.com/profiles/{epic_id}",
@@ -41,7 +44,11 @@ def build_external_player_profile_fields(
         }
 
     return {
-        "platform": infer_player_platform(player_id=player_id, steam_id=steam_id),
+        "platform": infer_player_platform(
+            steam_id=steam_id,
+            eos_id=eos_id,
+            platform=platform,
+        ),
         "external_profile_links": {},
     }
 
@@ -56,10 +63,17 @@ def normalize_epic_id(value: object) -> str | None:
     return normalized.lower() if _EPIC_ID_RE.fullmatch(normalized) else None
 
 
-def infer_player_platform(*, player_id: object = None, steam_id: object = None) -> str:
-    normalized_player_id = str(player_id or "").strip()
-    if normalize_steam_id_64(steam_id) or normalize_steam_id_64(normalized_player_id):
+def infer_player_platform(
+    *,
+    steam_id: object = None,
+    eos_id: object = None,
+    platform: object = None,
+) -> str:
+    explicit_platform = str(platform or "").strip().lower()
+    if explicit_platform:
+        return explicit_platform
+    if normalize_steam_id_64(steam_id):
         return "steam"
-    if normalize_epic_id(normalized_player_id):
+    if normalize_epic_id(eos_id):
         return "epic"
     return "unknown"

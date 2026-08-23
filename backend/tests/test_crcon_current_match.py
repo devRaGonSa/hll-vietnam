@@ -10,9 +10,14 @@ import unittest
 from unittest.mock import MagicMock, patch
 
 from app import payloads
-from app.config import get_crcon_current_match_bindings, get_current_match_source
+from app.config import (
+    get_crcon_current_match_bindings,
+    get_current_match_source,
+    get_server_list_source,
+)
 from app.crcon.api import CrconApiClient
 from app.crcon.cache import TtlCache
+from app.crcon.dto import parse_live_game_stats
 from app.crcon.database import (
     CURRENT_MAP_MATCH_SQL,
     MATCH_COMBAT_AGGREGATE_SQL,
@@ -21,6 +26,7 @@ from app.crcon.database import (
     CrconDatabase,
     CrconMatchCombatStats,
     CrconMatchLogEvent,
+    CrconServerScope,
 )
 from app.current_match import (
     CURRENT_MATCH_CACHE_MAX_ENTRIES,
@@ -30,13 +36,17 @@ from app.current_match import (
     CurrentMatchSnapshotService,
     CurrentMatchUnavailableError,
     MatchIdentityKind,
+    _build_bindings,
     decode_kill_cursor,
     encode_kill_cursor,
+    get_current_match_snapshot_service,
 )
+from app.server_targets import ServerTarget
 from app.routes import resolve_get_payload
 
 
 FIXTURE_DIR = Path(__file__).resolve().parent / "fixtures" / "crcon"
+VERIFIED_FIXTURE_DIR = Path(__file__).resolve().parent / "fixtures" / "crcon_12_0_1"
 NOW = datetime(2026, 8, 14, 8, 15, tzinfo=UTC)
 
 
@@ -169,13 +179,17 @@ def _binding(
     server_number: int = 7,
 ) -> CrconCurrentMatchBinding:
     return CrconCurrentMatchBinding(
-        server_slug=slug,
-        server_name="Synthetic Local Server",
-        api_base_url=f"https://{slug}.fixture.invalid",
-        server_number=server_number,
+        target=ServerTarget(
+            key=slug,
+            display_name="Synthetic Local Server",
+            crcon_base_url=f"https://{slug}.fixture.invalid",
+            server_number=server_number,
+            game="hll",
+            capabilities=frozenset({"live_state", "historical_maps", "event_logs"}),
+        ),
         database_url="postgresql://fixture.invalid/crcon",
         api_headers={"X-Fixture-Auth": "synthetic"},
-        capabilities=frozenset({"live_state", "historical_maps", "event_logs"}),
+        log_server=f"synthetic-server-{server_number}",
     )
 
 
@@ -183,7 +197,7 @@ class _FakeApi:
     def __init__(
         self,
         public_info: dict[str, object] | None = None,
-        live_stats: dict[str, object] | None = None,
+        live_stats: object | None = None,
     ) -> None:
         self.public_info = public_info if public_info is not None else _public_info()
         self.live_stats = live_stats if live_stats is not None else _live_stats()
@@ -284,7 +298,7 @@ class _FakeClock:
 
 def _service(
     api: object,
-    database: object,
+    database: object | None = None,
     *,
     clock: _FakeClock | None = None,
     bindings: dict[str, CrconCurrentMatchBinding] | None = None,
@@ -293,7 +307,9 @@ def _service(
     return CurrentMatchSnapshotService(
         bindings=bindings or {_binding().server_slug: _binding()},
         api_factory=lambda _binding_value: api,
-        database_factory=lambda _binding_value: database,
+        database_factory=(
+            (lambda _binding_value: database) if database is not None else None
+        ),
         cache=TtlCache(
             max_entries=CURRENT_MATCH_CACHE_MAX_ENTRIES,
             ttl_seconds=CURRENT_MATCH_CACHE_TTL_SECONDS,
@@ -309,6 +325,17 @@ class CurrentMatchConfigurationTests(unittest.TestCase):
             self.assertEqual(get_current_match_source(), "legacy")
         with patch.dict(os.environ, {"HLL_CURRENT_MATCH_SOURCE": " crcon "}, clear=True):
             self.assertEqual(get_current_match_source(), "crcon")
+        with patch.dict(os.environ, {"HLL_CURRENT_MATCH_SOURCE": " shadow "}, clear=True):
+            self.assertEqual(get_current_match_source(), "shadow")
+
+    def test_server_list_source_is_one_explicit_legacy_crcon_selector(self) -> None:
+        with patch.dict(os.environ, {}, clear=True):
+            self.assertEqual(get_server_list_source(), "legacy")
+        with patch.dict(os.environ, {"HLL_SERVER_LIST_SOURCE": " crcon "}, clear=True):
+            self.assertEqual(get_server_list_source(), "crcon")
+        with patch.dict(os.environ, {"HLL_SERVER_LIST_SOURCE": "mixed"}, clear=True):
+            with self.assertRaisesRegex(ValueError, "HLL_SERVER_LIST_SOURCE"):
+                get_server_list_source()
 
     def test_invalid_source_is_actionable(self) -> None:
         with patch.dict(os.environ, {"HLL_CURRENT_MATCH_SOURCE": "mixed"}, clear=True):
@@ -326,6 +353,9 @@ class CurrentMatchConfigurationTests(unittest.TestCase):
             "comunidad-hispana-02": {
                 "api_base_url": "https://two.fixture.invalid",
                 "server_number": 8,
+                "game": "hllv",
+                "log_server": "explicit-log-server-two",
+                "log_game": 2,
             },
         }
         with patch.dict(
@@ -335,6 +365,9 @@ class CurrentMatchConfigurationTests(unittest.TestCase):
         ):
             bindings = get_crcon_current_match_bindings()
         self.assertEqual([item["server_number"] for item in bindings], [7, 8])
+        self.assertEqual([item["game"] for item in bindings], ["hll", "hllv"])
+        self.assertEqual(bindings[1]["log_server"], "explicit-log-server-two")
+        self.assertEqual(bindings[1]["log_game"], 2)
         self.assertNotEqual(bindings[0]["api_base_url"], bindings[1]["api_base_url"])
 
     def test_missing_bindings_do_not_break_legacy_config(self) -> None:
@@ -342,8 +375,143 @@ class CurrentMatchConfigurationTests(unittest.TestCase):
             self.assertEqual(get_current_match_source(), "legacy")
             self.assertEqual(get_crcon_current_match_bindings(), ())
 
+    def test_binding_builder_uses_canonical_server_target(self) -> None:
+        bindings = _build_bindings(
+            (
+                {
+                    "server_slug": "comunidad-hll-vietnam-01",
+                    "display_name": "HLL Vietnam",
+                    "api_base_url": "https://hllv.fixture.invalid",
+                    "server_number": 2,
+                    "game": "hllv",
+                    "enabled": True,
+                    "capabilities": ("live_state",),
+                    "log_server": None,
+                },
+            ),
+            shared_database_url=None,
+        )
+
+        binding = bindings["comunidad-hll-vietnam-01"]
+        self.assertEqual(binding.target.server_number, 2)
+        self.assertEqual(binding.target.game, "hllv")
+        self.assertEqual(binding.target.crcon_base_url, "https://hllv.fixture.invalid")
+
+    def test_runtime_api_only_binding_drops_database_capabilities(self) -> None:
+        bindings = _build_bindings(
+            (
+                {
+                    "server_slug": "community-01",
+                    "display_name": "Community",
+                    "api_base_url": "https://fixture.invalid",
+                    "server_number": 1,
+                    "game": "hll",
+                    "enabled": True,
+                    "capabilities": ("live_state", "historical_maps", "event_logs"),
+                },
+            ),
+            shared_database_url="postgresql://must-not-be-used.invalid/crcon",
+            api_only=True,
+        )
+
+        self.assertEqual(bindings["community-01"].capabilities, frozenset({"live_state"}))
+        self.assertIsNone(bindings["community-01"].database_url)
+
 
 class CrconCurrentMatchAdapterTests(unittest.TestCase):
+    def test_api_only_snapshot_uses_both_verified_calls_and_live_stats_as_canonical(self) -> None:
+        verified_payload = json.loads(
+            (VERIFIED_FIXTURE_DIR / "live_game_stats.json").read_text(encoding="utf-8")
+        )
+        api = _FakeApi(live_stats=parse_live_game_stats(verified_payload["result"]))
+        binding = _build_bindings(
+            (
+                {
+                    "server_slug": "comunidad-hispana-01",
+                    "display_name": "Synthetic Local Server",
+                    "api_base_url": "https://fixture.invalid",
+                    "server_number": 7,
+                    "game": "hll",
+                    "enabled": True,
+                },
+            ),
+            shared_database_url=None,
+            api_only=True,
+        )
+
+        snapshot = _service(api, bindings=binding).get_snapshot("comunidad-hispana-01")
+
+        self.assertEqual(api.public_calls, 1)
+        self.assertEqual(api.live_calls, 1)
+        self.assertEqual(snapshot.identity_kind, MatchIdentityKind.EPHEMERAL)
+        self.assertFalse(snapshot.degraded)
+        self.assertEqual(snapshot.kills, ())
+        self.assertEqual(len(snapshot.source_states), 1)
+        player = snapshot.players[0]
+        self.assertEqual(player.player_id, "opaque-player-001")
+        self.assertEqual((player.kills, player.deaths, player.teamkills), (3, 2, 0))
+        self.assertEqual(player.deaths_by_teamkill, 0)
+        self.assertEqual(player.favorite_weapon, "Synthetic Rifle")
+        self.assertEqual(player.weapon_counts, (("Synthetic Rifle", 3),))
+
+    def test_runtime_current_match_service_does_not_construct_postgres(self) -> None:
+        configured = {
+            "comunidad-hispana-01": {
+                "api_base_url": "https://fixture.invalid",
+                "server_number": 7,
+            }
+        }
+        with (
+            patch.dict(
+                os.environ,
+                {"HLL_CRCON_CURRENT_MATCH_BINDINGS": json.dumps(configured)},
+                clear=False,
+            ),
+            patch("app.current_match._runtime_service", None),
+            patch("app.current_match._runtime_fingerprint", None),
+        ):
+            service = get_current_match_snapshot_service()
+
+        self.assertIsNone(service._database_factory)
+        self.assertEqual(
+            service._bindings["comunidad-hispana-01"].capabilities,
+            frozenset({"live_state"}),
+        )
+
+    def test_api_only_refresh_failure_returns_stale_last_good(self) -> None:
+        api = _FakeApi()
+        database = MagicMock()
+        clock = _FakeClock()
+        binding = _build_bindings(
+            (
+                {
+                    "server_slug": "comunidad-hispana-01",
+                    "display_name": "Synthetic Local Server",
+                    "api_base_url": "https://fixture.invalid",
+                    "server_number": 7,
+                    "game": "hll",
+                    "enabled": True,
+                    "capabilities": ("live_state",),
+                },
+            ),
+            shared_database_url=None,
+            api_only=True,
+        )
+        service = _service(api, clock=clock, bindings=binding)
+        fresh = service.get_snapshot("comunidad-hispana-01")
+        clock.tick(CURRENT_MATCH_CACHE_TTL_SECONDS + 0.1)
+        api.public_error = TimeoutError("offline")
+        api.live_error = TimeoutError("offline")
+
+        stale = service.get_snapshot("comunidad-hispana-01")
+
+        self.assertEqual(stale.match_id, fresh.match_id)
+        self.assertTrue(stale.degraded)
+        self.assertIn("crcon-live-last-good-stale", stale.degraded_reasons)
+        self.assertFalse(fresh.degraded)
+        self.assertEqual(fresh.players[0].kills, 99)
+        database.assert_not_called()
+
     def test_live_game_stats_uses_verified_endpoint(self) -> None:
         requests: list[object] = []
 
@@ -366,7 +534,7 @@ class CrconCurrentMatchAdapterTests(unittest.TestCase):
             timeout_seconds=1,
             transport=transport,
         )
-        self.assertEqual(client.get_live_game_stats(), {"stats": []})
+        self.assertEqual(client.get_live_game_stats().players, ())
         self.assertEqual(requests[0].full_url, "https://fixture.invalid/api/get_live_game_stats")
 
     def test_database_methods_are_read_only_bounded_and_deterministic(self) -> None:
@@ -390,13 +558,13 @@ class CrconCurrentMatchAdapterTests(unittest.TestCase):
             started_at=datetime(2026, 8, 14, 8, 0, tzinfo=UTC),
         )
         events = database.list_match_log_events(
-            server_number=7,
+            scope=CrconServerScope(7, "hll", "synthetic-server-7", 1),
             started_at=datetime(2026, 8, 14, 8, 0, tzinfo=UTC),
             ended_at=NOW,
             limit=50,
         )
         combat = database.aggregate_match_combat_stats(
-            server_number=7,
+            scope=CrconServerScope(7, "hll", "synthetic-server-7", 1),
             started_at=datetime(2026, 8, 14, 8, 0, tzinfo=UTC),
             ended_at=NOW,
         )
@@ -413,7 +581,8 @@ class CrconCurrentMatchAdapterTests(unittest.TestCase):
         self.assertEqual(
             connections[2].statements[-1][1],
             (
-                "7",
+                "synthetic-server-7",
+                1,
                 datetime(2026, 8, 14, 8, 0, tzinfo=UTC),
                 NOW,
                 ["KILL", "TEAM KILL"],
@@ -442,6 +611,15 @@ class CrconCurrentMatchAdapterTests(unittest.TestCase):
 
 
 class CurrentMatchSnapshotTests(unittest.TestCase):
+    def test_current_match_without_players_is_valid_and_not_fabricated(self) -> None:
+        api = _FakeApi(live_stats={"stats": []})
+        database = _FakeDatabase(events=())
+
+        snapshot = _service(api, database).get_snapshot(_binding().server_slug)
+
+        self.assertEqual(snapshot.players, ())
+        self.assertEqual(snapshot.kills, ())
+
     def test_canonical_identity_and_coherent_snapshot(self) -> None:
         api = _FakeApi()
         database = _FakeDatabase()
@@ -822,7 +1000,21 @@ class CurrentMatchRouteAndCompatibilityTests(unittest.TestCase):
 
     def test_crcon_compatibility_routes_share_one_cached_snapshot(self) -> None:
         api = _FakeApi()
-        service = _service(api, _FakeDatabase())
+        binding = _build_bindings(
+            (
+                {
+                    "server_slug": "comunidad-hispana-01",
+                    "display_name": "Synthetic Local Server",
+                    "api_base_url": "https://fixture.invalid",
+                    "server_number": 7,
+                    "game": "hll",
+                    "enabled": True,
+                },
+            ),
+            shared_database_url=None,
+            api_only=True,
+        )
+        service = _service(api, bindings=binding)
         with (
             patch.dict(os.environ, {"HLL_CURRENT_MATCH_SOURCE": "crcon"}, clear=False),
             patch.object(payloads, "get_current_match_snapshot_service", return_value=service),
@@ -839,8 +1031,11 @@ class CurrentMatchRouteAndCompatibilityTests(unittest.TestCase):
             )
         self.assertEqual(api.public_calls, 1)
         self.assertEqual(summary["data"]["map_pretty_name"], "Synthetic Forest Warfare")
-        self.assertIn("event_id", kills["data"]["items"][0])
+        self.assertEqual(kills["data"]["items"], [])
+        self.assertEqual(kills["data"]["selected_source"], "crcon-log-stream")
         self.assertIn("player_name", players["data"]["items"][0])
+        self.assertEqual(players["data"]["items"][0]["kills"], 99)
+        self.assertEqual(players["data"]["selected_source"], "crcon-live-game-stats")
 
     def test_legacy_default_does_not_construct_crcon_service(self) -> None:
         sample = {

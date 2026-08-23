@@ -23,8 +23,12 @@ DEFAULT_CRCON_API_TIMEOUT_SECONDS = 5.0
 DEFAULT_CRCON_DATABASE_CONNECT_TIMEOUT_SECONDS = 5
 DEFAULT_CRCON_DATABASE_STATEMENT_TIMEOUT_MS = 5000
 DEFAULT_CRCON_DATABASE_LOCK_TIMEOUT_MS = 1000
-DEFAULT_CRCON_CONTRACT_REVISION = "4cf1e7e2fa691d849eaf85abb7065010e13f28e4"
+DEFAULT_CRCON_CONTRACT_REVISION = "17c5880684cc419b27ef2bcca0dc439dfd623eae"
 DEFAULT_CURRENT_MATCH_SOURCE = "legacy"
+DEFAULT_SERVER_LIST_SOURCE = "legacy"
+DEFAULT_HISTORICAL_MATCH_SOURCE = "legacy"
+DEFAULT_HISTORICAL_AGGREGATE_SOURCE = "legacy"
+DEFAULT_CRCON_DATABASE_POOL_SIZE = 2
 DEFAULT_HISTORICAL_REFRESH_INTERVAL_SECONDS = 1800
 DEFAULT_HISTORICAL_REFRESH_OVERLAP_HOURS = 12
 DEFAULT_HISTORICAL_SNAPSHOT_REFRESH_INTERVAL_SECONDS = 900
@@ -85,6 +89,8 @@ DEFAULT_A2S_TARGETS_ENV_VAR = "HLL_BACKEND_A2S_TARGETS"
 DEFAULT_A2S_SOURCE_NAME = "community-hispana-a2s"
 DEFAULT_RCON_TARGETS_ENV_VAR = "HLL_BACKEND_RCON_TARGETS"
 DEFAULT_RCON_SOURCE_NAME = "community-hispana-rcon"
+DEFAULT_SERVER_TARGETS_ENV_VAR = "HLL_SERVER_TARGETS"
+DEFAULT_CRCON_LOG_STREAM_TOKENS_ENV_VAR = "HLL_CRCON_LOG_STREAM_TOKENS"
 
 
 def get_bind_address() -> tuple[str, int]:
@@ -192,11 +198,57 @@ def get_current_match_source() -> str:
     """Select the current-match backend explicitly; rollback is config-only."""
     source = os.getenv("HLL_CURRENT_MATCH_SOURCE", DEFAULT_CURRENT_MATCH_SOURCE)
     normalized = str(source or "").strip().lower()
-    if normalized not in {"legacy", "crcon"}:
+    if normalized not in {"legacy", "crcon", "shadow"}:
         raise ValueError(
-            "HLL_CURRENT_MATCH_SOURCE must be either 'legacy' or 'crcon'."
+            "HLL_CURRENT_MATCH_SOURCE must be 'legacy', 'crcon', or 'shadow'."
         )
     return normalized
+
+
+def get_server_list_source() -> str:
+    """Select the public server-list producer without changing legacy transport flags."""
+    source = os.getenv("HLL_SERVER_LIST_SOURCE", DEFAULT_SERVER_LIST_SOURCE)
+    normalized = str(source or "").strip().lower()
+    if normalized not in {"legacy", "crcon"}:
+        raise ValueError("HLL_SERVER_LIST_SOURCE must be either 'legacy' or 'crcon'.")
+    return normalized
+
+
+def get_historical_match_source() -> str:
+    """Select only the public historical list/detail producer."""
+    source = os.getenv(
+        "HLL_HISTORICAL_MATCH_SOURCE",
+        DEFAULT_HISTORICAL_MATCH_SOURCE,
+    )
+    normalized = str(source or "").strip().lower()
+    if normalized not in {"legacy", "crcon"}:
+        raise ValueError(
+            "HLL_HISTORICAL_MATCH_SOURCE must be either 'legacy' or 'crcon'."
+        )
+    return normalized
+
+
+def get_historical_aggregate_source() -> str:
+    """Select the public cross-match aggregate family with one rollback flag."""
+    source = os.getenv(
+        "HLL_HISTORICAL_AGGREGATE_SOURCE",
+        DEFAULT_HISTORICAL_AGGREGATE_SOURCE,
+    )
+    normalized = str(source or "").strip().lower()
+    if normalized not in {"legacy", "crcon"}:
+        raise ValueError(
+            "HLL_HISTORICAL_AGGREGATE_SOURCE must be either 'legacy' or 'crcon'."
+        )
+    return normalized
+
+
+def get_crcon_database_pool_size() -> int:
+    """Return the bounded process-local CRCON read connection-pool size."""
+    return _read_int_env(
+        "HLL_CRCON_DATABASE_POOL_SIZE",
+        str(DEFAULT_CRCON_DATABASE_POOL_SIZE),
+        minimum=1,
+    )
 
 
 def get_crcon_current_match_bindings() -> tuple[dict[str, object], ...]:
@@ -254,17 +306,68 @@ def get_crcon_current_match_bindings() -> tuple[dict[str, object], ...]:
         database_url = (
             str(raw_database_url).strip() if raw_database_url is not None else None
         )
+        game = str(raw_binding.get("game") or "hll").strip().lower()
+        if game not in {"hll", "hllv"}:
+            raise ValueError("CRCON binding game must be 'hll' or 'hllv'.")
+        enabled = raw_binding.get("enabled", True)
+        if not isinstance(enabled, bool):
+            raise ValueError("CRCON binding enabled must be a JSON boolean.")
+        raw_log_game = raw_binding.get("log_game")
+        if raw_log_game is None:
+            log_game = None
+        else:
+            try:
+                log_game = int(raw_log_game)
+            except (TypeError, ValueError):
+                raise ValueError("CRCON binding log_game must be 1 or 2.") from None
+            if log_game not in {1, 2}:
+                raise ValueError("CRCON binding log_game must be 1 or 2.")
         bindings.append(
             {
                 "server_slug": slug,
+                "display_name": str(
+                    raw_binding.get("display_name") or raw_binding.get("server_name") or slug
+                ).strip(),
                 "api_base_url": api_base_url,
                 "server_number": server_number,
+                "game": game,
+                "enabled": enabled,
+                "log_server": (
+                    str(raw_binding.get("log_server")).strip()
+                    if raw_binding.get("log_server") is not None
+                    else None
+                ),
+                "log_game": log_game,
                 "database_url": database_url or None,
                 "api_headers": dict(raw_headers),
                 "capabilities": capabilities,
             }
         )
     return tuple(bindings)
+
+
+def get_crcon_log_stream_tokens() -> dict[str, str]:
+    """Return per-server websocket tokens from secret-only environment config."""
+    raw_tokens = os.getenv(DEFAULT_CRCON_LOG_STREAM_TOKENS_ENV_VAR)
+    if raw_tokens is None or not raw_tokens.strip():
+        return {}
+    try:
+        parsed = json.loads(raw_tokens)
+    except json.JSONDecodeError:
+        raise ValueError(
+            "HLL_CRCON_LOG_STREAM_TOKENS must be a JSON object."
+        ) from None
+    if not isinstance(parsed, dict) or any(
+        not isinstance(slug, str)
+        or not slug.strip()
+        or not isinstance(token, str)
+        or not token.strip()
+        for slug, token in parsed.items()
+    ):
+        raise ValueError(
+            "HLL_CRCON_LOG_STREAM_TOKENS must map server slugs to non-empty tokens."
+        )
+    return {slug.strip(): token.strip() for slug, token in parsed.items()}
 
 
 def use_postgres_rcon_storage(*, explicit_sqlite_path: Path | None = None) -> bool:
@@ -967,5 +1070,14 @@ def get_rcon_targets_payload() -> str | None:
     if raw_payload is None:
         return None
 
+    normalized = raw_payload.strip()
+    return normalized or None
+
+
+def get_server_targets_payload() -> str | None:
+    """Return the optional non-secret CRCON ServerTarget registry JSON."""
+    raw_payload = os.getenv(DEFAULT_SERVER_TARGETS_ENV_VAR)
+    if raw_payload is None:
+        return None
     normalized = raw_payload.strip()
     return normalized or None

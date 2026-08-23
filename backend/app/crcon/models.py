@@ -8,8 +8,17 @@ from enum import StrEnum
 
 
 CRCON_REPOSITORY = "https://github.com/MarechJ/hll_rcon_tool"
-CRCON_REFERENCE_BRANCH = "master"
-CRCON_CONTRACT_REVISION = "4cf1e7e2fa691d849eaf85abb7065010e13f28e4"
+CRCON_REFERENCE_BRANCH = "v12.0.1"
+CRCON_CONTRACT_REVISION = "17c5880684cc419b27ef2bcca0dc439dfd623eae"
+CRCON_TARGET_VERSION = "12.0.1"
+
+
+class CrconContractStatus(StrEnum):
+    """Evidence status for a version-specific API or schema contract."""
+
+    SUPPORTED = "supported"
+    UNSUPPORTED = "unsupported"
+    UNVERIFIED = "unverified"
 
 
 class CrconCapability(StrEnum):
@@ -18,6 +27,7 @@ class CrconCapability(StrEnum):
     LIVE_STATE = "live_state"
     HISTORICAL_MAPS = "historical_maps"
     HISTORICAL_PLAYER_STATS = "historical_player_stats"
+    PLAYER_AGGREGATES = "player_aggregates"
     EVENT_LOGS = "event_logs"
     PLAYER_IDENTITIES = "player_identities"
     PLAYER_SESSIONS = "player_sessions"
@@ -28,8 +38,28 @@ class CrconCapabilityStatus(StrEnum):
     """Compatibility state for one CRCON capability."""
 
     SUPPORTED = "supported"
+    UNSUPPORTED = "unsupported"
+    UNKNOWN = "unknown"
     UNAVAILABLE = "unavailable"
     INCOMPATIBLE = "incompatible"
+
+
+class CrconAggregateState(StrEnum):
+    """Publicly observable state for a selected CRCON aggregate read."""
+
+    AVAILABLE = "AVAILABLE"
+    UNAVAILABLE = "UNAVAILABLE"
+    UNVERIFIED_SCHEMA = "UNVERIFIED_SCHEMA"
+    PERFORMANCE_BLOCKED = "PERFORMANCE_BLOCKED"
+
+
+class CrconPlayerHistoryState(StrEnum):
+    """Runtime state of the authenticated player-history capability."""
+
+    SUPPORTED = "SUPPORTED"
+    AUTH_REQUIRED = "AUTH_REQUIRED"
+    UNAVAILABLE = "UNAVAILABLE"
+    UNVERIFIED_HLLV = "UNVERIFIED_HLLV"
 
 
 @dataclass(frozen=True, slots=True)
@@ -82,6 +112,10 @@ class CrconUnavailableError(CrconError):
 
 class CrconApiError(CrconError):
     """Raised for sanitized CRCON HTTP failures."""
+
+
+class CrconApiAuthenticationError(CrconApiError):
+    """Raised for sanitized HTTP 401/403 CRCON failures."""
 
 
 class CrconDatabaseError(CrconError):

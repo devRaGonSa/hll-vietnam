@@ -524,7 +524,7 @@ function hydrateSummary(result, summaryNode, rangeNode, noteNode, snapshotMetaNo
     coverage.status === "week-plus" && !payload?.is_stale,
   );
   noteNode.textContent = buildSummaryNote(
-    "snapshot-precomputed",
+    payload?.summary_basis || "snapshot-precomputed",
     7,
     coverage,
     summary.server?.slug,
@@ -1030,7 +1030,7 @@ function renderRecentMatchCard(item) {
         </article>
         <article>
           <p class="historical-match-meta__label">Jugadores</p>
-          <strong>${escapeHtml(formatNumber(item.player_count))}</strong>
+          <strong>${escapeHtml(formatPlayerCount(item.player_count))}</strong>
         </article>
         <article>
           <p class="historical-match-meta__label">Marcador</p>
@@ -1479,6 +1479,8 @@ function buildSummaryNote(summaryBasis, weeklyWindowDays, coverage, serverSlug) 
   const basisLabel =
     summaryBasis === "snapshot-precomputed"
       ? "el historico local"
+      : summaryBasis === "crcon-postgres-read-only"
+        ? "CRCON PostgreSQL en modo solo lectura"
       : "el historico persistido disponible";
   const status = coverage?.status;
   void weeklyWindowDays;
@@ -1843,6 +1845,10 @@ function formatScore(result) {
 
 function hasMatchScore(result) {
   return (
+    result?.allied_score !== null &&
+    result?.allied_score !== undefined &&
+    result?.axis_score !== null &&
+    result?.axis_score !== undefined &&
     Number.isFinite(Number(result?.allied_score)) &&
     Number.isFinite(Number(result?.axis_score))
   );
@@ -1888,6 +1894,10 @@ function formatNumber(value) {
   }
 
   return new Intl.NumberFormat("es-ES").format(parsedValue);
+}
+
+function formatPlayerCount(value) {
+  return value === null || value === undefined ? "No disponible" : formatNumber(value);
 }
 
 function formatDecimal(value, fractionDigits = 1) {

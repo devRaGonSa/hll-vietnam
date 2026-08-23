@@ -1,0 +1,14 @@
+{
+  "source": "synthetic",
+  "verified_version": "12.0.1",
+  "verified_game": "hll",
+  "verification_status": "supported",
+  "evidence": "v12.0.1 tagged source returns result null when MapsHistory has no index 1",
+  "result": null,
+  "command": "get_previous_map",
+  "arguments": null,
+  "failed": false,
+  "error": null,
+  "forwards_results": null,
+  "version": "v12.0.1"
+}

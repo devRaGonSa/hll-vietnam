@@ -240,3 +240,47 @@ Permanecen fuera de phase 2:
 `app.storage_diagnostics` muestra conteos PostgreSQL, ultimas partidas
 materializadas, ultimos `match_end`, dominios restantes y un resumen de paridad
 para verificar la migracion antes de retirar fuentes legacy.
+
+## Decision 019: lectura historica de lista y detalle desde CRCON REST 12.0.1
+
+La navegacion publica de partidas historicas separa sus fuentes por capacidad.
+Con `HLL_HISTORICAL_MATCH_SOURCE=crcon`, la lista reciente usa exclusivamente
+`get_scoreboard_maps` y el detalle seleccionado usa `get_map_scoreboard`. El
+backend conserva los contratos JSON existentes mediante un `HistoryService` y
+serializadores de compatibilidad; el navegador nunca recibe URLs ni
+credenciales CRCON.
+
+La lista no fabrica un numero de jugadores cuando CRCON devuelve
+`player_stats: []`, ni solicita un detalle por cada partida. El detalle se lee
+solo bajo demanda, valida el `server_number` del `ServerTarget` y mantiene IDs
+de partida y jugador como strings opacos. Las listas y detalles completados
+pueden usar caches TTL acotadas en memoria, sin persistencia propia.
+
+`legacy` sigue siendo el valor por defecto y el rollback inmediato. Cuando se
+selecciona `crcon`, un error se expone como estado degradado o no encontrado y
+no activa fallback oculto. `server-summary`, leaderboards, rankings y
+estadisticas agregadas permanecen en sus caminos legacy hasta verificar e
+implementar el repositorio PostgreSQL CRCON de solo lectura. HLL esta soportado
+por evidencia 12.0.1; HLLV permanece `UNVERIFIED`.
+
+## Decision 020: búsqueda de jugador por API y agregados por PostgreSQL CRCON
+
+`HLL_HISTORICAL_AGGREGATE_SOURCE=legacy|crcon` mantiene una sola frontera de
+rollback para Stats y rankings, pero el adaptador CRCON elige la fuente por
+capacidad. La búsqueda pública por nombre usa el endpoint autenticado
+`get_players_history`; perfiles, rankings y otros agregados entre partidas
+siguen en el repositorio PostgreSQL CRCON de solo lectura.
+
+La credencial API permanece en `api_headers` del binding servidor y requiere
+`api.can_view_player_history`. El cliente sólo modela identidad, nombres y
+fechas; descarta campos de moderación, sesiones y cuenta. Un ID se trata siempre
+como string opaco. El fallback API de ID se aplica sólo tras una página de
+nombre vacía y exige igualdad literal, sin inferir Steam/EOS por formato.
+
+Para múltiples targets se consulta cada API elegida y se deduplica únicamente
+por `(game, player_id)`. HLLV se mantiene `UNVERIFIED_HLLV` y no se mezcla con
+HLL. No se añade persistencia, índice, base de datos ni token registry. El
+inventario de readers/writers y el gate de apagado vive en
+`docs/CRCON_FIRST_LEGACY_DEPENDENCY_LEDGER.md`; no hay writers
+`SHUTDOWN_READY` mientras existan rollback y decisiones pendientes de MVP,
+player-event y Elo/MMR.

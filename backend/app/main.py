@@ -8,6 +8,10 @@ from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 from .config import get_allowed_origins, get_bind_address
+from .current_match import (
+    start_current_match_log_streams,
+    stop_current_match_log_streams,
+)
 from .payloads import build_error_payload
 from .routes import resolve_get_payload
 
@@ -82,8 +86,13 @@ def run() -> None:
     """Start the local bootstrap server."""
     host, port = get_bind_address()
     server = create_server()
-    print(f"HLL Vietnam backend bootstrap listening on http://{host}:{port}")
-    server.serve_forever()
+    start_current_match_log_streams()
+    try:
+        print(f"HLL Vietnam backend bootstrap listening on http://{host}:{port}")
+        server.serve_forever()
+    finally:
+        stop_current_match_log_streams()
+        server.server_close()
 
 
 if __name__ == "__main__":

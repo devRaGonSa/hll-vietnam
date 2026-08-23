@@ -15,6 +15,7 @@ from .config import (
     get_rcon_request_timeout_seconds,
     get_rcon_targets_payload,
 )
+from .server_targets import ServerTarget, ServerTargetRegistry, load_server_targets
 
 
 RCON_BUFFER_SIZE = 32768
@@ -25,7 +26,7 @@ RCON_PROTOCOL_VERSION = 2
 
 @dataclass(frozen=True, slots=True)
 class RconServerTarget:
-    """Configuration needed to query one HLL RCON endpoint."""
+    """Legacy RCON transport adapter linked to the canonical ServerTarget when found."""
 
     name: str
     host: str
@@ -36,6 +37,7 @@ class RconServerTarget:
     region: str | None = None
     game_port: int | None = None
     query_port: int | None = None
+    server_target: ServerTarget | None = None
 
 
 class RconQueryError(RuntimeError):
@@ -379,7 +381,12 @@ def load_rcon_targets() -> tuple[RconServerTarget, ...]:
     parsed = json.loads(raw_payload)
     if not isinstance(parsed, list):
         raise ValueError("HLL_BACKEND_RCON_TARGETS must be a JSON array.")
-    return tuple(_coerce_rcon_target(item) for item in parsed if isinstance(item, dict))
+    registry = load_server_targets()
+    return tuple(
+        _coerce_rcon_target(item, registry=registry)
+        for item in parsed
+        if isinstance(item, dict)
+    )
 
 
 def query_live_server_state(
@@ -486,7 +493,11 @@ def build_rcon_target_key(target: RconServerTarget) -> str:
     return f"rcon:{target.host}:{target.port}"
 
 
-def _coerce_rcon_target(raw_target: dict[str, object]) -> RconServerTarget:
+def _coerce_rcon_target(
+    raw_target: dict[str, object],
+    *,
+    registry: ServerTargetRegistry | None = None,
+) -> RconServerTarget:
     slug = _string_or_none(raw_target.get("slug"))
     external_server_id = _string_or_none(raw_target.get("external_server_id")) or slug
     name = _string_or_none(raw_target.get("name")) or _slug_to_display_name(slug) or "Unnamed RCON target"
@@ -511,6 +522,11 @@ def _coerce_rcon_target(raw_target: dict[str, object]) -> RconServerTarget:
         region=_string_or_none(raw_target.get("region")),
         game_port=_coerce_optional_positive_int(raw_target.get("game_port")),
         query_port=_coerce_optional_positive_int(raw_target.get("query_port")),
+        server_target=(
+            registry.get(external_server_id)
+            if external_server_id and registry is not None
+            else None
+        ),
     )
 
 

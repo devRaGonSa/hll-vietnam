@@ -95,12 +95,9 @@ class RconMaterializationPipelineTests(unittest.TestCase):
             self.assertEqual(players["Alpha"]["kpm"], 0.17)
             self.assertEqual(players["Bravo"]["kpm_status"], "missing_connection_intervals")
             self.assertIsNone(players["Bravo"]["kpm"])
-            self.assertEqual(players["Alpha"]["steam_id_64"], "76561198000000001")
-            self.assertEqual(players["Alpha"]["platform"], "steam")
-            self.assertEqual(
-                players["Alpha"]["external_profile_links"]["hellor"],
-                "https://hellor.pro/player/76561198000000001",
-            )
+            self.assertNotIn("steam_id_64", players["Alpha"])
+            self.assertEqual(players["Alpha"]["platform"], "unknown")
+            self.assertEqual(players["Alpha"]["external_profile_links"], {})
             self.assertEqual(players["Charlie"]["platform"], "unknown")
             self.assertNotIn("steam_id_64", players["Charlie"])
             self.assertEqual(players["Charlie"]["external_profile_links"], {})
@@ -609,8 +606,8 @@ class RconMaterializationPipelineTests(unittest.TestCase):
             self.assertNotIn("profile_summary", players["Alpha"])
             self.assertNotIn("profile_summary", players["Bravo"])
             self.assertNotIn("player_id", players["Alpha"])
-            self.assertEqual(players["Alpha"]["steam_id_64"], "76561198000000001")
-            self.assertIn("external_profile_links", players["Alpha"])
+            self.assertNotIn("steam_id_64", players["Alpha"])
+            self.assertEqual(players["Alpha"]["external_profile_links"], {})
             gc.collect()
 
     def test_recent_matches_prefer_materialized_rcon_over_scoreboard_fallback(self) -> None:

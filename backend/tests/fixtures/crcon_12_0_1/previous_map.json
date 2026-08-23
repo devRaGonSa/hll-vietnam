@@ -1,0 +1,13 @@
+{
+  "source": "sanitized_real",
+  "verified_version": "12.0.1",
+  "verified_game": "hll",
+  "verification_status": "supported",
+  "result": {"name": "synthetic_valley_offensive", "start": "2026-08-21T08:00:00", "end": "2026-08-21T09:30:00"},
+  "command": "get_previous_map",
+  "arguments": null,
+  "failed": false,
+  "error": null,
+  "forwards_results": null,
+  "version": "v12.0.1"
+}

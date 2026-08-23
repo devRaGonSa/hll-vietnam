@@ -98,8 +98,8 @@ class StatsPlayerProfilePayloadTests(unittest.TestCase):
 
         self.assertEqual(result["matches_considered"], 0)
         self.assertEqual(result["kpm_status"], "missing_active_time")
-        self.assertEqual(result["platform"], "steam")
-        self.assertIn("steam", result["external_profile_links"])
+        self.assertEqual(result["platform"], "unknown")
+        self.assertEqual(result["external_profile_links"], {})
         self.assertEqual(result["source"]["missing_reason"], "player-period-stats-empty")
         self.assertFalse(result["source"]["fallback_used"])
 

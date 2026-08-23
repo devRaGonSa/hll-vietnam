@@ -145,10 +145,14 @@ function renderMapHero(item, mapName, nodes) {
 
 function renderScoreboardDetail(item, { mapName, serverName }) {
   const result = item.result || {};
-  const alliedScore = Number.isFinite(Number(result.allied_score))
+  const alliedScore = result.allied_score !== null &&
+    result.allied_score !== undefined &&
+    Number.isFinite(Number(result.allied_score))
     ? formatNumber(result.allied_score)
     : "-";
-  const axisScore = Number.isFinite(Number(result.axis_score))
+  const axisScore = result.axis_score !== null &&
+    result.axis_score !== undefined &&
+    Number.isFinite(Number(result.axis_score))
     ? formatNumber(result.axis_score)
     : "-";
   const winner = String(item.winner || result.winner || "").toLowerCase();

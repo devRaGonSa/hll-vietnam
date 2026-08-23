@@ -1,0 +1,30 @@
+{
+  "source": "synthetic",
+  "verified_version": "12.0.1",
+  "verified_game": null,
+  "verification_status": "unverified",
+  "reason": "No authorized deployed PostgreSQL read-only DSN was configured.",
+  "tables": {
+    "steam_id_64": ["id", "steam_id_64", "steam_id"],
+    "player_soldier": ["playersteamid_id", "eos_id", "name", "level", "platform", "clan_tag"],
+    "player_names": ["playersteamid_id", "name", "created", "last_seen"],
+    "player_sessions": ["playersteamid_id", "start", "end", "server_number", "server_name"],
+    "log_lines": ["id", "event_time", "type", "player1_name", "player1_steamid", "player2_name", "player2_steamid", "weapon", "server", "game"],
+    "map_history": ["id", "start", "end", "server_number", "map_name", "result", "game"],
+    "player_stats": ["id", "playersteamid_id", "map_id", "name", "kills", "deaths", "teamkills", "deaths_by_tk", "time_seconds", "combat", "offense", "defense", "support", "vehicle_kills", "vehicles_destroyed", "weapons"],
+    "server_counts": ["server_number", "datapoint_time", "map_id", "count", "vip_count"]
+  },
+  "tagged_source_reference": {
+    "tag": "v12.0.1",
+    "commit": "17c5880684cc419b27ef2bcca0dc439dfd623eae",
+    "map_history_unique_constraint": ["start", "end", "server_number", "map_name"],
+    "map_history_indexed_columns": ["start", "end", "server_number", "map_name"],
+    "player_stats_unique_constraint": ["playersteamid_id", "map_id"],
+    "player_stats_indexed_columns": ["playersteamid_id", "map_id"],
+    "player_names_indexed_columns": ["playersteamid_id"],
+    "player_names_name_search_index": null,
+    "log_lines_unique_constraint": ["event_time", "raw"],
+    "log_lines_game_type": "integer enum: 1=hll, 2=hllv",
+    "steam_id_64_semantics": "steam_id_64 column stores opaque player_id; steam_id is separate nullable metadata"
+  }
+}

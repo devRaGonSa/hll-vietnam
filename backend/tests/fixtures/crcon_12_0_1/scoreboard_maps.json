@@ -1,0 +1,39 @@
+{
+  "source": "sanitized_real",
+  "verified_version": "12.0.1",
+  "verified_game": "hll",
+  "verification_status": "supported",
+  "result": {
+    "page": 1,
+    "page_size": 2,
+    "total": 6,
+    "maps": [
+      {
+        "map": {"id": "synthetic_valley_offensive", "map": {"id": "synthetic_valley", "name": "synthetic_valley", "tag": "SYN", "pretty_name": "Synthetic Valley", "shortname": "Valley", "allies": {"name": "Allies", "team": "allies"}, "axis": {"name": "Axis", "team": "axis"}, "orientation": "vertical"}, "game_mode": "offensive", "attackers": "allies", "environment": "day", "pretty_name": "Synthetic Valley Offensive", "image_name": "synthetic_valley"},
+        "id": 9001,
+        "creation_time": "2026-08-21T10:00:01Z",
+        "start": "2026-08-21T08:00:00Z",
+        "end": "2026-08-21T09:30:00Z",
+        "server_number": 1,
+        "player_stats": [],
+        "result": {"axis": 2, "allied": 5}
+      },
+      {
+        "map": {"id": "synthetic_forest_warfare", "map": {"id": "synthetic_forest", "name": "synthetic_forest", "tag": "SYN", "pretty_name": "Synthetic Forest", "shortname": "Forest", "allies": {"name": "Allies", "team": "allies"}, "axis": {"name": "Axis", "team": "axis"}, "orientation": "horizontal"}, "game_mode": "warfare", "attackers": null, "environment": "day", "pretty_name": "Synthetic Forest Warfare", "image_name": "synthetic_forest"},
+        "id": 9000,
+        "creation_time": "2026-08-21T08:00:01Z",
+        "start": "2026-08-21T06:30:00Z",
+        "end": "2026-08-21T08:00:00Z",
+        "server_number": 1,
+        "player_stats": [],
+        "result": {"axis": 3, "allied": 2}
+      }
+    ]
+  },
+  "command": "get_scoreboard_maps",
+  "arguments": null,
+  "failed": false,
+  "error": null,
+  "forwards_results": null,
+  "version": "v12.0.1"
+}

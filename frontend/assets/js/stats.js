@@ -436,7 +436,9 @@
   function renderResultItem(item) {
     const playerId = escapeHtml(String(item.player_id || ""));
     const playerName = escapeHtml(resolveVisiblePlayerName(item.player_name, null, null));
-    const matches = Number.isFinite(Number(item.matches_considered))
+    const matches = item.matches_considered == null
+      ? "No disponible"
+      : Number.isFinite(Number(item.matches_considered))
       ? Number(item.matches_considered)
       : 0;
     const lastSeen = formatDateTime(item.last_seen_at);
@@ -1042,8 +1044,8 @@
   }
 
   function buildFallbackExternalProfileLinks(profileData) {
-    const playerId = String(profileData?.player_id || "").trim();
-    const steamId = String(profileData?.steam_id_64 || playerId).trim();
+    // CRCON player_id is opaque. Only explicit identity metadata may create links.
+    const steamId = String(profileData?.steam_id_64 || "").trim();
     if (/^\d{17}$/.test(steamId)) {
       return {
         steam: `https://steamcommunity.com/profiles/${steamId}`,
@@ -1052,7 +1054,7 @@
         helo: `https://helo-system.de/statistics/players/${steamId}?series=2024`,
       };
     }
-    const epicId = String(profileData?.epic_id || playerId).trim().toLowerCase();
+    const epicId = String(profileData?.epic_id || "").trim().toLowerCase();
     if (/^[0-9a-f]{32}$/i.test(epicId)) {
       return {
         hellor: `https://hellor.pro/player/${epicId}`,

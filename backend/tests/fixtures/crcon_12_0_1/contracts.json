@@ -1,0 +1,21 @@
+{
+  "source": "sanitized_real",
+  "verified_version": "12.0.1",
+  "verified_game": "hll",
+  "verification_status": "supported",
+  "endpoints": {
+    "get_public_info": {"hll": "supported", "hllv": "unverified", "method": "GET", "arguments": []},
+    "get_live_game_stats": {"hll": "supported", "hllv": "unverified", "method": "GET", "arguments": []},
+    "get_live_scoreboard": {"hll": "supported", "hllv": "unverified", "method": "GET", "arguments": []},
+    "get_scoreboard_maps": {"hll": "supported", "hllv": "unverified", "method": "GET", "arguments": ["page", "limit", "server_number"]},
+    "get_map_scoreboard": {"hll": "supported", "hllv": "unverified", "method": "GET", "arguments": ["map_id"]},
+    "get_map_history": {"hll": "supported", "hllv": "unverified", "method": "GET", "arguments": ["pretty"]},
+    "get_previous_map": {"hll": "supported", "hllv": "unverified", "method": "GET", "arguments": []}
+  },
+  "autodocumentation": {
+    "arguments_reported_for_priority_endpoints": {},
+    "return_types_reported": null,
+    "permissions_required": [],
+    "allowed_http_methods": ["GET"]
+  }
+}

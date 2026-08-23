@@ -7,10 +7,15 @@ import re
 
 from .config import (
     get_current_match_source,
+    get_historical_aggregate_source,
     get_historical_data_source_kind,
+    get_historical_match_source,
     get_live_data_source_kind,
     get_refresh_interval_seconds,
+    get_server_list_source,
 )
+from .crcon.aggregate_service import get_historical_aggregate_service
+from .crcon.player_search_service import get_crcon_player_search_service
 from .data_sources import (
     LIVE_SOURCE_A2S,
     SOURCE_KIND_PUBLIC_SCOREBOARD,
@@ -57,6 +62,11 @@ from .current_match import (
     legacy_summary_projection,
     snapshot_payload,
 )
+from .current_match_shadow import (
+    compare_current_match,
+    get_final_match_verifier,
+    store_current_match_parity,
+)
 from .rcon_historical_read_model import get_rcon_historical_match_detail
 from .rcon_annual_rankings import get_annual_ranking_snapshot
 from .rcon_historical_leaderboards import (
@@ -71,6 +81,11 @@ from .rcon_client import load_rcon_targets, query_live_server_sample
 from .rcon_admin_log_storage import list_current_match_kill_feed, list_current_match_player_stats
 from .scoreboard_origins import get_trusted_public_scoreboard_origin
 from .storage import list_latest_snapshots, list_server_history, list_snapshot_history
+from .server_service import build_crcon_server_list_payload, get_crcon_server_list_service
+from .history_service import (
+    build_crcon_match_detail_payload,
+    build_crcon_recent_matches_payload,
+)
 
 PUBLIC_SERVER_STATUS_TIMEOUT_SECONDS = 2.5
 
@@ -130,6 +145,14 @@ def build_discord_payload() -> dict[str, object]:
 
 def build_servers_payload() -> dict[str, object]:
     """Return current server status, refreshing stale snapshots before responding."""
+    if get_server_list_source() == "crcon":
+        return build_crcon_server_list_payload(get_crcon_server_list_service())
+    return _build_legacy_servers_payload()
+
+
+def _build_legacy_servers_payload() -> dict[str, object]:
+    """Preserve the persisted/A2S/RCON server-list path as explicit rollback."""
+
     max_snapshot_age_seconds = get_refresh_interval_seconds()
     persisted_items = _select_primary_snapshot_items(
         _enrich_server_items(list_latest_snapshots())
@@ -263,12 +286,29 @@ def build_server_detail_history_payload(
 
 def build_current_match_payload(*, server_slug: str) -> dict[str, object]:
     """Return the live page projection for one trusted active server."""
+    mode = get_current_match_source()
+    if mode == "crcon":
+        snapshot = get_current_match_snapshot_service().get_snapshot(server_slug)
+        get_final_match_verifier().record_live(snapshot)
+        return legacy_summary_projection(snapshot)
+    legacy = _build_legacy_current_match_payload(server_slug=server_slug)
+    if mode == "shadow":
+        legacy_players = _build_legacy_current_match_player_stats_payload(
+            server_slug=server_slug
+        )
+        _run_current_match_shadow(
+            server_slug=server_slug,
+            legacy_summary=legacy,
+            legacy_players=legacy_players,
+        )
+    return legacy
+
+
+def _build_legacy_current_match_payload(*, server_slug: str) -> dict[str, object]:
+    """Build the canonical legacy summary without consulting CRCON selectors."""
     origin = get_trusted_public_scoreboard_origin(server_slug)
     if origin is None:
         raise ValueError("Unsupported current match server.")
-    if get_current_match_source() == "crcon":
-        snapshot = get_current_match_snapshot_service().get_snapshot(origin.slug)
-        return legacy_summary_projection(snapshot)
 
     sample = _query_current_match_rcon_sample(origin.slug)
     if sample is not None:
@@ -325,7 +365,7 @@ def build_current_match_payload(*, server_slug: str) -> dict[str, object]:
 
     # The generic live server snapshot is a fallback only. It intentionally
     # drops richer RCON session fields such as game mode and current scores.
-    server_payload = build_servers_payload()
+    server_payload = _build_legacy_servers_payload()
     server_data = server_payload["data"]
     item = _find_current_match_snapshot_item(server_data.get("items", []), origin)
     return {
@@ -428,18 +468,45 @@ def build_current_match_kill_feed_payload(
     since_event_id: str | None = None,
 ) -> dict[str, object]:
     """Return normalized AdminLog kill rows for one trusted current-match page."""
-    origin = get_trusted_public_scoreboard_origin(server_slug)
-    if origin is None:
-        raise ValueError("Unsupported current match server.")
-    if get_current_match_source() == "crcon":
+    mode = get_current_match_source()
+    if mode == "crcon":
+        origin = get_trusted_public_scoreboard_origin(server_slug)
+        if origin is None:
+            raise ValueError("Unsupported current match server.")
         service = get_current_match_snapshot_service()
         snapshot = service.get_snapshot(origin.slug)
+        get_final_match_verifier().record_live(snapshot)
         events = service.project_kills(
             snapshot,
             since_cursor=since_event_id,
             limit=limit,
         )
         return legacy_kills_projection(snapshot, events)
+    legacy = _build_legacy_current_match_kill_feed_payload(
+        server_slug=server_slug,
+        limit=limit,
+        since_event_id=since_event_id,
+    )
+    if mode == "shadow":
+        _run_current_match_shadow(
+            server_slug=server_slug,
+            legacy_summary=_build_legacy_current_match_payload(server_slug=server_slug),
+            legacy_players=_build_legacy_current_match_player_stats_payload(
+                server_slug=server_slug
+            ),
+        )
+    return legacy
+
+
+def _build_legacy_current_match_kill_feed_payload(
+    *,
+    server_slug: str,
+    limit: int = 30,
+    since_event_id: str | None = None,
+) -> dict[str, object]:
+    origin = get_trusted_public_scoreboard_origin(server_slug)
+    if origin is None:
+        raise ValueError("Unsupported current match server.")
     try:
         feed = list_current_match_kill_feed(
             server_key=origin.slug,
@@ -468,12 +535,28 @@ def build_current_match_kill_feed_payload(
 
 def build_current_match_player_stats_payload(*, server_slug: str) -> dict[str, object]:
     """Return current player stats only when safe AdminLog evidence exists."""
+    mode = get_current_match_source()
+    if mode == "crcon":
+        snapshot = get_current_match_snapshot_service().get_snapshot(server_slug)
+        get_final_match_verifier().record_live(snapshot)
+        return legacy_players_projection(snapshot)
+    legacy = _build_legacy_current_match_player_stats_payload(server_slug=server_slug)
+    if mode == "shadow":
+        _run_current_match_shadow(
+            server_slug=server_slug,
+            legacy_summary=_build_legacy_current_match_payload(server_slug=server_slug),
+            legacy_players=legacy,
+        )
+    return legacy
+
+
+def _build_legacy_current_match_player_stats_payload(
+    *,
+    server_slug: str,
+) -> dict[str, object]:
     origin = get_trusted_public_scoreboard_origin(server_slug)
     if origin is None:
         raise ValueError("Unsupported current match server.")
-    if get_current_match_source() == "crcon":
-        snapshot = get_current_match_snapshot_service().get_snapshot(origin.slug)
-        return legacy_players_projection(snapshot)
     try:
         stats = list_current_match_player_stats(
             server_key=origin.slug,
@@ -508,7 +591,36 @@ def build_current_match_snapshot_payload(*, server_slug: str) -> dict[str, objec
             "CRCON current-match mode is not selected."
         )
     snapshot = get_current_match_snapshot_service().get_snapshot(origin.slug)
+    get_final_match_verifier().record_live(snapshot)
     return snapshot_payload(snapshot)
+
+
+def _run_current_match_shadow(
+    *,
+    server_slug: str,
+    legacy_summary: dict[str, object],
+    legacy_players: dict[str, object],
+) -> None:
+    """Run bounded CRCON diagnostics without changing or failing the legacy response."""
+    crcon_snapshot = None
+    try:
+        crcon_snapshot = get_current_match_snapshot_service().get_snapshot(server_slug)
+        get_final_match_verifier().record_live(crcon_snapshot)
+    except Exception:  # noqa: BLE001 - shadow failures never alter the canonical response
+        pass
+    player_data = legacy_players.get("data")
+    items = player_data.get("items") if isinstance(player_data, dict) else None
+    report = compare_current_match(
+        server_key=server_slug,
+        legacy_summary=legacy_summary,
+        legacy_players=(
+            [item for item in items if isinstance(item, dict)]
+            if isinstance(items, list)
+            else []
+        ),
+        crcon_snapshot=crcon_snapshot,
+    )
+    store_current_match_parity(report)
 
 
 def _empty_current_match_kill_feed_payload() -> dict[str, object]:
@@ -782,6 +894,14 @@ def build_stats_player_search_payload(
     if not normalized_query:
         raise ValueError("Query cannot be empty.")
 
+    if get_historical_aggregate_source() == "crcon":
+        result = get_crcon_player_search_service().search(
+            query=normalized_query,
+            server_id=server_id,
+            limit=limit,
+        )
+        return {"status": "ok", "data": result}
+
     result = search_rcon_materialized_players(
         query=normalized_query,
         server_id=server_id,
@@ -805,6 +925,14 @@ def build_stats_player_profile_payload(
     timeframe: str = "weekly",
 ) -> dict[str, object]:
     """Return personal RCON materialized stats and weekly/monthly ranking context."""
+    if get_historical_aggregate_source() == "crcon":
+        result = get_historical_aggregate_service().player_profile(
+            player_id=player_id,
+            server_id=server_id,
+            timeframe=timeframe,
+        )
+        return {"status": "ok", "data": result}
+
     result = get_rcon_materialized_player_stats(
         player_id=player_id,
         server_id=server_id,
@@ -859,6 +987,16 @@ def build_annual_ranking_snapshot_payload(
     limit: int = 20,
 ) -> dict[str, object]:
     """Return an annual ranking payload from precomputed snapshots."""
+    if get_historical_aggregate_source() == "crcon":
+        result = get_historical_aggregate_service().ranking(
+            server_id=server_id,
+            timeframe="annual",
+            metric=metric,
+            limit=limit,
+            year=year,
+        )
+        return {"status": "ok", "data": {"year": year, **result}}
+
     result = get_annual_ranking_snapshot(
         year=year,
         server_key=server_id,
@@ -926,6 +1064,38 @@ def build_global_ranking_payload(
     """Return the dedicated Ranking page payload without changing Stats contracts."""
     normalized_timeframe = str(timeframe or "weekly").strip().lower()
     normalized_server_id = _normalize_public_server_id(server_id)
+
+    if get_historical_aggregate_source() == "crcon":
+        result = get_historical_aggregate_service().ranking(
+            server_id=normalized_server_id,
+            timeframe=normalized_timeframe,
+            metric=metric,
+            limit=limit,
+            year=year,
+        )
+        generated_at = result.get("generated_at")
+        aggregate_state = result.get("aggregate_state")
+        data = {
+            **result,
+            "page_kind": "global-ranking",
+            "title": "Ranking global anual" if normalized_timeframe == "annual" else "Ranking global",
+            "context": f"global-ranking-{normalized_timeframe}",
+            "timeframe": normalized_timeframe,
+            "server_id": result.get("server_id") or normalized_server_id,
+            "metric": metric,
+            "limit": limit,
+            "year": year,
+            "freshness": "live-query" if aggregate_state == "AVAILABLE" else "unavailable",
+            "fallback_used": False,
+            "source": {
+                "primary_source": "crcon-postgres",
+                "read_model": "crcon-read-only-aggregate",
+                "generated_at": generated_at,
+                "freshness": "live-query" if aggregate_state == "AVAILABLE" else "unavailable",
+                "aggregate_state": aggregate_state,
+            },
+        }
+        return {"status": "ok", "data": data}
 
     if normalized_timeframe == "annual":
         if year is None:
@@ -1120,8 +1290,15 @@ def build_recent_historical_matches_payload(
     *,
     limit: int = 20,
     server_slug: str | None = None,
+    page: int = 1,
 ) -> dict[str, object]:
     """Return recent historical matches from persisted CRCON data."""
+    if get_historical_match_source() == "crcon":
+        return build_crcon_recent_matches_payload(
+            limit=limit,
+            server_slug=server_slug,
+            page=page,
+        )
     if server_slug:
         return _build_recent_historical_matches_legacy_snapshot_payload(
             limit=limit,
@@ -1279,6 +1456,11 @@ def build_historical_match_detail_payload(
     match_id: str,
 ) -> dict[str, object]:
     """Return available detail for one historical match without inventing external URLs."""
+    if get_historical_match_source() == "crcon":
+        return build_crcon_match_detail_payload(
+            server_slug=server_slug,
+            match_id=match_id,
+        )
     if get_historical_data_source_kind() == SOURCE_KIND_RCON:
         item = get_rcon_historical_match_detail(
             server_key=server_slug,
@@ -1455,6 +1637,18 @@ def build_historical_server_summary_snapshot_payload(
     server_slug: str | None = None,
 ) -> dict[str, object]:
     """Return one precomputed summary snapshot without recalculating aggregates."""
+    if get_historical_aggregate_source() == "crcon":
+        result = get_historical_aggregate_service().server_summary(
+            server_id=server_slug
+        )
+        return {
+            "status": "ok",
+            "data": {
+                "title": "Resumen histórico CRCON por servidor",
+                "context": "historical-server-summary-crcon",
+                **result,
+            },
+        }
     snapshot = _get_historical_snapshot_record(
         server_key=server_slug,
         snapshot_type=SNAPSHOT_TYPE_SERVER_SUMMARY,
@@ -1503,6 +1697,26 @@ def build_leaderboard_snapshot_payload(
 ) -> dict[str, object]:
     """Return one precomputed leaderboard snapshot for the requested timeframe."""
     normalized_timeframe = timeframe.strip().lower() if isinstance(timeframe, str) else "weekly"
+    if get_historical_aggregate_source() == "crcon":
+        result = get_historical_aggregate_service().ranking(
+            server_id=server_id,
+            timeframe=normalized_timeframe,
+            metric=metric,
+            limit=limit,
+        )
+        return {
+            "status": "ok",
+            "data": {
+                "title": _build_leaderboard_title(
+                    metric=metric,
+                    timeframe=normalized_timeframe,
+                    is_all_servers=server_id in {None, ALL_SERVERS_SLUG},
+                    snapshot=False,
+                ),
+                "context": f"historical-{normalized_timeframe}-leaderboard-crcon",
+                **result,
+            },
+        }
     if normalized_timeframe == "monthly":
         snapshot_type = SNAPSHOT_TYPE_MONTHLY_LEADERBOARD
         window = DEFAULT_MONTHLY_SNAPSHOT_WINDOW
@@ -1609,8 +1823,15 @@ def build_recent_historical_matches_snapshot_payload(
     *,
     limit: int = 20,
     server_slug: str | None = None,
+    page: int = 1,
 ) -> dict[str, object]:
     """Return one precomputed recent-matches snapshot."""
+    if get_historical_match_source() == "crcon":
+        return build_crcon_recent_matches_payload(
+            limit=limit,
+            server_slug=server_slug,
+            page=page,
+        )
     snapshot = _get_historical_snapshot_record(
         server_key=server_slug,
         snapshot_type=SNAPSHOT_TYPE_RECENT_MATCHES,

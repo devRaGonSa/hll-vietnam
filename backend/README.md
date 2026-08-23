@@ -108,6 +108,9 @@ Variables especialmente relevantes para Docker y Compose:
 - `HLL_BACKEND_HISTORICAL_DATA_SOURCE`
 - `HLL_BACKEND_RCON_TIMEOUT_SECONDS`
 - `HLL_BACKEND_RCON_TARGETS`
+- `HLL_SERVER_TARGETS`
+- `HLL_CRCON_CURRENT_MATCH_BINDINGS`
+- `HLL_HISTORICAL_AGGREGATE_SOURCE`
 - `HLL_HISTORICAL_CRCON_PAGE_SIZE`
 - `HLL_HISTORICAL_CRCON_TIMEOUT_SECONDS`
 - `HLL_HISTORICAL_CRCON_DETAIL_WORKERS`
@@ -118,6 +121,15 @@ Variables especialmente relevantes para Docker y Compose:
 - `HLL_HISTORICAL_FULL_SNAPSHOT_EVERY_RUNS`
 - `HLL_HISTORICAL_REFRESH_MAX_RETRIES`
 - `HLL_HISTORICAL_REFRESH_RETRY_DELAY_SECONDS`
+
+En `HLL_HISTORICAL_AGGREGATE_SOURCE=crcon`, la búsqueda pública de jugadores
+usa `GET /api/get_players_history`; perfiles y rankings siguen usando el
+repositorio PostgreSQL CRCON de solo lectura. La credencial no se envía al
+navegador: se reutiliza `api_headers.Authorization` del binding CRCON alineado
+con el target canónico. La clave debe pertenecer a un usuario con
+`api.can_view_player_history`. No se debe guardar el token en
+`HLL_SERVER_TARGETS`, URLs, HTML o JavaScript. `legacy` conserva el rollback
+inmediato de toda la familia de agregados.
 
 Para ejecucion containerizada, el repositorio incluye tambien:
 

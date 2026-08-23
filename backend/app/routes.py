@@ -49,6 +49,8 @@ from .payloads import (
     build_stats_player_search_payload,
 )
 from .scoreboard_origins import get_trusted_public_scoreboard_origin
+from .config import get_historical_aggregate_source
+from .server_targets import load_server_targets
 
 RANKING_METRICS = {
     "kills",
@@ -396,22 +398,30 @@ def resolve_get_payload(path: str) -> tuple[HTTPStatus | None, dict[str, object]
 
     if parsed.path == "/api/historical/recent-matches":
         limit = _parse_limit(parsed.query)
+        page = _parse_page(parsed.query)
         if limit is None:
             return HTTPStatus.BAD_REQUEST, build_error_payload("Invalid limit parameter")
+        if page is None:
+            return HTTPStatus.BAD_REQUEST, build_error_payload("Invalid page parameter")
         server_slug = parse_qs(parsed.query).get("server", [None])[0]
         return HTTPStatus.OK, build_recent_historical_matches_payload(
             limit=limit,
             server_slug=server_slug,
+            page=page,
         )
 
     if parsed.path == "/api/historical/snapshots/recent-matches":
         limit = _parse_limit(parsed.query)
+        page = _parse_page(parsed.query)
         if limit is None:
             return HTTPStatus.BAD_REQUEST, build_error_payload("Invalid limit parameter")
+        if page is None:
+            return HTTPStatus.BAD_REQUEST, build_error_payload("Invalid page parameter")
         server_slug = parse_qs(parsed.query).get("server", [None])[0]
         return HTTPStatus.OK, build_recent_historical_matches_snapshot_payload(
             limit=limit,
             server_slug=server_slug,
+            page=page,
         )
 
     if parsed.path == "/api/historical/matches/detail":
@@ -495,6 +505,15 @@ def _parse_limit(query: str) -> int | None:
     return limit
 
 
+def _parse_page(query: str) -> int | None:
+    raw_page = parse_qs(query).get("page", ["1"])[0]
+    try:
+        page = int(raw_page)
+    except ValueError:
+        return None
+    return page if 1 <= page <= 1000 else None
+
+
 def _resolve_current_match_builder(
     builder: Callable[[], dict[str, object]],
 ) -> tuple[HTTPStatus, dict[str, object]]:
@@ -540,6 +559,10 @@ def _is_supported_ranking_server_id(server_id: str | None) -> bool:
     if server_id is None:
         return True
     normalized = str(server_id).strip().lower()
+    if get_historical_aggregate_source() == "crcon":
+        if normalized in {"", "all", "all-servers"}:
+            return True
+        return load_server_targets().get(normalized) is not None
     return normalized in {
         "",
         "all",

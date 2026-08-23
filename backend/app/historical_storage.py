@@ -17,7 +17,10 @@ from .config import (
 from .historical_models import HistoricalServerDefinition
 from .monthly_mvp import build_monthly_mvp_rankings
 from .monthly_mvp_v2 import build_monthly_mvp_v2_rankings
-from .player_external_profiles import build_external_player_profile_fields
+from .player_external_profiles import (
+    build_external_player_profile_fields,
+    normalize_steam_id_64,
+)
 from .scoreboard_origins import (
     list_trusted_public_scoreboard_origins,
     resolve_trusted_scoreboard_match_url,
@@ -2512,14 +2515,14 @@ def _build_stable_player_key(player_payload: Mapping[str, object]) -> str:
 
 
 def _derive_player_identity(player_payload: Mapping[str, object]) -> tuple[str, str | None, str | None]:
-    steam_id = _stringify(_get_nested(player_payload, "steaminfo", "profile", "steamid"))
+    steam_id = normalize_steam_id_64(
+        _get_nested(player_payload, "steaminfo", "profile", "steamid")
+    )
     source_player_id = _stringify(player_payload.get("player_id"))
     steaminfo_id = _stringify(_get_nested(player_payload, "steaminfo", "id"))
 
     if steam_id:
         return f"steam:{steam_id}", steam_id, source_player_id
-    if _is_probable_steam_id(source_player_id):
-        return f"steam:{source_player_id}", source_player_id, source_player_id
     if source_player_id:
         return f"crcon-player:{source_player_id}", None, source_player_id
     if steaminfo_id:
@@ -2592,11 +2595,6 @@ def _normalize_name_key(player_name: str) -> str:
     return compact_name or "unknown-player"
 
 
-def _is_probable_steam_id(value: object) -> bool:
-    text = _stringify(value)
-    return bool(text and text.isdigit() and len(text) >= 16)
-
-
 def _canonicalize_stored_player_row(
     row: sqlite3.Row,
 ) -> tuple[str, str | None, str | None, str]:
@@ -2605,10 +2603,9 @@ def _canonicalize_stored_player_row(
     steam_id = _stringify(row["steam_id"])
     source_player_id = _stringify(row["source_player_id"])
 
-    if _is_probable_steam_id(steam_id):
-        return f"steam:{steam_id}", steam_id, source_player_id, display_name
-    if _is_probable_steam_id(source_player_id):
-        return f"steam:{source_player_id}", source_player_id, source_player_id, display_name
+    explicit_steam_id = normalize_steam_id_64(steam_id)
+    if explicit_steam_id:
+        return f"steam:{explicit_steam_id}", explicit_steam_id, source_player_id, display_name
     if source_player_id:
         return f"crcon-player:{source_player_id}", None, source_player_id, display_name
     if stable_player_key and stable_player_key.startswith("steaminfo:"):
@@ -2621,8 +2618,6 @@ def _canonicalize_stored_player_row(
         source_ref = stable_player_key.removeprefix("crcon-player:")
         return stable_player_key, None, source_player_id or source_ref, display_name
     if stable_player_key:
-        if _is_probable_steam_id(stable_player_key):
-            return f"steam:{stable_player_key}", stable_player_key, source_player_id, display_name
         return f"crcon-player:{stable_player_key}", None, source_player_id or stable_player_key, display_name
     return f"name:{_normalize_name_key(display_name)}", None, None, display_name
 
@@ -2890,11 +2885,11 @@ def _pick_preferred_display_name(current_value: object, incoming_value: object) 
 
 
 def _pick_preferred_steam_id(current_value: object, incoming_value: object) -> str | None:
-    current_id = _stringify(current_value)
-    incoming_id = _stringify(incoming_value)
-    if _is_probable_steam_id(current_id):
+    current_id = normalize_steam_id_64(current_value)
+    incoming_id = normalize_steam_id_64(incoming_value)
+    if current_id:
         return current_id
-    if _is_probable_steam_id(incoming_id):
+    if incoming_id:
         return incoming_id
     return None
 

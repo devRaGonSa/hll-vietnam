@@ -1,0 +1,57 @@
+{
+  "source": "sanitized_real",
+  "verified_version": "12.0.1",
+  "verified_game": "hll",
+  "verification_status": "supported",
+  "result": {
+    "current_map": {
+      "map": {
+        "id": "synthetic_forest_warfare",
+        "map": {
+          "id": "synthetic_forest",
+          "name": "synthetic_forest",
+          "tag": "SYN",
+          "pretty_name": "Synthetic Forest",
+          "shortname": "Forest",
+          "allies": {"name": "Allies", "team": "allies"},
+          "axis": {"name": "Axis", "team": "axis"},
+          "orientation": "horizontal"
+        },
+        "game_mode": "warfare",
+        "attackers": null,
+        "environment": "day",
+        "pretty_name": "Synthetic Forest Warfare",
+        "image_name": "synthetic_forest"
+      },
+      "start": 1787313600
+    },
+    "next_map": {
+      "map": {
+        "id": "synthetic_valley_offensive",
+        "map": {"id": "synthetic_valley", "name": "synthetic_valley", "tag": "SYN", "pretty_name": "Synthetic Valley", "shortname": "Valley", "allies": {"name": "Allies", "team": "allies"}, "axis": {"name": "Axis", "team": "axis"}, "orientation": "vertical"},
+        "game_mode": "offensive",
+        "attackers": "allies",
+        "environment": "day",
+        "pretty_name": "Synthetic Valley Offensive",
+        "image_name": "synthetic_valley"
+      },
+      "start": null
+    },
+    "player_count": 54,
+    "max_player_count": 100,
+    "player_count_by_team": {"allied": 28, "axis": 26},
+    "score": {"allied": 3, "axis": 2},
+    "cap_flips": [{"allied_score": 3, "axis_score": 2, "ts": 1200}],
+    "match_time": 5400,
+    "time_remaining": 1875.25,
+    "vote_status": {"enabled": true, "paused": false, "results": [], "last_reminder": null, "next_map": "synthetic_valley_offensive", "player_choice": null},
+    "name": {"name": "Synthetic HLL Server", "short_name": "Synthetic", "public_stats_port": 443, "public_stats_port_https": 443},
+    "config": {"build_number": "synthetic", "build_revision": "synthetic", "password_protected": false, "server_name": "Synthetic HLL Server", "supported_platforms": ["Steam", "WinGDK", "eos"], "game": "hll"}
+  },
+  "command": "get_public_info",
+  "arguments": null,
+  "failed": false,
+  "error": null,
+  "forwards_results": null,
+  "version": "v12.0.1"
+}

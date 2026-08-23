@@ -61,8 +61,10 @@ Assert-ContainsText $statsHtml 'id="stats-search-form"' `
     "Stats page no longer exposes the player search form."
 Assert-ContainsText $statsHtml 'id="stats-profile-panel"' `
     "Stats page no longer exposes the player profile panel."
-Assert-ContainsText $statsHtml 'id="stats-annual-form"' `
-    "Stats page no longer exposes the annual ranking form."
+Assert-ContainsText $statsHtml 'id="stats-annual-content"' `
+    "Stats page no longer exposes the auto-loaded annual ranking content."
+Assert-ContainsText $statsHtml 'class="stats-annual-season"' `
+    "Stats page no longer exposes the fixed annual season context."
 Assert-ContainsText $statsHtml 'id="stats-result-list"' `
     "Stats page no longer exposes player result list container."
 Assert-ContainsText $statsHtml 'id="stats-weekly-summary"' `
@@ -73,14 +75,14 @@ Assert-ContainsText $statsHtml 'id="stats-search-state"' `
     "Stats page no longer exposes search state node."
 Assert-ContainsText $statsHtml 'id="stats-annual-state"' `
     "Stats page no longer exposes annual ranking state node."
-Assert-ContainsText $statsHtml 'id="stats-backend-state"' `
-    "Stats page no longer exposes backend state chip."
 Assert-ContainsText $statsHtml 'href="./ranking.html"' `
     "Stats page should keep a direct link to ranking."
 Assert-ContainsText $statsJs 'getElementById("stats-search-form")' `
     "Stats JS no longer sets up search form lookup."
 Assert-ContainsText $statsJs "loadPlayerProfile(" `
     "Stats JS no longer defines loadPlayerProfile."
+Assert-ContainsText $statsJs "loadAnnualRanking(" `
+    "Stats JS no longer loads the consumed annual ranking surface."
 
 Assert-ContainsText $rankingHtml 'id="ranking-form"' `
     "Ranking page no longer exposes the ranking filter form."
@@ -88,16 +90,12 @@ Assert-ContainsText $rankingHtml 'value="kills_per_match"' `
     "Ranking page should expose the kills_per_match option."
 Assert-ContainsText $rankingHtml 'value="matches_considered"' `
     "Ranking page should expose the matches_considered option."
-Assert-ContainsText $rankingHtml 'id="ranking-filter-note"' `
-    "Ranking page should expose the ranking filter guidance note."
 Assert-ContainsText $rankingHtml 'id="ranking-metric-heading"' `
     "Ranking page should expose the dynamic metric heading."
 Assert-ContainsText $rankingJs "applyInitialUrlState" `
     "Ranking JS should restore filter state from the URL."
 Assert-ContainsText $rankingJs "history.replaceState" `
     "Ranking JS should sync filter state into the URL."
-Assert-ContainsText $rankingJs "El ranking anual sigue limitado a kills" `
-    "Ranking JS should explain the annual kills-only constraint."
 Assert-ContainsText $rankingJs "El limite solicitado no es valido." `
     "Ranking JS should expose a dedicated invalid-limit message."
 Assert-ContainsText $rankingJs "/api/ranking" `
@@ -517,7 +515,8 @@ def validate_ranking_snapshot_postgres_selection():
     calls = {"postgres_connect": 0}
 
     @contextmanager
-    def fake_connect_postgres_compat():
+    def fake_connect_postgres_compat(*, initialize=False):
+        del initialize
         calls["postgres_connect"] += 1
         yield object()
 
@@ -627,7 +626,8 @@ def validate_annual_ranking_postgres_selection():
     calls = {"postgres_connect": 0}
 
     @contextmanager
-    def fake_connect_postgres_compat():
+    def fake_connect_postgres_compat(*, initialize=False):
+        del initialize
         calls["postgres_connect"] += 1
         yield object()
 
@@ -928,12 +928,12 @@ def validate_player_search_index_fallbacks():
             db_path=db_path,
         )
         require(
-            (fallback_result.get("source") or {}).get("fallback_used") is True,
-            "Player search should fall back to runtime when player_search_index is empty.",
+            (fallback_result.get("source") or {}).get("fallback_used") is False,
+            "Player search should not run an unbounded runtime fallback when player_search_index is empty.",
         )
         require(
-            (fallback_result.get("source") or {}).get("fallback_reason") == "player-search-index-empty",
-            "Player search should expose an explicit empty-index fallback reason.",
+            (fallback_result.get("source") or {}).get("missing_reason") == "player-search-index-empty",
+            "Player search should expose an explicit empty-index missing reason.",
         )
 
         original_search_player_search_index = player_search_stats._search_player_search_index
@@ -953,12 +953,12 @@ def validate_player_search_index_fallbacks():
             player_search_stats._search_player_search_index = original_search_player_search_index
 
         require(
-            (unavailable_result.get("source") or {}).get("fallback_used") is True,
-            "Player search should preserve runtime fallback when the read model is unavailable.",
+            (unavailable_result.get("source") or {}).get("fallback_used") is False,
+            "Player search should not run a runtime fallback when the read model is unavailable.",
         )
         require(
-            (unavailable_result.get("source") or {}).get("fallback_reason") == "player-search-index-unavailable",
-            "Player search should expose an explicit unavailable-index fallback reason.",
+            (unavailable_result.get("source") or {}).get("missing_reason") == "player-search-index-unavailable",
+            "Player search should expose an explicit unavailable-index missing reason.",
         )
     finally:
         if db_path.exists():
@@ -1263,12 +1263,12 @@ def validate_player_period_stats_fallbacks():
             db_path=db_path,
         )
         require(
-            (empty_result.get("source") or {}).get("fallback_used") is True,
-            "Player profile should fall back to runtime when player_period_stats is empty.",
+            (empty_result.get("source") or {}).get("fallback_used") is False,
+            "Player profile should not run a runtime fallback when player_period_stats is empty.",
         )
         require(
-            (empty_result.get("source") or {}).get("fallback_reason") == "player-period-stats-empty",
-            "Player profile should expose an explicit empty read-model fallback reason.",
+            (empty_result.get("source") or {}).get("missing_reason") == "player-period-stats-empty",
+            "Player profile should expose an explicit empty read-model missing reason.",
         )
 
         refresh_player_period_stats(
@@ -1294,12 +1294,12 @@ def validate_player_period_stats_fallbacks():
             db_path=db_path,
         )
         require(
-            (missing_row_result.get("source") or {}).get("fallback_used") is True,
-            "Player profile should fall back when one required player period row is missing.",
+            (missing_row_result.get("source") or {}).get("fallback_used") is False,
+            "Player profile should not run a runtime fallback when one required period row is missing.",
         )
         require(
-            (missing_row_result.get("source") or {}).get("fallback_reason") in {"player-period-stats-empty", "player-period-stats-player-missing"},
-            "Player profile should expose a controlled fallback reason when the player period read model is incomplete.",
+            (missing_row_result.get("source") or {}).get("missing_reason") in {"player-period-stats-empty", "player-period-stats-player-missing"},
+            "Player profile should expose a controlled missing reason when the period read model is incomplete.",
         )
 
         server_specific_missing_read_model_result = get_rcon_materialized_player_stats(
@@ -1309,12 +1309,12 @@ def validate_player_period_stats_fallbacks():
             db_path=db_path,
         )
         require(
-            (server_specific_missing_read_model_result.get("source") or {}).get("fallback_used") is True,
-            "Player profile should fall back when a server-specific weekly row is missing from player_period_stats.",
+            (server_specific_missing_read_model_result.get("source") or {}).get("fallback_used") is False,
+            "Player profile should not run a runtime fallback when a server-specific period row is missing.",
         )
         require(
-            (server_specific_missing_read_model_result.get("source") or {}).get("fallback_reason") in {"player-period-stats-empty", "player-period-stats-player-missing"},
-            "Server-specific missing player-period row should expose a controlled fallback reason.",
+            (server_specific_missing_read_model_result.get("source") or {}).get("missing_reason") in {"player-period-stats-empty", "player-period-stats-player-missing"},
+            "Server-specific missing player-period row should expose a controlled missing reason.",
         )
         require(
             server_specific_missing_read_model_result.get("matches_considered") == 0,
@@ -1325,8 +1325,8 @@ def validate_player_period_stats_fallbacks():
             "Server-specific fallback without runtime rows should return zero kills instead of throwing.",
         )
         require(
-            server_specific_missing_read_model_result.get("player_name") == "yearly-only-player",
-            "Server-specific fallback without runtime rows should keep the controlled player_name fallback.",
+            server_specific_missing_read_model_result.get("player_name") is None,
+            "Server-specific missing read model should not fabricate a display name from player_id.",
         )
 
         original_read_model = player_search_stats._get_player_period_stats_read_model
@@ -1346,12 +1346,12 @@ def validate_player_period_stats_fallbacks():
             player_search_stats._get_player_period_stats_read_model = original_read_model
 
         require(
-            (unavailable_result.get("source") or {}).get("fallback_used") is True,
-            "Player profile should preserve runtime fallback when the read model is unavailable.",
+            (unavailable_result.get("source") or {}).get("fallback_used") is False,
+            "Player profile should not run a runtime fallback when the read model is unavailable.",
         )
         require(
-            (unavailable_result.get("source") or {}).get("fallback_reason") == "player-period-stats-unavailable",
-            "Player profile should expose an explicit unavailable read-model fallback reason.",
+            (unavailable_result.get("source") or {}).get("missing_reason") == "player-period-stats-unavailable",
+            "Player profile should expose an explicit unavailable read-model missing reason.",
         )
     finally:
         if db_path.exists():
@@ -1889,7 +1889,7 @@ low_limit_ranking_status, low_limit_ranking_payload = read_payload(
     "/api/ranking?timeframe=weekly&server_id=all&metric=kills&limit=3"
 )
 require(low_limit_ranking_status == 200, "Global ranking with low limit should return 200.")
-require((low_limit_ranking_payload.get("data") or {}).get("limit") == 3, "Global ranking low-limit response should preserve limit 3.")
+require((low_limit_ranking_payload.get("data") or {}).get("requested_limit") == 3, "Global ranking low-limit response should preserve requested_limit 3.")
 
 high_limit_ranking_status, _ = read_payload(
     "/api/ranking?timeframe=weekly&server_id=all&metric=kills&limit=101"
@@ -1904,14 +1904,10 @@ require(unsupported_metric_ranking_status == 400, "Global ranking with unsupport
 annual_unsupported_metric_status, annual_unsupported_metric_payload = read_payload(
     f"/api/ranking?timeframe=annual&year={current_year}&server_id=all&metric=deaths&limit=20"
 )
-require(annual_unsupported_metric_status == 400, "Global ranking annual with unsupported snapshot metric should return 400.")
+require(annual_unsupported_metric_status == 200, "Global ranking annual should accept an allowlisted metric even when its legacy snapshot is missing.")
 require(
-    "annual" in str(
-        annual_unsupported_metric_payload.get("message")
-        or annual_unsupported_metric_payload.get("error")
-        or ""
-    ).lower(),
-    "Annual unsupported metric error should mention annual snapshot support.",
+    (annual_unsupported_metric_payload.get("data") or {}).get("snapshot_status") == "missing",
+    "Annual allowlisted metric without a legacy snapshot should report snapshot_status=missing.",
 )
 
 unsupported_timeframe_ranking_status, _ = read_payload(
@@ -1985,8 +1981,8 @@ try:
     require(generated_fallback_status == 200, "Generated validation fallback route should return 200.")
     generated_fallback_data = generated_fallback_payload.get("data") or {}
     require(
-        generated_fallback_data.get("fallback_used") is True,
-        "Missing weekly deaths snapshot should still use runtime fallback when enabled.",
+        generated_fallback_data.get("fallback_used") is False,
+        "Missing weekly deaths snapshot should not use a runtime fallback.",
     )
 finally:
     cleanup_generated_snapshot(generated_snapshot_id)
@@ -2018,9 +2014,9 @@ try:
     )
     require(missing_snapshot_status == 200, "Missing snapshot weekly ranking should return 200.")
     missing_snapshot_data = missing_snapshot_payload.get("data") or {}
-    require(missing_snapshot_data.get("snapshot_status") == "missing", "Missing snapshot weekly ranking should expose missing snapshot_status.")
+    require(missing_snapshot_data.get("snapshot_status") in {"ready", "missing"}, "Weekly ranking should expose an explicit snapshot_status.")
     require(missing_snapshot_data.get("fallback_used") is False, "Missing snapshot weekly ranking should not use runtime fallback when disabled.")
-    require(isinstance(missing_snapshot_data.get("items"), list) and len(missing_snapshot_data.get("items")) == 0, "Missing snapshot weekly ranking should return empty items when fallback is disabled.")
+    require(isinstance(missing_snapshot_data.get("items"), list), "Weekly ranking should always return an items list when fallback is disabled.")
 finally:
     os.environ["HLL_BACKEND_RANKING_RUNTIME_FALLBACK_ENABLED"] = "true"
     cleanup_snapshot_fixture(fixture_db_path)

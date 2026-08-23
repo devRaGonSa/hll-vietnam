@@ -274,7 +274,7 @@
 
           <article>
             <p class="historical-match-meta__label">Jugadores</p>
-            <strong>${escapeDynamicHtml(formatDynamicNumber(item?.player_count))}</strong>
+            <strong>${escapeDynamicHtml(formatDynamicPlayerCount(item?.player_count))}</strong>
           </article>
 
           <article>
@@ -298,8 +298,7 @@
 
   function normalizeDynamicServerSlug(value) {
     const normalized = String(value || "").trim();
-    if (["comunidad-hispana-01", "comunidad-hispana-02", "all-servers"].includes(normalized)) return normalized;
-    return "all-servers";
+    return normalized || "all-servers";
   }
 
   function buildDynamicRecentMeta(items) {
@@ -325,10 +324,23 @@
     return Number.isFinite(number) ? new Intl.NumberFormat("es-ES").format(number) : "0";
   }
 
+  function formatDynamicPlayerCount(value) {
+    return value === null || value === undefined
+      ? "No disponible"
+      : formatDynamicNumber(value);
+  }
+
   function formatDynamicScore(result) {
     const allied = result?.allied_score;
     const axis = result?.axis_score;
-    if (Number.isFinite(Number(allied)) && Number.isFinite(Number(axis))) return `${allied} - ${axis}`;
+    if (
+      allied !== null &&
+      allied !== undefined &&
+      axis !== null &&
+      axis !== undefined &&
+      Number.isFinite(Number(allied)) &&
+      Number.isFinite(Number(axis))
+    ) return `${allied} - ${axis}`;
     return "- - -";
   }
 

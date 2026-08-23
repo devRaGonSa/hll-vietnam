@@ -1,0 +1,21 @@
+{
+  "source": "sanitized_real",
+  "verified_version": "12.0.1",
+  "verified_game": "hll",
+  "verification_status": "supported",
+  "result": [
+    {"endpoint": "get_public_info", "arguments": {}, "return_type": null, "doc_string": null, "auto_settings_capable": false, "permissions_required": [], "allowed_http_methods": ["GET"]},
+    {"endpoint": "get_live_game_stats", "arguments": {}, "return_type": null, "doc_string": "Return stats for the currently playing match", "auto_settings_capable": false, "permissions_required": [], "allowed_http_methods": ["GET"]},
+    {"endpoint": "get_live_scoreboard", "arguments": {}, "return_type": null, "doc_string": "Return stats for all currently connected players (stats are reset on disconnect, not match start)", "auto_settings_capable": false, "permissions_required": [], "allowed_http_methods": ["GET"]},
+    {"endpoint": "get_scoreboard_maps", "arguments": {}, "return_type": null, "doc_string": null, "auto_settings_capable": false, "permissions_required": [], "allowed_http_methods": ["GET"]},
+    {"endpoint": "get_map_scoreboard", "arguments": {}, "return_type": null, "doc_string": null, "auto_settings_capable": false, "permissions_required": [], "allowed_http_methods": ["GET"]},
+    {"endpoint": "get_map_history", "arguments": {}, "return_type": null, "doc_string": null, "auto_settings_capable": false, "permissions_required": [], "allowed_http_methods": ["GET"]},
+    {"endpoint": "get_previous_map", "arguments": {}, "return_type": null, "doc_string": null, "auto_settings_capable": false, "permissions_required": [], "allowed_http_methods": ["GET"]}
+  ],
+  "command": "get_api_documentation",
+  "arguments": null,
+  "failed": false,
+  "error": null,
+  "forwards_results": null,
+  "version": "v12.0.1"
+}

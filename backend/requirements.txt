@@ -1,2 +1,3 @@
 # PostgreSQL is used by the phase-1 RCON historical storage migration.
 psycopg[binary]>=3.2,<4
+websocket-client>=1.8,<2
