@@ -83,7 +83,9 @@ test("map name and lazy local thumbnail replace the static MAPA label", () => {
   assert.match(markup, /loading="lazy"/);
   assert.doesNotMatch(markup, />MAPA</i);
   assert.match(css, /\.server-card__map\s*\{[\s\S]*?grid-template-columns:\s*82px minmax\(0, 1fr\)/);
-  assert.doesNotMatch(css, /grid-template-columns:\s*minmax\(104px, 36%\)/);
+  assert.match(css, /\.server-card__map-image\s*\{[\s\S]*?height:\s*46px;[\s\S]*?object-fit:\s*contain;/);
+  assert.doesNotMatch(css, /\.server-card__map-image\s*\{[\s\S]*?object-fit:\s*cover;/);
+  assert.match(css, /@media \(max-width: 640px\)[\s\S]*?\.server-card__map-image\s*\{\s*height:\s*42px;/);
 });
 
 test("unknown and HLLV maps use the explicit local fallback", () => {
@@ -102,19 +104,21 @@ test("scorebar represents Allies lead, Axis lead and ties proportionally", () =>
   const allies = runtime.renderServerStatsCard(server({ allied_score: 3, axis_score: 2 }));
   assert.match(allies, /server-card__scoreboard--allies/);
   assert.match(allies, /--allied-score-share: 60\.00%; --axis-score-share: 40\.00%/);
-  assert.match(allies, />3 — 2<\/strong>/);
-  assert.match(allies, /Allies va ganando/);
+  assert.match(allies, /server-card__scoreboard-team--allies[\s\S]*?<span>Allies<\/span>[\s\S]*?<strong>3<\/strong>/);
+  assert.match(allies, /server-card__scoreboard-team--axis[\s\S]*?<strong>2<\/strong>[\s\S]*?<span>Axis<\/span>/);
+  assert.doesNotMatch(allies, />3 — 2</);
 
   const axis = runtime.renderServerStatsCard(server({ allied_score: 2, axis_score: 3 }));
   assert.match(axis, /server-card__scoreboard--axis/);
   assert.match(axis, /--allied-score-share: 40\.00%; --axis-score-share: 60\.00%/);
-  assert.match(axis, /Axis va ganando/);
+  assert.match(axis, /<span>Allies<\/span>[\s\S]*?<strong>2<\/strong>/);
+  assert.match(axis, /<strong>3<\/strong>[\s\S]*?<span>Axis<\/span>/);
 
   const tie = runtime.renderServerStatsCard(server({ allied_score: 2, axis_score: 2 }));
   assert.match(tie, /server-card__scoreboard--tie/);
   assert.match(tie, /--allied-score-share: 50\.00%; --axis-score-share: 50\.00%/);
-  assert.match(tie, />2 — 2<\/strong>/);
-  assert.match(tie, /Empate/);
+  assert.match(tie, /Puntuación: Allies 2, Axis 2\. Empate\./);
+  assert.doesNotMatch(tie, />2 — 2</);
 
   assert.match(css, /server-card__scorebar-side--allies[\s\S]*?#426d91/);
   assert.match(css, /server-card__scorebar-side--axis[\s\S]*?#b95c54/);
@@ -122,12 +126,14 @@ test("scorebar represents Allies lead, Axis lead and ties proportionally", () =>
 
 test("scorebar preserves real zero and distinguishes unknown", () => {
   const zero = runtime.renderServerStatsCard(server({ allied_score: 0, axis_score: 0 }));
-  assert.match(zero, /Puntuación: 0 — 0/);
+  assert.match(zero, /Puntuación: Allies 0, Axis 0\. Empate\./);
+  assert.match(zero, /<span>Allies<\/span>[\s\S]*?<strong>0<\/strong>/);
+  assert.match(zero, /<strong>0<\/strong>[\s\S]*?<span>Axis<\/span>/);
+  assert.doesNotMatch(zero, />0 — 0</);
   assert.match(zero, /--allied-score-share: 50\.00%; --axis-score-share: 50\.00%/);
   const unknown = runtime.renderServerStatsCard(server({ allied_score: null, axis_score: null }));
   assert.match(unknown, /aria-label="Puntuación no disponible\."/);
-  assert.match(unknown, /<strong>—<\/strong>/);
-  assert.doesNotMatch(unknown, /Puntuación: 0 — 0/);
+  assert.equal((unknown.match(/<strong>—<\/strong>/g) || []).length, 2);
   assert.match(unknown, /server-card__scoreboard--unknown/);
   assert.match(unknown, /server-card__scorebar-unknown/);
   assert.doesNotMatch(unknown, /server-card__scorebar-side--allies/);

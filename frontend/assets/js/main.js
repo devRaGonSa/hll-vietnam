@@ -391,24 +391,15 @@ function formatPopulationValue(value) {
   return Number.isInteger(value) && value >= 0 ? String(value) : "—";
 }
 
-function formatLiveScore(alliedScore, axisScore) {
-  // CRCON keeps stable side order: side 1 — side 2. Those sides are
-  // Allies/Axis in HLL and South/North in HLL Vietnam.
+function resolveScorePresentation(alliedScore, axisScore) {
   if (
     !Number.isInteger(alliedScore) || alliedScore < 0 ||
     !Number.isInteger(axisScore) || axisScore < 0
   ) {
-    return "—";
-  }
-  return `${alliedScore} — ${axisScore}`;
-}
-
-function resolveScorePresentation(alliedScore, axisScore) {
-  const label = formatLiveScore(alliedScore, axisScore);
-  if (label === "—") {
     return {
       available: false,
-      label,
+      alliedScore: null,
+      axisScore: null,
       leader: "unknown",
       leaderLabel: "Puntuaci\u00f3n no disponible",
       alliedPercent: 50,
@@ -431,7 +422,8 @@ function resolveScorePresentation(alliedScore, axisScore) {
 
   return {
     available: true,
-    label,
+    alliedScore,
+    axisScore,
     leader,
     leaderLabel,
     alliedPercent,
@@ -441,11 +433,13 @@ function resolveScorePresentation(alliedScore, axisScore) {
 
 function renderScoreboardBar(score) {
   const accessibilityLabel = score.available
-    ? `Puntuaci\u00f3n: ${score.label}. ${score.leaderLabel}.`
+    ? `Puntuaci\u00f3n: Allies ${score.alliedScore}, Axis ${score.axisScore}. ${score.leaderLabel}.`
     : "Puntuaci\u00f3n no disponible.";
   const shareStyle = score.available
     ? ` style="--allied-score-share: ${score.alliedPercent.toFixed(2)}%; --axis-score-share: ${score.axisPercent.toFixed(2)}%;"`
     : "";
+  const alliedLabel = score.available ? String(score.alliedScore) : "—";
+  const axisLabel = score.available ? String(score.axisScore) : "—";
 
   return `
     <section
@@ -454,20 +448,21 @@ function renderScoreboardBar(score) {
       data-score-state="${score.leader}"
       ${shareStyle}
     >
-      <div class="server-card__scoreboard-heading">
-        <span>Puntuaci\u00f3n</span>
-        <strong>${escapeHtml(score.label)}</strong>
-        <em>${escapeHtml(score.leaderLabel)}</em>
+      <div class="server-card__scoreboard-teams">
+        <span class="server-card__scoreboard-team server-card__scoreboard-team--allies">
+          <span>Allies</span>
+          <strong>${escapeHtml(alliedLabel)}</strong>
+        </span>
+        <span class="server-card__scoreboard-team server-card__scoreboard-team--axis">
+          <strong>${escapeHtml(axisLabel)}</strong>
+          <span>Axis</span>
+        </span>
       </div>
       <div class="server-card__scorebar" role="img" aria-label="${escapeHtml(accessibilityLabel)}">
         ${score.available ? `
           <span class="server-card__scorebar-side server-card__scorebar-side--allies"></span>
           <span class="server-card__scorebar-side server-card__scorebar-side--axis"></span>
         ` : '<span class="server-card__scorebar-unknown"></span>'}
-      </div>
-      <div class="server-card__scoreboard-legend" aria-hidden="true">
-        <span>Allies</span>
-        <span>Axis</span>
       </div>
     </section>
   `;
