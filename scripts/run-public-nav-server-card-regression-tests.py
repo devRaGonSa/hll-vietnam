@@ -84,6 +84,9 @@ require("map-image-resolver.js?v=323" in index_html, "Home does not load the sha
 require("SERVER_CARD_PRESENTATION" in main_js and "data-server-target" in main_js, "Server card labels are not target-backed")
 require("remaining_match_time_seconds" in main_js and "allied_score" in main_js and "axis_score" in main_js, "Live match card fields are incomplete")
 require("server-card__map-image" in css and "server-card__live-metrics" in css, "Enhanced server card styles are missing")
+require("grid-template-columns: 82px minmax(0, 1fr);" in css, "Home map thumbnail is not compact")
+require("server-card__scorebar-side--allies" in css and "server-card__scorebar-side--axis" in css, "Proportional scorebar styles are incomplete")
+require("resolveScorePresentation" in main_js and "--allied-score-share" in main_js, "Scorebar does not use live score proportions")
 normalizer = main_js[main_js.index("function normalizeServerGame") : main_js.index("function normalizeServerRegion")]
 require("serverName" not in normalizer, "Game detection must not inspect the server name")
 print("TASK-321 public nav, normative content, bots page, cache and HLLV validation passed.")

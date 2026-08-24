@@ -87,6 +87,13 @@ Require-Contains $css '.server-card--game-hllv' `
     "HLL Vietnam server-card styling is missing."
 Require-Contains $css '.server-card__map-image' "Map thumbnail styling is missing."
 Require-Contains $css '.server-card__live-metrics' "Live score/time layout is missing."
+Require-Contains $css 'grid-template-columns: 82px minmax(0, 1fr)' `
+    "Map thumbnail was not reduced to the compact desktop width."
+Require-Contains $css '.server-card__scorebar-side--allies' "Allies scorebar segment is missing."
+Require-Contains $css '.server-card__scorebar-side--axis' "Axis scorebar segment is missing."
+Require-Contains $javascript 'resolveScorePresentation' "Proportional score presentation is missing."
+Require-Contains $javascript '--allied-score-share:' "Real Allies score share is not rendered."
+Require-Contains $javascript '--axis-score-share:' "Real Axis score share is not rendered."
 Require-Contains $javascript 'Hist\u00f3rico' "Historical server link changed."
 Require-Contains $javascript 'Partida actual' "Current-match server link changed."
 

@@ -294,7 +294,7 @@ function renderServerStatsCard(server) {
     serverGame === "hllv" ? "server-card--game-hllv" : "";
   const gameLabel = formatServerGameLabel(serverGame);
   const mapImage = resolveServerMapImage(server, serverGame, currentMap);
-  const scoreLabel = formatLiveScore(server.allied_score, server.axis_score);
+  const score = resolveScorePresentation(server.allied_score, server.axis_score);
   const remainingSeconds = normalizeRemainingSeconds(
     server.remaining_match_time_seconds,
   );
@@ -333,16 +333,15 @@ function renderServerStatsCard(server) {
         />
         <strong class="server-card__map-name">${escapeHtml(currentMap)}</strong>
       </div>
-      <dl class="server-card__live-metrics" aria-label="Datos de la partida actual">
-        <div class="server-card__live-metric">
-          <dt>Tiempo restante</dt>
-          <dd${remainingAttribute} aria-label="Tiempo restante: ${escapeHtml(remainingLabel)}">${escapeHtml(remainingLabel)}</dd>
-        </div>
-        <div class="server-card__live-metric">
-          <dt>Puntuaci\u00f3n</dt>
-          <dd aria-label="Puntuaci\u00f3n: ${escapeHtml(scoreLabel)}">${escapeHtml(scoreLabel)}</dd>
-        </div>
-      </dl>
+      <div class="server-card__match-summary">
+        <dl class="server-card__live-metrics" aria-label="Tiempo de la partida actual">
+          <div class="server-card__live-metric">
+            <dt>Tiempo restante</dt>
+            <dd${remainingAttribute} aria-label="Tiempo restante: ${escapeHtml(remainingLabel)}">${escapeHtml(remainingLabel)}</dd>
+          </div>
+        </dl>
+        ${renderScoreboardBar(score)}
+      </div>
       <div class="server-card__footer">
         ${actionMarkup}
       </div>
@@ -402,6 +401,76 @@ function formatLiveScore(alliedScore, axisScore) {
     return "—";
   }
   return `${alliedScore} — ${axisScore}`;
+}
+
+function resolveScorePresentation(alliedScore, axisScore) {
+  const label = formatLiveScore(alliedScore, axisScore);
+  if (label === "—") {
+    return {
+      available: false,
+      label,
+      leader: "unknown",
+      leaderLabel: "Puntuaci\u00f3n no disponible",
+      alliedPercent: 50,
+      axisPercent: 50,
+    };
+  }
+
+  const total = alliedScore + axisScore;
+  const alliedPercent = total === 0 ? 50 : (alliedScore / total) * 100;
+  const leader = alliedScore > axisScore
+    ? "allies"
+    : axisScore > alliedScore
+      ? "axis"
+      : "tie";
+  const leaderLabel = leader === "allies"
+    ? "Allies va ganando"
+    : leader === "axis"
+      ? "Axis va ganando"
+      : "Empate";
+
+  return {
+    available: true,
+    label,
+    leader,
+    leaderLabel,
+    alliedPercent,
+    axisPercent: 100 - alliedPercent,
+  };
+}
+
+function renderScoreboardBar(score) {
+  const accessibilityLabel = score.available
+    ? `Puntuaci\u00f3n: ${score.label}. ${score.leaderLabel}.`
+    : "Puntuaci\u00f3n no disponible.";
+  const shareStyle = score.available
+    ? ` style="--allied-score-share: ${score.alliedPercent.toFixed(2)}%; --axis-score-share: ${score.axisPercent.toFixed(2)}%;"`
+    : "";
+
+  return `
+    <section
+      class="server-card__scoreboard server-card__scoreboard--${score.leader}"
+      aria-label="${escapeHtml(accessibilityLabel)}"
+      data-score-state="${score.leader}"
+      ${shareStyle}
+    >
+      <div class="server-card__scoreboard-heading">
+        <span>Puntuaci\u00f3n</span>
+        <strong>${escapeHtml(score.label)}</strong>
+        <em>${escapeHtml(score.leaderLabel)}</em>
+      </div>
+      <div class="server-card__scorebar" role="img" aria-label="${escapeHtml(accessibilityLabel)}">
+        ${score.available ? `
+          <span class="server-card__scorebar-side server-card__scorebar-side--allies"></span>
+          <span class="server-card__scorebar-side server-card__scorebar-side--axis"></span>
+        ` : '<span class="server-card__scorebar-unknown"></span>'}
+      </div>
+      <div class="server-card__scoreboard-legend" aria-hidden="true">
+        <span>Allies</span>
+        <span>Axis</span>
+      </div>
+    </section>
+  `;
 }
 
 function normalizeRemainingSeconds(value) {
