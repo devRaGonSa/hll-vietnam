@@ -16,6 +16,8 @@ PUBLIC_PAGES = (
     "ranking.html",
     "partida-actual.html",
     "vip.html",
+    "normativa.html",
+    "bots.html",
 )
 
 
@@ -37,7 +39,7 @@ for page_name in PUBLIC_PAGES:
     navs = re.findall(r'<nav class="public-nav".*?</nav>', html, flags=re.DOTALL)
     require(len(navs) == 1, f"{page_name} must contain one public nav")
     require('href="./vip.html"' in navs[0], f"{page_name} nav lacks VIP")
-require('href="./vip.html" aria-current="page">VIP</a>' in vip, "VIP nav is not active")
+require('class="public-nav__menu-link is-current" href="./vip.html" aria-current="page">VIP</a>' in vip, "VIP nav is not active")
 require("HLL Vietnam</span><strong>+12 h VIP" in vip, "Verified HLLV Seed VIP is missing")
 require("HLL #1 y HLL #2</span><strong>+24 h VIP" in vip, "Classic Seed VIP is missing")
 require("Solo Hell Let Loose clásico · HLL #1 y HLL #2" in vip, "Weekly classic scope is ambiguous")

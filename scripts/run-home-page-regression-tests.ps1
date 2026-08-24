@@ -48,7 +48,13 @@ if (-not (0 -le $serversIndex -and $serversIndex -lt $trailerIndex -and $trailer
 }
 
 Require-Absent $html 'class="panel panel--vip"' "VIP content must not remain on the home page."
-Require-Contains $html 'href="./vip.html"' "VIP navigation link is missing."
+Require-Contains $html 'data-public-nav' "Shared public navigation is missing."
+Require-Contains $html 'Servidores <span class="public-nav__chevron"' "Servers dropdown is missing."
+Require-Contains $html 'Comunidad <span class="public-nav__chevron"' "Community dropdown is missing."
+Require-Contains $html 'href="./vip.html"' "VIP community navigation link is missing."
+Require-Contains $html 'href="./normativa.html"' "Normative community navigation link is missing."
+Require-Contains $html 'href="./bots.html"' "Bots community navigation link is missing."
+Require-Contains $html 'public-nav.js?v=321' "Shared navigation behavior is missing."
 Require-Absent $html "CDO" "Unverified CDO reward was published."
 Require-Absent $html "CDE" "Unverified CDE reward was published."
 Require-Contains $html 'id="trailer-frame"' "Trailer was removed."

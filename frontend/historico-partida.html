@@ -14,22 +14,28 @@
   </head>
   <body>
     <div class="page-shell historical-shell">
-      <nav class="public-nav" aria-label="Navegación pública principal">
-        <a class="public-nav__link" href="./index.html">
-          Inicio
-        </a>
-        <a class="public-nav__link" href="./historico.html">
-          Histórico
-        </a>
-        <a class="public-nav__link" href="./stats.html">
-          Estadísticas
-        </a>
-        <a class="public-nav__link" href="./ranking.html">
-          Ranking
-        </a>
-        <a class="public-nav__link" href="./vip.html">
-          VIP
-        </a>
+      <nav class="public-nav" aria-label="Navegación pública principal" data-public-nav>
+        <a class="public-nav__link" href="./index.html">Inicio</a>
+        <div class="public-nav__group is-active" data-nav-group>
+          <button class="public-nav__trigger" type="button" aria-expanded="false" aria-haspopup="true" aria-controls="public-nav-servers" data-nav-trigger>
+            Servidores <span class="public-nav__chevron" aria-hidden="true">▾</span>
+          </button>
+          <div class="public-nav__menu" id="public-nav-servers" data-nav-menu hidden>
+            <a class="public-nav__menu-link" href="./historico.html">Histórico</a>
+            <a class="public-nav__menu-link" href="./stats.html">Estadísticas</a>
+            <a class="public-nav__menu-link" href="./ranking.html">Ranking</a>
+          </div>
+        </div>
+        <div class="public-nav__group" data-nav-group>
+          <button class="public-nav__trigger" type="button" aria-expanded="false" aria-haspopup="true" aria-controls="public-nav-community" data-nav-trigger>
+            Comunidad <span class="public-nav__chevron" aria-hidden="true">▾</span>
+          </button>
+          <div class="public-nav__menu" id="public-nav-community" data-nav-menu hidden>
+            <a class="public-nav__menu-link" href="./vip.html">VIP</a>
+            <a class="public-nav__menu-link" href="./normativa.html">Normativa</a>
+            <a class="public-nav__menu-link" href="./bots.html">Bots y comandos</a>
+          </div>
+        </div>
       </nav>
       <header class="hero historical-hero">
         <div class="hero__overlay"></div>
@@ -175,6 +181,7 @@
       </main>
     </div>
 
+    <script src="./assets/js/public-nav.js?v=321"></script>
     <script src="./assets/js/config.js"></script>
     <script src="./assets/js/map-image-resolver.js"></script>
     <script src="./assets/js/historico-partida.js"></script>
