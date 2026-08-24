@@ -9,7 +9,6 @@ En esta primera fase, el proyecto se centra en una landing sencilla, limpia y pr
 - Landing inicial de comunidad.
 - Estructura de repositorio preparada para crecer.
 - Carpeta de backend reservada para una futura implementacion en Python.
-- Carpeta `ai/` ya integrada como capa operativa para orquestacion por tasks y trabajo con Codex.
 
 ## Estructura del repositorio
 
@@ -17,7 +16,6 @@ En esta primera fase, el proyecto se centra en una landing sencilla, limpia y pr
 /
 |-- README.md
 |-- .gitignore
-|-- AGENTS.md
 |-- docs/
 |   |-- project-overview.md
 |   |-- roadmap.md
@@ -39,20 +37,6 @@ En esta primera fase, el proyecto se centra en una landing sencilla, limpia y pr
 |   |-- .env.example
 |   `-- app/
 |       `-- __init__.py
-|-- ai/
-|   |-- README.md
-|   |-- architecture-index.md
-|   |-- repo-context.md
-|   |-- system-metrics.md
-|   |-- task-template.md
-|   |-- prompts/
-|   |   `-- plan-feature.md
-|   |-- orchestrator/
-|   |   `-- README.md
-|   `-- tasks/
-|       |-- pending/
-|       |-- in-progress/
-|       `-- done/
 |-- docker-compose.yml
 `-- scripts/
 ```

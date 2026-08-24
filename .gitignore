@@ -9,10 +9,13 @@ build/
 .DS_Store
 Thumbs.db
 
-# Local AI worker/runtime artifacts
-ai/worker.lock
-ai/reports/*.md
-!ai/reports/.gitkeep
+# Local AI / Codex development orchestration
+/ai/
+/AGENTS.md
+/ai-platform.json
+/install-ai-platform.ps1
+/.github/workflows/codex-worker.yml
+/scripts/codex-runner.ps1
 
 # Local backend runtime data
 backend/runtime/

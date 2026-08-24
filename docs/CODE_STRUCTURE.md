@@ -39,9 +39,9 @@ The other repository areas are:
   `python -m` entrypoints are part of the reachability audit.
 - `docs`: architecture, runbooks and migration evidence; operational command
   references count as live evidence, not as dead prose.
-- `ai/tasks`: historical task evidence plus pending/in-progress work; task-only
-  references do not by themselves make code live, but they explain rollback
-  and product decisions.
+- `ai/` is local development orchestration and is intentionally not versioned
+  or deployed. References in historical technical evidence do not make it a
+  runtime dependency.
 
 ## Complete backend module classification before moves
 
