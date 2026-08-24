@@ -1,5 +1,10 @@
 // Progressive enhancement for local frontend-backend checks.
 const DEFAULT_SERVER_POLL_INTERVAL_MS = 300 * 1000;
+const SERVER_CARD_PRESENTATION = Object.freeze({
+  "comunidad-hispana-01": Object.freeze({ label: "Servidor 1" }),
+  "comunidad-hispana-02": Object.freeze({ label: "Servidor 2" }),
+  "comunidad-hll-vietnam-01": Object.freeze({ label: "Servidor 3" }),
+});
 const TRUSTED_SERVER_ACTIONS = Object.freeze({
   "comunidad-hispana-01": Object.freeze({
     publicScoreboardUrl: "https://scoreboard.comunidadhll.es",
@@ -82,6 +87,8 @@ const COMMUNITY_CLANS = Object.freeze([
     discordLabel: "Abrir Discord",
   },
 ]);
+
+let serverCountdownTimerId = null;
 
 document.addEventListener("DOMContentLoaded", () => {
   console.info("HLL Vietnam frontend ready");
@@ -209,6 +216,7 @@ async function hydrateServers(
     setServersDataState(serversBadge, deriveSnapshotState(serversData));
 
     if (serversData.items.length === 0) {
+      stopServerCountdown();
       serversList.innerHTML =
         '<p class="servers-empty">Informaci\u00f3n de servidores disponible m\u00e1s adelante.</p>';
       return;
@@ -216,7 +224,9 @@ async function hydrateServers(
 
     const visibleItems = selectPrimaryServerItems(serversData.items);
     serversList.innerHTML = renderServerSections(visibleItems);
+    restartServerCountdown();
   } catch (error) {
+    stopServerCountdown();
     console.warn("Servers panel failed to hydrate with live data", error);
     serversList.innerHTML =
       '<p class="servers-empty">No se pudo cargar el estado real de servidores en este momento.</p>';
@@ -268,46 +278,72 @@ function setServersDataState(badgeNode, state) {
 }
 
 function renderServerStatsCard(server) {
-  const serverName = server.server_name || "Servidor sin nombre";
+  const serverTargetKey = resolveServerTargetKey(server);
+  const serverLabel = SERVER_CARD_PRESENTATION[serverTargetKey]?.label || "Servidor";
   const statusLabel = formatServerStatus(server.status);
   const stateClass =
     server.status === "online" ? "server-state--online" : "server-state--offline";
   const isRealSnapshot = isRealLiveSnapshot(server);
-  const currentMap = server.current_map || "Sin mapa disponible";
-  const region = normalizeServerRegion(server.region);
-  const players = Number.isFinite(server.players) ? server.players : 0;
-  const maxPlayers = Number.isFinite(server.max_players) ? server.max_players : 0;
+  const currentMap = getTrimmedServerValue(server.current_map) || "Mapa no disponible";
+  const players = formatPopulationValue(server.players);
+  const maxPlayers = formatPopulationValue(server.max_players);
   const actionMarkup = renderServerAction(server);
   const cardVariantClass = isRealSnapshot ? "server-card--real" : "server-card--reference";
   const serverGame = normalizeServerGame(server.game);
   const gameVariantClass =
     serverGame === "hllv" ? "server-card--game-hllv" : "";
-  const eyebrowLabel = isRealSnapshot ? "Servidor de comunidad" : "Referencia actual";
-  const quickFactItems = [
-    { label: "Mapa", value: currentMap, valueClassName: "server-card__quickfact-value--map" },
-  ];
-  if (region) {
-    quickFactItems.push({ label: "Regi\u00f3n", value: region });
-  }
-  const quickFacts = renderQuickFacts(quickFactItems);
+  const gameLabel = formatServerGameLabel(serverGame);
+  const mapImage = resolveServerMapImage(server, serverGame, currentMap);
+  const scoreLabel = formatLiveScore(server.allied_score, server.axis_score);
+  const remainingSeconds = normalizeRemainingSeconds(
+    server.remaining_match_time_seconds,
+  );
+  const remainingLabel = formatRemainingTime(remainingSeconds);
+  const remainingAttribute = remainingSeconds === null
+    ? ""
+    : ` data-remaining-seconds="${remainingSeconds}"`;
+  const mapImageAlt = mapImage.matched ? `Mapa ${currentMap}` : "";
 
   return `
     <article
       class="server-card server-card--stats ${cardVariantClass} ${gameVariantClass}"
       data-game="${escapeHtml(serverGame)}"
+      data-server-target="${escapeHtml(serverTargetKey)}"
     >
       <div class="server-card__top server-card__top--stats">
         <div class="server-card__identity">
-          <p class="server-card__eyebrow">${escapeHtml(eyebrowLabel)}</p>
-          <h3>${escapeHtml(serverName)}</h3>
+          <p class="server-card__eyebrow">${escapeHtml(gameLabel)}</p>
+          <h3>${escapeHtml(serverLabel)}</h3>
         </div>
         <div class="server-card__status-column">
           <span class="server-state ${stateClass}">${escapeHtml(statusLabel)}</span>
           <p class="server-card__population">${escapeHtml(`${players} / ${maxPlayers}`)}</p>
         </div>
       </div>
-      <div class="server-card__bottom">
-        ${quickFacts}
+      <div class="server-card__map" data-image-state="${mapImage.matched ? "resolved" : "fallback"}">
+        <img
+          class="server-card__map-image"
+          src="${escapeHtml(mapImage.src)}"
+          alt="${escapeHtml(mapImageAlt)}"
+          width="960"
+          height="540"
+          loading="lazy"
+          decoding="async"
+          onerror="this.onerror=null;this.src='./assets/img/maps/unknown-day.webp';this.alt='';this.closest('.server-card__map').dataset.imageState='fallback';"
+        />
+        <strong class="server-card__map-name">${escapeHtml(currentMap)}</strong>
+      </div>
+      <dl class="server-card__live-metrics" aria-label="Datos de la partida actual">
+        <div class="server-card__live-metric">
+          <dt>Tiempo restante</dt>
+          <dd${remainingAttribute} aria-label="Tiempo restante: ${escapeHtml(remainingLabel)}">${escapeHtml(remainingLabel)}</dd>
+        </div>
+        <div class="server-card__live-metric">
+          <dt>Puntuaci\u00f3n</dt>
+          <dd aria-label="Puntuaci\u00f3n: ${escapeHtml(scoreLabel)}">${escapeHtml(scoreLabel)}</dd>
+        </div>
+      </dl>
+      <div class="server-card__footer">
         ${actionMarkup}
       </div>
     </article>
@@ -324,6 +360,131 @@ function normalizeServerGame(value) {
     return normalized;
   }
   return "unknown";
+}
+
+function resolveServerTargetKey(server) {
+  if (!server) {
+    return "";
+  }
+  return [
+    server.key,
+    server.external_server_id,
+    server.server_slug,
+    server.target_key,
+    server.slug,
+    server.community_slug,
+  ]
+    .map(getTrimmedServerValue)
+    .find((value) => SERVER_CARD_PRESENTATION[value]) || "";
+}
+
+function formatServerGameLabel(game) {
+  if (game === "hll") {
+    return "Hell Let Loose";
+  }
+  if (game === "hllv") {
+    return "Hell Let Loose Vietnam";
+  }
+  return "Juego no disponible";
+}
+
+function formatPopulationValue(value) {
+  return Number.isInteger(value) && value >= 0 ? String(value) : "—";
+}
+
+function formatLiveScore(alliedScore, axisScore) {
+  // CRCON keeps stable side order: side 1 — side 2. Those sides are
+  // Allies/Axis in HLL and South/North in HLL Vietnam.
+  if (
+    !Number.isInteger(alliedScore) || alliedScore < 0 ||
+    !Number.isInteger(axisScore) || axisScore < 0
+  ) {
+    return "—";
+  }
+  return `${alliedScore} — ${axisScore}`;
+}
+
+function normalizeRemainingSeconds(value) {
+  // /api/servers projects CRCON get_public_info.time_remaining as this field.
+  return Number.isFinite(value) && value >= 0 ? Math.floor(value) : null;
+}
+
+function formatRemainingTime(value) {
+  const seconds = normalizeRemainingSeconds(value);
+  if (seconds === null) {
+    return "—";
+  }
+  const hours = Math.floor(seconds / 3600);
+  const minutes = Math.floor((seconds % 3600) / 60);
+  const trailingSeconds = seconds % 60;
+  if (hours > 0) {
+    return `${hours}:${String(minutes).padStart(2, "0")}:${String(trailingSeconds).padStart(2, "0")}`;
+  }
+  return `${String(minutes).padStart(2, "0")}:${String(trailingSeconds).padStart(2, "0")}`;
+}
+
+function resolveServerMapImage(server, serverGame, currentMap) {
+  const resolver = globalThis.HLL_MAP_IMAGES?.resolveMapImageAsset ||
+    globalThis.HLL_VIETNAM_MAP_IMAGES?.resolveMapImageAsset;
+  if (typeof resolver !== "function") {
+    return {
+      src: "./assets/img/maps/unknown-day.webp",
+      matched: false,
+      fallback: true,
+    };
+  }
+  return resolver({
+    game: serverGame,
+    candidates: [
+      server.layer,
+      server.layer_id,
+      server.map_id,
+      server.current_map,
+      currentMap,
+      server.game_mode,
+    ],
+  });
+}
+
+function stopServerCountdown(timerScope = globalThis) {
+  if (serverCountdownTimerId !== null) {
+    timerScope.clearInterval(serverCountdownTimerId);
+    serverCountdownTimerId = null;
+  }
+}
+
+function tickServerCountdown(ownerDocument = document) {
+  const nodes = Array.from(
+    ownerDocument.querySelectorAll("[data-remaining-seconds]"),
+  );
+  nodes.forEach((node) => {
+    const currentSeconds = normalizeRemainingSeconds(
+      Number(node.dataset.remainingSeconds),
+    );
+    if (currentSeconds === null) {
+      return;
+    }
+    const nextSeconds = Math.max(0, currentSeconds - 1);
+    const label = formatRemainingTime(nextSeconds);
+    node.dataset.remainingSeconds = String(nextSeconds);
+    node.textContent = label;
+    node.setAttribute("aria-label", `Tiempo restante: ${label}`);
+  });
+}
+
+function restartServerCountdown(
+  ownerDocument = document,
+  timerScope = globalThis,
+) {
+  stopServerCountdown(timerScope);
+  if (!ownerDocument.querySelector("[data-remaining-seconds]")) {
+    return null;
+  }
+  serverCountdownTimerId = timerScope.setInterval(
+    () => tickServerCountdown(ownerDocument),
+    1000,
+  );
+  return serverCountdownTimerId;
 }
 
 function normalizeServerRegion(value) {
@@ -447,23 +608,6 @@ function renderClanDiscordLink(clan) {
     >
       ${escapeHtml(clan.discordLabel)}
     </a>
-  `;
-}
-
-function renderQuickFacts(items) {
-  return `
-    <div class="server-card__quickfacts">
-      ${items
-        .map(
-          (item) => `
-            <article class="server-card__quickfact">
-              <p>${escapeHtml(item.label)}</p>
-              <strong class="${escapeHtml(item.valueClassName || "")}">${escapeHtml(item.value)}</strong>
-            </article>
-          `,
-        )
-        .join("")}
-    </div>
   `;
 }
 

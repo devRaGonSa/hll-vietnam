@@ -39,6 +39,7 @@ require(len(set(structures)) == 1, "Public pages do not share the same navigatio
 css = (FRONTEND / "assets/css/styles.css").read_text(encoding="utf-8-sig")
 nav_js = (FRONTEND / "assets/js/public-nav.js").read_text(encoding="utf-8")
 main_js = (FRONTEND / "assets/js/main.js").read_text(encoding="utf-8-sig")
+index_html = (FRONTEND / "index.html").read_text(encoding="utf-8-sig")
 normative = (FRONTEND / "normativa.html").read_text(encoding="utf-8")
 bots = (FRONTEND / "bots.html").read_text(encoding="utf-8")
 vip = (FRONTEND / "vip.html").read_text(encoding="utf-8")
@@ -79,6 +80,10 @@ require("no-store, no-cache, must-revalidate, max-age=0" in static_server, "HTML
 require("normalizeServerGame(server.game)" in main_js, "Card variant does not use server.game")
 require('serverGame === "hllv" ? "server-card--game-hllv"' in main_js, "HLLV class mapping is missing")
 require('data-game="${escapeHtml(serverGame)}"' in main_js and ".server-card--game-hllv" in css, "Semantic HLLV card variant is missing")
+require("map-image-resolver.js?v=323" in index_html, "Home does not load the shared local map resolver")
+require("SERVER_CARD_PRESENTATION" in main_js and "data-server-target" in main_js, "Server card labels are not target-backed")
+require("remaining_match_time_seconds" in main_js and "allied_score" in main_js and "axis_score" in main_js, "Live match card fields are incomplete")
+require("server-card__map-image" in css and "server-card__live-metrics" in css, "Enhanced server card styles are missing")
 normalizer = main_js[main_js.index("function normalizeServerGame") : main_js.index("function normalizeServerRegion")]
 require("serverName" not in normalizer, "Game detection must not inspect the server name")
 print("TASK-321 public nav, normative content, bots page, cache and HLLV validation passed.")

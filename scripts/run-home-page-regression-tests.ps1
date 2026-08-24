@@ -55,6 +55,7 @@ Require-Contains $html 'href="./vip.html"' "VIP community navigation link is mis
 Require-Contains $html 'href="./normativa.html"' "Normative community navigation link is missing."
 Require-Contains $html 'href="./bots.html"' "Bots community navigation link is missing."
 Require-Contains $html 'public-nav.js?v=321' "Shared navigation behavior is missing."
+Require-Contains $html 'map-image-resolver.js?v=323' "Home map image resolver is missing."
 Require-Absent $html "CDO" "Unverified CDO reward was published."
 Require-Absent $html "CDE" "Unverified CDE reward was published."
 Require-Contains $html 'id="trailer-frame"' "Trailer was removed."
@@ -66,8 +67,26 @@ Require-Contains $javascript 'server-card--game-hllv' `
     "HLL Vietnam server-card variant is missing."
 Require-Contains $javascript 'data-game=' `
     "Server cards no longer expose their normalized game metadata."
+Require-Contains $javascript 'SERVER_CARD_PRESENTATION' `
+    "Compact server labels are not mapped from stable targets."
+Require-Contains $javascript '"comunidad-hispana-01": Object.freeze({ label: "Servidor 1" })' `
+    "Server 1 compact label is missing."
+Require-Contains $javascript '"comunidad-hispana-02": Object.freeze({ label: "Servidor 2" })' `
+    "Server 2 compact label is missing."
+Require-Contains $javascript '"comunidad-hll-vietnam-01": Object.freeze({ label: "Servidor 3" })' `
+    "Server 3 compact label is missing."
+Require-Contains $javascript 'server.allied_score' "Live allied score is missing from cards."
+Require-Contains $javascript 'server.axis_score' "Live axis score is missing from cards."
+Require-Contains $javascript 'server.remaining_match_time_seconds' `
+    "Canonical remaining time is missing from cards."
+Require-Contains $javascript 'data-remaining-seconds' "Client countdown hook is missing."
+Require-Contains $javascript 'loading="lazy"' "Map thumbnails are not lazy loaded."
+Require-Contains $javascript 'unknown-day.webp' "Local map fallback is missing."
+Require-Absent $javascript 'label: "Mapa"' "Obsolete MAPA label remains in server cards."
 Require-Contains $css '.server-card--game-hllv' `
     "HLL Vietnam server-card styling is missing."
+Require-Contains $css '.server-card__map-image' "Map thumbnail styling is missing."
+Require-Contains $css '.server-card__live-metrics' "Live score/time layout is missing."
 Require-Contains $javascript 'Hist\u00f3rico' "Historical server link changed."
 Require-Contains $javascript 'Partida actual' "Current-match server link changed."
 
