@@ -48,6 +48,11 @@ for fragment in ('"click"', '"Escape"', "ownerDocument.addEventListener", "close
 require("grid-template-columns: repeat(3, minmax(0, 1fr));" in css, "Nav is not three columns")
 require("position: absolute;" in css and "z-index: 60;" in css, "Dropdown overlay positioning is missing")
 require("position: sticky;" in css and ".normative-index--mobile" in css, "Responsive normative index is missing")
+require(".content.normative-layout" in css, "Normative layout lacks its centered container")
+require("width: min(1240px, calc(100vw - (var(--page-shell-gutter) * 2)));" in css, "Normative container is not width-constrained")
+require("grid-template-columns: minmax(220px, 240px) minmax(0, 960px);" in css, "Normative desktop columns are not constrained")
+require("max-width: 960px;" in css, "Normative article lacks a readable maximum width")
+require("@media (max-width: 1024px)" in css, "Normative layout does not collapse for tablet widths")
 
 ids = ("servidores-usuarios", "seedeo", "servidores-clanes", "discord-usuarios", "discord-clanes", "eventos", "miembros-vip", "creadores-contenido", "sanciones", "confrontacion")
 for section_id in ids:
