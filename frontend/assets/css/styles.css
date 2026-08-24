@@ -334,6 +334,10 @@ a {
   margin-top: 28px;
 }
 
+.guide-grid--two {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
 .guide-card {
   padding: 24px;
   border: 1px solid var(--border);
@@ -395,8 +399,9 @@ a {
   background: linear-gradient(145deg, rgba(183, 201, 125, 0.07), transparent 55%), var(--panel-soft);
 }
 
-.command-card--wide {
-  grid-column: span 3;
+.command-card--featured {
+  border-color: rgba(210, 182, 118, 0.45);
+  background: linear-gradient(145deg, rgba(210, 182, 118, 0.13), transparent 58%), var(--panel-soft);
 }
 
 .command-card__heading {
@@ -418,42 +423,19 @@ a {
 }
 
 .command-card__alias code,
-.command-card p code {
+.command-card p code,
+.command-card a {
   color: var(--accent-warm);
+}
+
+.command-card a {
+  font-weight: 700;
 }
 
 .command-card > p {
-  margin: 13px 0 18px;
+  margin: 13px 0 0;
   color: var(--text-soft);
   line-height: 1.62;
-}
-
-.command-card dl {
-  display: grid;
-  gap: 7px;
-  margin: auto 0 0;
-}
-
-.command-card dl div {
-  display: grid;
-  grid-template-columns: 64px minmax(0, 1fr);
-  gap: 10px;
-}
-
-.command-card dt,
-.command-card dd {
-  margin: 0;
-  font-size: 0.82rem;
-  line-height: 1.45;
-}
-
-.command-card dt {
-  color: var(--accent-warm);
-  font-weight: 800;
-}
-
-.command-card dd {
-  color: var(--text-muted);
 }
 
 .guide-note {
@@ -2219,8 +2201,6 @@ h2 {
 
   .guide-grid,
   .command-grid { grid-template-columns: 1fr; }
-
-  .command-card--wide { grid-column: auto; }
 }
 
 @media (max-width: 640px) {

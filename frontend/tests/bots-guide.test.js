@@ -24,7 +24,59 @@ test("bots guide replaces the placeholder and retains public navigation", () => 
   assert.match(css, /\.command-grid/);
 });
 
-test("every published game command is ACTIVE and public in the audit", () => {
+test("command cards are direct and contain only the editorial selection", () => {
+  const commands = publishedCommandGroups.flat();
+  assert.deepEqual(commands, [
+    "!help",
+    "!rewards",
+    "!me",
+    "!wkm",
+    "!top",
+    "!vip",
+    "!redeploy",
+    "!r",
+    "!votemap",
+    "!vm",
+    "!nodos",
+  ]);
+
+  for (const removed of ["!discord", "!push", "!switch", "@switch", "@help"]) {
+    assert.doesNotMatch(html, new RegExp(`<code>${removed.replace("!", "\\!")}</code>`));
+  }
+  assert.doesNotMatch(html, /<dl>|<dt>Quién<\/dt>|<dt>Dónde<\/dt>/);
+  assert.doesNotMatch(html, /no distingue mayúsculas|respeta sus minúsculas/i);
+  assert.match(html, /!redeploy[\s\S]*también <code>!r<\/code>[\s\S]*10 segundos/);
+  assert.match(html, /!votemap[\s\S]*también <code>!vm<\/code>/);
+});
+
+test("Rewards is verified and Guide is not invented", () => {
+  assert.match(html, /data-chat-command="!rewards"/);
+  assert.match(html, /objetivos y recompensas VIP semanales activos/);
+  assert.match(html, /Disponible en HLL #1 y HLL #2/);
+  assert.match(audit, /\| `!rewards` \| ACTIVE \| Sí \|/);
+  assert.match(audit, /Comando independiente de Guía \| NOT_VERIFIED/);
+  assert.doesNotMatch(html, /data-chat-command="!(?:guia|guía|guide|retos|objetivos)"/i);
+});
+
+test("Discord status is removed while support and moderation remain", () => {
+  assert.doesNotMatch(html, /Estado del servidor|Consultas desde Discord|-server[123]/);
+  assert.match(html, /Tickets[\s\S]*Soporte guiado/);
+  assert.match(html, /Convivencia[\s\S]*Moderación asistida/);
+  assert.match(audit, /Consultas de estado en Discord \| ACTIVE \| SÍ \| NO \| Decisión editorial/);
+});
+
+test("audit preserves active commands and records editorial exclusions", () => {
+  for (const command of ["!discord", "!push", "!switch"]) {
+    assert.ok(audit.includes(`| \`${command}\``), `${command} must remain documented`);
+    const editorialRow = audit
+      .split("\n")
+      .find((line) => line.startsWith(`| \`${command}\``));
+    assert.match(editorialRow, /\| ACTIVE \| SÍ \| NO \|/);
+  }
+  assert.match(audit, /VISIBLE_EN_GUIA/);
+});
+
+test("every published game command is ACTIVE and technically publicable in the audit", () => {
   assert.ok(publishedCommandGroups.length > 0);
   for (const commands of publishedCommandGroups) {
     for (const command of commands) {

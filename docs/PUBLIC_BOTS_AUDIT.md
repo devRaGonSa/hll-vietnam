@@ -2,19 +2,24 @@
 
 Auditoría read-only realizada el 24 de agosto de 2026 sobre la VPS desplegada. La comprobación cruzó estado de unidades y temporizadores, configuración efectiva de los tres targets CRCON, código cargado en los procesos, configuración YAML efectiva y actividad reciente. No se ejecutaron comandos de juego o Discord, no se enviaron mensajes y no se incluyeron credenciales, endpoints, identificadores privados, expresiones de moderación ni datos de jugadores.
 
+La reauditoría editorial de TASK-322 volvió a comprobar los comandos relacionados con Guía y VIP Rewards. `Publicable técnicamente` describe una función real que podría documentarse sin exponer información sensible; `VISIBLE_EN_GUIA` recoge la decisión editorial independiente sobre `frontend/bots.html`.
+
 `ACTIVE` significa que el mecanismo está habilitado, no está en simulación y su proceso o target está activo. `DRY_RUN` identifica procesos que observan o registran pero no aplican la acción. Una plantilla deshabilitada puede tener instancias activas; la matriz refleja la instancia efectiva. En particular, la descripción histórica de la unidad de Custom Seed aún dice “dry-run”, pero el proceso efectivo carga `bot.dry_run: false` y tiene habilitadas sus acciones; por eso se clasifica como `ACTIVE`.
 
 ## Matriz sanitizada
 
-| Mecanismo | Estado | Ámbito | Tipo | Público | Motivo |
+| Mecanismo | Estado | Ámbito | Tipo | Publicable técnicamente | Motivo |
 |-----------|--------|--------|------|---------|--------|
-| Respuestas de chat configuradas (`!help`, `!discord`, `!wkm`, `!push`, `!vip`) | ACTIVE | HLL #1, HLL #2, HLL Vietnam | CHAT_COMMAND | Sí | Configuración efectiva habilitada e idéntica en los tres targets. |
-| Cambio de bando habilitado (`!switch`, `@switch`) | ACTIVE | HLL #1, HLL #2, HLL Vietnam | CHAT_COMMAND | Sí | Acción habilitada para jugadores con permiso y bajo la condición pública de población. |
+| Respuestas visibles (`!help`, `!wkm`, `!vip`) | ACTIVE | HLL #1, HLL #2, HLL Vietnam | CHAT_COMMAND | Sí | Configuración efectiva habilitada e idéntica en los tres targets. |
+| Respuestas omitidas (`!discord`, `!push`) | ACTIVE | HLL #1, HLL #2, HLL Vietnam | CHAT_COMMAND | Sí | Siguen activas, pero se omiten de la guía por decisión editorial. |
+| Cambio de bando habilitado (`!switch`, `@switch`) | ACTIVE | HLL #1, HLL #2, HLL Vietnam | CHAT_COMMAND | Sí | Sigue activo, pero se omite de la guía por decisión editorial. |
 | Redespliegue (`!redeploy`, `!r`) | ACTIVE | HLL #1, HLL #2, HLL Vietnam | CHAT_COMMAND | Sí | Acción habilitada para cualquier jugador, sin argumentos. |
 | Solicitud de nodos (`!nodos`) | ACTIVE | HLL #1, HLL #2 | CHAT_COMMAND | Sí | Configuración habilitada y método cargado en los dos targets clásicos; ausente en Vietnam. |
 | Votación de mapa (`!votemap`, `!vm`) | ACTIVE | HLL #1, HLL #2, HLL Vietnam | CHAT_COMMAND | Sí | Función habilitada sin restricción VIP o de flags. |
 | Estadísticas históricas (`!me`) | ACTIVE | HLL #1, HLL #2, HLL Vietnam | CHAT_COMMAND | Sí | Herramienta cargada en los tres supervisores y habilitada para los tres targets. |
 | Clasificación en vivo (`!top`) | ACTIVE | HLL #1, HLL #2, HLL Vietnam | CHAT_COMMAND | Sí | Herramienta cargada y habilitada en los tres targets. |
+| Progreso semanal (`!rewards`) | ACTIVE | HLL #1, HLL #2 | CHAT_COMMAND | Sí | Parser cargado, mensajería habilitada y ejecuciones reales recientes en ambos servidores. |
+| Comando independiente de Guía | NOT_VERIFIED | Tres targets y código desplegado | CHAT_COMMAND | No | No existe literal o handler activo distinto de la ayuda ya ofrecida por `!help`. |
 | `!admin` de juego | INACTIVE | HLL #1, HLL #2, HLL Vietnam | CHAT_COMMAND | No | Existe en la configuración, pero cada entrada está deshabilitada. |
 | Alias histórico `!historico` | LEGACY | Código de porting no desplegado | CHAT_COMMAND | No | Se encontró en una copia de porting, no en la configuración cargada. |
 | Estadísticas privadas al conectar | ACTIVE | HLL #1, HLL #2, HLL Vietnam | GAME_AUTOMATION | Sí | El resumen histórico está habilitado al conectar y también bajo demanda con `!me`. |
@@ -35,18 +40,31 @@ Auditoría read-only realizada el 24 de agosto de 2026 sobre la VPS desplegada. 
 | Kill ticker / top de bajas | ACTIVE | HLL #1, HLL #2 | GAME_AUTOMATION | Sí | Instancias activas y no dry-run; alternan top de bajas y avisos de votación en el broadcast. |
 | AutoBroadcast nativo CRCON | INACTIVE | HLL #1, HLL #2, HLL Vietnam | CRCON_FEATURE | No | Deshabilitado en los tres targets; el broadcast visible de #1/#2 lo gestiona Kill Ticker. |
 | Watch Kill Rate | INACTIVE | HLL #1, HLL #2, HLL Vietnam | CRCON_FEATURE | No | Deshabilitado en los tres targets. |
-| Bot informativo de Discord | ACTIVE | Discord; HLL #1 y HLL #2 | DISCORD_BOT | Sí | Responde consultas de jugadores y duración de partida en los canales permitidos. |
+| Bot informativo de Discord | ACTIVE | Discord; HLL #1 y HLL #2 | DISCORD_BOT | Sí | Sigue activo, pero sus consultas se omiten de la guía por decisión editorial. |
 | Bot de tickets | ACTIVE | Discord | DISCORD_BOT | Sí | Publica instrucciones de soporte al crearse tickets de categorías conocidas. |
 | Bot de reinicio y utilidades internas | ACTIVE | Discord/operaciones | OPERATIONS_ONLY | No | Sus comandos gestionan operaciones o tareas restringidas, no una función pública general. |
 | Monitores de jugadores y gráfica | ACTIVE | HLL #1, HLL #2 | OPERATIONS_ONLY | No | Temporizadores operativos sin interacción pública. |
 
+## Visibilidad editorial
+
+| Función verificada | Estado técnico | Publicable técnicamente | VISIBLE_EN_GUIA | Motivo editorial |
+|---------------------|----------------|-------------------------|------------------|------------------|
+| `!help`, `!me`, `!wkm`, `!top`, `!vip`, `!redeploy`/`!r`, `!votemap`/`!vm`, `!nodos` | ACTIVE | SÍ | SÍ | Utilidades prioritarias para la guía directa. |
+| `!rewards` | ACTIVE | SÍ | SÍ | Consulta útil del progreso semanal; enlaza a VIP sin duplicar las misiones. |
+| Comando independiente de Guía | NOT_VERIFIED | NO | NO | No se encontró un literal activo; `!help` cubre la guía rápida disponible. |
+| `!discord` | ACTIVE | SÍ | NO | Decisión editorial: retirar de esta guía. |
+| `!push` | ACTIVE | SÍ | NO | Decisión editorial: retirar de esta guía. |
+| `!switch`, `@switch` | ACTIVE | SÍ | NO | Decisión editorial: retirar de esta guía. |
+| `@help` | ACTIVE | SÍ | NO | Se mantiene como hecho técnico; la guía muestra solo el literal principal `!help`. |
+| Consultas de estado en Discord | ACTIVE | SÍ | NO | Decisión editorial: retirar la tarjeta y sus comandos de esta guía. |
+
 ## Comandos de chat de juego verificados
 
-Los comandos de respuesta configurables (`!help`, `@help`, `!discord`, `!wkm`, `!push`, `!vip`, `!switch`, `@switch`, `!redeploy`, `!r` y `!nodos`) distinguen mayúsculas y minúsculas y se activan por palabra exacta. No tienen argumentos configurados ni cooldown/limitación por partida. Las condiciones indicadas abajo se evalúan antes de aplicar la acción.
+Los comandos de respuesta configurables (`!help`, `@help`, `!discord`, `!wkm`, `!push`, `!vip`, `!switch`, `@switch`, `!redeploy`, `!r` y `!nodos`) distinguen mayúsculas y minúsculas y se activan por palabra exacta. No tienen argumentos configurados ni cooldown/limitación por partida. Las condiciones indicadas abajo se evalúan antes de aplicar la acción. `!rewards` usa un parser independiente, normaliza el mensaje a minúsculas y requiere coincidencia completa con el literal configurado.
 
 `!me`, `!top`, `!votemap` y `!vm` no distinguen mayúsculas y minúsculas. `!me` y `!top` requieren que el mensaje completo sea el comando. La familia Vote Map acepta los argumentos detallados en la tabla.
 
-| Comando exacto | Estado | Público | Quién puede usarlo | Efecto/respuesta | Argumentos y límites | Servidores |
+| Comando exacto | Estado | Publicable | Quién puede usarlo | Efecto/respuesta | Argumentos y límites | Servidores |
 |----------------|--------|---------|--------------------|------------------|----------------------|------------|
 | `!help`, `@help` | ACTIVE | Sí | Cualquier jugador | Mensaje privado con el resumen configurado. | Sin argumentos; sin cooldown configurado. | Los tres |
 | `!discord` | ACTIVE | Sí | Cualquier jugador | Mensaje privado con la invitación oficial. | Sin argumentos; sin cooldown configurado. | Los tres |
@@ -54,6 +72,7 @@ Los comandos de respuesta configurables (`!help`, `@help`, `!discord`, `!wkm`, `
 | `!wkm` | ACTIVE | Sí | Cualquier jugador | Mensaje privado con el último némesis y arma registrados. | Sin argumentos; sin cooldown configurado. | Los tres |
 | `!top` | ACTIVE | Sí | Cualquier jugador | Mensaje privado con rankings de la partida actual. | Sin argumentos; no distingue mayúsculas; sin cooldown configurado. | Los tres |
 | `!vip` | ACTIVE | Sí | Cualquier jugador | Mensaje privado con la caducidad VIP conocida. | Sin argumentos; sin cooldown configurado. | Los tres |
+| `!rewards` | ACTIVE | Sí | Cualquier jugador conectado | Mensaje privado con su progreso en los objetivos semanales activos, misiones completadas y posición de top semanal cuando corresponde. | Sin alias ni argumentos; coincidencia completa; no distingue mayúsculas. | HLL #1 y HLL #2 |
 | `!push` | ACTIVE | Sí | Cualquier jugador | Mensaje privado informativo sobre el equipo competitivo. | Sin argumentos; sin cooldown configurado. | Los tres |
 | `!switch`, `@switch` | ACTIVE | Sí | Jugadores que tienen el permiso configurado | Cambia inmediatamente al jugador de bando. | Sin argumentos; disponible con menos de 50 jugadores; sin cooldown configurado. | Los tres |
 | `!redeploy`, `!r` | ACTIVE | Sí | Cualquier jugador | Aplica al propio jugador la acción de redespliegue rápido. | Sin argumentos; sin cooldown configurado. | Los tres |
@@ -69,14 +88,14 @@ Los comandos de respuesta configurables (`!help`, `@help`, `!discord`, `!wkm`, `
 
 La búsqueda encontró el método desplegado, la entrada efectiva del comando y las imágenes activas que lo contienen en HLL #1 y HLL #2. El método comprueba que quien lo solicita ocupa el rol de comandante, obtiene únicamente ingenieros de su equipo y les envía el aviso privado configurado. No está configurado en HLL Vietnam. No se encontró cooldown, límite por partida ni argumentos. Las apariciones aisladas en código sin una entrada efectiva no se trataron como disponibilidad.
 
-## Comandos públicos de Discord
+## Comandos técnicamente públicos de Discord
 
-| Comando exacto | Estado | Público | Quién puede usarlo | Efecto | Ámbito |
+| Comando exacto | Estado | Publicable | Quién puede usarlo | Efecto | Ámbito |
 |----------------|--------|---------|--------------------|--------|--------|
 | `-server1 players`, `-server2 players` | ACTIVE | Sí | Miembros en los canales habilitados | Muestra jugadores conectados y paginación por reacciones. | HLL #1 y HLL #2 |
 | `-server1 tiempo`, `-server2 tiempo` | ACTIVE | Sí | Miembros en los canales habilitados | Muestra la duración de la partida actual. | HLL #1 y HLL #2 |
 
-El código contiene una función `-server3`, pero el target 3 no está en la lista efectiva de servidores activos del bot; responde como inactivo y no se publica. Los comandos de mantenimiento de listas, reinicio y gestión de palabras requieren contexto o roles internos y quedan fuera de la guía pública.
+El código contiene una función `-server3`, pero el target 3 no está en la lista efectiva de servidores activos del bot; responde como inactivo. Todas estas consultas se conservan como hechos técnicos, pero se retiran de `bots.html` por decisión editorial. Los comandos de mantenimiento de listas, reinicio y gestión de palabras requieren contexto o roles internos y quedan fuera de la guía pública.
 
 ## Evidencia operativa sanitizada
 
@@ -86,7 +105,9 @@ El código contiene una función `-server3`, pero el target 3 no está en la lis
 - Los tres targets CRCON estaban activos. Seed VIP, Vote Map, chat, topstats e histórico estaban habilitados en los tres. Las instancias del Kill Ticker y Custom Seed estaban procesando eventos recientes en #1/#2.
 - La ventana reciente de diarios mostró actividad continua en Commander AFK, Custom Seed, Kill Ticker y VIP Rewards. Los conteos se revisaron sin copiar nombres, IDs ni líneas crudas al documento.
 - Las plantillas de Kill Ticker aparecen deshabilitadas como plantilla, pero las instancias #1 y #2 están cargadas y activas. Se clasifican por estado efectivo.
+- VIP Rewards estaba activo, habilitado y no dry-run para HLL #1/#2. La configuración efectiva define únicamente `!rewards`; el handler devuelve por mensaje privado el progreso del jugador y la ventana reciente registró usos reales en ambos targets. No se imprimieron nombres ni líneas de chat.
+- La búsqueda de Guía revisó configuración efectiva de los tres targets, código del supervisor y fuentes desplegadas. No encontró `!guia`, `!guía`, `!guide` ni otro handler independiente activo.
 
 ## Criterio editorial
 
-La página pública explica efectos útiles y ámbitos, pero omite nombres de procesos, rutas, intervalos de sondeo, expresiones y listas de moderación, contadores internos, identificadores, endpoints y procedimientos de administración. Commander AFK y el control de nombres se conservan en esta auditoría para justificar su exclusión, sin presentarlos como funciones activas. Las reglas de recompensas y seeding se enlazan a `frontend/vip.html`; las reglas de conducta se enlazan a `frontend/normativa.html`.
+La página pública explica los comandos prioritarios con una descripción directa, pero omite nombres de procesos, rutas, intervalos de sondeo, expresiones y listas de moderación, contadores internos, identificadores, endpoints y procedimientos de administración. Commander AFK y el control de nombres se conservan en esta auditoría para justificar su exclusión, sin presentarlos como funciones activas. `!discord`, `!push`, `!switch` y las consultas de estado en Discord siguen documentados como activos, aunque `VISIBLE_EN_GUIA = NO`. Las reglas de recompensas y seeding se enlazan a `frontend/vip.html`; las reglas de conducta se enlazan a `frontend/normativa.html`.
