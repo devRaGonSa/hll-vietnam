@@ -279,6 +279,9 @@ function renderServerStatsCard(server) {
   const maxPlayers = Number.isFinite(server.max_players) ? server.max_players : 0;
   const actionMarkup = renderServerAction(server);
   const cardVariantClass = isRealSnapshot ? "server-card--real" : "server-card--reference";
+  const serverGame = normalizeServerGame(server.game);
+  const gameVariantClass =
+    serverGame === "hllv" ? "server-card--game-hllv" : "";
   const eyebrowLabel = isRealSnapshot ? "Servidor de comunidad" : "Referencia actual";
   const quickFactItems = [
     { label: "Mapa", value: currentMap, valueClassName: "server-card__quickfact-value--map" },
@@ -289,7 +292,10 @@ function renderServerStatsCard(server) {
   const quickFacts = renderQuickFacts(quickFactItems);
 
   return `
-    <article class="server-card server-card--stats ${cardVariantClass}">
+    <article
+      class="server-card server-card--stats ${cardVariantClass} ${gameVariantClass}"
+      data-game="${escapeHtml(serverGame)}"
+    >
       <div class="server-card__top server-card__top--stats">
         <div class="server-card__identity">
           <p class="server-card__eyebrow">${escapeHtml(eyebrowLabel)}</p>
@@ -310,6 +316,14 @@ function renderServerStatsCard(server) {
 
 function renderServerSections(latestItems) {
   return latestItems.map((server) => renderServerStatsCard(server)).join("");
+}
+
+function normalizeServerGame(value) {
+  const normalized = typeof value === "string" ? value.trim().toLowerCase() : "";
+  if (normalized === "hll" || normalized === "hllv") {
+    return normalized;
+  }
+  return "unknown";
 }
 
 function normalizeServerRegion(value) {

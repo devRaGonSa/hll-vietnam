@@ -54,6 +54,14 @@ Require-Absent $html "CDE" "Unverified CDE reward was published."
 Require-Contains $html 'id="trailer-frame"' "Trailer was removed."
 Require-Contains $html 'id="community-clans-list"' "Clans section was removed."
 Require-Contains $javascript '/api/servers' "Server API contract changed."
+Require-Contains $javascript 'normalizeServerGame(server.game)' `
+    "Server cards no longer derive their game variant from the semantic game field."
+Require-Contains $javascript 'server-card--game-hllv' `
+    "HLL Vietnam server-card variant is missing."
+Require-Contains $javascript 'data-game=' `
+    "Server cards no longer expose their normalized game metadata."
+Require-Contains $css '.server-card--game-hllv' `
+    "HLL Vietnam server-card styling is missing."
 Require-Contains $javascript 'Hist\u00f3rico' "Historical server link changed."
 Require-Contains $javascript 'Partida actual' "Current-match server link changed."
 
