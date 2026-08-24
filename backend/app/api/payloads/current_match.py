@@ -224,11 +224,8 @@ def build_current_match_kill_feed_payload(
     """Return normalized AdminLog kill rows for one trusted current-match page."""
     mode = get_current_match_source()
     if mode == "crcon":
-        origin = get_trusted_public_scoreboard_origin(server_slug)
-        if origin is None:
-            raise ValueError("Unsupported current match server.")
         service = get_current_match_snapshot_service()
-        snapshot = service.get_snapshot(origin.slug)
+        snapshot = service.get_snapshot(server_slug)
         get_final_match_verifier().record_live(snapshot)
         events = service.project_kills(
             snapshot,
@@ -337,14 +334,11 @@ def _build_legacy_current_match_player_stats_payload(
 
 def build_current_match_snapshot_payload(*, server_slug: str) -> dict[str, object]:
     """Return the canonical coherent snapshot only in explicit CRCON mode."""
-    origin = get_trusted_public_scoreboard_origin(server_slug)
-    if origin is None:
-        raise ValueError("Unsupported current match server.")
     if get_current_match_source() != "crcon":
         raise CurrentMatchUnavailableError(
             "CRCON current-match mode is not selected."
         )
-    snapshot = get_current_match_snapshot_service().get_snapshot(origin.slug)
+    snapshot = get_current_match_snapshot_service().get_snapshot(server_slug)
     get_final_match_verifier().record_live(snapshot)
     return snapshot_payload(snapshot)
 

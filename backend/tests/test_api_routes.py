@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from contextlib import ExitStack
 from http import HTTPStatus
+import json
+import os
 import unittest
 from unittest.mock import patch
 from urllib.parse import urlparse
@@ -13,6 +15,7 @@ from app.api.routes import history as history_routes
 from app.api.routes import players as player_routes
 from app.api.routes import rankings as ranking_routes
 from app.api.routes import servers as server_routes
+from app.scoreboard_origins import get_trusted_public_scoreboard_origin
 
 
 PUBLIC_ROUTE_CASES = {
@@ -29,10 +32,10 @@ PUBLIC_ROUTE_CASES = {
         "/api/servers/server-one/history?limit=20",
     ),
     "current_match": (
-        "/api/current-match/snapshot?server=server-one",
-        "/api/current-match?server=server-one",
-        "/api/current-match/kills?server=server-one&limit=20",
-        "/api/current-match/players?server=server-one",
+        "/api/current-match/snapshot?server=comunidad-hispana-01",
+        "/api/current-match?server=comunidad-hispana-01",
+        "/api/current-match/kills?server=comunidad-hispana-01&limit=20",
+        "/api/current-match/players?server=comunidad-hispana-01",
     ),
     "players": (
         "/api/stats/players/search?q=Player&limit=10",
@@ -107,6 +110,40 @@ PATCHED_BUILDERS = {
         "build_historical_server_summary_payload",
     ),
 }
+
+
+def _current_match_server_targets(*extra_targets: dict[str, object]) -> str:
+    targets = [
+        {
+            "key": "comunidad-hispana-01",
+            "display_name": "Synthetic HLL #01",
+            "server_number": 1,
+            "game": "hll",
+            "crcon_base_url": "https://hll-one.fixture.invalid",
+            "enabled": True,
+            "capabilities": ["live_state"],
+        },
+        {
+            "key": "comunidad-hispana-02",
+            "display_name": "Synthetic HLL #02",
+            "server_number": 2,
+            "game": "hll",
+            "crcon_base_url": "https://hll-two.fixture.invalid",
+            "enabled": True,
+            "capabilities": ["live_state"],
+        },
+        {
+            "key": "comunidad-hll-vietnam-01",
+            "display_name": "Synthetic HLLV #01",
+            "server_number": 3,
+            "game": "hllv",
+            "crcon_base_url": "https://hllv-one.fixture.invalid",
+            "enabled": True,
+            "capabilities": ["live_state"],
+        },
+        *extra_targets,
+    ]
+    return json.dumps(targets)
 
 
 class ApiRouteRegistryTests(unittest.TestCase):
@@ -290,12 +327,12 @@ class ApiRouteRegistryTests(unittest.TestCase):
                 self.assertEqual(payload, {"status": "error", "message": message})
 
     def test_current_match_missing_and_unknown_server_contracts(self) -> None:
-        missing_status, missing = resolve_get_payload("/api/current-match/snapshot")
-        with patch.object(
-            current_match_routes,
-            "get_trusted_public_scoreboard_origin",
-            return_value=None,
+        with patch.dict(
+            os.environ,
+            {"HLL_SERVER_TARGETS": _current_match_server_targets()},
+            clear=False,
         ):
+            missing_status, missing = resolve_get_payload("/api/current-match/snapshot")
             unknown_status, unknown = resolve_get_payload(
                 "/api/current-match?server=unknown"
             )
@@ -311,6 +348,65 @@ class ApiRouteRegistryTests(unittest.TestCase):
             {"status": "error", "message": "Current match server is not supported"},
         )
 
+    def test_current_match_accepts_enabled_hll_and_hllv_live_state_targets(self) -> None:
+        paths = (
+            "/api/current-match/snapshot?server=comunidad-hispana-01",
+            "/api/current-match/snapshot?server=comunidad-hispana-02",
+            "/api/current-match/snapshot?server=comunidad-hll-vietnam-01",
+            "/api/current-match?server=comunidad-hll-vietnam-01",
+            "/api/current-match/kills?server=comunidad-hll-vietnam-01&limit=20",
+            "/api/current-match/players?server=comunidad-hll-vietnam-01",
+        )
+        self.assertIsNone(
+            get_trusted_public_scoreboard_origin("comunidad-hll-vietnam-01")
+        )
+        with self._patched_builders():
+            for path in paths:
+                with self.subTest(path=path):
+                    status, payload = resolve_get_payload(path)
+                    self.assertEqual(status, HTTPStatus.OK)
+                    self.assertEqual(payload["status"], "ok")
+
+    def test_current_match_rejects_disabled_or_non_live_state_targets(self) -> None:
+        configured_targets = _current_match_server_targets(
+            {
+                "key": "disabled-target",
+                "display_name": "Synthetic Disabled",
+                "server_number": 4,
+                "game": "hll",
+                "crcon_base_url": "https://disabled.fixture.invalid",
+                "enabled": False,
+                "capabilities": ["live_state"],
+            },
+            {
+                "key": "history-only-target",
+                "display_name": "Synthetic History Only",
+                "server_number": 5,
+                "game": "hllv",
+                "crcon_base_url": "https://history-only.fixture.invalid",
+                "enabled": True,
+                "capabilities": ["historical_maps"],
+            },
+        )
+        with patch.dict(
+            os.environ,
+            {"HLL_SERVER_TARGETS": configured_targets},
+            clear=False,
+        ):
+            for slug in ("disabled-target", "history-only-target"):
+                with self.subTest(slug=slug):
+                    status, payload = resolve_get_payload(
+                        f"/api/current-match/snapshot?server={slug}"
+                    )
+                    self.assertEqual(status, HTTPStatus.NOT_FOUND)
+                    self.assertEqual(
+                        payload,
+                        {
+                            "status": "error",
+                            "message": "Current match server is not supported",
+                        },
+                    )
+
     def _patched_builders(self) -> ExitStack:
         stack = ExitStack()
         payload = {"status": "ok", "data": {"route": "stub"}}
@@ -318,10 +414,10 @@ class ApiRouteRegistryTests(unittest.TestCase):
             for builder in builders:
                 stack.enter_context(patch.object(module, builder, return_value=payload))
         stack.enter_context(
-            patch.object(
-                current_match_routes,
-                "get_trusted_public_scoreboard_origin",
-                return_value=object(),
+            patch.dict(
+                os.environ,
+                {"HLL_SERVER_TARGETS": _current_match_server_targets()},
+                clear=False,
             )
         )
         return stack

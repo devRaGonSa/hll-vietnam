@@ -6,7 +6,7 @@ from collections.abc import Callable
 from http import HTTPStatus
 from urllib.parse import ParseResult, parse_qs
 
-from ...scoreboard_origins import get_trusted_public_scoreboard_origin
+from ...server_targets import load_server_targets
 from ...services.current_match import CurrentMatchCursorError, CurrentMatchUnavailableError
 from ..payloads.current_match import (
     build_current_match_kill_feed_payload,
@@ -70,7 +70,12 @@ def resolve_current_match_route(parsed: ParseResult) -> RouteResult:
 def _validate_current_match_server(server_slug: str | None) -> RouteResult | None:
     if not server_slug:
         return HTTPStatus.BAD_REQUEST, build_error_payload("Server parameter is required")
-    if get_trusted_public_scoreboard_origin(server_slug) is None:
+    target = load_server_targets().get(server_slug)
+    if (
+        target is None
+        or not target.enabled
+        or "live_state" not in target.capabilities
+    ):
         return HTTPStatus.NOT_FOUND, build_error_payload("Current match server is not supported")
     return None
 

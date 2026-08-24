@@ -44,6 +44,7 @@ from app.services.current_match import (
     encode_kill_cursor,
     get_current_match_snapshot_service,
 )
+from app.scoreboard_origins import get_trusted_public_scoreboard_origin
 from app.server_targets import ServerTarget
 from app.api.routes import resolve_get_payload
 
@@ -180,6 +181,7 @@ def _binding(
     slug: str = "comunidad-hispana-01",
     *,
     server_number: int = 7,
+    game: str = "hll",
 ) -> CrconCurrentMatchBinding:
     return CrconCurrentMatchBinding(
         target=ServerTarget(
@@ -187,12 +189,33 @@ def _binding(
             display_name="Synthetic Local Server",
             crcon_base_url=f"https://{slug}.fixture.invalid",
             server_number=server_number,
-            game="hll",
+            game=game,  # type: ignore[arg-type]
             capabilities=frozenset({"live_state", "historical_maps", "event_logs"}),
         ),
         database_url="postgresql://fixture.invalid/crcon",
         api_headers={"X-Fixture-Auth": "synthetic"},
         log_server=f"synthetic-server-{server_number}",
+    )
+
+
+def _server_target_payload(
+    slug: str = "comunidad-hispana-01",
+    *,
+    server_number: int = 7,
+    game: str = "hll",
+) -> str:
+    return json.dumps(
+        [
+            {
+                "key": slug,
+                "display_name": "Synthetic Local Server",
+                "server_number": server_number,
+                "game": game,
+                "crcon_base_url": f"https://{slug}.fixture.invalid",
+                "enabled": True,
+                "capabilities": ["live_state"],
+            }
+        ]
     )
 
 
@@ -952,6 +975,15 @@ class CurrentMatchCacheAndSingleFlightTests(unittest.TestCase):
 
 
 class CurrentMatchRouteAndCompatibilityTests(unittest.TestCase):
+    def setUp(self) -> None:
+        targets = patch.dict(
+            os.environ,
+            {"HLL_SERVER_TARGETS": _server_target_payload()},
+            clear=False,
+        )
+        targets.start()
+        self.addCleanup(targets.stop)
+
     def test_new_snapshot_route_and_unsupported_server(self) -> None:
         service = _service(_FakeApi(), _FakeDatabase())
         with (
@@ -969,6 +1001,33 @@ class CurrentMatchRouteAndCompatibilityTests(unittest.TestCase):
             "/api/current-match/snapshot?server=not-trusted"
         )
         self.assertEqual(int(status), 404)
+
+    def test_hllv_snapshot_route_does_not_require_scoreboard_origin(self) -> None:
+        slug = "comunidad-hll-vietnam-01"
+        binding = _binding(slug, server_number=3, game="hllv")
+        service = _service(_FakeApi(), bindings={slug: binding})
+        self.assertIsNone(get_trusted_public_scoreboard_origin(slug))
+        with (
+            patch.dict(
+                os.environ,
+                {
+                    "HLL_CURRENT_MATCH_SOURCE": "crcon",
+                    "HLL_SERVER_TARGETS": _server_target_payload(
+                        slug,
+                        server_number=3,
+                        game="hllv",
+                    ),
+                },
+                clear=False,
+            ),
+            patch.object(payloads, "get_current_match_snapshot_service", return_value=service),
+        ):
+            status, response = resolve_get_payload(
+                f"/api/current-match/snapshot?server={slug}"
+            )
+
+        self.assertEqual(int(status), 200)
+        self.assertEqual(response["data"]["server_slug"], slug)
 
     def test_malformed_crcon_kill_cursor_returns_stable_400(self) -> None:
         service = _service(_FakeApi(), _FakeDatabase())
