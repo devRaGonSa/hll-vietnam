@@ -69,7 +69,9 @@ require("Ver original en Discord" not in normative and "normative-source" not in
 source_links = set(re.findall(r"https://discord\.com/\S+", normative_source))
 require(len(source_links) == 9, "Editorial source no longer retains all nine original Discord links")
 require("IntersectionObserver" in (FRONTEND / "assets/js/normativa.js").read_text(encoding="utf-8"), "Active-section behavior is missing")
-require("Guía en preparación" in bots and "Guía de bots y comandos" not in bots, "Bots page is not conservative")
+require("Guía en preparación" not in bots, "Bots page is still a placeholder")
+require("Comandos en chat" in bots and "Automatizaciones del servidor" in bots, "Verified bots guide is missing")
+require('href="./normativa.html"' in bots and 'href="./vip.html"' in bots, "Bots guide links are incomplete")
 require("Activo de 09:30 a 21:30 Europe/Madrid." in vip, "Verified VIP schedule changed")
 for removed in ("VIP indefinido", "acumulación/ciclos", "temporal/indefinido"):
     require(removed.lower() not in vip.lower(), f"Removed VIP wording returned: {removed}")

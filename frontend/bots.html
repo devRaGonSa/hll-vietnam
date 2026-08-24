@@ -37,26 +37,110 @@
             <div class="logo-frame"><img src="./assets/img/logo.png" alt="Logo oficial de la Comunidad Hispana HLL" class="logo-frame__image" width="1024" height="1044" decoding="async" /></div>
             <div class="hero__copy">
               <h1 class="hero__title">Bots y <span class="hero__title-accent">comandos</span></h1>
-              <p class="hero__text">Próximamente encontrarás aquí una guía pública y verificada de las herramientas de la comunidad.</p>
+              <p class="hero__text">Conoce los comandos y automatizaciones que ayudan a gestionar nuestros servidores.</p>
             </div>
           </div>
         </div>
       </header>
 
       <main class="content">
-        <section class="panel panel--guide" aria-labelledby="bots-title">
+        <section class="panel panel--guide" aria-labelledby="chat-commands-title">
           <div class="panel__shell">
             <div class="panel__header">
-              <p class="eyebrow eyebrow--section">Guía en preparación</p>
-              <h2 id="bots-title">Una referencia clara y segura</h2>
-              <p class="panel__intro">Estamos preparando esta sección para documentar únicamente funciones públicas confirmadas, con instrucciones sencillas y sin exponer procesos internos.</p>
+              <p class="eyebrow eyebrow--section">Comandos en chat</p>
+              <h2 id="chat-commands-title">Utilidades disponibles durante la partida</h2>
+              <p class="panel__intro">Escribe el comando en el chat del juego. Los comandos se muestran tal como están configurados; salvo que indiquemos lo contrario, respeta sus minúsculas.</p>
+            </div>
+            <div class="command-grid">
+              <article class="command-card" data-chat-command="!help,@help">
+                <div class="command-card__heading"><code>!help</code><span class="command-card__alias">también <code>@help</code></span></div>
+                <p>Muestra el resumen de comandos configurados.</p>
+                <dl><div><dt>Quién</dt><dd>Cualquier jugador</dd></div><div><dt>Dónde</dt><dd>HLL #1, HLL #2 y HLL Vietnam</dd></div></dl>
+              </article>
+              <article class="command-card" data-chat-command="!discord">
+                <div class="command-card__heading"><code>!discord</code></div>
+                <p>Te envía la invitación oficial de Discord.</p>
+                <dl><div><dt>Quién</dt><dd>Cualquier jugador</dd></div><div><dt>Dónde</dt><dd>Los tres servidores</dd></div></dl>
+              </article>
+              <article class="command-card" data-chat-command="!me">
+                <div class="command-card__heading"><code>!me</code><span class="command-card__alias">no distingue mayúsculas</span></div>
+                <p>Consulta por mensaje privado tu histórico y estadísticas acumuladas.</p>
+                <dl><div><dt>Quién</dt><dd>Cualquier jugador</dd></div><div><dt>Dónde</dt><dd>Los tres servidores</dd></div></dl>
+              </article>
+              <article class="command-card" data-chat-command="!wkm">
+                <div class="command-card__heading"><code>!wkm</code></div>
+                <p>Te indica quién fue tu último némesis y qué arma utilizó.</p>
+                <dl><div><dt>Quién</dt><dd>Cualquier jugador</dd></div><div><dt>Dónde</dt><dd>Los tres servidores</dd></div></dl>
+              </article>
+              <article class="command-card" data-chat-command="!top">
+                <div class="command-card__heading"><code>!top</code><span class="command-card__alias">no distingue mayúsculas</span></div>
+                <p>Muestra la clasificación de la partida actual por categorías de juego.</p>
+                <dl><div><dt>Quién</dt><dd>Cualquier jugador</dd></div><div><dt>Dónde</dt><dd>Los tres servidores</dd></div></dl>
+              </article>
+              <article class="command-card" data-chat-command="!vip">
+                <div class="command-card__heading"><code>!vip</code></div>
+                <p>Consulta por mensaje privado la caducidad de tu VIP.</p>
+                <dl><div><dt>Quién</dt><dd>Cualquier jugador</dd></div><div><dt>Dónde</dt><dd>Los tres servidores</dd></div></dl>
+              </article>
+              <article class="command-card" data-chat-command="!push">
+                <div class="command-card__heading"><code>!push</code></div>
+                <p>Recibe información sobre el equipo competitivo Push y cómo participar.</p>
+                <dl><div><dt>Quién</dt><dd>Cualquier jugador</dd></div><div><dt>Dónde</dt><dd>Los tres servidores</dd></div></dl>
+              </article>
+              <article class="command-card" data-chat-command="!switch,@switch">
+                <div class="command-card__heading"><code>!switch</code><span class="command-card__alias">también <code>@switch</code></span></div>
+                <p>Cambia de bando cuando tienes habilitado ese permiso y el servidor está por debajo de 50 jugadores.</p>
+                <dl><div><dt>Quién</dt><dd>Jugadores habilitados</dd></div><div><dt>Dónde</dt><dd>Los tres servidores</dd></div></dl>
+              </article>
+              <article class="command-card" data-chat-command="!redeploy,!r">
+                <div class="command-card__heading"><code>!redeploy</code><span class="command-card__alias">atajo <code>!r</code></span></div>
+                <p>Fuerza tu propio redespliegue rápido.</p>
+                <dl><div><dt>Quién</dt><dd>Cualquier jugador</dd></div><div><dt>Dónde</dt><dd>Los tres servidores</dd></div></dl>
+              </article>
+              <article class="command-card command-card--wide" data-chat-command="!votemap,!vm">
+                <div class="command-card__heading"><code>!votemap</code><span class="command-card__alias">también <code>!vm</code> · no distingue mayúsculas</span></div>
+                <p>Consulta y vota el siguiente mapa. Usa <code>!votemap número</code> para votar, <code>!votemap help</code> para ver la ayuda, <code>never</code> o <code>allow</code> para desactivar o recuperar recordatorios, y <code>!vm add</code> para consultar cómo proponer una opción.</p>
+                <dl><div><dt>Quién</dt><dd>Cualquier jugador</dd></div><div><dt>Dónde</dt><dd>Los tres servidores</dd></div></dl>
+              </article>
+              <article class="command-card command-card--wide" data-chat-command="!nodos">
+                <div class="command-card__heading"><code>!nodos</code></div>
+                <p>Permite al comandante pedir la construcción de nodos. El aviso llega por mensaje privado a los ingenieros de su propio equipo que estén conectados.</p>
+                <dl><div><dt>Quién</dt><dd>Comandantes</dd></div><div><dt>Dónde</dt><dd>HLL #1 y HLL #2</dd></div></dl>
+              </article>
+            </div>
+          </div>
+        </section>
+
+        <section class="panel panel--guide" aria-labelledby="automations-title">
+          <div class="panel__shell">
+            <div class="panel__header">
+              <p class="eyebrow eyebrow--section">Automatizaciones del servidor</p>
+              <h2 id="automations-title">Ayudas y controles que puedes encontrar</h2>
+              <p class="panel__intro">Estas funciones actúan sin que tengas que escribir un comando.</p>
             </div>
             <div class="guide-grid">
-              <article class="guide-card"><h3>Ayuda a jugadores</h3><p>Consultas y utilidades públicas relacionadas con la experiencia de juego.</p></article>
-              <article class="guide-card"><h3>Automatizaciones</h3><p>Acciones automáticas visibles para la comunidad y cómo interpretar sus avisos.</p></article>
-              <article class="guide-card"><h3>Recompensas y avisos</h3><p>Información pública sobre recompensas activas y comunicaciones de la comunidad.</p></article>
+              <article class="guide-card"><p class="guide-card__label">Moderación</p><h3>Roles y reglas de juego</h3><p>Los servidores aplican controles automáticos sobre requisitos de nivel, escuadras sin oficial y reglas de seeding. Según la infracción, el sistema puede avisar, sancionar o expulsar. Consulta siempre la <a href="./normativa.html">normativa</a>.</p><p class="guide-card__scope">Reglas según servidor · seeding en los tres</p></article>
+              <article class="guide-card"><p class="guide-card__label">Seeding</p><h3>VIP por ayudar a llenar</h3><p>El sistema detecta la ayuda elegible durante el llenado y concede automáticamente la recompensa correspondiente.</p><p class="guide-card__scope">HLL #1, HLL #2 y HLL Vietnam · <a href="./vip.html">ver reglas VIP</a></p></article>
+              <article class="guide-card"><p class="guide-card__label">Recompensas</p><h3>Retos y rendimiento</h3><p>Las automatizaciones reconocen retos elegibles y resultados destacados, y añaden las horas de VIP que correspondan.</p><p class="guide-card__scope">Consulta el ámbito y las reglas activas en <a href="./vip.html">VIP</a></p></article>
+              <article class="guide-card"><p class="guide-card__label">Información</p><h3>Estadísticas al entrar</h3><p>Al conectarte puedes recibir un resumen privado de tus estadísticas acumuladas, que también puedes consultar con <code>!me</code>.</p><p class="guide-card__scope">Los tres servidores</p></article>
+              <article class="guide-card"><p class="guide-card__label">Avisos</p><h3>Top de bajas y votación</h3><p>HLL #1 y HLL #2 alternan en el aviso del servidor el top de bajas de la partida y la información de votación del siguiente mapa.</p><p class="guide-card__scope">HLL #1 y HLL #2</p></article>
+              <article class="guide-card"><p class="guide-card__label">Fin de partida</p><h3>Clasificaciones destacadas</h3><p>Al terminar la partida se muestran clasificaciones de rendimiento y se procesan las recompensas elegibles.</p><p class="guide-card__scope">Los tres servidores</p></article>
             </div>
-            <p class="guide-note">La guía se ampliará cuando los nombres, comandos y condiciones hayan sido verificados.</p>
+          </div>
+        </section>
+
+        <section class="panel panel--guide" aria-labelledby="discord-title">
+          <div class="panel__shell">
+            <div class="panel__header">
+              <p class="eyebrow eyebrow--section">Discord y soporte</p>
+              <h2 id="discord-title">Información y ayuda de la comunidad</h2>
+            </div>
+            <div class="guide-grid">
+              <article class="guide-card"><p class="guide-card__label">Estado del servidor</p><h3>Consultas desde Discord</h3><p>En los canales habilitados puedes usar <code>-server1 players</code> o <code>-server2 players</code> para consultar jugadores, y sustituir <code>players</code> por <code>tiempo</code> para ver la duración de la partida actual.</p></article>
+              <article class="guide-card"><p class="guide-card__label">Tickets</p><h3>Soporte guiado</h3><p>Al abrir un ticket, el bot publica las indicaciones adecuadas para solicitudes VIP, apelaciones, soporte y otros trámites disponibles.</p></article>
+              <article class="guide-card"><p class="guide-card__label">Convivencia</p><h3>Moderación asistida</h3><p>Determinados canales cuentan con detección automatizada que avisa al equipo de moderación ante posibles incumplimientos. Las decisiones y sanciones se rigen por la <a href="./normativa.html">normativa</a>.</p></article>
+            </div>
+            <p class="guide-note">Las automatizaciones pueden cambiar con la configuración del servidor. Para las condiciones vigentes consulta la <a href="./normativa.html">Normativa</a> y la guía de <a href="./vip.html">VIP</a>.</p>
           </div>
         </section>
       </main>

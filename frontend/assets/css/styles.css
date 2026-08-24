@@ -346,10 +346,114 @@ a {
   color: var(--accent-strong);
 }
 
-.guide-card p {
+.guide-card p,
+.guide-card a {
   margin: 0;
   color: var(--text-soft);
   line-height: 1.65;
+}
+
+.guide-card a {
+  color: var(--accent-strong);
+  font-weight: 700;
+}
+
+.guide-card code {
+  color: var(--accent-strong);
+}
+
+.guide-card__label {
+  margin-bottom: 8px !important;
+  color: var(--accent-warm) !important;
+  font-size: 0.76rem;
+  font-weight: 800;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.guide-card__scope {
+  margin-top: 16px !important;
+  padding-top: 14px;
+  border-top: 1px solid var(--border);
+  font-size: 0.88rem;
+}
+
+.command-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 16px;
+  margin-top: 28px;
+}
+
+.command-card {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  padding: 22px;
+  border: 1px solid var(--border);
+  border-radius: 18px;
+  background: linear-gradient(145deg, rgba(183, 201, 125, 0.07), transparent 55%), var(--panel-soft);
+}
+
+.command-card--wide {
+  grid-column: span 3;
+}
+
+.command-card__heading {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+}
+
+.command-card__heading > code {
+  color: var(--accent-strong);
+  font-size: 1.12rem;
+  font-weight: 800;
+}
+
+.command-card__alias {
+  color: var(--text-muted);
+  font-size: 0.78rem;
+}
+
+.command-card__alias code,
+.command-card p code {
+  color: var(--accent-warm);
+}
+
+.command-card > p {
+  margin: 13px 0 18px;
+  color: var(--text-soft);
+  line-height: 1.62;
+}
+
+.command-card dl {
+  display: grid;
+  gap: 7px;
+  margin: auto 0 0;
+}
+
+.command-card dl div {
+  display: grid;
+  grid-template-columns: 64px minmax(0, 1fr);
+  gap: 10px;
+}
+
+.command-card dt,
+.command-card dd {
+  margin: 0;
+  font-size: 0.82rem;
+  line-height: 1.45;
+}
+
+.command-card dt {
+  color: var(--accent-warm);
+  font-weight: 800;
+}
+
+.command-card dd {
+  color: var(--text-muted);
 }
 
 .guide-note {
@@ -2113,7 +2217,10 @@ h2 {
     grid-template-columns: 1fr;
   }
 
-  .guide-grid { grid-template-columns: 1fr; }
+  .guide-grid,
+  .command-grid { grid-template-columns: 1fr; }
+
+  .command-card--wide { grid-column: auto; }
 }
 
 @media (max-width: 640px) {
