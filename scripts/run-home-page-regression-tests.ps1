@@ -87,10 +87,13 @@ Require-Contains $css '.server-card--game-hllv' `
     "HLL Vietnam server-card styling is missing."
 Require-Contains $css '.server-card__map-image' "Map thumbnail styling is missing."
 Require-Contains $css '.server-card__live-metrics' "Live score/time layout is missing."
-Require-Contains $css 'grid-template-columns: 82px minmax(0, 1fr)' `
-    "Map thumbnail was not reduced to the compact desktop width."
-Require-Contains $css 'height: 46px' "Map thumbnail height is not explicitly compact."
-Require-Contains $css 'object-fit: contain' "Map thumbnail does not preserve the full image."
+Require-Contains $css 'grid-template-columns: minmax(0, 1fr)' `
+    "Map backdrop does not span the full content width."
+Require-Contains $css '.server-card__map::after' "Dark map backdrop overlay is missing."
+Require-Contains $css 'height: 100%' "Map image does not fill its visual block."
+Require-Contains $css 'object-fit: cover' "Map image does not cover its visual block."
+Require-Contains $css 'min-height: 76px' "Map backdrop is not kept compact."
+Require-Contains $css 'text-shadow: 0 1px 3px' "Map name contrast treatment is missing."
 Require-Contains $css '.server-card__scorebar-side--allies' "Allies scorebar segment is missing."
 Require-Contains $css '.server-card__scorebar-side--axis' "Axis scorebar segment is missing."
 Require-Contains $javascript 'server-card__scoreboard-team--allies' "Allies score is not attached to its team label."

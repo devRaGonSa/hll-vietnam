@@ -75,17 +75,18 @@ test("classic and Vietnam variants derive only from the semantic game field", ()
   assert.match(vietnam, /Hell Let Loose Vietnam/);
 });
 
-test("map name and lazy local thumbnail replace the static MAPA label", () => {
+test("map name overlays a full-width local map backdrop", () => {
   const markup = runtime.renderServerStatsCard(server());
   assert.match(markup, /server-card__map-name">St\. Mere Eglise/);
   assert.match(markup, /src="\.\/assets\/img\/maps\/stmereeglise-day\.webp"/);
   assert.match(markup, /alt="Mapa St\. Mere Eglise"/);
   assert.match(markup, /loading="lazy"/);
   assert.doesNotMatch(markup, />MAPA</i);
-  assert.match(css, /\.server-card__map\s*\{[\s\S]*?grid-template-columns:\s*82px minmax\(0, 1fr\)/);
-  assert.match(css, /\.server-card__map-image\s*\{[\s\S]*?height:\s*46px;[\s\S]*?object-fit:\s*contain;/);
-  assert.doesNotMatch(css, /\.server-card__map-image\s*\{[\s\S]*?object-fit:\s*cover;/);
-  assert.match(css, /@media \(max-width: 640px\)[\s\S]*?\.server-card__map-image\s*\{\s*height:\s*42px;/);
+  assert.match(css, /\.server-card__map\s*\{[\s\S]*?position:\s*relative;[\s\S]*?grid-template-columns:\s*minmax\(0, 1fr\);[\s\S]*?min-height:\s*76px;/);
+  assert.match(css, /\.server-card__map::after\s*\{[\s\S]*?linear-gradient/);
+  assert.match(css, /\.server-card__map-image\s*\{[\s\S]*?position:\s*absolute;[\s\S]*?inset:\s*0;[\s\S]*?height:\s*100%;[\s\S]*?object-fit:\s*cover;[\s\S]*?opacity:\s*0\.56;/);
+  assert.match(css, /\.server-card__map-name\s*\{[\s\S]*?z-index:\s*2;[\s\S]*?background:\s*rgba\(5, 7, 5, 0\.58\);[\s\S]*?text-shadow:/);
+  assert.match(css, /@media \(max-width: 640px\)[\s\S]*?\.server-card__map\s*\{[\s\S]*?min-height:\s*70px;/);
 });
 
 test("unknown and HLLV maps use the explicit local fallback", () => {
