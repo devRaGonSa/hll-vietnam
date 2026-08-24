@@ -2,7 +2,14 @@
 
 from __future__ import annotations
 
-from ...config import get_historical_data_source_kind, get_live_data_source_kind
+from ...config import (
+    get_current_match_source,
+    get_historical_aggregate_source,
+    get_historical_data_source_kind,
+    get_historical_match_source,
+    get_live_data_source_kind,
+    get_server_list_source,
+)
 from ...data_sources import (
     SOURCE_KIND_RCON,
     describe_historical_runtime_policy,
@@ -14,14 +21,20 @@ def build_health_payload() -> dict[str, str]:
         "status": "ok",
         "service": "hll-vietnam-backend",
         "phase": "bootstrap",
+        "server_list_source": get_server_list_source(),
+        "current_match_source": get_current_match_source(),
+        "historical_match_source": get_historical_match_source(),
+        "historical_aggregate_source": get_historical_aggregate_source(),
         "live_data_source": get_live_data_source_kind(),
         "historical_data_source": get_historical_data_source_kind(),
         "historical_runtime_policy": describe_historical_runtime_policy()["mode"],
+        "historical_runtime_policy_scope": "legacy-rollback-transport-metadata",
         "live_runtime_policy": (
             "rcon-first-with-a2s-fallback"
             if get_live_data_source_kind() == SOURCE_KIND_RCON
             else "a2s-primary"
         ),
+        "live_runtime_policy_scope": "legacy-rollback-transport-metadata",
     }
 
 

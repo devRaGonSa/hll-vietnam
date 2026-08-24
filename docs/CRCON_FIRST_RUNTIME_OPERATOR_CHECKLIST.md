@@ -5,6 +5,13 @@ project `.env` contain none of the four required runtime inputs. No real CRCON,
 WebSocket or PostgreSQL request was eligible, and no secret was discovered or
 printed.
 
+TASK-313 production handoff evidence on the same date supersedes that local
+configuration result for the deployed environment: all four effective selectors
+are `crcon`; the three configured HLL/HLLV targets passed the documented public
+route smokes with HTTP 200; and default production Compose contains only
+backend, frontend and PostgreSQL. This repository task does not copy or print
+the deployed configuration.
+
 ## Current sanitized configuration result
 
 | Input | Status | Credential |
@@ -180,3 +187,32 @@ Instrument the run so any access to HLL-owned gameplay history, snapshot,
 AdminLog materialization, ranking snapshot or player index/profile snapshot
 fails the validation. Expected active legacy readers are zero. Do not disable
 any writer in this task.
+
+## TASK-313 guarded deployed reader probe
+
+Run this once inside a deployed backend container/process environment after the
+normal health and route smokes are green:
+
+```text
+python -m app.tools.verify_crcon_first_readers
+```
+
+The command refuses to start unless every effective selector is `crcon`. It
+starts only its own process-local native Log Stream reader, exercises the real
+public route dispatcher and configured CRCON REST/PostgreSQL readers, verifies
+that the kills projection selected `crcon-log-stream`, and stops that temporary
+reader on exit. It never initializes/migrates storage, starts application
+writers, changes deployment state or prints response payloads, match IDs,
+player IDs, names, tokens or connection strings.
+
+For the current three-target deployment, success is one sanitized JSON object
+with `status=ok`, `enabled_target_count=3`, `route_count=20`,
+`detail_route_count=3` and `legacy_reader_access_count=0`. Exact field order is
+not significant. Any guarded legacy access, non-200 canonical route, missing
+recent match for internal detail discovery, mixed selector or unexpected route
+error exits nonzero.
+
+This probe proves application-owned reader dispatch in its one-shot process. It
+does not prove a live combat event occurred during the short window and does not
+authorize stopping rollback writers. Until an operator records the sanitized
+success object, `PRODUCTION_ACTIVE_LEGACY_READERS = PENDING_OPERATOR_PROBE`.

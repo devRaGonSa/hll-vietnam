@@ -138,6 +138,58 @@ requirements and the least-privilege SQL template live in
 `docs/CRCON_FIRST_RUNTIME_OPERATOR_CHECKLIST.md` and
 `docs/CRCON_READ_ONLY_ROLE.sql`.
 
+## TASK-313 reader-boundary inventory and proof
+
+The production cutover handoff reports all four effective selectors as `crcon`,
+HTTP 200 smoke results for the three deployed HLL/HLLV targets across server
+list, current match, history and ranking, and a default production Compose graph
+containing only backend, frontend and PostgreSQL. TASK-313 treats those as
+established operator evidence; it did not redeploy or independently repeat the
+production probe.
+
+| Canonical surface | Effective selector | Normal CRCON reader | Guarded legacy/rollback boundary |
+| --- | --- | --- | --- |
+| `/api/servers` | `HLL_SERVER_LIST_SOURCE` | CRCON public-info server-list service | persisted snapshots plus A2S/RCON legacy refresh |
+| current snapshot, kills and players | `HLL_CURRENT_MATCH_SOURCE` | CRCON REST snapshot plus native Log Stream | trusted-scoreboard/RCON sample and AdminLog materialized readers |
+| recent matches and detail | `HLL_HISTORICAL_MATCH_SOURCE` | CRCON scoreboard maps/detail REST service | classic history, historical snapshots and RCON materialized detail |
+| server summary and ranking | `HLL_HISTORICAL_AGGREGATE_SOURCE` | CRCON PostgreSQL SELECT-only aggregate service | historical/ranking snapshots and RCON materialized leaderboard |
+| player search and opaque profile | `HLL_HISTORICAL_AGGREGATE_SOURCE` | authenticated CRCON REST search plus CRCON PostgreSQL SELECT-only profile | player index/profile snapshots and classic historical profile |
+
+The inventory classifications are:
+
+- **CRCON normal:** the five services in the table above. They own canonical
+  dispatch when the effective selector is `crcon`.
+- **Legacy rollback:** payload-level aliases for snapshot/history/AdminLog,
+  ranking and player read models. They remain reachable only through explicit
+  legacy/shadow or compatibility routes and are patched at their actual use
+  sites by the TASK-313 guard.
+- **Unrelated:** canonical `ServerTarget` validation, trusted-scoreboard URL
+  enrichment, static community payloads, and legacy transport-policy metadata.
+  These are not gameplay legacy reads.
+- **Dead:** removed MVP, player-event and Elo/MMR readers remain absent. Their
+  retained rows/files are storage-lifecycle candidates, not active readers.
+
+`test_crcon_first_reader_boundaries.py` runs the public route dispatcher with
+two synthetic HLL targets and one HLLV target. Fake CRCON API/repository objects
+serve all normal reads while every known application-owned legacy payload
+boundary raises `LegacyReaderAccessError`. It covers 20 route invocations,
+including three internally discovered historical details, and proves zero
+legacy accesses under all-CRCON selection. Separate tests prove the guard fails
+closed, mixed selection is refused, and legacy/shadow selector values remain
+valid rollback configuration.
+
+`/health` now exposes `server_list_source`, `current_match_source`,
+`historical_match_source` and `historical_aggregate_source`. The older live and
+historical runtime-policy fields remain for compatibility and are explicitly
+labelled `legacy-rollback-transport-metadata`; they do not describe canonical
+CRCON-first route ownership.
+
+`CRCON_FIRST_ACTIVE_LEGACY_READERS = 0` is therefore established for the
+deterministic all-CRCON dispatch contract. The stronger deployed-process status
+is `PENDING_OPERATOR_PROBE` until an operator runs the guarded one-shot command
+in the deployed backend environment. No writer shutdown follows from the local
+proof.
+
 ## Runtime evidence still required from TASK-307/TASK-310
 
 Product features no longer block runtime migration. The outstanding operational
@@ -152,7 +204,7 @@ evidence remains:
 4. the explicitly authorized SELECT-only CRCON DSN and target scope, followed
    by role, `transaction_read_only`, deployed-schema/game-value and bounded
    `EXPLAIN` verification;
-5. zero-active-reader proof in the intended runtime configuration.
+5. guarded one-shot zero-active-reader proof in the deployed backend process.
 
 TASK-298 remains `INSUFFICIENT_EVIDENCE`; no further complete-match wait is
 required for local development.
@@ -163,10 +215,12 @@ required for local development.
 
 `LEGACY_WRITER_DISABLE_READINESS = NOT_READY`.
 
-There is no product-feature blocker. Readiness is now blocked only by the
-missing authorized runtime configuration and the resulting inability to prove
-zero normal-path legacy readers. The currently hot rollback writers stay
-enabled; no shutdown task is eligible yet.
+There is no product-feature blocker. Production selectors and smokes establish
+the cutover, and deterministic route instrumentation establishes zero legacy
+reads for the all-CRCON dispatch contract. Writer-disable readiness remains
+blocked on the separate deployed-process operator probe and rollback-policy
+decision. The currently hot rollback writers stay enabled; no shutdown task is
+eligible yet.
 
 No writer was stopped, no deployment file changed, no table/schema/data was
 deleted, and no remote CRCON, PostgreSQL or Redis state was touched.
