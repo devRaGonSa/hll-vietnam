@@ -335,7 +335,6 @@
     const serverId = String(data.server_id || annualServerId);
     const serverLabel = labelForStatsServer(serverId);
     const sourceMatches = safeInt(data.source_matches_count, 0);
-    const generatedAt = formatDateTime(data.generated_at);
     const year = safeInt(data.year, annualDefaultYear);
     const metric = escapeHtml(String(data.metric || annualMetric));
 
@@ -375,10 +374,6 @@
           <article class="stats-annual-meta-item">
             <p>Partidas base</p>
             <strong>${safeInt(sourceMatches, 0)}</strong>
-          </article>
-          <article class="stats-annual-meta-item">
-            <p>Actualizado</p>
-            <strong>${escapeHtml(generatedAt || "No disponible")}</strong>
           </article>
         </div>
         ${renderAnnualRows(items)}

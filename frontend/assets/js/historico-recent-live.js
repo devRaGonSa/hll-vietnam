@@ -77,14 +77,14 @@
         recentMatchesState.page = 1;
         setDynamicState(stateNode, "No hay partidas recientes disponibles para este alcance.");
         renderOwnedList(listNode, "");
-        metaNode.textContent = "Datos recientes sin partidas disponibles.";
+        setDynamicMeta(metaNode, "Datos recientes sin partidas disponibles.");
         renderDynamicPagination();
         return;
       }
 
       stateNode.hidden = true;
       if (noteNode) noteNode.textContent = "";
-      metaNode.textContent = buildDynamicRecentMeta(items);
+      setDynamicMeta(metaNode, "");
       renderDynamicRecentMatchesPage();
     } catch (error) {
       if (requestId !== recentMatchesState.activeRequestId || serverSlug !== recentMatchesState.serverSlug) {
@@ -93,7 +93,7 @@
       recentMatchesState.items = [];
       recentMatchesState.page = 1;
       setDynamicState(stateNode, "No se pudieron cargar las partidas recientes dinÃ¡micas.", true);
-      metaNode.textContent = "Error al leer las partidas recientes dinÃ¡micas.";
+      setDynamicMeta(metaNode, "Error al leer las partidas recientes dinÃ¡micas.");
       renderDynamicPagination();
     }
   }
@@ -301,9 +301,10 @@
     return normalized || "all-servers";
   }
 
-  function buildDynamicRecentMeta(items) {
-    const newest = items[0]?.closed_at || items[0]?.ended_at || items[0]?.started_at;
-    return newest ? `Actualizado: ${formatDynamicTimestamp(newest)}` : "Actualizado recientemente";
+  function setDynamicMeta(node, message) {
+    const text = String(message || "").trim();
+    node.textContent = text;
+    node.hidden = !text;
   }
 
   function setDynamicState(node, message, isError = false) {

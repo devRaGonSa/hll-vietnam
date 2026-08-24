@@ -514,9 +514,7 @@ function hydrateSummary(result, summaryNode, rangeNode, noteNode, snapshotMetaNo
     noteNode.textContent = emptyState.summaryNote;
     setSnapshotMeta(
       snapshotMetaNode,
-      payload?.generated_at
-        ? buildSnapshotMetaText(payload, "Resumen sin datos de actualización.")
-        : "No hay datos en este alcance.",
+      "No hay datos en este alcance.",
     );
     return;
   }
@@ -538,10 +536,7 @@ function hydrateSummary(result, summaryNode, rangeNode, noteNode, snapshotMetaNo
     coverage,
     summary.server?.slug,
   );
-  setSnapshotMeta(
-    snapshotMetaNode,
-    buildSnapshotMetaText(payload, "Resumen sin fecha de actualizacion."),
-  );
+  setSnapshotMeta(snapshotMetaNode, "");
   summaryNode.innerHTML = [
     renderSummaryCard("Servidor", summary.server?.name || "Servidor no disponible"),
     renderSummaryCard(
@@ -606,10 +601,7 @@ function hydrateWeeklyLeaderboard(
     payload?.timeframe || resolvedTimeframeKey,
   );
   noteNode.textContent = buildWeeklyWindowNote(payload);
-  setSnapshotMeta(
-    snapshotMetaNode,
-    buildSnapshotMetaText(payload, "Ranking sin datos de actualización."),
-  );
+  setSnapshotMeta(snapshotMetaNode, "");
   if (aggregateProblem) {
     setState(stateNode, aggregateProblem.message, true);
     tableNode.hidden = true;
@@ -679,10 +671,7 @@ function hydrateRecentMatches(result, stateNode, listNode, snapshotMetaNode) {
   }
 
   const payload = result.value?.data;
-  setSnapshotMeta(
-    snapshotMetaNode,
-    buildSnapshotMetaText(payload, "Partidas pendientes de generacion."),
-  );
+  setSnapshotMeta(snapshotMetaNode, "");
   if (!payload?.found) {
     resetRecentMatchesPagination();
     listNode.innerHTML = "";
@@ -975,7 +964,9 @@ function setRangeBadge(node, label, isFresh) {
 }
 
 function setSnapshotMeta(node, message) {
-  node.textContent = message;
+  const text = String(message || "").trim();
+  node.textContent = text;
+  node.hidden = !text;
 }
 
 function syncActiveButtons(buttons, activeServerSlug) {
@@ -1063,14 +1054,6 @@ function buildLeaderboardSnapshotKey(serverSlug, timeframeKey, metricKey) {
   return `leaderboard:${serverSlug}:${timeframeKey}:${metricKey}`;
 }
 
-function buildRangeLabel(start, end) {
-  if (!start && !end) {
-    return "";
-  }
-
-  return `${formatTimestamp(start)} a ${formatTimestamp(end)}`;
-}
-
 function buildCoverageBadgeLabel(coverage, timeRange, serverSlug) {
   const rangeStart = coverage?.first_match_at || timeRange?.start;
   const rangeEnd = coverage?.last_match_at || timeRange?.end;
@@ -1153,26 +1136,6 @@ function buildRecentMatchesNote(serverSlug) {
     return "Lista de cierres ya registrados para los servidores con historico disponible.";
   }
   return `Lista de cierres ya registrados para ${getHistoricalServerLabel(serverSlug)}.`;
-}
-
-function buildSnapshotMetaText(payload, missingMessage) {
-  if (!payload?.generated_at) {
-    return missingMessage;
-  }
-
-  const parts = [
-    payload.is_stale
-      ? `Actualizado: ${formatTimestamp(payload.generated_at)}`
-      : `Actualizado: ${formatTimestamp(payload.generated_at)}`,
-  ];
-  const sourceRangeLabel = buildRangeLabel(
-    payload?.source_range_start,
-    payload?.source_range_end,
-  );
-  if (sourceRangeLabel) {
-    parts.push(`Cobertura: ${sourceRangeLabel}`);
-  }
-  return parts.join(" | ");
 }
 
 function preserveAggregateReason(node, payload) {

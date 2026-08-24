@@ -365,7 +365,6 @@
   }
 
   function buildMetaMarkup(data) {
-    const source = data.source && typeof data.source === "object" ? data.source : {};
     const timeframe = String(data.timeframe || defaultTimeframe);
     const metric = String(data.metric || defaultMetric);
     const cards = [
@@ -374,7 +373,6 @@
       { label: "M\u00e9trica activa", value: labelForMetric(metric), active: true },
       { label: "L\u00edmite", value: `Top ${safeInt(data.limit, safeInt(defaultLimit, 20))}` },
       { label: "Periodo", value: labelForWindow(data) },
-      { label: "Actualizado", value: formatDateTime(source.generated_at) },
     ];
 
     if (timeframe === "annual") {
@@ -528,20 +526,6 @@
       .json()
       .then((parsed) => parsed)
       .catch(() => null);
-  }
-
-  function formatDateTime(value) {
-    if (!value) {
-      return "No disponible";
-    }
-    const parsedDate = new Date(String(value));
-    if (Number.isNaN(parsedDate.getTime())) {
-      return "No disponible";
-    }
-    return new Intl.DateTimeFormat("es-ES", {
-      dateStyle: "short",
-      timeStyle: "short",
-    }).format(parsedDate);
   }
 
   function escapeHtml(value) {
