@@ -1718,7 +1718,13 @@ require_int(annual_data.get("year"), "Annual payload should include numeric year
 require_int(annual_data.get("limit"), "Annual payload should include limit.")
 require_int(annual_data.get("requested_limit"), "Annual payload should include requested_limit.")
 require_int(annual_data.get("effective_limit"), "Annual payload should include effective_limit.")
-require_int(annual_data.get("snapshot_limit"), "Annual payload should include snapshot_limit.")
+if annual_data.get("aggregate_state") is None:
+    require_int(annual_data.get("snapshot_limit"), "Legacy annual payload should include snapshot_limit.")
+else:
+    require(
+        annual_data.get("aggregate_state") in {"AVAILABLE", "UNAVAILABLE", "UNVERIFIED_SCHEMA"},
+        "CRCON-first annual payload should expose aggregate_state.",
+    )
 require_int(annual_data.get("item_count"), "Annual payload should include item_count.")
 require(annual_data.get("snapshot_status") in {"ready", "missing"}, "Annual snapshot_status should be ready or missing.")
 require(isinstance(annual_data.get("items"), list), "Annual ranking items should be list.")

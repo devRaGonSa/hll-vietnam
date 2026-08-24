@@ -16,7 +16,11 @@ from ..config import (
     get_crcon_database_statement_timeout_ms,
     get_crcon_database_url,
 )
-from ..server_targets import ServerTarget, load_server_targets
+from ..server_targets import (
+    ServerTarget,
+    load_server_targets,
+    resolve_public_aggregate_scope,
+)
 from ..player_external_profiles import build_external_player_profile_fields
 from ..crcon.cache import TtlCache
 from ..crcon.models import (
@@ -27,9 +31,6 @@ from ..crcon.models import (
 )
 from ..crcon.postgres_repository import PostgresCrconRepository
 from ..crcon.repository import CrconReadRepository, CrconServerScope, resolve_server_scope
-
-
-ALL_SERVER_KEYS = {"", "all", "all-servers"}
 
 
 @dataclass(frozen=True, slots=True)
@@ -294,15 +295,15 @@ class HistoricalAggregateService:
     def _resolve(
         self, server_id: str | None
     ) -> tuple[tuple[ServerTarget, ...], tuple[CrconServerScope, ...]] | dict[str, object]:
-        normalized = str(server_id or "").strip().lower()
-        if normalized in ALL_SERVER_KEYS:
-            targets = self._targets
-        else:
-            targets = tuple(target for target in self._targets if target.key == normalized)
-        if not targets:
+        selection = resolve_public_aggregate_scope(self._targets, server_id)
+        if selection is None:
             return self._state(CrconAggregateState.UNVERIFIED_SCHEMA, "server-target-not-configured")
-        if len({target.game for target in targets}) != 1:
-            return self._state(CrconAggregateState.UNAVAILABLE, "cross-game-aggregate-rejected")
+        targets = selection.targets
+        if not targets:
+            return self._state(
+                CrconAggregateState.UNVERIFIED_SCHEMA,
+                "classic-hll-aggregate-targets-not-configured",
+            )
         return targets, tuple(resolve_server_scope(target) for target in targets)
 
     def _server_keys(self, server_numbers: tuple[int, ...]) -> list[str]:
@@ -349,7 +350,7 @@ def _ranking_item(row: object) -> dict[str, object]:
     return {
         "ranking_position": int(getattr(row, "ranking_position")),
         "player_id": str(getattr(row, "player_id")),
-        "player_name": str(getattr(row, "player_name")),
+        "player_name": _public_player_name(getattr(row, "player_name", None)),
         "metric_value": float(getattr(row, "metric_value")),
         "matches_considered": matches,
         "record_kills": int(getattr(row, "record_kills")),
@@ -371,6 +372,11 @@ def _ranking_item(row: object) -> dict[str, object]:
 
 def _iso(value: datetime | None) -> str | None:
     return value.astimezone(timezone.utc).isoformat() if value is not None else None
+
+
+def _public_player_name(value: object) -> str | None:
+    normalized = str(value or "").strip()
+    return normalized or None
 
 
 _runtime_lock = RLock()

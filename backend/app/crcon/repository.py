@@ -123,7 +123,7 @@ class CrconServerAggregate:
 @dataclass(frozen=True, slots=True)
 class CrconRankingRow:
     player_id: str
-    player_name: str
+    player_name: str | None
     matches_played: int
     record_kills: int
     kills: int
@@ -146,7 +146,7 @@ class CrconRankingRow:
 @dataclass(frozen=True, slots=True)
 class CrconPlayerProfileAggregate:
     player_id: str
-    player_name: str
+    player_name: str | None
     steam_id: str | None
     eos_id: str | None
     platform: str | None

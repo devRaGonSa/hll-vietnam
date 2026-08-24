@@ -337,3 +337,19 @@ Never grant HLL write privileges to CRCON, embed authenticated URLs in frontend 
 8. What retention, backup or legal decision is required before deleting HLL volumes after rollback expiry?
 9. RESOLVED by TASK-309: monthly MVP, event/duel views and Elo/MMR were removed.
 10. What measured rate, latency and connection limits can the CRCON owner support?
+
+## 25. Public classic aggregate scope
+
+On `www.comunidadhll.es`, the public `all` / `all-servers` aggregate group is
+explicitly the enabled classic Hell Let Loose targets Comunidad Hispana #1 and
+#2. HLL Vietnam is excluded from that group and remains a separately
+addressable explicit target where the relevant CRCON capability is verified.
+Scope resolution happens in the public domain layer before repository calls;
+the PostgreSQL reader still rejects cross-game scopes.
+
+Historical leaderboards, Ranking and Stats profiles/annual ranking use bounded
+CRCON PostgreSQL `SELECT` queries in CRCON-first mode. They do not require or
+write local application ranking snapshots. Default player search uses the same
+classic group through authenticated CRCON player history; explicitly requested
+HLL Vietnam player history remains marked unverified until its capability is
+verified.

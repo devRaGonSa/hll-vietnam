@@ -153,7 +153,7 @@ def build_annual_ranking_snapshot_payload(
             "limit": result.get("limit"),
             "requested_limit": result.get("requested_limit"),
             "effective_limit": result.get("effective_limit"),
-            "snapshot_limit": result.get("snapshot_limit"),
+            "snapshot_limit": int(result.get("snapshot_limit") or 0),
             "item_count": result.get("item_count"),
             "source": result.get("source"),
             "snapshot_status": result.get("snapshot_status"),

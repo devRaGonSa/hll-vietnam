@@ -11,7 +11,11 @@ from threading import Lock
 from typing import Any
 
 from ..config import get_crcon_api_timeout_seconds, get_crcon_current_match_bindings
-from ..server_targets import ServerTarget, load_server_targets
+from ..server_targets import (
+    ServerTarget,
+    load_server_targets,
+    resolve_public_aggregate_scope,
+)
 from ..crcon.api import CrconApiClient
 from ..crcon.dto import CrconPlayerHistoryEntry
 from ..crcon.models import (
@@ -19,9 +23,6 @@ from ..crcon.models import (
     CrconApiError,
     CrconPlayerHistoryState,
 )
-
-
-ALL_SERVER_KEYS = {"", "all", "all-servers"}
 
 
 @dataclass(frozen=True, slots=True)
@@ -123,11 +124,12 @@ class PlayerSearchService:
     def _resolve(
         self, server_id: str | None
     ) -> tuple[PlayerSearchBinding, ...] | None:
-        key = str(server_id or "").strip()
-        if key.lower() in ALL_SERVER_KEYS:
-            return tuple(self._bindings.values())
-        binding = self._bindings.get(key)
-        return (binding,) if binding is not None else None
+        selection = resolve_public_aggregate_scope(
+            tuple(binding.target for binding in self._bindings.values()), server_id
+        )
+        if selection is None:
+            return None
+        return tuple(self._bindings[target.key] for target in selection.targets)
 
     def _search_target(
         self,

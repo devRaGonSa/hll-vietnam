@@ -63,7 +63,7 @@
     profileError: "No fue posible cargar las estad\u00edsticas del jugador.",
     annualLoading: "Cargando ranking anual...",
     annualMissing:
-      "Todavia no hay ranking anual publicado para el a\u00f1o solicitado.",
+      "No hay actividad anual disponible para el a\u00f1o solicitado.",
     annualReadyEmpty:
       "El ranking anual ya esta disponible, pero no muestra filas para ese filtro.",
     annualUnsupportedMetric:
@@ -225,6 +225,12 @@
       }
 
       const items = normalizeArray(payload.data?.items);
+      const aggregateProblem = describeAggregateProblem(payload.data);
+      preserveAggregateReason(searchStateNode, payload.data);
+      if (aggregateProblem) {
+        setSearchState(aggregateProblem.tone, aggregateProblem.message);
+        return;
+      }
       if (!items.length) {
         setSearchState("empty", messages.searchEmpty);
         return;
@@ -322,7 +328,8 @@
       return;
     }
 
-    const snapshotStatus = String(data.snapshot_status || "").toLowerCase();
+    const aggregateProblem = describeAggregateProblem(data);
+    preserveAggregateReason(annualStateNode, data);
     const items = normalizeArray(data.items);
     const limit = safeInt(data.limit, 0);
     const serverId = String(data.server_id || annualServerId);
@@ -332,12 +339,14 @@
     const year = safeInt(data.year, annualDefaultYear);
     const metric = escapeHtml(String(data.metric || annualMetric));
 
-    if (snapshotStatus !== "ready" || !items.length) {
-      const isReadyButEmpty = snapshotStatus === "ready" && !items.length;
-      setAnnualState(
-        "neutral",
-        isReadyButEmpty ? messages.annualReadyEmpty : messages.annualMissing,
-      );
+    if (aggregateProblem) {
+      setAnnualState(aggregateProblem.tone, aggregateProblem.message);
+      annualContentNode.innerHTML = "";
+      return;
+    }
+
+    if (!items.length) {
+      setAnnualState("neutral", messages.annualReadyEmpty);
       annualContentNode.innerHTML = "";
       return;
     }
@@ -496,6 +505,12 @@
       const monthlyFailed = monthlyProfileResult.status === "rejected";
 
       if (!weeklyData && !monthlyData) {
+        const reasons = [weeklyProfileResult, monthlyProfileResult]
+          .filter((result) => result.status === "rejected")
+          .map((result) => result.reason);
+        if (reasons.length && reasons.every((reason) => reason?.name === "AggregateUnavailableError")) {
+          throw reasons[0];
+        }
         throw new Error("Both weekly and monthly profile windows failed.");
       }
 
@@ -572,12 +587,20 @@
       isBackendOnline = true;
     } catch (error) {
       console.warn("Player profile failed", error);
-      markAsBackendUnavailable();
+      const aggregateUnavailable = error?.name === "AggregateUnavailableError";
+      if (!aggregateUnavailable) {
+        markAsBackendUnavailable();
+      }
       if (profilePanel) {
         profilePanel.hidden = false;
       }
       profileTitle.textContent = messages.profileReadyTitle;
-      profileStateNode.textContent = messages.profileError;
+      profileStateNode.textContent = aggregateUnavailable
+        ? "Las estadísticas CRCON de este alcance no están disponibles temporalmente."
+        : messages.profileError;
+      if (aggregateUnavailable && error?.stateReason) {
+        profileStateNode.dataset.aggregateReason = error.stateReason;
+      }
       profileStateNode.className = "stats-state stats-state--error";
       if (comparisonGrid) {
         comparisonGrid.innerHTML = "";
@@ -680,7 +703,15 @@
       throw new Error(payload?.message || "Respuesta de perfil invalida");
     }
 
-    return payload.data || {};
+    const data = payload.data || {};
+    const aggregateProblem = describeAggregateProblem(data);
+    if (aggregateProblem) {
+      const error = new Error(aggregateProblem.message);
+      error.name = "AggregateUnavailableError";
+      error.stateReason = data.state_reason || "";
+      throw error;
+    }
+    return data;
   }
 
   function renderComparisonCards({
@@ -944,7 +975,37 @@
         return normalized;
       }
     }
-    return "Jugador seleccionado";
+    return "Jugador no identificado";
+  }
+
+  function preserveAggregateReason(node, data) {
+    if (!node) {
+      return;
+    }
+    const reason = String(data?.state_reason || "").trim();
+    if (reason) {
+      node.dataset.aggregateReason = reason;
+    } else {
+      delete node.dataset.aggregateReason;
+    }
+  }
+
+  function describeAggregateProblem(data) {
+    const aggregateState = String(data?.aggregate_state || "AVAILABLE").toUpperCase();
+    const playerHistoryState = String(data?.player_history_state || "SUPPORTED").toUpperCase();
+    if (aggregateState === "AVAILABLE" && playerHistoryState === "SUPPORTED") {
+      return null;
+    }
+    if (aggregateState === "UNVERIFIED_SCHEMA" || playerHistoryState === "UNVERIFIED_HLLV") {
+      return {
+        tone: "warning",
+        message: "Este alcance no está soportado por la lectura de estadísticas actual.",
+      };
+    }
+    return {
+      tone: "error",
+      message: "Las estadísticas CRCON no están disponibles temporalmente. Vuelve a intentarlo más tarde.",
+    };
   }
 
   function isDisplayablePlayerName(value) {
@@ -1191,4 +1252,3 @@
     return String(serverId || "Todos los servidores");
   }
 });
-

@@ -23,7 +23,11 @@ from app.crcon.repository import (
     CrconServerAggregate,
     CrconServerScope,
 )
-from app.server_targets import ServerTarget
+from app.server_targets import (
+    PublicAggregateScopeKind,
+    ServerTarget,
+    resolve_public_aggregate_scope,
+)
 from app.api.routes import resolve_get_payload
 
 
@@ -168,15 +172,77 @@ class HistoricalAggregateServiceTests(unittest.TestCase):
         self.assertFalse(empty["found"])
         self.assertEqual(empty["item"]["coverage"]["status"], "empty")
 
-    def test_cross_game_all_server_query_fails_closed(self) -> None:
+    def test_classic_all_server_query_excludes_hllv(self) -> None:
         service = HistoricalAggregateService(
             repository=self.repository,
-            targets=(_target("hll", 1), _target("hllv", 2, "hllv")),
+            targets=(_target("hll-1", 1), _target("hll-2", 2), _target("hllv", 3, "hllv")),
         )
         result = service.server_summary(server_id="all")
-        self.assertEqual(result["aggregate_state"], "UNAVAILABLE")
-        self.assertEqual(result["state_reason"], "cross-game-aggregate-rejected")
-        self.assertEqual(self.repository.calls, [])
+        self.assertEqual(result["aggregate_state"], "AVAILABLE")
+        scopes = self.repository.calls[-1][1]
+        self.assertEqual(tuple(scope.server_number for scope in scopes), (1, 2))
+        self.assertTrue(all(scope.game == "hll" for scope in scopes))
+
+    def test_public_scope_is_typed_and_hllv_remains_explicit(self) -> None:
+        targets = (_target("hll-1", 1), _target("hll-2", 2), _target("hllv", 3, "hllv"))
+        classic = resolve_public_aggregate_scope(targets, "all-servers")
+        explicit = resolve_public_aggregate_scope(targets, "hllv")
+        self.assertIsNotNone(classic)
+        self.assertIsNotNone(explicit)
+        self.assertEqual(classic.kind, PublicAggregateScopeKind.CLASSIC_HLL)
+        self.assertEqual(tuple(target.key for target in classic.targets), ("hll-1", "hll-2"))
+        self.assertEqual(explicit.kind, PublicAggregateScopeKind.EXPLICIT_TARGET)
+        self.assertEqual(explicit.targets[0].game, "hllv")
+
+    def test_explicit_hllv_ranking_creates_only_hllv_scope(self) -> None:
+        service = HistoricalAggregateService(
+            repository=self.repository,
+            targets=(_target("hll-1", 1), _target("hllv", 3, "hllv")),
+        )
+        result = service.ranking(
+            server_id="hllv", timeframe="monthly", metric="kills", limit=10
+        )
+        self.assertEqual(result["aggregate_state"], "AVAILABLE")
+        scopes = self.repository.calls[-1][1]["scopes"]
+        self.assertEqual(scopes, (CrconServerScope(3, "hllv"),))
+
+    def test_all_weekly_and_monthly_rankings_use_both_classic_servers(self) -> None:
+        service = HistoricalAggregateService(
+            repository=self.repository,
+            targets=(_target("hll-1", 1), _target("hll-2", 2), _target("hllv", 3, "hllv")),
+            now=lambda: datetime(2026, 8, 23, 12, tzinfo=timezone.utc),
+        )
+        for timeframe in ("weekly", "monthly"):
+            with self.subTest(timeframe=timeframe):
+                result = service.ranking(
+                    server_id="all", timeframe=timeframe, metric="kills", limit=10
+                )
+                self.assertTrue(result["found"])
+                self.assertEqual(result["items"][0]["player_name"], "Player")
+                scopes = self.repository.calls[-1][1]["scopes"]
+                self.assertEqual(tuple(scope.server_number for scope in scopes), (1, 2))
+
+    def test_individual_classic_rankings_remain_addressable(self) -> None:
+        for server_id, number in (("server-1", 1), ("server-2", 2)):
+            with self.subTest(server_id=server_id):
+                result = self.service.ranking(
+                    server_id=server_id, timeframe="weekly", metric="deaths", limit=10
+                )
+                self.assertTrue(result["found"])
+                scopes = self.repository.calls[-1][1]["scopes"]
+                self.assertEqual(scopes, (CrconServerScope(number, "hll"),))
+
+    def test_missing_canonical_name_never_falls_back_to_opaque_id(self) -> None:
+        original = self.repository.list_rankings
+        def unnamed(**kwargs):
+            row = original(**kwargs)[0]
+            return (replace(row, player_name=None),)
+        self.repository.list_rankings = unnamed
+        result = self.service.ranking(
+            server_id="all", timeframe="weekly", metric="kills", limit=10
+        )
+        self.assertIsNone(result["items"][0]["player_name"])
+        self.assertNotEqual(result["items"][0]["player_name"], "opaque-player-id")
 
     def test_profile_links_require_explicit_steam_metadata(self) -> None:
         result = self.service.player_profile(
@@ -229,6 +295,8 @@ class HistoricalAggregateServiceTests(unittest.TestCase):
         self.assertIn("SERVER_NUMBER = ANY(%S)", sql)
         self.assertIn("GAME = %S", sql)
         self.assertIn('"END" < %S', sql)
+        self.assertIn("FILTER (WHERE NULLIF(BTRIM(STATS.NAME), '') IS NOT NULL)", sql)
+        self.assertNotIn("IDENTITIES.STEAM_ID_64\n           ) AS PLAYER_NAME", sql)
         for keyword in ("INSERT ", "UPDATE ", "DELETE ", "CREATE ", "ALTER ", "DROP "):
             self.assertNotIn(keyword, sql)
         self.assertEqual(RANKING_METRIC_SQL["kills"], "kills")
@@ -390,22 +458,32 @@ class AggregatePayloadSelectionTests(unittest.TestCase):
         self.environment.stop()
 
     def test_all_public_aggregate_builders_delegate_without_legacy_fallback(self) -> None:
-        with patch(
-            "app.api.payloads.players.search_rcon_materialized_players",
-            side_effect=AssertionError("legacy fallback used"),
+        with (
+            patch(
+                "app.api.payloads.players.search_rcon_materialized_players",
+                side_effect=AssertionError("legacy fallback used"),
+            ),
+            patch(
+                "app.api.payloads.rankings.get_annual_ranking_snapshot",
+                side_effect=AssertionError("application annual snapshot used"),
+            ),
+            patch(
+                "app.api.payloads.rankings.get_latest_ranking_snapshot",
+                side_effect=AssertionError("application ranking snapshot used"),
+            ),
         ):
             search = payloads.build_stats_player_search_payload(query="Player")
-        profile = payloads.build_stats_player_profile_payload(player_id="opaque")
-        annual = payloads.build_annual_ranking_snapshot_payload(year=2026)
-        ranking = payloads.build_global_ranking_payload(
-            timeframe="weekly", metric="kills", limit=10
-        )
-        summary = payloads.build_historical_server_summary_snapshot_payload(
-            server_slug="server-1"
-        )
-        leaderboard = payloads.build_leaderboard_snapshot_payload(
-            server_id="server-1", timeframe="monthly", metric="support", limit=10
-        )
+            profile = payloads.build_stats_player_profile_payload(player_id="opaque")
+            annual = payloads.build_annual_ranking_snapshot_payload(year=2026)
+            ranking = payloads.build_global_ranking_payload(
+                timeframe="weekly", metric="kills", limit=10
+            )
+            summary = payloads.build_historical_server_summary_snapshot_payload(
+                server_slug="server-1"
+            )
+            leaderboard = payloads.build_leaderboard_snapshot_payload(
+                server_id="server-1", timeframe="monthly", metric="support", limit=10
+            )
 
         self.assertEqual(search["data"]["player_history_state"], "SUPPORTED")
         self.assertEqual(profile["data"]["player_id"], "opaque")

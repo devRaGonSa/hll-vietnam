@@ -1,8 +1,10 @@
 # VIP rewards public-rule audit
 
-TASK-315 verified the public home-page rules against the deployed VPS on
+TASK-315 verified the public rules against the deployed VPS on
 2026-08-24. This document records public semantics only; it intentionally omits
 credentials, endpoints, webhooks, private identifiers and raw player data.
+TASK-316 moved this copy from the home page to `frontend/vip.html`; the home
+page links to that dedicated public section through its primary navigation.
 
 ## Operator-provided policy
 
@@ -20,6 +22,8 @@ was `/opt/comunidadhll/bots/vip-rewards/rewards_runtime.py`; the sanitized rule
 sources were `config.yml`, `weekly_rewards.py`, `vip_delivery_writer.py` and the
 dated files under `missions/`. Runtime configuration confirmed non-dry-run live
 delivery with its explicit write guard satisfied, scoped to HLL #1 and HLL #2.
+These weekly gameplay challenges apply only to classic Hell Let Loose on HLL
+#1 and HLL #2. They do not apply to HLL Vietnam.
 
 The active `2026-08-24.yml` period covers 24–31 August 2026. Every challenge is
 rewarded once per player in that weekly period and grants four VIP hours:

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
+from enum import Enum
 from typing import Literal
 from urllib.parse import urlsplit
 
@@ -15,6 +16,14 @@ from .config import (
 
 
 ServerGame = Literal["hll", "hllv"]
+PUBLIC_ALL_SERVER_KEYS = frozenset({"", "all", "all-servers"})
+
+
+class PublicAggregateScopeKind(str, Enum):
+    """Product-level aggregate groups, resolved before repository/SQL access."""
+
+    CLASSIC_HLL = "classic-hll"
+    EXPLICIT_TARGET = "explicit-target"
 
 
 @dataclass(frozen=True, slots=True)
@@ -55,6 +64,38 @@ class ServerTarget:
         object.__setattr__(self, "display_name", display_name)
         object.__setattr__(self, "crcon_base_url", base_url)
         object.__setattr__(self, "capabilities", frozenset(self.capabilities))
+
+
+@dataclass(frozen=True, slots=True)
+class PublicAggregateScope:
+    """A same-game target selection for the public comunidadhll.es site."""
+
+    kind: PublicAggregateScopeKind
+    targets: tuple[ServerTarget, ...]
+
+    def __post_init__(self) -> None:
+        if len({target.game for target in self.targets}) > 1:
+            raise ValueError("Public aggregate scopes cannot mix games.")
+
+
+def resolve_public_aggregate_scope(
+    targets: tuple[ServerTarget, ...], server_id: str | None
+) -> PublicAggregateScope | None:
+    """Resolve public `all` to enabled classic HLL; keep explicit targets separate."""
+    enabled = tuple(target for target in targets if target.enabled)
+    normalized = str(server_id or "").strip().lower()
+    if normalized in PUBLIC_ALL_SERVER_KEYS:
+        return PublicAggregateScope(
+            kind=PublicAggregateScopeKind.CLASSIC_HLL,
+            targets=tuple(target for target in enabled if target.game == "hll"),
+        )
+    target = next((target for target in enabled if target.key.lower() == normalized), None)
+    if target is None:
+        return None
+    return PublicAggregateScope(
+        kind=PublicAggregateScopeKind.EXPLICIT_TARGET,
+        targets=(target,),
+    )
 
 
 class ServerTargetRegistry:

@@ -192,7 +192,7 @@ class PlayerSearchServiceTests(unittest.TestCase):
         self.assertEqual(hll["player_history_state"], "AUTH_REQUIRED")
         self.assertEqual(hllv["player_history_state"], "UNVERIFIED_HLLV")
 
-    def test_merge_key_never_deduplicates_equal_ids_across_games(self) -> None:
+    def test_default_public_search_excludes_unverified_hllv(self) -> None:
         class SyntheticCrossGameService(PlayerSearchService):
             def _search_target(self, binding, *, query, limit):
                 return CrconPlayerHistoryState.SUPPORTED, None, (
@@ -212,8 +212,22 @@ class PlayerSearchServiceTests(unittest.TestCase):
             bindings=bindings,
             api_factory=lambda _binding: self.fail("synthetic override owns reads"),
         ).search(query="Player", server_id="all", limit=10)
-        self.assertEqual(result["item_count"], 2)
-        self.assertEqual({item["game"] for item in result["items"]}, {"hll", "hllv"})
+        self.assertEqual(result["aggregate_state"], "AVAILABLE")
+        self.assertEqual(result["player_history_state"], "SUPPORTED")
+        self.assertEqual(result["item_count"], 1)
+        self.assertEqual(result["items"][0]["game"], "hll")
+        self.assertEqual([row["game"] for row in result["target_states"]], ["hll"])
+
+    def test_explicit_hllv_search_stays_unverified(self) -> None:
+        binding = PlayerSearchBinding(
+            _target("hllv", 2, "hllv"), {"Authorization": f"Bearer {SECRET}"}
+        )
+        result = PlayerSearchService(
+            bindings={"hllv": binding},
+            api_factory=lambda _binding: self.fail("HLLV API must remain unqueried"),
+        ).search(query="Player", server_id="hllv", limit=10)
+        self.assertEqual(result["aggregate_state"], "UNAVAILABLE")
+        self.assertEqual(result["player_history_state"], "UNVERIFIED_HLLV")
 
     def test_multitarget_merge_deduplicates_opaque_id_inside_hll_only(self) -> None:
         now = datetime(2026, 8, 23, tzinfo=timezone.utc)

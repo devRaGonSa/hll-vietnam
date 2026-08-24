@@ -175,7 +175,7 @@ document.addEventListener("DOMContentLoaded", () => {
     );
     weeklyValueHeadingNode.textContent = activeMetricConfig.valueHeading;
     setRangeBadge(rangeNode, "Cargando rango temporal", false);
-    summaryNoteNode.textContent = `La vista esta leyendo datos precalculados del historico local para ${activeServerLabel}.`;
+    summaryNoteNode.textContent = `La vista está leyendo agregados CRCON de solo lectura para ${activeServerLabel}.`;
     setSnapshotMeta(summarySnapshotMetaNode, "Cargando datos de resumen...");
     renderSummaryLoading(summaryNode);
     weeklyWindowNoteNode.textContent = "Cargando datos del ranking activo...";
@@ -490,12 +490,21 @@ function hydrateSummary(result, summaryNode, rangeNode, noteNode, snapshotMetaNo
     renderSummaryError(summaryNode);
     setRangeBadge(rangeNode, "Resumen no disponible", false);
     noteNode.textContent =
-      "No se pudo leer el resumen precalculado para el alcance seleccionado.";
+      "No se pudo completar la solicitud del resumen para el alcance seleccionado.";
     setSnapshotMeta(snapshotMetaNode, "Error al leer los datos de resumen.");
     return;
   }
 
   const payload = result.value?.data;
+  const aggregateProblem = describeAggregateProblem(payload);
+  preserveAggregateReason(summaryNode, payload);
+  if (aggregateProblem) {
+    renderSummaryError(summaryNode);
+    setRangeBadge(rangeNode, aggregateProblem.title, false);
+    noteNode.textContent = aggregateProblem.message;
+    setSnapshotMeta(snapshotMetaNode, "Lectura CRCON no disponible.");
+    return;
+  }
   const summary = payload?.item;
   const hasHistoricalData =
     Number(summary?.imported_matches_count ?? summary?.matches_count ?? 0) > 0;
@@ -506,8 +515,8 @@ function hydrateSummary(result, summaryNode, rangeNode, noteNode, snapshotMetaNo
     setSnapshotMeta(
       snapshotMetaNode,
       payload?.generated_at
-        ? buildSnapshotMetaText(payload, "Resumen pendiente de generacion.")
-        : "Resumen pendiente de generacion.",
+        ? buildSnapshotMetaText(payload, "Resumen sin datos de actualización.")
+        : "No hay datos en este alcance.",
     );
     return;
   }
@@ -524,7 +533,7 @@ function hydrateSummary(result, summaryNode, rangeNode, noteNode, snapshotMetaNo
     coverage.status === "week-plus" && !payload?.is_stale,
   );
   noteNode.textContent = buildSummaryNote(
-    payload?.summary_basis || "snapshot-precomputed",
+    payload?.summary_basis || "crcon-postgres-read-only",
     7,
     coverage,
     summary.server?.slug,
@@ -577,7 +586,7 @@ function hydrateWeeklyLeaderboard(
       resolvedTimeframeKey,
     );
     noteNode.textContent =
-      "No se pudo leer los datos precalculados para esta metrica.";
+      "No se pudo completar la solicitud del agregado para esta métrica.";
     setSnapshotMeta(snapshotMetaNode, "Error al leer los datos del ranking.");
     setState(
       stateNode,
@@ -589,6 +598,8 @@ function hydrateWeeklyLeaderboard(
   }
 
   const payload = result.value?.data;
+  const aggregateProblem = describeAggregateProblem(payload);
+  preserveAggregateReason(stateNode, payload);
   titleNode.textContent = buildLeaderboardTitle(
     metricConfig,
     payload?.server_slug,
@@ -597,8 +608,13 @@ function hydrateWeeklyLeaderboard(
   noteNode.textContent = buildWeeklyWindowNote(payload);
   setSnapshotMeta(
     snapshotMetaNode,
-    buildSnapshotMetaText(payload, "Ranking pendiente de generacion."),
+    buildSnapshotMetaText(payload, "Ranking sin datos de actualización."),
   );
+  if (aggregateProblem) {
+    setState(stateNode, aggregateProblem.message, true);
+    tableNode.hidden = true;
+    return;
+  }
   if (!payload?.found) {
     setState(
       stateNode,
@@ -638,7 +654,7 @@ function hydrateWeeklyLeaderboard(
         return `
         <tr>
           <td class="historical-table__position">#${escapeHtml(item.ranking_position)}</td>
-          <td>${escapeHtml(item.player?.name || "Jugador no identificado")}</td>
+          <td>${escapeHtml(item.player_name || "Jugador no identificado")}</td>
           <td>${escapeHtml(formatNumber(item.metric_value))}</td>
           <td>${escapeHtml(formatNumber(item.matches_considered))}</td>
           ${ratioCell}
@@ -1157,6 +1173,35 @@ function buildSnapshotMetaText(payload, missingMessage) {
     parts.push(`Cobertura: ${sourceRangeLabel}`);
   }
   return parts.join(" | ");
+}
+
+function preserveAggregateReason(node, payload) {
+  if (!node) {
+    return;
+  }
+  const reason = String(payload?.state_reason || "").trim();
+  if (reason) {
+    node.dataset.aggregateReason = reason;
+  } else {
+    delete node.dataset.aggregateReason;
+  }
+}
+
+function describeAggregateProblem(payload) {
+  const state = String(payload?.aggregate_state || "").toUpperCase();
+  if (!state || state === "AVAILABLE") {
+    return null;
+  }
+  if (state === "UNVERIFIED_SCHEMA") {
+    return {
+      title: "Alcance no compatible",
+      message: "Este alcance no está soportado por la lectura histórica actual.",
+    };
+  }
+  return {
+    title: "Datos no disponibles",
+    message: "El agregado CRCON no está disponible temporalmente. Vuelve a intentarlo más tarde.",
+  };
 }
 
 function formatTopMaps(topMaps) {

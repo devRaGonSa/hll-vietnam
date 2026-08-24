@@ -244,10 +244,10 @@ WITH scoped_maps AS (
       AND (%s IS NULL OR "end" < %s)
 ), aggregate_rows AS (
     SELECT identities.steam_id_64 AS player_id,
-           COALESCE(
-               (array_agg(NULLIF(btrim(stats.name), '') ORDER BY maps."end" DESC, stats.map_id DESC))[1],
-               identities.steam_id_64
-           ) AS player_name,
+           (array_agg(
+               NULLIF(btrim(stats.name), '')
+               ORDER BY maps."end" DESC, stats.map_id DESC
+           ) FILTER (WHERE NULLIF(btrim(stats.name), '') IS NOT NULL))[1] AS player_name,
            count(DISTINCT stats.map_id)::bigint AS matches_played,
            COALESCE(max(stats.kills), 0)::bigint AS record_kills,
            COALESCE(sum(stats.kills), 0)::bigint AS kills,
@@ -868,7 +868,7 @@ def _ranking_row(row: object) -> CrconRankingRow:
     values = _row_values(row, columns)
     return CrconRankingRow(
         player_id=str(values[0]),
-        player_name=str(values[1] or values[0]),
+        player_name=str(values[1]).strip() if values[1] else None,
         matches_played=int(values[2] or 0),
         record_kills=int(values[3] or 0),
         kills=int(values[4] or 0),
@@ -901,7 +901,7 @@ def _player_profile_row(row: object) -> CrconPlayerProfileAggregate:
     raw_servers = values[19] if isinstance(values[19], (list, tuple)) else ()
     return CrconPlayerProfileAggregate(
         player_id=str(values[0]),
-        player_name=str(values[1] or values[0]),
+        player_name=str(values[1]).strip() if values[1] else None,
         steam_id=str(values[2]) if values[2] is not None else None,
         eos_id=str(values[3]) if values[3] is not None else None,
         platform=str(values[4]) if values[4] is not None else None,

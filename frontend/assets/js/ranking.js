@@ -177,6 +177,20 @@
     emptyNode.textContent = message;
   }
 
+  function preserveAggregateReason(data) {
+    const reason = String(data?.state_reason || "").trim();
+    [stateNode, emptyNode].forEach((node) => {
+      if (!node) {
+        return;
+      }
+      if (reason) {
+        node.dataset.aggregateReason = reason;
+      } else {
+        delete node.dataset.aggregateReason;
+      }
+    });
+  }
+
   async function loadRanking() {
     const requestId = currentRequestId + 1;
     currentRequestId = requestId;
@@ -264,7 +278,7 @@
     ) {
       setRankingState("warning", "La metrica anual solicitada no esta disponible.");
       renderEmptyState(
-        "La consulta anual devolvio una metrica sin snapshot seguro para esta vista.",
+        "La consulta anual devolvió una métrica no disponible para esta vista.",
       );
       return;
     }
@@ -296,7 +310,8 @@
     const timeframe = String(data.timeframe || defaultTimeframe);
     const serverId = String(data.server_id || defaultServerId);
     const metric = String(data.metric || defaultMetric);
-    const snapshotStatus = String(data.snapshot_status || "").toLowerCase();
+    const aggregateState = String(data.aggregate_state || "AVAILABLE").toUpperCase();
+    preserveAggregateReason(data);
 
     if (titleNode) {
       titleNode.textContent =
@@ -311,25 +326,26 @@
       metaNode.innerHTML = buildMetaMarkup(data);
     }
 
-    if (timeframe === "annual" && snapshotStatus === "missing") {
-      setRankingState("warning", "Snapshot anual no disponible para esta metrica.");
+    if (aggregateState !== "AVAILABLE") {
+      const unsupported = aggregateState === "UNVERIFIED_SCHEMA";
+      setRankingState(
+        unsupported ? "warning" : "error",
+        unsupported
+          ? "El alcance solicitado no está soportado."
+          : "El agregado CRCON no está disponible.",
+      );
       renderEmptyState(
-        "Genera el snapshot anual para esta combinacion de metrica, servidor y a\u00f1o antes de publicarlo.",
+        unsupported
+          ? "Selecciona un alcance compatible con el ranking clásico de HLL."
+          : "La fuente CRCON no respondió correctamente en este intento. Vuelve a intentarlo más tarde.",
       );
       return;
     }
 
     if (!items.length) {
-      setRankingState(
-        "neutral",
-        timeframe === "annual"
-          ? "Snapshot anual listo pero sin filas visibles para este filtro."
-          : "No hay datos visibles para el periodo y servidor seleccionado.",
-      );
+      setRankingState("neutral", "No hay datos visibles para el periodo y servidor seleccionado.");
       renderEmptyState(
-        timeframe === "annual"
-          ? "La lectura anual existe pero no devolvio filas para este filtro."
-          : "No se encontraron jugadores con actividad suficiente en este periodo.",
+        "La consulta se completó correctamente, pero no encontró jugadores con actividad en este periodo.",
       );
       return;
     }
@@ -363,8 +379,8 @@
 
     if (timeframe === "annual") {
       cards.push({
-        label: "Snapshot",
-        value: String(data.snapshot_status || "missing"),
+        label: "Estado de lectura",
+        value: String(data.aggregate_state || "AVAILABLE"),
       });
     }
 
@@ -537,4 +553,3 @@
       .replaceAll("'", "&#39;");
   }
 });
-
