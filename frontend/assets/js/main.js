@@ -67,13 +67,15 @@ const COMMUNITY_CLANS = Object.freeze([
     name: "BxB",
     badge: "Clan CH",
     description:
-      "Clan activo de la comunidad.",
+      "Clan activo de la comunidad, con acceso directo a su discord.",
     logoSrc: "./assets/img/clans/bxb.png",
     logoAlt: "Logo de BxB",
     logoClassName: "clan-card__logo--bxb",
     cardClassName: "clan-card--bxb",
-    discordUrl: "",
-    discordLabel: "Pr\u00f3ximamente",
+    discordUrl: "https://discord.gg/R2hKrfYaZ6",
+    discordLabel: "Abrir Discord",
+    placeholderLabel: "BxB",
+
   },
   {
     name: "7dv",
