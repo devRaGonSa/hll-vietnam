@@ -168,6 +168,34 @@ class CrconPlayerProfileAggregate:
     kills_ranking_position: int | None
 
 
+@dataclass(frozen=True, slots=True)
+class CrconHistoricalMatchLookup:
+    """One bounded, explicitly scoped CRCON map-history lookup."""
+
+    map_id: int
+    scope: CrconServerScope
+
+    def __post_init__(self) -> None:
+        if isinstance(self.map_id, bool) or self.map_id <= 0:
+            raise ValueError("CRCON historical map ID must be a positive integer.")
+
+
+@dataclass(frozen=True, slots=True)
+class CrconMatchPlayerCount:
+    map_id: int
+    player_count: int
+
+
+@dataclass(frozen=True, slots=True)
+class CrconExplicitPlayerIdentity:
+    """Explicit platform metadata keyed by CRCON's otherwise opaque player ID."""
+
+    player_id: str
+    steam_id_64: str | None
+    eos_id: str | None
+    platform: str | None
+
+
 class CrconReadRepository(Protocol):
     """Small application-facing contract; it intentionally exposes no raw SQL."""
 
@@ -238,5 +266,18 @@ class CrconReadRepository(Protocol):
         started_at: datetime | None,
         ended_at: datetime | None,
     ) -> CrconPlayerProfileAggregate | None: ...
+
+    def list_match_player_counts(
+        self,
+        *,
+        matches: tuple[CrconHistoricalMatchLookup, ...],
+    ) -> tuple[CrconMatchPlayerCount, ...]: ...
+
+    def list_match_player_identities(
+        self,
+        *,
+        match: CrconHistoricalMatchLookup,
+        player_ids: tuple[str, ...],
+    ) -> tuple[CrconExplicitPlayerIdentity, ...]: ...
 
     def close(self) -> None: ...

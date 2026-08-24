@@ -120,15 +120,15 @@ removed them rather than leaving broken or dead commands.
 | `CRCON_REST_RUNTIME_HLL` | `CONFIGURATION_REQUIRED` |
 | `PLAYER_SEARCH_RUNTIME` | `CONFIGURATION_REQUIRED` (Bearer also unavailable) |
 | `CRCON_LOG_STREAM_RUNTIME_HLL` | `CONFIGURATION_REQUIRED` |
-| `CRCON_DB_DEPLOYED_SCHEMA` | `UNVERIFIED` |
-| `CRCON_DB_RUNTIME` | `AUTH_UNAVAILABLE` |
+| `CRCON_DB_DEPLOYED_SCHEMA` | `VERIFIED` (TASK-314 metadata-only inspection) |
+| `CRCON_DB_RUNTIME` | `VERIFIED_READ_ONLY` (existing `hll_web_ro` role) |
 | `SERVER_SUMMARY_RUNTIME` | `UNVERIFIED` |
 | `RANKINGS_RUNTIME` | `UNVERIFIED` |
 | `PLAYER_PROFILE_RUNTIME` | `UNVERIFIED` |
 | `CURRENT_MATCH_RUNTIME_HLL` | `BLOCKED` |
 | `CURRENT_MATCH_PARITY_EVIDENCE` | `INSUFFICIENT_EVIDENCE` |
 | `CURRENT_MATCH_HLLV` | `UNVERIFIED` |
-| `CRCON_FIRST_ACTIVE_LEGACY_READERS` | `UNVERIFIED` |
+| `CRCON_FIRST_ACTIVE_LEGACY_READERS` | `0` (TASK-313 deployed probe) |
 | `LEGACY_WRITER_DISABLE_READINESS` | `NOT_READY` |
 
 The canonical local audit found `HLL_SERVER_TARGETS`,
@@ -184,11 +184,42 @@ historical runtime-policy fields remain for compatibility and are explicitly
 labelled `legacy-rollback-transport-metadata`; they do not describe canonical
 CRCON-first route ownership.
 
-`CRCON_FIRST_ACTIVE_LEGACY_READERS = 0` is therefore established for the
-deterministic all-CRCON dispatch contract. The stronger deployed-process status
-is `PENDING_OPERATOR_PROBE` until an operator runs the guarded one-shot command
-in the deployed backend environment. No writer shutdown follows from the local
-proof.
+`CRCON_FIRST_ACTIVE_LEGACY_READERS = 0` is established for both the
+deterministic all-CRCON dispatch contract and the deployed reader process. The
+recorded production probe reported `enabled_target_count=3`, `route_count=20`,
+`detail_route_count=3`, `legacy_reader_access_count=0` and `status=ok`, with
+`HLL_SERVER_LIST_SOURCE`, `HLL_CURRENT_MATCH_SOURCE`,
+`HLL_HISTORICAL_MATCH_SOURCE` and `HLL_HISTORICAL_AGGREGATE_SOURCE` all set to
+`crcon`.
+
+This proves production reader cutover only. It does not authorize deleting
+data, PostgreSQL databases or volumes; stopping every legacy writer; or deleting
+rollback images. No writer shutdown follows from the proof.
+
+## TASK-314 CRCON history enrichment relationships
+
+TASK-314 verified the deployed CRCON 12.0.1 schema through the existing
+`hll_web_ro` role with both `default_transaction_read_only` and
+`transaction_read_only` set to `on`. Historical participant counts use the
+following declared relationship:
+
+`map_history.id <- player_stats.map_id`, with the participant identity FK
+`player_stats.playersteamid_id -> steam_id_64.id`. The deployed
+`unique_map_player (playersteamid_id, map_id)` constraint prevents duplicate
+statistics rows per player and map. The implementation nevertheless uses
+`COUNT(DISTINCT player_stats.playersteamid_id)` because the product semantics
+are canonical participants, not physical rows. The bounded query also verifies
+`map_history.server_number` and numeric `map_history.game` for every requested
+map and uses the existing `player_stats(map_id)` index.
+
+Explicit external-profile metadata uses the same participant FK. The opaque
+CRCON player key is `steam_id_64.steam_id_64`; an explicit SteamID64, when
+present, is `steam_id_64.steam_id`. EOS and platform metadata come from
+`player_soldier.eos_id` and `player_soldier.platform` through the declared FK
+`player_soldier.playersteamid_id -> steam_id_64.id` and its unique
+`playersteamid_id` constraint. These values are fetched in one bounded query for
+the selected completed map. No identity type is inferred from the opaque key,
+its characters, or the game.
 
 ## Runtime evidence still required from TASK-307/TASK-310
 

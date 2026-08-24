@@ -879,7 +879,7 @@ function renderRecentMatchCard(item) {
         </article>
         <article>
           <p class="historical-match-meta__label">Jugadores</p>
-          <strong>${escapeHtml(formatPlayerCount(item.player_count))}</strong>
+          <strong>${escapeHtml(formatPlayerCount(item.player_count, item.player_count_status))}</strong>
         </article>
         <article>
           <p class="historical-match-meta__label">Marcador</p>
@@ -1337,8 +1337,16 @@ function formatNumber(value) {
   return new Intl.NumberFormat("es-ES").format(parsedValue);
 }
 
-function formatPlayerCount(value) {
-  return value === null || value === undefined ? "No disponible" : formatNumber(value);
+function formatPlayerCount(value, status) {
+  const normalizedStatus = typeof status === "string" ? status.trim().toLowerCase() : "";
+  if (value === null || value === undefined || normalizedStatus.startsWith("unknown")) {
+    return "No disponible";
+  }
+  const parsedValue = Number(value);
+  if (!Number.isInteger(parsedValue) || parsedValue < 0) {
+    return "No disponible";
+  }
+  return new Intl.NumberFormat("es-ES").format(parsedValue);
 }
 
 function formatDecimal(value, fractionDigits = 1) {

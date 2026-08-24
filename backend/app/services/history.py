@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
+import atexit
 import hashlib
 import json
 from collections.abc import Callable, Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from threading import Lock
 from typing import Any
@@ -13,11 +14,23 @@ from typing import Any
 from ..config import (
     get_crcon_api_timeout_seconds,
     get_crcon_current_match_bindings,
+    get_crcon_database_connect_timeout_seconds,
+    get_crcon_database_lock_timeout_ms,
+    get_crcon_database_pool_size,
+    get_crcon_database_statement_timeout_ms,
+    get_crcon_database_url,
 )
 from ..crcon.api import CrconApiClient
 from ..crcon.cache import TtlCache
 from ..crcon.dto import CrconHistoricalMap, CrconMapPage, CrconMapScoreboard
-from ..crcon.models import CrconApiError
+from ..crcon.models import CrconApiError, CrconDatabaseError, CrconUnavailableError
+from ..crcon.postgres_repository import PostgresCrconRepository
+from ..crcon.repository import (
+    CrconExplicitPlayerIdentity,
+    CrconHistoricalMatchLookup,
+    CrconReadRepository,
+    resolve_server_scope,
+)
 from ..player_external_profiles import build_external_player_profile_fields
 from ..server_targets import ServerTarget, load_server_targets
 
@@ -41,6 +54,8 @@ class HistoryBinding:
 class HistoricalMatchRecord:
     target: ServerTarget
     match: CrconHistoricalMap
+    player_count: int | None = None
+    player_count_status: str = "unknown-on-scoreboard-maps"
 
 
 @dataclass(frozen=True, slots=True)
@@ -56,6 +71,10 @@ class HistoricalMatchPage:
 class HistoricalMatchDetail:
     target: ServerTarget
     scoreboard: CrconMapScoreboard
+    explicit_identities: Mapping[str, CrconExplicitPlayerIdentity] = field(
+        default_factory=dict
+    )
+    degraded_reasons: tuple[str, ...] = ()
 
 
 class HistoryTargetNotFoundError(LookupError):
@@ -81,11 +100,13 @@ class HistoryService:
         *,
         bindings: Mapping[str, HistoryBinding],
         api_factory: ApiFactory,
+        repository: CrconReadRepository | None = None,
         list_cache: TtlCache[tuple[str, int, int], HistoricalMatchPage] | None = None,
         detail_cache: TtlCache[tuple[str, str], HistoricalMatchDetail] | None = None,
     ) -> None:
         self._bindings = dict(bindings)
         self._api_factory = api_factory
+        self._repository = repository
         self._list_cache = (
             list_cache
             if list_cache is not None
@@ -126,6 +147,7 @@ class HistoryService:
             result = self._read_aggregate_page(
                 bindings, page=resolved_page, page_size=resolved_size
             )
+        result = self._enrich_player_counts(result)
         self._list_cache.put(cache_key, result)
         return result
 
@@ -165,10 +187,88 @@ class HistoryService:
         if match.started_at is None:
             raise HistoryUnavailableError("crcon-map-scoreboard-malformed")
 
-        detail = HistoricalMatchDetail(target=binding.target, scoreboard=scoreboard)
+        identities: dict[str, CrconExplicitPlayerIdentity] = {}
+        degraded_reasons: tuple[str, ...] = ()
+        lookup = _historical_match_lookup(binding.target, match.map_id)
+        player_ids = tuple(
+            str(player.identity.player_id)
+            for player in scoreboard.players
+            if player.identity is not None
+        )
+        if self._repository is not None and lookup is not None and player_ids:
+            try:
+                identities = {
+                    identity.player_id: identity
+                    for identity in self._repository.list_match_player_identities(
+                        match=lookup,
+                        player_ids=player_ids,
+                    )
+                }
+            except (CrconDatabaseError, CrconUnavailableError, ValueError):
+                degraded_reasons = ("unknown-crcon-db-identity-unavailable",)
+
+        detail = HistoricalMatchDetail(
+            target=binding.target,
+            scoreboard=scoreboard,
+            explicit_identities=identities,
+            degraded_reasons=degraded_reasons,
+        )
         if match.ended_at is not None:
             self._detail_cache.put(cache_key, detail)
         return detail
+
+    def _enrich_player_counts(
+        self, page: HistoricalMatchPage
+    ) -> HistoricalMatchPage:
+        if self._repository is None or not page.items:
+            return page
+        lookups = tuple(
+            lookup
+            for record in page.items
+            if (lookup := _historical_match_lookup(record.target, record.match.map_id))
+            is not None
+        )
+        if not lookups:
+            return page
+        try:
+            counts = {
+                row.map_id: row.player_count
+                for row in self._repository.list_match_player_counts(matches=lookups)
+            }
+        except (CrconDatabaseError, CrconUnavailableError, ValueError):
+            return replace(
+                page,
+                items=tuple(
+                    replace(
+                        record,
+                        player_count=None,
+                        player_count_status="unknown-crcon-db-unavailable",
+                    )
+                    for record in page.items
+                ),
+                degraded_reasons=tuple(
+                    dict.fromkeys(
+                        (*page.degraded_reasons, "unknown-crcon-db-player-count-unavailable")
+                    )
+                ),
+            )
+        return replace(
+            page,
+            items=tuple(
+                replace(
+                    record,
+                    player_count=counts.get(int(record.match.map_id)),
+                    player_count_status=(
+                        "complete-crcon-db-player-stats"
+                        if int(record.match.map_id) in counts
+                        else "unknown-crcon-db-no-match"
+                    ),
+                )
+                if _numeric_map_id(record.match.map_id) is not None
+                else record
+                for record in page.items
+            ),
+        )
 
     def _resolve_list_bindings(self, scope: str) -> tuple[HistoryBinding, ...]:
         if scope == ALL_SERVERS_SLUG:
@@ -180,6 +280,10 @@ class HistoryService:
         if binding is None:
             raise HistoryTargetNotFoundError("historical-target-not-configured")
         return (binding,)
+
+    def close(self) -> None:
+        if self._repository is not None:
+            self._repository.close()
 
     def _read_single_target_page(
         self,
@@ -346,8 +450,8 @@ def build_crcon_match_detail_payload(
             "server_slug": server_slug,
             "match_id": str(match_id),
             "found": True,
-            "degraded": False,
-            "degraded_reasons": [],
+            "degraded": bool(detail.degraded_reasons),
+            "degraded_reasons": list(detail.degraded_reasons),
             **_source_policy("success", "crcon-map-scoreboard"),
             "item": _serialize_detail(detail),
         },
@@ -374,8 +478,8 @@ def _serialize_recent(record: HistoricalMatchRecord) -> dict[str, object]:
             "winner": winner,
         },
         "winner": winner,
-        "player_count": None,
-        "player_count_status": "unknown-on-scoreboard-maps",
+        "player_count": record.player_count,
+        "player_count_status": record.player_count_status,
         "capture_basis": "crcon-scoreboard-maps",
         "source_basis": "crcon-rest",
         "result_source": "crcon-scoreboard-maps",
@@ -393,7 +497,18 @@ def _serialize_detail(detail: HistoricalMatchDetail) -> dict[str, object]:
         for player in detail.scoreboard.players
         if player.identity is not None and player.name
     }
-    players = [_serialize_player(player, names) for player in detail.scoreboard.players]
+    players = [
+        _serialize_player(
+            player,
+            names,
+            explicit_identity=(
+                detail.explicit_identities.get(str(player.identity.player_id))
+                if player.identity is not None
+                else None
+            ),
+        )
+        for player in detail.scoreboard.players
+    ]
     recent = _serialize_recent(HistoricalMatchRecord(detail.target, match))
     encounters = [
         {**encounter, "owner_player_id": player["player_id"]}
@@ -413,12 +528,29 @@ def _serialize_detail(detail: HistoricalMatchDetail) -> dict[str, object]:
     }
 
 
-def _serialize_player(player: Any, names: Mapping[str, str]) -> dict[str, object]:
+def _serialize_player(
+    player: Any,
+    names: Mapping[str, str],
+    *,
+    explicit_identity: CrconExplicitPlayerIdentity | None = None,
+) -> dict[str, object]:
     player_id = str(player.identity.player_id) if player.identity is not None else None
     external = build_external_player_profile_fields(
-        steam_id=player.identity.steam_id if player.identity is not None else None,
-        eos_id=player.identity.eos_id if player.identity is not None else None,
-        platform=player.identity.platform if player.identity is not None else None,
+        steam_id=(
+            explicit_identity.steam_id_64
+            if explicit_identity is not None
+            else player.identity.steam_id if player.identity is not None else None
+        ),
+        eos_id=(
+            explicit_identity.eos_id
+            if explicit_identity is not None
+            else player.identity.eos_id if player.identity is not None else None
+        ),
+        platform=(
+            explicit_identity.platform
+            if explicit_identity is not None
+            else player.identity.platform if player.identity is not None else None
+        ),
     )
     kpm = player.kills_per_minute
     if kpm is None and player.kills is not None and player.time_seconds:
@@ -631,6 +763,27 @@ def _iso(value: datetime | None) -> str | None:
     return value.astimezone(UTC).isoformat().replace("+00:00", "Z") if value else None
 
 
+def _numeric_map_id(value: object) -> int | None:
+    normalized = str(value or "").strip()
+    if not normalized or not normalized.isdecimal():
+        return None
+    map_id = int(normalized)
+    return map_id if map_id > 0 else None
+
+
+def _historical_match_lookup(
+    target: ServerTarget,
+    map_id: object,
+) -> CrconHistoricalMatchLookup | None:
+    numeric_map_id = _numeric_map_id(map_id)
+    if numeric_map_id is None:
+        return None
+    return CrconHistoricalMatchLookup(
+        map_id=numeric_map_id,
+        scope=resolve_server_scope(target),
+    )
+
+
 def _load_history_bindings() -> dict[str, HistoryBinding]:
     current_configs = get_crcon_current_match_bindings()
     configs_by_slug = {str(row["server_slug"]): row for row in current_configs}
@@ -666,6 +819,14 @@ _runtime_service: HistoryService | None = None
 def get_history_service() -> HistoryService:
     """Build or reuse one process-local service without exposing binding secrets."""
     bindings = _load_history_bindings()
+    dsn = get_crcon_database_url()
+    database_config = {
+        "dsn_digest": hashlib.sha256(dsn.encode("utf-8")).hexdigest() if dsn else None,
+        "connect_timeout": get_crcon_database_connect_timeout_seconds(),
+        "statement_timeout": get_crcon_database_statement_timeout_ms(),
+        "lock_timeout": get_crcon_database_lock_timeout_ms(),
+        "pool_size": get_crcon_database_pool_size(),
+    }
     fingerprint_payload = [
         {
             "key": binding.target.key,
@@ -678,7 +839,7 @@ def get_history_service() -> HistoryService:
             "headers": sorted(binding.api_headers.items()),
         }
         for binding in bindings.values()
-    ]
+    ] + [database_config]
     fingerprint = hashlib.sha256(
         json.dumps(fingerprint_payload, default=str, sort_keys=True).encode("utf-8")
     ).hexdigest()
@@ -686,9 +847,19 @@ def get_history_service() -> HistoryService:
     with _runtime_lock:
         if _runtime_service is not None and _runtime_fingerprint == fingerprint:
             return _runtime_service
+        if _runtime_service is not None:
+            _runtime_service.close()
         timeout = get_crcon_api_timeout_seconds()
+        repository = PostgresCrconRepository(
+            dsn=dsn,
+            connect_timeout_seconds=database_config["connect_timeout"],
+            statement_timeout_ms=database_config["statement_timeout"],
+            lock_timeout_ms=database_config["lock_timeout"],
+            pool_size=database_config["pool_size"],
+        )
         _runtime_service = HistoryService(
             bindings=bindings,
+            repository=repository,
             api_factory=lambda binding: CrconApiClient(
                 base_url=binding.target.crcon_base_url,
                 timeout_seconds=timeout,
@@ -697,3 +868,12 @@ def get_history_service() -> HistoryService:
         )
         _runtime_fingerprint = fingerprint
         return _runtime_service
+
+
+def _close_runtime_service() -> None:
+    with _runtime_lock:
+        if _runtime_service is not None:
+            _runtime_service.close()
+
+
+atexit.register(_close_runtime_service)

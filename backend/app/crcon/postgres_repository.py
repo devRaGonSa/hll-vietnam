@@ -16,8 +16,11 @@ from .capabilities import PROBED_TABLES, build_capability_report
 from .models import CrconCapabilityReport, CrconDatabaseError, CrconUnavailableError
 from .repository import (
     CrconCurrentMap,
+    CrconExplicitPlayerIdentity,
+    CrconHistoricalMatchLookup,
     CrconMatchCombatStats,
     CrconMatchLogEvent,
+    CrconMatchPlayerCount,
     CrconPlayerAggregate,
     CrconPlayerProfileAggregate,
     CrconRankingRow,
@@ -27,6 +30,8 @@ from .repository import (
 
 
 APPLICATION_NAME = "hll-vietnam-bff"
+MAX_HISTORICAL_MATCH_LOOKUPS = 100
+MAX_MATCH_PLAYER_IDENTITY_LOOKUPS = 200
 SCHEMA_COLUMNS_SQL = """
 SELECT table_name, column_name
 FROM information_schema.columns
@@ -291,6 +296,39 @@ LEFT JOIN LATERAL (
       AND maps."end" IS NOT NULL
 ) AS latest ON true
 WHERE ranked.player_id = %s
+"""
+
+MATCH_PLAYER_COUNTS_SQL = """
+WITH requested(map_id, server_number, game) AS (
+    SELECT *
+    FROM unnest(%s::integer[], %s::integer[], %s::integer[])
+)
+SELECT requested.map_id,
+       count(DISTINCT stats.playersteamid_id)::bigint AS player_count
+FROM requested
+JOIN map_history AS maps
+  ON maps.id = requested.map_id
+ AND maps.server_number = requested.server_number
+ AND maps.game = requested.game
+LEFT JOIN player_stats AS stats ON stats.map_id = maps.id
+GROUP BY requested.map_id
+ORDER BY requested.map_id
+"""
+
+MATCH_PLAYER_IDENTITIES_SQL = """
+SELECT identities.steam_id_64 AS player_id,
+       identities.steam_id AS explicit_steam_id_64,
+       soldier.eos_id,
+       soldier.platform
+FROM map_history AS maps
+JOIN player_stats AS stats ON stats.map_id = maps.id
+JOIN steam_id_64 AS identities ON identities.id = stats.playersteamid_id
+LEFT JOIN player_soldier AS soldier ON soldier.playersteamid_id = identities.id
+WHERE maps.id = %s
+  AND maps.server_number = %s
+  AND maps.game = %s
+  AND identities.steam_id_64 = ANY(%s)
+ORDER BY identities.steam_id_64
 """
 
 Connector = Callable[..., Any]
@@ -567,6 +605,57 @@ LIMIT %s OFFSET %s
             row = connection.execute(PLAYER_PROFILE_SQL, params).fetchone()
         return _player_profile_row(row) if row is not None else None
 
+    def list_match_player_counts(
+        self,
+        *,
+        matches: tuple[CrconHistoricalMatchLookup, ...],
+    ) -> tuple[CrconMatchPlayerCount, ...]:
+        """Count distinct canonical participants for one bounded result page."""
+        self._require_configured()
+        if not matches:
+            return ()
+        if len(matches) > MAX_HISTORICAL_MATCH_LOOKUPS:
+            raise ValueError("matches must contain at most 100 entries.")
+        if len({match.map_id for match in matches}) != len(matches):
+            raise ValueError("matches must contain unique map IDs.")
+        map_ids = [match.map_id for match in matches]
+        server_numbers = [match.scope.server_number for match in matches]
+        games = [1 if match.scope.game == "hll" else 2 for match in matches]
+        with self._read_only_connection() as connection:
+            rows = connection.execute(
+                MATCH_PLAYER_COUNTS_SQL,
+                (map_ids, server_numbers, games),
+            ).fetchall()
+        return tuple(_match_player_count_row(row) for row in rows)
+
+    def list_match_player_identities(
+        self,
+        *,
+        match: CrconHistoricalMatchLookup,
+        player_ids: tuple[str, ...],
+    ) -> tuple[CrconExplicitPlayerIdentity, ...]:
+        """Resolve explicit identities for one completed map in one query."""
+        self._require_configured()
+        normalized_ids = tuple(
+            dict.fromkeys(value.strip() for value in player_ids if value.strip())
+        )
+        if not normalized_ids:
+            return ()
+        if len(normalized_ids) > MAX_MATCH_PLAYER_IDENTITY_LOOKUPS:
+            raise ValueError("player_ids must contain at most 200 unique entries.")
+        game = 1 if match.scope.game == "hll" else 2
+        with self._read_only_connection() as connection:
+            rows = connection.execute(
+                MATCH_PLAYER_IDENTITIES_SQL,
+                (
+                    match.map_id,
+                    match.scope.server_number,
+                    game,
+                    list(normalized_ids),
+                ),
+            ).fetchall()
+        return tuple(_explicit_player_identity_row(row) for row in rows)
+
     def close(self) -> None:
         """Close idle pooled runtime connections; injected test connections are not pooled."""
         if self._pool is not None:
@@ -743,6 +832,30 @@ def _row_values(row: object, columns: tuple[str, ...]) -> tuple[object, ...]:
     if isinstance(row, (tuple, list)) and len(row) >= len(columns):
         return tuple(row[: len(columns)])
     raise CrconDatabaseError("CRCON aggregate query returned an unexpected row.")
+
+
+def _match_player_count_row(row: object) -> CrconMatchPlayerCount:
+    map_id, player_count = _row_values(row, ("map_id", "player_count"))
+    count = int(player_count)
+    if count < 0:
+        raise CrconDatabaseError("CRCON participant count cannot be negative.")
+    return CrconMatchPlayerCount(map_id=int(map_id), player_count=count)
+
+
+def _explicit_player_identity_row(row: object) -> CrconExplicitPlayerIdentity:
+    player_id, steam_id, eos_id, platform = _row_values(
+        row,
+        ("player_id", "explicit_steam_id_64", "eos_id", "platform"),
+    )
+    normalized_player_id = str(player_id or "").strip()
+    if not normalized_player_id:
+        raise CrconDatabaseError("CRCON identity query returned an empty player ID.")
+    return CrconExplicitPlayerIdentity(
+        player_id=normalized_player_id,
+        steam_id_64=str(steam_id).strip() if steam_id is not None else None,
+        eos_id=str(eos_id).strip() if eos_id is not None else None,
+        platform=str(platform).strip() if platform is not None else None,
+    )
 
 
 def _ranking_row(row: object) -> CrconRankingRow:

@@ -337,6 +337,8 @@ class CrconDatabaseTests(unittest.TestCase):
                 "get_player_aggregate",
                 "get_player_profile_aggregate",
                 "get_server_aggregate",
+                "list_match_player_counts",
+                "list_match_player_identities",
                 "list_rankings",
                 "list_match_log_events",
                 "probe_capabilities",

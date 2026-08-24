@@ -214,5 +214,12 @@ error exits nonzero.
 
 This probe proves application-owned reader dispatch in its one-shot process. It
 does not prove a live combat event occurred during the short window and does not
-authorize stopping rollback writers. Until an operator records the sanitized
-success object, `PRODUCTION_ACTIVE_LEGACY_READERS = PENDING_OPERATOR_PROBE`.
+authorize stopping rollback writers.
+
+TASK-313 recorded the production result: `status=ok`,
+`enabled_target_count=3`, `route_count=20`, `detail_route_count=3` and
+`legacy_reader_access_count=0`, while all four effective source selectors were
+`crcon`. Therefore `CRCON_FIRST_ACTIVE_LEGACY_READERS=0` is proven for the
+deployed reader cutover. This evidence does not authorize data, PostgreSQL or
+volume deletion; automatic shutdown of all legacy writers; or deletion of
+rollback images.

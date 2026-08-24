@@ -21,6 +21,11 @@ from app.crcon.dto import (
     parse_scoreboard_maps,
 )
 from app.crcon.models import CrconApiError
+from app.crcon.models import CrconDatabaseError
+from app.crcon.repository import (
+    CrconExplicitPlayerIdentity,
+    CrconMatchPlayerCount,
+)
 from app.services.history import (
     HistoricalMatchDetail,
     HistoryBinding,
@@ -88,6 +93,49 @@ class _FakeApi:
         if self.error:
             raise self.error
         return self.detail
+
+
+class _FakeRepository:
+    configured = True
+
+    def __init__(self, *, fail: bool = False) -> None:
+        self.fail = fail
+        self.count_calls = []
+        self.identity_calls = []
+
+    def list_match_player_counts(self, *, matches):
+        self.count_calls.append(matches)
+        if self.fail:
+            raise CrconDatabaseError("sanitized fixture failure")
+        counts = {9001: 81, 9000: 0}
+        return tuple(
+            CrconMatchPlayerCount(match.map_id, counts[match.map_id])
+            for match in matches
+            if match.map_id in counts
+        )
+
+    def list_match_player_identities(self, *, match, player_ids):
+        self.identity_calls.append((match, player_ids))
+        if self.fail:
+            raise CrconDatabaseError("sanitized fixture failure")
+        rows = {
+            "opaque-player-001": CrconExplicitPlayerIdentity(
+                player_id="opaque-player-001",
+                steam_id_64="76561198000000000",
+                eos_id=None,
+                platform="steam",
+            ),
+            "opaque-epic-player": CrconExplicitPlayerIdentity(
+                player_id="opaque-epic-player",
+                steam_id_64=None,
+                eos_id="a" * 32,
+                platform="epic",
+            ),
+        }
+        return tuple(rows[value] for value in player_ids if value in rows)
+
+    def close(self):
+        return None
 
 
 class HistoricalSourceSelectorTests(unittest.TestCase):
@@ -300,6 +348,51 @@ class RecentHistoryServiceTests(unittest.TestCase):
         self.service.list_recent_matches(server_slug="server-one", page=1, page_size=2)
         self.assertEqual(len(self.api.list_calls), 1)
 
+    def test_player_counts_are_enriched_in_one_bounded_repository_call(self) -> None:
+        repository = _FakeRepository()
+        service = HistoryService(
+            bindings={"server-one": self.binding},
+            api_factory=lambda _binding: self.api,
+            repository=repository,
+        )
+        data = build_crcon_recent_matches_payload(
+            limit=2, server_slug="server-one", service=service
+        )["data"]
+
+        self.assertEqual([row["player_count"] for row in data["items"]], [81, 0])
+        self.assertTrue(
+            all(
+                row["player_count_status"] == "complete-crcon-db-player-stats"
+                for row in data["items"]
+            )
+        )
+        self.assertEqual(len(repository.count_calls), 1)
+        self.assertEqual(len(repository.count_calls[0]), 2)
+        self.assertEqual(self.api.detail_calls, [])
+
+    def test_player_count_enrichment_failure_keeps_rest_list_available(self) -> None:
+        repository = _FakeRepository(fail=True)
+        service = HistoryService(
+            bindings={"server-one": self.binding},
+            api_factory=lambda _binding: self.api,
+            repository=repository,
+        )
+        data = build_crcon_recent_matches_payload(
+            limit=2, server_slug="server-one", service=service
+        )["data"]
+
+        self.assertTrue(data["found"])
+        self.assertTrue(data["degraded"])
+        self.assertEqual(len(data["items"]), 2)
+        self.assertTrue(all(row["player_count"] is None for row in data["items"]))
+        self.assertTrue(
+            all(
+                row["player_count_status"] == "unknown-crcon-db-unavailable"
+                for row in data["items"]
+            )
+        )
+        self.assertEqual(len(repository.count_calls), 1)
+
 
 class HistoricalMatchDetailTests(unittest.TestCase):
     def setUp(self) -> None:
@@ -417,6 +510,59 @@ class HistoricalMatchDetailTests(unittest.TestCase):
         open_service.get_match_detail(server_slug="server-one", match_id="open-map")
         open_service.get_match_detail(server_slug="server-one", match_id="open-map")
         self.assertEqual(open_api.detail_calls, ["open-map", "open-map"])
+
+    def test_bulk_explicit_steam_identity_enriches_links_once(self) -> None:
+        repository = _FakeRepository()
+        service = HistoryService(
+            bindings={"server-one": self.binding},
+            api_factory=lambda _binding: self.api,
+            repository=repository,
+        )
+        data = build_crcon_match_detail_payload(
+            server_slug="server-one", match_id="9001", service=service
+        )["data"]
+        player = data["item"]["players"][0]
+
+        self.assertEqual(
+            set(player["external_profile_links"]),
+            {"steam", "hellor", "hll_records", "helo"},
+        )
+        self.assertEqual((player["kills"], player["deaths"]), (14, 9))
+        self.assertEqual(len(repository.identity_calls), 1)
+        self.assertEqual(repository.identity_calls[0][1], ("opaque-player-001",))
+
+    def test_bulk_explicit_eos_identity_has_only_supported_links(self) -> None:
+        raw = _fixture_result("map_scoreboard.json")
+        raw["player_stats"][0]["player_id"] = "opaque-epic-player"
+        service = HistoryService(
+            bindings={"server-one": self.binding},
+            api_factory=lambda _binding: _FakeApi(detail=parse_map_scoreboard(raw)),
+            repository=_FakeRepository(),
+        )
+        player = build_crcon_match_detail_payload(
+            server_slug="server-one", match_id="9001", service=service
+        )["data"]["item"]["players"][0]
+
+        self.assertEqual(set(player["external_profile_links"]), {"hellor", "hll_records"})
+        self.assertNotIn("steam", player["external_profile_links"])
+        self.assertNotIn("helo", player["external_profile_links"])
+
+    def test_identity_enrichment_failure_keeps_scoreboard_stats_available(self) -> None:
+        repository = _FakeRepository(fail=True)
+        service = HistoryService(
+            bindings={"server-one": self.binding},
+            api_factory=lambda _binding: self.api,
+            repository=repository,
+        )
+        data = build_crcon_match_detail_payload(
+            server_slug="server-one", match_id="9001", service=service
+        )["data"]
+
+        self.assertTrue(data["found"])
+        self.assertTrue(data["degraded"])
+        self.assertEqual(data["item"]["players"][0]["kills"], 14)
+        self.assertEqual(data["item"]["players"][0]["external_profile_links"], {})
+        self.assertEqual(len(repository.identity_calls), 1)
 
 
 class HistoricalRouteCompatibilityTests(unittest.TestCase):
