@@ -158,9 +158,10 @@ a {
 }
 
 .public-nav__chevron {
-  margin-left: 8px;
+  margin-left: 9px;
   color: var(--accent);
-  font-size: 0.72em;
+  font-size: 1.05em;
+  line-height: 1;
   transition: transform 160ms ease;
 }
 
@@ -324,11 +325,6 @@ a {
   border-left: 3px solid var(--accent-warm);
   border-radius: 8px;
   background: rgba(210, 182, 118, 0.07);
-}
-
-.normative-source {
-  min-width: 0;
-  margin-top: 12px;
 }
 
 .guide-grid {
@@ -709,7 +705,7 @@ h2 {
 
 .content {
   width: 100%;
-  margin-top: -28px;
+  margin-top: 24px;
   position: relative;
   z-index: 2;
   display: grid;
