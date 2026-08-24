@@ -62,7 +62,8 @@ Rules:
 - Preserve HLL Vietnam project identity.
 - Do not introduce unnecessary frameworks or dependencies.
 - Do not implement backend functionality unless the task explicitly requires it.
-- Do not expand Elo/MMR, historical workers or RCON server #03 handling unless the task explicitly requires it.
+- Do not reintroduce removed experiments, expand historical workers or change
+  RCON server #03 handling unless the task explicitly requires it.
 - Do not overwrite repository-specific context with generic platform template text.
 
 ## Validation

@@ -17,8 +17,8 @@ The first maintenance pass does not routinely delete:
 - `displayed_historical_snapshots`;
 - file-based snapshots under `backend/data/snapshots/`;
 - public-scoreboard `historical_*` fallback tables;
-- `player_event_raw_ledger` and its worker metadata;
-- Elo/MMR tables;
+- dead `player_event_raw_ledger`/worker metadata and Elo/MMR table data left by
+  removed TASK-309 experiments (preserved here; no product reader/writer);
 - Comunidad Hispana #03 data reactivation or targets.
 
 ## Why Application-Level And Not `pg_cron`

@@ -91,10 +91,6 @@ class HistoricalRunnerMaintenanceTests(unittest.TestCase):
                 return_value={"status": "ok"},
             ),
             patch(
-                "app.historical_runner.rebuild_elo_mmr_models",
-                return_value={"status": "ok"},
-            ),
-            patch(
                 "app.historical_runner.run_database_maintenance_cleanup",
                 side_effect=RuntimeError("maintenance failed"),
             ),

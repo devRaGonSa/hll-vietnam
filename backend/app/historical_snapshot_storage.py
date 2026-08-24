@@ -280,12 +280,7 @@ def _is_effectively_empty_snapshot_payload(
         items = payload.get("items")
         return not isinstance(items, list) or len(items) == 0
 
-    if snapshot_type in {
-        "weekly-leaderboard",
-        "monthly-leaderboard",
-        "monthly-mvp",
-        "monthly-mvp-v2",
-    }:
+    if snapshot_type in {"weekly-leaderboard", "monthly-leaderboard"}:
         items = payload.get("items")
         return not isinstance(items, list) or len(items) == 0
 
@@ -317,26 +312,12 @@ def _build_snapshot_filename(*, snapshot_type: str, metric: str | None) -> str:
         return "server-summary.json"
     if snapshot_type == "recent-matches":
         return "recent-matches.json"
-    if snapshot_type == "monthly-mvp-v2":
-        return "monthly-mvp-v2.json"
-    if snapshot_type == "player-event-most-killed":
-        return "player-events-most-killed.json"
-    if snapshot_type == "player-event-death-by":
-        return "player-events-death-by.json"
-    if snapshot_type == "player-event-duels":
-        return "player-events-duels.json"
-    if snapshot_type == "player-event-weapon-kills":
-        return "player-events-weapon-kills.json"
-    if snapshot_type == "player-event-teamkills":
-        return "player-events-teamkills.json"
     if snapshot_type == "weekly-leaderboard":
         metric_suffix = "matches-over-100-kills" if metric == "matches_over_100_kills" else _slugify(metric or "unknown")
         return f"weekly-{metric_suffix}.json"
     if snapshot_type == "monthly-leaderboard":
         metric_suffix = "matches-over-100-kills" if metric == "matches_over_100_kills" else _slugify(metric or "unknown")
         return f"monthly-{metric_suffix}.json"
-    if snapshot_type == "monthly-mvp":
-        return "monthly-mvp.json"
     metric_suffix = _slugify(metric or "")
     base_name = _slugify(snapshot_type)
     return f"{base_name}-{metric_suffix}.json" if metric_suffix else f"{base_name}.json"

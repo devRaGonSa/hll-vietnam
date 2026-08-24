@@ -1368,8 +1368,6 @@ def validate_historical_runner_read_model_refresh_cycle():
     original_resolve_classic_fallback_policy = historical_runner._resolve_classic_fallback_policy
     original_rcon_capture_has_new_useful_data = historical_runner._rcon_capture_has_new_useful_data
     original_generate_historical_snapshots = historical_runner.generate_historical_snapshots
-    original_build_elo_mmr_rebuild_policy = historical_runner._build_elo_mmr_rebuild_policy
-    original_rebuild_elo_mmr_models = historical_runner.rebuild_elo_mmr_models
     original_refresh_player_search_index = historical_runner.refresh_player_search_index
     original_refresh_player_period_stats = historical_runner.refresh_player_period_stats
     original_refresh_ranking_snapshots = historical_runner.refresh_ranking_snapshots
@@ -1403,16 +1401,6 @@ def validate_historical_runner_read_model_refresh_cycle():
         "status": "ok",
         "generated_at": "2026-06-09T08:00:00Z",
     }
-    historical_runner._build_elo_mmr_rebuild_policy = lambda **kwargs: {
-        "due": False,
-        "policy": "validation-policy",
-        "last_generated_at": None,
-        "samples_since_last_rebuild": 1,
-        "minutes_since_last_rebuild": None,
-        "rebuild_interval_minutes": 60,
-        "min_new_samples": 10,
-    }
-    historical_runner.rebuild_elo_mmr_models = lambda: {"status": "ok"}
     historical_runner._maybe_run_database_maintenance = lambda: {
         "status": "skipped",
         "reason": "validation-disabled",
@@ -1595,8 +1583,6 @@ def validate_historical_runner_read_model_refresh_cycle():
         historical_runner._resolve_classic_fallback_policy = original_resolve_classic_fallback_policy
         historical_runner._rcon_capture_has_new_useful_data = original_rcon_capture_has_new_useful_data
         historical_runner.generate_historical_snapshots = original_generate_historical_snapshots
-        historical_runner._build_elo_mmr_rebuild_policy = original_build_elo_mmr_rebuild_policy
-        historical_runner.rebuild_elo_mmr_models = original_rebuild_elo_mmr_models
         historical_runner.refresh_player_search_index = original_refresh_player_search_index
         historical_runner.refresh_player_period_stats = original_refresh_player_period_stats
         historical_runner.refresh_ranking_snapshots = original_refresh_ranking_snapshots

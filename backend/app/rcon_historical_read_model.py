@@ -108,11 +108,6 @@ def describe_rcon_historical_read_model() -> dict[str, object]:
             "/api/historical/weekly-top-kills",
             "/api/historical/weekly-leaderboard",
             "/api/historical/leaderboard",
-            "/api/historical/monthly-mvp",
-            "/api/historical/monthly-mvp-v2",
-            "/api/historical/elo-mmr/leaderboard",
-            "/api/historical/elo-mmr/player",
-            "/api/historical/player-events",
             "/api/historical/player-profile",
             "/api/historical/snapshots/*",
         ],
@@ -127,7 +122,6 @@ def describe_rcon_historical_read_model() -> dict[str, object]:
         "limitations": [
             "No retroactive backfill of closed matches.",
             "No weekly or monthly competitive leaderboards.",
-            "No MVP or player-event parity with public-scoreboard.",
             "No player-level scoreboard parity from RCON samples alone.",
         ],
     }

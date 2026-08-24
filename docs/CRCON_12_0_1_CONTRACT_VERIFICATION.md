@@ -336,7 +336,9 @@ The migrated family is server summary, historical weekly/monthly leaderboards,
 global weekly/monthly/annual rankings, exact-ID/index-gated player search and
 weekly/monthly player profiles. Annual rankings are direct timeframe queries;
 no annual snapshot is persisted. Historical match list/detail remains on
-TASK-301 REST. MVP V1/V2 and Elo/MMR remain separate derived legacy products;
+TASK-301 REST. MVP V1/V2 and Elo/MMR were separate derived legacy products;
+TASK-309 subsequently removed those application slices. Existing stored data
+was not deleted;
 workers and storage remain available for rollback and unmigrated domains.
 
 | Public aggregate surface | Local implementation | Real schema/data | Decision |

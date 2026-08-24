@@ -402,48 +402,6 @@ def persist_server_snapshots(
     }
 
 
-def upsert_player_event_rows(events: Iterable[object]) -> dict[str, int]:
-    initialize_postgres_display_storage()
-    inserted = 0
-    duplicates = 0
-    with connect_postgres() as connection:
-        for event in events:
-            row = connection.execute(
-                """
-                INSERT INTO player_event_raw_ledger (
-                    event_id, event_type, occurred_at, server_slug, external_match_id,
-                    source_kind, source_ref, raw_event_ref, killer_player_key,
-                    killer_display_name, victim_player_key, victim_display_name,
-                    weapon_name, weapon_category, kill_category, is_teamkill, event_value
-                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-                ON CONFLICT(event_id) DO NOTHING
-                RETURNING id
-                """,
-                (
-                    event.event_id,
-                    event.event_type,
-                    event.occurred_at,
-                    event.server_slug,
-                    event.external_match_id,
-                    event.source_kind,
-                    event.source_ref,
-                    event.raw_event_ref,
-                    event.killer_player_key,
-                    event.killer_display_name,
-                    event.victim_player_key,
-                    event.victim_display_name,
-                    event.weapon_name,
-                    event.weapon_category,
-                    event.kill_category,
-                    bool(event.is_teamkill),
-                    max(1, int(event.event_value)),
-                ),
-            ).fetchone()
-            inserted += int(bool(row))
-            duplicates += int(not row)
-    return {"events_inserted": inserted, "duplicate_events": duplicates}
-
-
 def list_server_snapshot_history(*, server_id: str | None = None, limit: int) -> list[dict[str, object]]:
     initialize_postgres_display_storage()
     where = ""

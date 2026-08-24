@@ -88,7 +88,7 @@ def migrate_sqlite_to_postgres() -> dict[str, object]:
         "weekly-and-monthly-scoreboard-rankings",
         "displayed-historical-snapshots",
         "live-server-summary-cache",
-        "player-event-ledger",
+        "deferred-dead-player-event-storage",
     ]
     for table_name, totals in sorted(table_totals.items()):
         summary["rows_read"][table_name] = totals["read"]

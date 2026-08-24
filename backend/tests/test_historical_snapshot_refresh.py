@@ -43,7 +43,6 @@ from app.historical_runner import (
     run_periodic_historical_refresh,
 )
 from app.historical_snapshots import _normalize_snapshot_limit
-from app.historical_storage import list_monthly_mvp_v2_ranking
 from app.postgres_display_storage import _json_payload_default
 from app.rcon_historical_read_model import (
     _calculate_coverage_hours,
@@ -279,34 +278,6 @@ class HistoricalSnapshotRefreshTests(unittest.TestCase):
 
         self.assertEqual([row["player_id"] for row in deduplicated_rows], ["player-1", "player-2"])
         self.assertEqual(deduplicated_rows[0]["player_name"], "Alpha")
-
-    def test_monthly_mvp_v2_missing_player_event_ledger_returns_empty_payload(self) -> None:
-        monthly_window = {
-            "window_start": datetime(2026, 6, 1, tzinfo=timezone.utc),
-            "window_end": datetime(2026, 6, 11, tzinfo=timezone.utc),
-            "window_kind": "current-month",
-            "window_label": "Mes activo",
-            "uses_fallback": False,
-            "selection_reason": "test",
-            "current_month_closed_matches": 4,
-            "previous_month_closed_matches": 8,
-            "minimum_closed_matches": 3,
-            "current_month_has_sufficient_sample": True,
-            "is_early_month": False,
-        }
-        with (
-            patch("app.historical_storage.initialize_historical_storage", return_value=Path("dummy.sqlite3")),
-            patch("app.historical_storage._select_monthly_window", return_value=monthly_window),
-            patch(
-                "app.historical_storage._get_monthly_player_event_coverage",
-                side_effect=sqlite3.OperationalError("no such table: player_event_raw_ledger"),
-            ),
-        ):
-            payload = list_monthly_mvp_v2_ranking(server_id="all-servers", limit=10)
-
-        self.assertFalse(payload["event_coverage"]["ready"])
-        self.assertEqual(payload["event_coverage"]["reason"], "player-event-raw-ledger-missing")
-        self.assertEqual(payload["items"], [])
 
     def test_initialize_ranking_snapshot_storage_uses_materialized_initializer_without_invalid_keyword(self) -> None:
         db_path = Path("dummy.sqlite3")
@@ -714,18 +685,6 @@ class HistoricalSnapshotRefreshTests(unittest.TestCase):
                 "app.historical_runner.generate_historical_snapshots",
                 side_effect=RuntimeError("legacy snapshot failure"),
             ),
-            patch(
-                "app.historical_runner._build_elo_mmr_rebuild_policy",
-                return_value={
-                    "due": False,
-                    "policy": "validation-policy",
-                    "last_generated_at": None,
-                    "samples_since_last_rebuild": 1,
-                    "minutes_since_last_rebuild": None,
-                    "rebuild_interval_minutes": 60,
-                    "min_new_samples": 10,
-                },
-            ),
             patch("app.historical_runner.refresh_player_search_index", return_value={"status": "ok"}) as search_refresh,
             patch("app.historical_runner.refresh_player_period_stats", return_value={"status": "ok"}) as period_refresh,
             patch("app.historical_runner.refresh_ranking_snapshots", return_value={"status": "ok"}) as ranking_refresh,
@@ -766,18 +725,6 @@ class HistoricalSnapshotRefreshTests(unittest.TestCase):
             patch(
                 "app.historical_runner.generate_historical_snapshots",
                 return_value={"status": "ok", "generated_at": "2026-06-09T08:00:00Z"},
-            ),
-            patch(
-                "app.historical_runner._build_elo_mmr_rebuild_policy",
-                return_value={
-                    "due": False,
-                    "policy": "validation-policy",
-                    "last_generated_at": None,
-                    "samples_since_last_rebuild": 1,
-                    "minutes_since_last_rebuild": None,
-                    "rebuild_interval_minutes": 60,
-                    "min_new_samples": 10,
-                },
             ),
             patch("app.historical_runner.refresh_player_search_index", return_value={"status": "ok"}),
             patch("app.historical_runner.refresh_player_period_stats", return_value={"status": "ok"}),

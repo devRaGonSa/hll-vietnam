@@ -45,14 +45,8 @@ DEFAULT_PUBLIC_HISTORICAL_MONTHLY_REFRESH_HOUR_INTERVAL = 2
 DEFAULT_HISTORICAL_REFRESH_MAX_RETRIES = 2
 DEFAULT_HISTORICAL_REFRESH_RETRY_DELAY_SECONDS = 30
 DEFAULT_HISTORICAL_FULL_SNAPSHOT_EVERY_RUNS = 4
-DEFAULT_HISTORICAL_ELO_MMR_REBUILD_INTERVAL_MINUTES = 180
-DEFAULT_HISTORICAL_ELO_MMR_MIN_NEW_SAMPLES = 12
 DEFAULT_HISTORICAL_WEEKLY_FALLBACK_MIN_MATCHES = 3
 DEFAULT_HISTORICAL_WEEKLY_FALLBACK_MAX_WEEKDAY = 2
-DEFAULT_PLAYER_EVENT_REFRESH_INTERVAL_SECONDS = 1800
-DEFAULT_PLAYER_EVENT_REFRESH_OVERLAP_HOURS = 12
-DEFAULT_PLAYER_EVENT_REFRESH_MAX_RETRIES = 2
-DEFAULT_PLAYER_EVENT_REFRESH_RETRY_DELAY_SECONDS = 30
 DEFAULT_RCON_HISTORICAL_CAPTURE_INTERVAL_SECONDS = 600
 DEFAULT_RCON_HISTORICAL_CAPTURE_MAX_RETRIES = 2
 DEFAULT_RCON_HISTORICAL_CAPTURE_RETRY_DELAY_SECONDS = 15
@@ -657,30 +651,6 @@ def get_historical_full_snapshot_every_runs() -> int:
     return run_count
 
 
-def get_historical_elo_mmr_rebuild_interval_minutes() -> int:
-    """Return the minimum minutes between automatic Elo/MMR rebuilds."""
-    configured_value = os.getenv(
-        "HLL_HISTORICAL_ELO_MMR_REBUILD_INTERVAL_MINUTES",
-        str(DEFAULT_HISTORICAL_ELO_MMR_REBUILD_INTERVAL_MINUTES),
-    )
-    interval_minutes = int(configured_value)
-    if interval_minutes <= 0:
-        raise ValueError("HLL_HISTORICAL_ELO_MMR_REBUILD_INTERVAL_MINUTES must be positive.")
-    return interval_minutes
-
-
-def get_historical_elo_mmr_min_new_samples() -> int:
-    """Return the minimum new RCON samples required for an automatic Elo/MMR rebuild."""
-    configured_value = os.getenv(
-        "HLL_HISTORICAL_ELO_MMR_MIN_NEW_SAMPLES",
-        str(DEFAULT_HISTORICAL_ELO_MMR_MIN_NEW_SAMPLES),
-    )
-    min_samples = int(configured_value)
-    if min_samples <= 0:
-        raise ValueError("HLL_HISTORICAL_ELO_MMR_MIN_NEW_SAMPLES must be positive.")
-    return min_samples
-
-
 def get_historical_weekly_fallback_min_matches() -> int:
     """Return the minimum closed matches required to trust the current week."""
     configured_value = os.getenv(
@@ -705,56 +675,6 @@ def get_historical_weekly_fallback_max_weekday() -> int:
         raise ValueError("HLL_HISTORICAL_WEEKLY_FALLBACK_MAX_WEEKDAY must be between 0 and 6.")
 
     return max_weekday
-
-
-def get_player_event_refresh_interval_seconds() -> int:
-    """Return the default interval used by the player event refresh loop."""
-    configured_value = os.getenv(
-        "HLL_PLAYER_EVENT_REFRESH_INTERVAL_SECONDS",
-        str(DEFAULT_PLAYER_EVENT_REFRESH_INTERVAL_SECONDS),
-    )
-    interval_seconds = int(configured_value)
-    if interval_seconds <= 0:
-        raise ValueError("HLL_PLAYER_EVENT_REFRESH_INTERVAL_SECONDS must be positive.")
-    return interval_seconds
-
-
-def get_player_event_refresh_overlap_hours() -> int:
-    """Return the overlap window used by player event refresh runs."""
-    configured_value = os.getenv(
-        "HLL_PLAYER_EVENT_REFRESH_OVERLAP_HOURS",
-        str(DEFAULT_PLAYER_EVENT_REFRESH_OVERLAP_HOURS),
-    )
-    overlap_hours = int(configured_value)
-    if overlap_hours < 0:
-        raise ValueError("HLL_PLAYER_EVENT_REFRESH_OVERLAP_HOURS must be zero or positive.")
-    return overlap_hours
-
-
-def get_player_event_refresh_max_retries() -> int:
-    """Return the retry count used by the player event refresh loop."""
-    configured_value = os.getenv(
-        "HLL_PLAYER_EVENT_REFRESH_MAX_RETRIES",
-        str(DEFAULT_PLAYER_EVENT_REFRESH_MAX_RETRIES),
-    )
-    max_retries = int(configured_value)
-    if max_retries < 0:
-        raise ValueError("HLL_PLAYER_EVENT_REFRESH_MAX_RETRIES must be zero or positive.")
-    return max_retries
-
-
-def get_player_event_refresh_retry_delay_seconds() -> int:
-    """Return the wait time between player event refresh retries."""
-    configured_value = os.getenv(
-        "HLL_PLAYER_EVENT_REFRESH_RETRY_DELAY_SECONDS",
-        str(DEFAULT_PLAYER_EVENT_REFRESH_RETRY_DELAY_SECONDS),
-    )
-    retry_delay_seconds = int(configured_value)
-    if retry_delay_seconds < 0:
-        raise ValueError(
-            "HLL_PLAYER_EVENT_REFRESH_RETRY_DELAY_SECONDS must be zero or positive."
-        )
-    return retry_delay_seconds
 
 
 def get_rcon_historical_capture_interval_seconds() -> int:

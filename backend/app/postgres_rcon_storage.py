@@ -765,16 +765,6 @@ def list_competitive_windows(*, target_key: str | None, limit: int) -> list[dict
     return [_serialize_window(row) for row in rows]
 
 
-def count_samples_since(since: str | None) -> int:
-    if not since:
-        return 0
-    row = _fetchone(
-        "SELECT COUNT(*) AS sample_count FROM rcon_historical_samples WHERE captured_at > %s",
-        (since,),
-    )
-    return int(row["sample_count"] or 0) if row else 0
-
-
 def list_competitive_summary_rows(*, target_key: str | None) -> list[dict[str, object]]:
     where_clause, params = _target_where_clause(target_key)
     rows = _fetchall(

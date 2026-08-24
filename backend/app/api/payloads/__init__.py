@@ -20,16 +20,6 @@ from .players import (
     build_stats_player_profile_payload,
     build_stats_player_search_payload,
 )
-from .product_features import (
-    build_elo_mmr_leaderboard_payload,
-    build_elo_mmr_player_payload,
-    build_monthly_mvp_payload,
-    build_monthly_mvp_snapshot_payload,
-    build_monthly_mvp_v2_payload,
-    build_monthly_mvp_v2_snapshot_payload,
-    build_player_event_payload,
-    build_player_event_snapshot_payload,
-)
 from .rankings import (
     build_annual_ranking_snapshot_payload,
     build_global_ranking_payload,
@@ -64,8 +54,6 @@ __all__ = [
     "build_current_match_player_stats_payload",
     "build_current_match_snapshot_payload",
     "build_discord_payload",
-    "build_elo_mmr_leaderboard_payload",
-    "build_elo_mmr_player_payload",
     "build_error_payload",
     "build_global_ranking_payload",
     "build_health_payload",
@@ -77,12 +65,6 @@ __all__ = [
     "build_leaderboard_snapshot_payload",
     "build_monthly_leaderboard_payload",
     "build_monthly_leaderboard_snapshot_payload",
-    "build_monthly_mvp_payload",
-    "build_monthly_mvp_snapshot_payload",
-    "build_monthly_mvp_v2_payload",
-    "build_monthly_mvp_v2_snapshot_payload",
-    "build_player_event_payload",
-    "build_player_event_snapshot_payload",
     "build_recent_historical_matches_payload",
     "build_recent_historical_matches_snapshot_payload",
     "build_server_detail_history_payload",

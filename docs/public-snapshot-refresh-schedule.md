@@ -55,9 +55,6 @@ Historical page:
     - `deaths`
     - `matches_over_100_kills`
     - `support`
-  - also refreshes:
-    - `monthly-mvp`
-    - `monthly-mvp-v2`
   - runs under `public-historical-monthly-refresh`
 
 Recent matches:
@@ -101,7 +98,7 @@ Manual public jobs executed with `python -m app.historical_runner --public-job .
 - CLI JSON output serializes `datetime` and `date` values safely
 - ranking snapshot rows are deduplicated by `player_id` before inserting `ranking_snapshot_items`
 - PostgreSQL snapshot storage initialization runs once at the start of the heavy job, then substeps reuse non-DDL connections
-- missing `player_event_raw_ledger` no longer aborts `historical-monthly`; the monthly MVP V2 slice degrades to an empty payload with `event_coverage.ready = false`
+- removed MVP/player-event slices are not part of the monthly job
 - materialized storage initialization gating stays in the leaderboard wrapper layer; `initialize_rcon_materialized_storage()` is called without extra keywords only when initialization is actually required
 
 This keeps manual validation commands useful without hiding partial failures inside the job payload.

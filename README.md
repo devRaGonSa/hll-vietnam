@@ -96,8 +96,9 @@ Modo normal recomendado:
 - mantener `historical-runner` y `rcon-historical-worker` como servicios
   avanzados bajo demanda
 - mantener Comunidad Hispana #03 fuera de los targets RCON por defecto
-- dejar Elo/MMR y la materializacion historica compleja en pausa operativa
-  hasta una reintroduccion explicita
+- mantener fuera del producto MVP V1/V2, player-events de compatibilidad y
+  Elo/MMR; TASK-309 retiro sus superficies de aplicacion sin borrar datos
+  persistidos
 
 Primer arranque:
 
@@ -189,9 +190,10 @@ Buenas practicas:
 
 Estas operaciones quedan disponibles para uso explicito, pero no son parte del
 arranque recomendado. La ruta normal de despliegue es `backend` + `frontend`.
-El codigo, las migraciones, los snapshots historicos y Elo/MMR se conservan en
-la repo, pero Elo/MMR y la materializacion historica compleja quedan pausados
-operativamente en esta fase.
+Los workers historicos compartidos, las migraciones y los snapshots necesarios
+para rollback se conservan. MVP V1/V2, player-events de compatibilidad y
+Elo/MMR ya no forman parte de la aplicacion; sus datos persistidos existentes
+no se borraron y quedan para una limpieza de storage posterior.
 
 Refresh historico puntual dentro del contenedor backend:
 
@@ -244,8 +246,9 @@ La linea historica actual usa RCON como fuente primaria. El flujo previsto es:
 
 El scoreboard publico queda limitado a enriquecimiento, links confiables o
 fallback historico cuando RCON falla, no tiene cobertura suficiente o no cubre
-una operacion concreta. Elo/MMR sigue pausado y Comunidad Hispana #03 permanece
-fuera de los targets RCON por defecto.
+una operacion concreta. Las superficies MVP, player-events de compatibilidad y
+Elo/MMR fueron retiradas, y Comunidad Hispana #03 permanece fuera de los
+targets RCON por defecto.
 
 Comandos manuales RCON dentro del contenedor backend:
 

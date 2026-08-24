@@ -1,5 +1,10 @@
 # CRCON-first stateless architecture
 
+> TASK-309 update (2026-08-24): the MVP V1/V2, player-event compatibility and
+> Elo/MMR options recorded in this design were resolved as `REMOVED`. Their
+> application readers/writers are gone; pre-existing stored data remains
+> untouched pending a separate cleanup task.
+
 ## 1. Executive decision
 
 HLL Vietnam will become a stateless, read-only presentation layer over CRCON. The selected target is **Target A**: one Python container serves the static frontend and the `/api` BFF, keeps only bounded process-memory caches, and reads the CRCON HTTP API and CRCON PostgreSQL. Direct RCON is not a mandatory target-v1 dependency; it remains an opt-in emergency adapter only if fixture and deployment validation prove that CRCON cannot provide a required live field.
@@ -87,7 +92,7 @@ Target counts: one HLL service, zero HLL gameplay volumes, zero HLL workers and 
 | Server sampling | `server_snapshots` | snapshot writers, landing/history payloads | TEMPORARILY KEEP; migrate to CRCON public info and `server_counts`, then REMOVE |
 | Imported historical core | `historical_servers`, `historical_maps`, `historical_matches`, `historical_players`, `historical_player_match_stats` | historical import/storage and payloads | TEMPORARILY KEEP; migrate list/detail/profile/ranking surfaces, then REMOVE |
 | Display snapshots | `displayed_historical_snapshots`, snapshot JSON under backend data | generators/scheduler, snapshot endpoints | TEMPORARILY KEEP; migrate consumers and caching, then REMOVE |
-| Raw player ledger | `player_event_raw_ledger` | event/duel/weapon generation | TEMPORARILY KEEP; validate CRCON `log_lines` semantics, then REMOVE |
+| Raw player ledger | `player_event_raw_ledger` | none after TASK-309 | DEAD STORAGE; inspect before later cleanup |
 | SQLite historical store | `historical_servers`, `historical_maps`, `historical_matches`, `historical_players`, `historical_player_match_stats`, `ingestion_runs`, `backfill_progress` | `historical_storage` and runners | TEMPORARILY KEEP; remove after PostgreSQL legacy rollback window closes |
 | Historical RCON capture | `rcon_historical_targets`, `rcon_historical_capture_runs`, `rcon_historical_samples`, `rcon_historical_checkpoints`, `rcon_historical_competitive_windows` | historical worker/storage | TEMPORARILY KEEP; remove worker and all migrated dependants first |
 | AdminLog/materialization | `rcon_admin_log_events`, `rcon_player_profile_snapshots`, `rcon_materialized_matches`, `rcon_match_player_stats` | AdminLog worker/parser/materializer, live/history payloads | TEMPORARILY KEEP; migrate current match and history, then REMOVE |
@@ -121,14 +126,14 @@ All routes are GET. `A` means CRCON API, `B` CRCON PostgreSQL, and `C` optional 
 | `/api/historical/leaderboard?limit&server&metric&timeframe` | none found | historical leaderboard/read models | B bounded aggregate; 2 min | deprecate after aliases; medium |
 | `/api/historical/weekly-leaderboard?limit&server&metric` | none found | weekly builder | B bounded aggregate; 2 min | deprecate after aliases; medium |
 | `/api/historical/monthly-leaderboard?limit&server&metric` | none found | monthly builder | B bounded aggregate; 5 min | deprecate after aliases; medium |
-| `/api/historical/monthly-mvp?server&limit` | none found | MVP snapshot/read model | B `player_stats`; 5 min | DEFER pending product value/semantic definition; high |
-| `/api/historical/monthly-mvp-v2?server&limit` | none found | MVP-v2 snapshot/read model | B `player_stats`; 5 min | keep only v2 if accepted, deprecate v1; high |
-| `/api/historical/player-events?server&view&limit` | none found | raw ledger/event models | B bounded `log_lines`; 1-5 min | keep weapon/duel views if semantics validate; high |
+| `/api/historical/monthly-mvp?server&limit` | none found | none | none | REMOVED in TASK-309 |
+| `/api/historical/monthly-mvp-v2?server&limit` | none found | none | none | REMOVED in TASK-309 |
+| `/api/historical/player-events?server&view&limit` | none found | none | none | REMOVED in TASK-309 |
 | `/api/historical/snapshots/leaderboard?server&timeframe&metric&limit` | `historico.js` | snapshot file/table | B aggregate via cache; 2 min | retain path during migration, remove snapshot semantics later; medium |
 | `/api/historical/snapshots/monthly-leaderboard?server&metric&limit` | none found | snapshot generator/store | B aggregate via cache; 5 min | deprecate duplicate; medium |
-| `/api/historical/snapshots/monthly-mvp?server&limit` | none found | snapshot generator/store | B aggregate via cache; 5 min | follow MVP decision; high |
-| `/api/historical/snapshots/monthly-mvp-v2?server&limit` | none found | snapshot generator/store | B aggregate via cache; 5 min | follow MVP-v2 decision; high |
-| `/api/historical/snapshots/player-events?server&view&limit` | none found | snapshot generator/store | B bounded logs via cache; 1-5 min | deprecate duplicate after consumer audit; high |
+| `/api/historical/snapshots/monthly-mvp?server&limit` | none found | none | none | REMOVED in TASK-309 |
+| `/api/historical/snapshots/monthly-mvp-v2?server&limit` | none found | none | none | REMOVED in TASK-309 |
+| `/api/historical/snapshots/player-events?server&view&limit` | none found | none | none | REMOVED in TASK-309 |
 | `/api/historical/snapshots/weekly-leaderboard?server&metric&limit` | none found | snapshot generator/store | B aggregate via cache; 2 min | deprecate duplicate; medium |
 | `/api/historical/recent-matches?server&limit` | none found | historical storage/provider | A `get_scoreboard_maps`; 15 s | retain; medium |
 | `/api/historical/snapshots/recent-matches?server&limit` | `historico.js`, `historico-recent-live.js` | displayed snapshot | A `get_scoreboard_maps`; 15 s | compatibility alias then consolidate; medium |
@@ -136,8 +141,8 @@ All routes are GET. `A` means CRCON API, `B` CRCON PostgreSQL, and `C` optional 
 | `/api/historical/server-summary?server` | none found | historical aggregate | A/B maps + counts; 60 s | retain; medium |
 | `/api/historical/snapshots/server-summary?server` | `historico.js` | displayed snapshot | A/B maps + counts; 60 s | compatibility alias then consolidate; medium |
 | `/api/historical/player-profile?player` | none found | historical player/profile models | A player profile/history plus B stats; 30 s | deprecate in favor of stats profile; high |
-| `/api/historical/elo-mmr/leaderboard?server&limit` | none found | HLL Elo snapshot/read models | no verified CRCON equivalent | REMOVE/DEFER while feature is paused; high |
-| `/api/historical/elo-mmr/player?server&player` | none found | HLL Elo read models | no verified CRCON equivalent | REMOVE/DEFER while feature is paused; high |
+| `/api/historical/elo-mmr/leaderboard?server&limit` | none found | none | none | REMOVED in TASK-309 |
+| `/api/historical/elo-mmr/player?server&player` | none found | none | none | REMOVED in TASK-309 |
 
 Classification summary: static/local routes remain local; live surfaces combine A+B; history detail prefers A; server samples, rankings, search, profiles and event analytics use verified bounded B reads; C is not required for the base design.
 
@@ -251,7 +256,7 @@ Special bounded event views may query `log_lines` between the selected map's sta
 
 Weekly, monthly and annual kills, deaths, teamkills, K/D, kills per match and matches considered are bounded aggregates over completed `map_history` + `player_stats`. `support` is kept with CRCON source because it is a verified `player_stats` field. Results are cached by server/period/metric/limit and return a common ranking contract.
 
-Player search reads identity, soldier and name-history tables with strict limits. Profile identity/sessions prefer CRCON player APIs; period totals and recent matches may use bounded SQL. Monthly MVP v1 is deprecated; MVP v2 is deferred until its formula and product value are approved. Weapon/duel/teamkill views are kept only after `log_lines` fixture semantics pass. HLL Elo/MMR remains removed/deferred because no verified CRCON equivalent exists and the UI is paused.
+Player search reads identity, soldier and name-history tables with strict limits. Profile identity/sessions prefer CRCON player APIs; period totals and recent matches may use bounded SQL. TASK-309 removed monthly MVP V1/V2, weapon/duel/teamkill compatibility views and Elo/MMR from the application.
 
 ## 16. In-memory caching
 
@@ -330,5 +335,5 @@ Never grant HLL write privileges to CRCON, embed authenticated URLs in frontend 
 6. Does CRCON issue #1186 affect only `get_live_game_stats` kills or other fields required by HLL?
 7. Are queue counts available in the verified public-info contract in the deployed revision? If not, omit or explicitly degrade rather than infer.
 8. What retention, backup or legal decision is required before deleting HLL volumes after rollback expiry?
-9. Are monthly MVP, event/duel views and paused Elo/MMR valuable enough to retain or redesign?
+9. RESOLVED by TASK-309: monthly MVP, event/duel views and Elo/MMR were removed.
 10. What measured rate, latency and connection limits can the CRCON owner support?

@@ -237,17 +237,11 @@ normaliza espacios y barras finales para mantener la comparacion con el header
 - `GET /api/historical/weekly-top-kills?limit=10&server=comunidad-hispana-01`
 - `GET /api/historical/weekly-leaderboard?metric=kills&limit=10&server=comunidad-hispana-01`
 - `GET /api/historical/leaderboard?timeframe=monthly&metric=kills&limit=10&server=comunidad-hispana-01`
-- `GET /api/historical/monthly-mvp?limit=10&server=comunidad-hispana-01`
-- `GET /api/historical/monthly-mvp-v2?limit=10&server=comunidad-hispana-01`
-- `GET /api/historical/player-events?view=most-killed&limit=10&server=comunidad-hispana-01`
 - `GET /api/historical/recent-matches?limit=20&server=comunidad-hispana-01`
 - `GET /api/historical/server-summary?server=comunidad-hispana-01`
 - `GET /api/historical/snapshots/server-summary?server=comunidad-hispana-01`
 - `GET /api/historical/snapshots/weekly-leaderboard?metric=kills&limit=10&server=comunidad-hispana-01`
 - `GET /api/historical/snapshots/leaderboard?timeframe=monthly&metric=kills&limit=10&server=comunidad-hispana-01`
-- `GET /api/historical/snapshots/monthly-mvp?limit=10&server=comunidad-hispana-01`
-- `GET /api/historical/snapshots/monthly-mvp-v2?limit=10&server=comunidad-hispana-01`
-- `GET /api/historical/snapshots/player-events?view=most-killed&limit=10&server=comunidad-hispana-01`
 - `GET /api/historical/snapshots/recent-matches?limit=6&server=comunidad-hispana-01`
 - `GET /api/historical/player-profile?player=steam%3A76561198000000000`
 
@@ -568,9 +562,6 @@ Lectura historica minima cuando `HLL_BACKEND_HISTORICAL_DATA_SOURCE=rcon`:
   - `GET /api/historical/weekly-top-kills`
   - `GET /api/historical/weekly-leaderboard`
   - `GET /api/historical/leaderboard`
-  - `GET /api/historical/monthly-mvp`
-  - `GET /api/historical/monthly-mvp-v2`
-  - `GET /api/historical/player-events`
   - `GET /api/historical/player-profile`
   - `GET /api/historical/snapshots/*`
 
@@ -651,7 +642,6 @@ Esta politica se aplica de forma uniforme a las capas writer-capable que
 comparten el mismo SQLite, incluyendo:
 
 - `historical_storage.py`
-- `player_event_storage.py`
 - `rcon_historical_storage.py`
 - `storage.py`
 
@@ -685,7 +675,6 @@ bruto. Esta capa esta preparada para guardar:
 - `server-summary`
 - `weekly-leaderboard` con metricas `kills`, `deaths`, `support` y `matches_over_100_kills`
 - `monthly-leaderboard` con las mismas metricas semanticas
-- `monthly-mvp`
 - `recent-matches`
 
 Por defecto se escriben bajo:
@@ -706,7 +695,6 @@ Ejemplos:
 - `backend/data/snapshots/comunidad-hispana-01/weekly-kills.json`
 - `backend/data/snapshots/comunidad-hispana-02/recent-matches.json`
 - `backend/data/snapshots/all-servers/weekly-support.json`
-- `backend/data/snapshots/all-servers/monthly-mvp.json`
 
 Cada archivo conserva metadatos operativos minimos:
 
@@ -1048,80 +1036,9 @@ La misma capa de snapshots guarda tambien `monthly-leaderboard` por servidor y
 por agregado `all-servers`, con archivos como `monthly-kills.json` y
 `monthly-support.json`.
 
-Tambien persiste `monthly-mvp.json` por servidor y para `all-servers`, listo
-para lectura rapida desde `/api/historical/monthly-mvp` y
-`/api/historical/snapshots/monthly-mvp` sin recalculo pesado en request.
-
-La misma operativa persiste tambien snapshots V2 de eventos de jugador para el
-ultimo mes con datos disponible por servidor y para `all-servers`, listos para
-lectura rapida sin consultas pesadas on-demand:
-
-- `player-events-most-killed.json`
-- `player-events-death-by.json`
-- `player-events-duels.json`
-- `player-events-weapon-kills.json`
-- `player-events-teamkills.json`
-
-Los endpoints `/api/historical/player-events` y
-`/api/historical/snapshots/player-events` aceptan:
-
-- `view=most-killed`
-- `view=death-by`
-- `view=duels`
-- `view=weapon-kills`
-- `view=teamkills`
-
-La respuesta expone metadata operativa alineada con el resto de snapshots:
-
-- `generated_at`
-- `month_key`
-- `source_range_start`
-- `source_range_end`
-- `found`
-- `is_stale`
-
-El backend incluye ademas el calculo interno de `monthly MVP V1` en
-`app/monthly_mvp.py`, separado de los leaderboards mensuales simples por
-metrica. Ese calculo:
-
-- usa solo `kills`, `support`, `time_seconds`, `deaths` y `teamkills`
-  persistidos
-- recompone `KPM` y `KDA` desde totales mensuales
-- aplica elegibilidad minima de `6` partidas cerradas y `6` horas
-- soporta servidor individual y el agregado logico `all-servers`
-
-En esta fase el ranking MVP queda listo para serializar en snapshots o payloads
-sin reemplazar los leaderboards mensuales ya existentes por `kills`, `deaths`,
-`support` y `matches_over_100_kills`.
-
-La repo incluye tambien un calculo backend separado de `monthly MVP V2` en
-`app/monthly_mvp_v2.py`, expuesto de momento por
-`/api/historical/monthly-mvp-v2`.
-
-Esta V2:
-
-- convive sin reemplazar `monthly MVP V1`
-- reusa la misma ventana mensual y la misma elegibilidad base
-- anade `rivalry_edge` y `duel_control` derivados del ledger V2 de eventos
-- aplica una penalizacion de teamkills mas estricta
-- mantiene fuera del score el peso por arma o tipo de kill hasta validar mejor
-  esas senales
-
-Esa capacidad V2 se persiste tambien en snapshots dedicados
-`monthly-mvp-v2.json` por servidor y para `all-servers`, leidos por:
-
-- `/api/historical/monthly-mvp-v2`
-- `/api/historical/snapshots/monthly-mvp-v2`
-
-La lectura HTTP de V2 sigue asi la misma politica de fast path de solo lectura
-que el resto de snapshots historicos, con metadata util como:
-
-- `generated_at`
-- `month_key`
-- `found`
-- `source_range_start`
-- `source_range_end`
-- `event_coverage`
+TASK-309 retiro los snapshots, builders y rutas exclusivos de MVP V1/V2 y
+player-events. Los artefactos antiguos que ya existan en disco no se borran en
+esta task y se consideran storage muerto pendiente de una limpieza controlada.
 
 ## Ingesta historica CRCON
 
@@ -1344,7 +1261,6 @@ de datos compartido. Ese lock coordina:
 
 - `app.historical_ingestion`
 - `app.historical_runner`
-- `app.player_event_worker`
 - `app.rcon_historical_worker`
 
 Rutas HTTP read-only como `/api/historical/snapshots/*`, `/api/servers` en modo
@@ -1382,12 +1298,6 @@ Runbook minimo:
 
   Si el lock esta ocupado, el comando esperara hasta el timeout configurado y,
   si no se libera, terminara con un mensaje claro de lock ocupado.
-
-- pasada manual de player-events:
-
-  ```powershell
-  docker compose exec backend python -m app.player_event_worker refresh --overlap-hours 48
-  ```
 
 - pasada manual de captura prospectiva RCON:
 
@@ -1458,104 +1368,12 @@ sin tocar endpoints ni payloads.
 
 Esta separacion mantiene el backend simple y deja una base clara para futuras tasks sin introducir integraciones reales todavia.
 
-## Fuente y ledger de eventos de jugador V2
+## Experimentos retirados
 
-La repo incluye ahora una primera base V2 separada del historico `historical_*`
-para preparar metricas avanzadas de duelos, armas y teamkills sin tocar todavia
-la UI ni el scoring final.
-
-Fuente minima elegida en esta fase:
-
-- detalle de partida `GET /api/get_map_scoreboard?map_id={id}` del scoreboard CRCON
-
-Importante:
-
-- esta fuente no es un feed raw por kill
-- el adaptador actual normaliza solo senales parciales ya visibles en el
-  resumen de partida:
-  - `most_killed`
-  - `death_by`
-  - `weapons`
-  - `death_by_weapons`
-  - `teamkills`
-- `occurred_at` usa el timestamp de cierre o inicio de la partida, no el
-  instante exacto del kill
-- el ledger raw es append-only y deduplica por `event_id`
-- la persistencia queda separada de `historical_matches` y
-  `historical_player_match_stats` aunque comparte el mismo SQLite de desarrollo
-
-Contrato minimo normalizado por evento:
-
-- `event_id`
-- `event_type`
-- `occurred_at`
-- `server_slug`
-- `external_match_id`
-- `source_kind`
-- `source_ref`
-- `killer_player_key`
-- `victim_player_key`
-- `weapon_name`
-- `kill_category`
-- `is_teamkill`
-- `event_value`
-
-Tablas nuevas:
-
-- `player_event_raw_ledger`
-- `player_event_ingestion_runs`
-- `player_event_backfill_progress`
-
-Comandos manuales desde `backend/`:
-
-```powershell
-python -m app.player_event_worker refresh
-python -m app.player_event_worker refresh --server comunidad-hispana-01 --max-pages 1
-python -m app.player_event_worker loop --interval 1800
-```
-
-Variables opcionales del worker:
-
-- `HLL_PLAYER_EVENT_REFRESH_INTERVAL_SECONDS`
-- `HLL_PLAYER_EVENT_REFRESH_OVERLAP_HOURS`
-- `HLL_PLAYER_EVENT_REFRESH_MAX_RETRIES`
-- `HLL_PLAYER_EVENT_REFRESH_RETRY_DELAY_SECONDS`
-
-Flags utiles del worker:
-
-- `--server comunidad-hispana-01` para validar un solo servidor
-- `--overlap-hours 48` para releer una ventana reciente mayor
-- `--max-pages 1` para una comprobacion acotada
-
-Ejemplos operativos:
-
-```powershell
-python -m app.player_event_worker refresh --overlap-hours 48
-python -m app.player_event_worker refresh --server comunidad-hispana-01 --overlap-hours 48 --max-pages 1
-```
-
-Politica operativa minima:
-
-- el worker corre fuera del request path HTTP
-- reusa la capa historica `public-scoreboard` solo como fuente de detalle
-- persiste checkpoints por servidor y pagina
-- la reejecucion es segura porque el ledger usa insercion idempotente por
-  `event_id`
-
-Agregados V2 ya disponibles desde codigo:
-
-- `list_most_killed()`
-- `list_death_by()`
-- `list_net_duel_summaries()`
-- `list_weapon_kills()`
-- `list_teamkill_summaries()`
-
-Limitaciones actuales de esta fase:
-
-- no existe todavia un ledger raw por kill individual
-- los agregados de duelos y armas son parciales, porque dependen del mejor
-  resumen disponible por jugador en CRCON y no de todos los encounters del match
-- la V2 no expone aun endpoints HTTP ni snapshots propios
+TASK-309 retiro de la aplicacion MVP V1/V2, player-events de compatibilidad y
+Elo/MMR: rutas, payloads, calculos, workers exclusivos, configuracion y frontend.
+No se ejecuto ninguna eliminacion de tablas, filas, migraciones o snapshots ya
+persistidos. Esos restos son storage muerto pendiente de una task posterior.
 
 ## Historical Runtime Policy
 
@@ -1600,13 +1418,9 @@ Estado real a fecha de esta fase:
   `fallback_reason` visible
 - `historical_ingestion` intenta primero una captura writer-oriented por RCON y
   deja esa tentativa visible en su salida
-- leaderboards semanales/mensuales, MVP V1/V2 y player-events siguen teniendo
-  fallback a `public-scoreboard` mientras RCON no disponga de señal competitiva
-  por jugador con paridad suficiente
-- Elo/MMR permanece pausado y desacoplado del arranque del backend; cuando se
-  reactive mediante una task explicita, debera respetar el contexto
-  RCON-backed primario y usar `public-scoreboard` solo como suplemento/fallback
-  para estadisticas por jugador sin paridad RCON
+- los leaderboards semanales/mensuales supervivientes mantienen el fallback
+  documentado; MVP, player-events de compatibilidad y Elo/MMR ya no tienen ruta
+  publica ni writer de aplicacion
 
 ## PostgreSQL Phase 2 Displayed Data Migration
 
@@ -1634,55 +1448,15 @@ Paridad minima a revisar en `tools.storage_diagnostics`:
 - `admin_log_events`, `materialized_matches`, `player_stats`
 - `public_scoreboard_historical_matches`
 - fuentes de rankings semanales y mensuales
-- `server_summary_cache`, `server_snapshots`, `player_event_ledger`
+- `server_summary_cache`, `server_snapshots`
 - `scoreboard_candidates`
 - ultimas partidas materializadas y ultimos eventos AdminLog `match_end`
 
 Fuera de phase 2 quedan checkpoints/runs de ingesta publica que no se muestran
-en frontend y Elo/MMR pausado. Si un endpoint de mantenimiento recibe un
-`db_path` explicito, sigue trabajando contra SQLite para migracion, tests o
-compatibilidad operativa controlada.
-
-## Elo/MMR Monthly Ranking
-
-Se añade una primera base operativa inspirada en el documento
-`sistema_elo_mensual_hll.pdf`, pero adaptada a la telemetria real disponible.
-
-Superficies nuevas:
-
-- `python -m app.elo_mmr_engine rebuild`
-- `python -m app.elo_mmr_engine leaderboard --server all-servers --limit 10`
-- `python -m app.elo_mmr_engine player --server all-servers --player <stable_player_key>`
-- `/api/historical/elo-mmr/leaderboard`
-- `/api/historical/elo-mmr/player`
-
-Persistencia nueva en SQLite:
-
-- `elo_mmr_player_ratings`
-- `elo_mmr_match_results`
-- `elo_mmr_monthly_rankings`
-- `elo_mmr_monthly_checkpoints`
-
-Politica de exactitud:
-
-- `exact`: outcome, combat, utility, disciplina por teamkills, MMR persistente
-- `approximate`: role bucket, objective index, strength of schedule
-- `not_available`: leadership y tacticas finas no persistidas
-
-Cuando `historical_data_source=rcon`, el motor Elo/MMR deja visible una
-frontera hibrida y honesta:
-
-- `primary_source = rcon`
-- `selected_source = hybrid-rcon-competitive-plus-public-scoreboard`
-- `fallback_used = true`
-
-Eso significa que la capa RCON-backed ya aporta el contexto competitivo de
-cobertura y calidad de match, pero las estadisticas competitivas por jugador
-siguen necesitando el suplemento clasico hasta que RCON tenga esa granularidad.
-
-La especificacion detallada y el mapa de capabilities quedan en:
-
-- `docs/elo-mmr-monthly-ranking-design.md`
+en frontend. Los restos persistidos de los experimentos retirados se conservan
+sin lectores ni writers de producto hasta una limpieza de storage separada. Si
+un endpoint de mantenimiento recibe un `db_path` explicito, sigue trabajando
+contra SQLite para migracion, tests o compatibilidad operativa controlada.
 
 ## Alcance
 

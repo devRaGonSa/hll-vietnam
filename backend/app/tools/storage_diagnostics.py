@@ -54,7 +54,7 @@ def build_storage_diagnostics() -> dict[str, object]:
             "monthly-rankings",
             "displayed-historical-snapshots",
             "server-summary-and-live-server-cache",
-            "player-event-ledger",
+            "deferred-dead-player-event-storage",
         ],
         "table_counts": {
             **rcon_counts,
@@ -88,15 +88,22 @@ def build_storage_diagnostics() -> dict[str, object]:
                 "planned_phase": "phase-3-or-when-scoreboard-import-runs-on-postgresql",
             },
             {
-                "domain": "Elo/MMR tables",
+                "domain": "removed Elo/MMR table data",
                 "displayed_in_frontend": False,
-                "reason": "Elo/MMR remains paused and hidden from visible pages",
-                "planned_phase": "phase-3",
+                "reason": "application readers and writers were removed; table/data deletion is deferred",
+                "planned_phase": "controlled-dead-storage-cleanup",
+            },
+            {
+                "domain": "removed player-event table data",
+                "displayed_in_frontend": False,
+                "reason": "application readers and writer were removed; table/data deletion is deferred",
+                "planned_phase": "controlled-dead-storage-cleanup",
             },
         ],
         "sqlite_remaining": [
             "public-scoreboard ingestion run and backfill checkpoints",
-            "paused Elo/MMR tables",
+            "removed Elo/MMR table data",
+            "removed player-event table data",
         ],
         "scoreboard_correlation": "PostgreSQL safe candidates and migrated trusted historical match URLs are used.",
         "external_player_ids": _postgres_external_player_id_diagnostics()

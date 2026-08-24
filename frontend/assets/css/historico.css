@@ -350,22 +350,8 @@
   gap: 14px;
 }
 
-.historical-mvp-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(min(100%, 240px), 1fr));
-  gap: 14px;
-}
-
-.historical-elo-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(min(100%, 260px), 1fr));
-  gap: 14px;
-}
-
 .historical-stat-card,
-.historical-match-card,
-.historical-mvp-card,
-.historical-elo-card {
+.historical-match-card {
   position: relative;
   overflow: hidden;
   padding: 18px;
@@ -379,13 +365,7 @@
 .historical-stat-card p,
 .historical-stat-card strong,
 .historical-match-card p,
-.historical-match-card strong,
-.historical-mvp-card p,
-.historical-mvp-card strong,
-.historical-mvp-card span,
-.historical-elo-card p,
-.historical-elo-card strong,
-.historical-elo-card span {
+.historical-match-card strong {
   margin: 0;
 }
 
@@ -401,222 +381,6 @@
 .historical-stat-card strong {
   font-size: 1.05rem;
   line-height: 1.4;
-}
-
-.historical-mvp-card {
-  display: grid;
-  gap: 16px;
-}
-
-.historical-mvp-card--v2 {
-  border-color: rgba(187, 143, 72, 0.26);
-  background:
-    radial-gradient(circle at top right, rgba(187, 143, 72, 0.12), transparent 40%),
-    linear-gradient(180deg, rgba(31, 27, 18, 0.96), rgba(12, 15, 11, 0.98));
-}
-
-.historical-mvp-card--rank-1 {
-  border-color: rgba(210, 182, 118, 0.34);
-  background:
-    radial-gradient(circle at top right, rgba(210, 182, 118, 0.16), transparent 42%),
-    linear-gradient(180deg, rgba(36, 32, 20, 0.96), rgba(12, 15, 11, 0.98));
-}
-
-.historical-mvp-card__top {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 12px;
-}
-
-.historical-mvp-card__rank {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  min-width: 42px;
-  min-height: 42px;
-  padding: 0 12px;
-  border: 1px solid rgba(210, 182, 118, 0.26);
-  border-radius: 999px;
-  color: var(--accent-warm);
-  font-size: 0.76rem;
-  font-weight: 800;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-}
-
-.historical-mvp-card__player {
-  font-size: 1.18rem;
-  line-height: 1.3;
-}
-
-.historical-mvp-card__version {
-  display: inline-flex;
-  align-items: center;
-  min-height: 28px;
-  padding: 0 10px;
-  border: 1px solid rgba(187, 143, 72, 0.28);
-  border-radius: 999px;
-  color: var(--accent-warm);
-  font-size: 0.68rem;
-  font-weight: 800;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-}
-
-.historical-mvp-card__score-label {
-  margin-bottom: 6px;
-  color: var(--muted);
-  font-size: 0.72rem;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-}
-
-.historical-mvp-card__score-value {
-  color: var(--accent-strong);
-  font-size: 1.8rem;
-  line-height: 1;
-}
-
-.historical-mvp-card__meta {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 12px;
-}
-
-.historical-mvp-card__meta span {
-  display: block;
-  margin-bottom: 6px;
-  color: var(--muted);
-  font-size: 0.7rem;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-}
-
-.historical-mvp-card__footer {
-  padding-top: 12px;
-  border-top: 1px solid rgba(159, 168, 141, 0.12);
-  color: var(--text-soft);
-  font-size: 0.88rem;
-  line-height: 1.5;
-}
-
-.historical-mvp-card__signals {
-  display: grid;
-  gap: 10px;
-}
-
-.historical-elo-card {
-  display: grid;
-  gap: 16px;
-  border-color: rgba(96, 150, 124, 0.24);
-  background:
-    radial-gradient(circle at top right, rgba(96, 150, 124, 0.12), transparent 40%),
-    linear-gradient(180deg, rgba(21, 32, 27, 0.96), rgba(12, 15, 11, 0.98));
-}
-
-.historical-elo-card__top {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 12px;
-}
-
-.historical-elo-card__rank {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  min-width: 42px;
-  min-height: 42px;
-  padding: 0 12px;
-  border: 1px solid rgba(96, 150, 124, 0.28);
-  border-radius: 999px;
-  color: #a8d4bf;
-  font-size: 0.76rem;
-  font-weight: 800;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-}
-
-.historical-elo-card__accuracy {
-  display: inline-flex;
-  align-items: center;
-  min-height: 28px;
-  padding: 0 10px;
-  border: 1px solid rgba(96, 150, 124, 0.24);
-  border-radius: 999px;
-  color: #a8d4bf;
-  font-size: 0.68rem;
-  font-weight: 800;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-}
-
-.historical-elo-card__meta,
-.historical-elo-card__scores {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 10px;
-}
-
-.historical-elo-card__meta article,
-.historical-elo-card__scores article {
-  padding: 10px 12px;
-  border: 1px solid rgba(96, 150, 124, 0.14);
-  border-radius: 14px;
-  background: rgba(13, 17, 12, 0.42);
-}
-
-.historical-elo-card__meta span,
-.historical-elo-card__scores span {
-  display: block;
-  margin-bottom: 6px;
-  color: var(--muted);
-  font-size: 0.7rem;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-}
-
-.historical-elo-card__summary {
-  color: var(--text-soft);
-  font-size: 0.9rem;
-  line-height: 1.5;
-}
-
-.historical-elo-card__footer {
-  padding-top: 12px;
-  border-top: 1px solid rgba(159, 168, 141, 0.12);
-  color: var(--text-soft);
-  font-size: 0.88rem;
-  line-height: 1.5;
-}
-
-.historical-mvp-card__signal-summary {
-  color: var(--text-soft);
-  font-size: 0.9rem;
-  line-height: 1.5;
-}
-
-.historical-mvp-card__signal-grid {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 10px;
-}
-
-.historical-mvp-card__signal-grid article {
-  padding: 10px 12px;
-  border: 1px solid rgba(187, 143, 72, 0.14);
-  border-radius: 14px;
-  background: rgba(13, 17, 12, 0.42);
-}
-
-.historical-mvp-card__signal-grid span {
-  display: block;
-  margin-bottom: 6px;
-  color: var(--muted);
-  font-size: 0.68rem;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
 }
 
 .historical-state {
@@ -1046,81 +810,6 @@
   }
 }
 
-.historical-comparison-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(min(100%, 260px), 1fr));
-  gap: 14px;
-}
-
-.historical-comparison-card {
-  display: grid;
-  gap: 14px;
-  padding: 18px;
-  border: 1px solid rgba(159, 168, 141, 0.16);
-  border-radius: 18px;
-  background:
-    radial-gradient(circle at top right, rgba(183, 201, 125, 0.1), transparent 42%),
-    linear-gradient(180deg, rgba(28, 34, 25, 0.94), rgba(12, 15, 11, 0.98));
-  box-shadow: var(--shadow-soft);
-}
-
-.historical-comparison-card__top,
-.historical-comparison-card__scores {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 12px;
-}
-
-.historical-comparison-card__eyebrow,
-.historical-comparison-card__delta-label,
-.historical-comparison-card__meta span {
-  margin: 0 0 6px;
-  color: var(--muted);
-  font-size: 0.7rem;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-}
-
-.historical-comparison-card__title {
-  margin: 0;
-  font-size: 1.08rem;
-  line-height: 1.35;
-}
-
-.historical-comparison-card__delta-value {
-  color: var(--accent-strong);
-  font-size: 1.35rem;
-  line-height: 1;
-}
-
-.historical-comparison-card__score-block strong {
-  display: block;
-  font-size: 1rem;
-}
-
-.historical-comparison-card__meta {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 10px;
-}
-
-.historical-comparison-card__meta article {
-  padding: 10px 12px;
-  border: 1px solid rgba(159, 168, 141, 0.14);
-  border-radius: 14px;
-  background: rgba(13, 17, 12, 0.42);
-}
-
-.historical-comparison-card__summary {
-  margin: 0;
-  padding-top: 12px;
-  border-top: 1px solid rgba(159, 168, 141, 0.12);
-  color: var(--text-soft);
-  font-size: 0.9rem;
-  line-height: 1.5;
-}
-
 .historical-match-card {
   display: grid;
   gap: 14px;
@@ -1232,30 +921,9 @@
     flex-direction: column;
   }
 
-  .historical-mvp-card__top {
-    flex-direction: column;
-  }
-
   .current-match-player-intro {
     align-items: flex-start;
     flex-direction: column;
-  }
-
-  .historical-mvp-card__meta {
-    grid-template-columns: 1fr;
-  }
-
-  .historical-mvp-card__signal-grid {
-    grid-template-columns: 1fr;
-  }
-
-  .historical-comparison-card__top,
-  .historical-comparison-card__scores {
-    flex-direction: column;
-  }
-
-  .historical-comparison-card__meta {
-    grid-template-columns: 1fr;
   }
 
   .historical-match-card__actions {

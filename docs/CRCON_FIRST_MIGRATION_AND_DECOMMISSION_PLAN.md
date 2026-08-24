@@ -1,5 +1,10 @@
 # CRCON-first migration and decommission plan
 
+> TASK-309 update (2026-08-24): MVP V1/V2, player-event compatibility and
+> Elo/MMR application slices are removed. The affected matrix rows below are
+> retained as migration history; they no longer represent deferred product
+> work. Existing table data and snapshot artifacts were not deleted.
+
 ## 1. Migration principles
 
 Use an endpoint-by-endpoint strangler. For each capability: add a CRCON adapter and pinned local fixtures; implement the new domain mapping behind a switch; compare legacy/new results; switch one endpoint; validate its actual frontend consumer; retain rollback; and delete legacy paths only after all dependants have accepted parity.
@@ -30,14 +35,14 @@ All endpoints are GET. Compatibility means the existing HLL response stays stabl
 | `/api/historical/leaderboard` | common ranking query | weekly/monthly supported metrics | DEPRECATE |
 | `/api/historical/weekly-leaderboard` | common ranking query | response golden | DEPRECATE |
 | `/api/historical/monthly-leaderboard` | common ranking query | response golden | DEPRECATE |
-| `/api/historical/monthly-mvp` | no automatic replacement | product/formula decision | DEPRECATE/REMOVE |
-| `/api/historical/monthly-mvp-v2` | bounded CRCON stats if retained | approved formula and fixture parity | DEFER |
-| `/api/historical/player-events` | bounded CRCON logs | weapon/teamkill/duel semantics and privacy acceptance | REWRITE or REMOVE per view |
+| `/api/historical/monthly-mvp` | none | TASK-309 removal approval | REMOVED |
+| `/api/historical/monthly-mvp-v2` | none | TASK-309 removal approval | REMOVED |
+| `/api/historical/player-events` | none | TASK-309 removal approval | REMOVED |
 | `/api/historical/snapshots/leaderboard` | same common ranking service | `historico.js` validation | REWRITE compatibility alias |
 | `/api/historical/snapshots/monthly-leaderboard` | common ranking service | no remaining consumer | DEPRECATE |
-| `/api/historical/snapshots/monthly-mvp` | follow MVP decision | no remaining consumer | DEPRECATE/REMOVE |
-| `/api/historical/snapshots/monthly-mvp-v2` | follow MVP-v2 decision | approved product need | DEFER |
-| `/api/historical/snapshots/player-events` | same event query if retained | no remaining consumer | DEPRECATE |
+| `/api/historical/snapshots/monthly-mvp` | none | TASK-309 removal approval | REMOVED |
+| `/api/historical/snapshots/monthly-mvp-v2` | none | TASK-309 removal approval | REMOVED |
+| `/api/historical/snapshots/player-events` | none | TASK-309 removal approval | REMOVED |
 | `/api/historical/snapshots/weekly-leaderboard` | common ranking service | no remaining consumer | DEPRECATE |
 | `/api/historical/recent-matches` | CRCON `get_scoreboard_maps` | pagination/order/map identity parity | REWRITE |
 | `/api/historical/snapshots/recent-matches` | same history service | both history loaders validated and consolidated | REWRITE alias, later deprecate |
@@ -45,10 +50,11 @@ All endpoints are GET. Compatibility means the existing HLL response stays stabl
 | `/api/historical/server-summary` | CRCON maps/counts | totals and date semantics accepted | REWRITE |
 | `/api/historical/snapshots/server-summary` | same summary service | `historico.js` validated | REWRITE alias, later deprecate |
 | `/api/historical/player-profile` | common stats profile service | no remaining consumer and contract mapping | DEPRECATE in favor of `/api/stats/players/{id}` |
-| `/api/historical/elo-mmr/leaderboard` | none verified | explicit product reapproval required | REMOVE/DEFER |
-| `/api/historical/elo-mmr/player` | none verified | explicit product reapproval required | REMOVE/DEFER |
+| `/api/historical/elo-mmr/leaderboard` | none | TASK-309 removal approval | REMOVED |
+| `/api/historical/elo-mmr/player` | none | TASK-309 removal approval | REMOVED |
 
-No route is deleted until repository search and access telemetry (when available during deployment handoff) confirm no consumer.
+The TASK-309 product routes were deleted after repository consumer and dynamic
+reachability searches found no surviving caller. No deployment was performed.
 
 ## 3. Module KEEP/REWRITE/DELETE matrix
 
@@ -202,7 +208,7 @@ The implementation handoff must provide:
 - retention/export decision for HLL PostgreSQL, SQLite/snapshot files and named volumes;
 - smoke/parity checklist for all 36 endpoint surfaces and 16 explicit frontend
   HTTP call sites (14 endpoint patterns);
-- explicit decisions for MVP, event/duel views, Elo/MMR, queue display and optional direct RCON; and
+- the resolved TASK-309 removal decision plus remaining queue-display and optional direct-RCON decisions; and
 - approval that old workers, database service and volumes may be stopped/removed in separate changes.
 
 TASK-289 performed architecture research only: no SSH, Portainer, production access, database connection, deployment, runtime configuration or product-code mutation occurred. Integration tests are not applicable to these documentation and lifecycle-only changes.

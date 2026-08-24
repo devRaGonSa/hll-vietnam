@@ -603,35 +603,6 @@ def list_rcon_historical_competitive_windows(
     return items
 
 
-def count_rcon_historical_samples_since(
-    since: str | None,
-    *,
-    db_path: Path | None = None,
-) -> int:
-    """Return how many RCON samples were captured after one timestamp."""
-    if use_postgres_rcon_storage(explicit_sqlite_path=db_path):
-        from .postgres_rcon_storage import count_samples_since
-
-        return count_samples_since(since)
-
-    if not since:
-        return 0
-    resolved_path = _resolve_db_path(db_path)
-    try:
-        with _connect_readonly(resolved_path) as connection:
-            row = connection.execute(
-                """
-                SELECT COUNT(*) AS sample_count
-                FROM rcon_historical_samples
-                WHERE captured_at > ?
-                """,
-                (since,),
-            ).fetchone()
-    except sqlite3.OperationalError:
-        return 0
-    return int(row["sample_count"] or 0) if row else 0
-
-
 def list_rcon_historical_competitive_summary_rows(
     *,
     target_key: str | None = None,

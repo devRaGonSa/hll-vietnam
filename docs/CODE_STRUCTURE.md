@@ -1,9 +1,9 @@
 # HLL Vietnam code structure
 
-Audit date: 2026-08-23. TASK-304 established the primary packages, TASK-305
+Audit date: 2026-08-24. TASK-304 established the primary packages, TASK-305
 split the API payload facade and TASK-306 split route dispatch by public
-domain. Public URLs, payload contracts, source selectors and runtime behavior
-remain unchanged.
+domain. TASK-309 removed the approved MVP, player-event compatibility and
+Elo/MMR experiments without changing surviving source selectors or rollback.
 
 ## Dependency direction
 
@@ -70,9 +70,9 @@ That is evidence for later extraction, not permission to relabel it as dead.
 | `a2s_client.py`, `collector.py`, `scheduler.py`, `data_sources.py` | LEGACY / WORKER | active snapshot-history and rollback paths; retain |
 | `storage.py`, `postgres_display_storage.py` | STORAGE / LEGACY | active snapshot-history and rollback paths; retain |
 | `historical_models.py` | DOMAIN / LEGACY | retain rollback model |
-| `historical_storage.py`, `historical_snapshot_storage.py` | STORAGE / LEGACY | rollback plus product dependencies; retain |
+| `historical_storage.py`, `historical_snapshot_storage.py` | STORAGE / LEGACY | product-feature readers removed; retain rollback snapshots |
 | `historical_ingestion.py`, `historical_runner.py` | WORKER / LEGACY | dynamic entrypoints; retain |
-| `historical_snapshots.py` | SERVICE / LEGACY / PRODUCT_FEATURE | mixed rollback/MVP/player-event builder; retain |
+| `historical_snapshots.py` | SERVICE / LEGACY | MVP/player-event builders removed; retain normal rollback snapshots |
 | `database_maintenance.py` | INFRASTRUCTURE / TOOL | dynamic entrypoint and runner dependency; retain |
 | `postgres_rcon_storage.py`, `rcon_admin_log_storage.py`, `rcon_historical_storage.py` | STORAGE / LEGACY | active rollback writers; retain |
 | `rcon_client.py`, `rcon_admin_log_parser.py`, `rcon_scoreboard_correlation.py`, `rcon_historical_read_model.py` | LEGACY | rollback implementation; retain |
@@ -82,12 +82,11 @@ That is evidence for later extraction, not permission to relabel it as dead.
 | `rcon_historical_leaderboards.py`, `rcon_historical_player_stats.py`, `rcon_annual_rankings.py` | SERVICE / LEGACY | rollback read models and jobs; retain |
 | `rcon_scoreboard_relink.py`, `scoreboard_correlation_diagnostics.py` | TOOL / LEGACY | move to `tools/`; update documented entrypoints |
 | `observe_current_match_parity.py`, `storage_diagnostics.py`, `sqlite_to_postgres_migration.py` | TOOL | parity observer retained in place; move other commands to `tools/` |
-| `elo_mmr_engine.py`, `elo_mmr_models.py`, `elo_mmr_storage.py` | PRODUCT_FEATURE / STORAGE | product decision required; do not move to legacy |
-| `monthly_mvp.py`, `monthly_mvp_v2.py` | PRODUCT_FEATURE | active routes; product decision required |
-| `player_event_models.py`, `player_event_source.py`, `player_event_aggregates.py` | PRODUCT_FEATURE / DOMAIN | product decision required |
-| `player_event_storage.py` | PRODUCT_FEATURE / STORAGE | product decision required |
-| `player_event_worker.py` | PRODUCT_FEATURE / WORKER | dynamic entrypoint; product decision required |
-| `providers/player_event_source_provider.py` | PRODUCT_FEATURE / SERVICE | product decision required |
+| `elo_mmr_engine.py`, `elo_mmr_models.py`, `elo_mmr_storage.py` | REMOVED PRODUCT_FEATURE | removed in TASK-309; stored table data untouched |
+| `monthly_mvp.py`, `monthly_mvp_v2.py` | REMOVED PRODUCT_FEATURE | removed in TASK-309 |
+| `player_event_models.py`, `player_event_source.py`, `player_event_aggregates.py` | REMOVED PRODUCT_FEATURE | removed in TASK-309 |
+| `player_event_storage.py`, `player_event_worker.py` | REMOVED PRODUCT_FEATURE | reader/writer code removed; stored table data untouched |
+| `providers/player_event_source_provider.py` | REMOVED PRODUCT_FEATURE | removed in TASK-309 |
 | `providers/public_scoreboard_provider.py`, `providers/rcon_provider.py` | LEGACY / SERVICE | rollback provider adapters; retain |
 | `player_external_profiles.py` | SERVICE | retained shared compatibility mapper |
 
@@ -108,7 +107,6 @@ backend/app/
       current_match.py    # four current-match transports
       history.py          # recent/detail/legacy summary routes
       players.py          # exact search before dynamic opaque player ID
-      product_features.py # MVP/player-event/Elo routes pending decisions
       rankings.py         # ranking/leaderboard/aggregate routes
       servers.py          # exact server routes before dynamic history
       static.py           # health and static community routes
@@ -118,7 +116,6 @@ backend/app/
       current_match.py    # CRCON/legacy/shadow current-match contracts
       history.py          # recent match/detail/summary contracts
       players.py          # player search/profile contracts
-      product_features.py # MVP/player-event/Elo contracts pending decisions
       rankings.py         # ranking/leaderboard/aggregate contracts
       servers.py          # CRCON/legacy server-card and snapshot contracts
       static.py           # health/community/trailer/Discord/error contracts
@@ -146,14 +143,14 @@ backend/app/
     scoreboard_relink.py
     sqlite_to_postgres_migration.py
     storage_diagnostics.py
-  providers/
+  providers/              # surviving rollback provider adapters
   legacy/product/storage/worker modules (still flat; see rationale below)
 ```
 
 The refactor intentionally stops before mechanically moving every RCON,
 historical, storage and worker module into `legacy/`. The TASK-303 ledger shows
-that those modules are interconnected with active snapshot-history routes,
-rollback selectors and undecided product features. A mass rename would make
+that those modules are interconnected with active snapshot-history routes and
+rollback selectors. A mass rename would make
 the tree look cleaner while obscuring those mixed ownership boundaries.
 
 ## API and frontend contracts
@@ -161,11 +158,11 @@ the tree look cleaner while obscuring those mixed ownership boundaries.
 The former 584-line `api/routes.py` is now a routes package with no SQL, CRCON
 parsing or historical reconstruction. `routes/__init__.py` retains the stable
 `resolve_get_payload(path)` import and dispatches through an explicit immutable
-registry in this order: static, servers, current match, players, rankings,
-history and product features. `main.py`, scripts and external callers therefore
+registry in this order: static, servers, current match, players, rankings and
+history. `main.py`, scripts and external callers therefore
 need no import change or domain knowledge.
 
-All 37 existing URLs remain unchanged. Each router uses the same
+The 29 surviving URLs remain unchanged. Each router uses the same
 `(HTTPStatus | None, payload)` result contract and imports its canonical TASK-305
 payload domain directly. Exact player search precedes the dynamic opaque
 player-ID route, and exact server history precedes per-server dynamic history.
@@ -180,14 +177,14 @@ through the 98-line `payloads/__init__.py` compatibility surface.
 TASK-305 replaced the 2,904-line `api/payloads.py` monolith with domain modules.
 `current_match.py` depends one-way on the legacy server-card helper;
 `history.py` depends one-way on the ranking server-summary contract; and both
-history/ranking/product modules share only the focused `common.py` snapshot
+history/ranking modules share only the focused `common.py` snapshot
 metadata helpers. No reverse dependency or circular import is present.
 
 Legacy fallback helpers remain private and visibly named in the public domain
 that selects them. A separate `legacy.py` was rejected because it would split
 each selector from its paired public contract and introduce avoidable cross-
-module coupling. Undecided MVP, player-event and Elo routes are isolated in
-`product_features.py` and remain `PRODUCT_DECISION_REQUIRED`.
+module coupling. TASK-309 deleted the now-empty `product_features.py` route and
+payload modules and removed their compatibility exports.
 
 `api/serializers.py` remains a cohesive 107-line module for pure timestamps,
 opaque server IDs, ranking values and source display. Splitting it would create
@@ -213,8 +210,6 @@ moving all scripts would change every HTML import for little backend benefit.
   transport/schema behavior in `crcon/`.
 - Keep one-off diagnostics as explicit documented module entrypoints.
 - Do not add new application-owned persistence for CRCON-first readers.
-- Do not place MVP, player-events or Elo/MMR under `legacy/` until a product
-  decision defines their final source and state requirements.
 
 ## Remaining dependency violations and follow-ups
 
@@ -244,10 +239,10 @@ requests, scheduler/worker calls, every Compose variant, scripts, documented
 | Three private payload helpers (`_leaderboard_snapshot_items_need_playtime_enrichment`, `_load_runtime_leaderboard_items`, `_is_snapshot_stale`) | `SAFE_DELETE` | no production, route, frontend, worker, dynamic-entrypoint or documentation caller after extraction; the runtime leaderboard loader was referenced only by a test asserting it was not called; removed in TASK-305 |
 | Monolith-only `GET_ROUTES` mixed static/server table | `SAFE_DELETE` | internal to the replaced dispatcher, with no external import/reference; static routes and `/api/servers` now have explicit domain ownership and the 37-route matrix proves one owner each |
 | A2S/collector/snapshot stack | `LEGACY_ROLLBACK_REQUIRED` | `/api/servers` legacy selector and explicit latest/history routes still read it |
-| historical/RCON materializers and stores | `MIGRATED_BUT_ROLLBACK_ONLY` plus mixed product dependencies | immediate selectors and active derived features still require them; retained |
+| historical/RCON materializers and stores | `MIGRATED_BUT_ROLLBACK_ONLY` | immediate selectors still require them; removed experiments no longer do |
 | parity observer | `DYNAMIC_ENTRYPOINT` | bounded documented tool retained at `app.observe_current_match_parity`; no waiting or behavioral change performed |
-| MVP, player-event and Elo/MMR backend modules | `PRODUCT_DECISION_REQUIRED` | active routes and application state exist; no approved final CRCON source; retained |
-| unused MVP/Elo renderer helpers and CSS in `historico.js`/`historico.css` | `PRODUCT_DECISION_REQUIRED` | no active fetch/DOM surface found, but paired backend feature disposition is undecided; retained |
+| MVP, player-event and Elo/MMR backend modules | `SAFE_DELETE` | product approved removal; no surviving frontend, route, deployment, rollback or dynamic consumer; removed |
+| unused MVP/Elo renderer helpers and CSS in `historico.js`/`historico.css` | `SAFE_DELETE` | no active fetch/DOM surface; removed with the approved backend slices |
 | all other no-incoming-import CLI modules | `DYNAMIC_ENTRYPOINT` or `UNKNOWN` only after command review | documented/Compose commands were found; none deleted |
 
 ## Configuration audit
@@ -260,8 +255,7 @@ cross-checked. No application variable is proven `UNUSED`.
 - `LEGACY_ROLLBACK`: A2S/live-source, SQLite/storage/lock, classic historical
   ingestion, RCON capture/AdminLog, ranking snapshot, maintenance and retention
   settings.
-- `PRODUCT_DECISION_REQUIRED`: player-event, Elo/MMR and related public refresh
-  cadence settings.
+- Removed in TASK-309: exclusive player-event and Elo/MMR cadence settings.
 - `DEPRECATED`: JTA Compose accepts
   `HLL_BACKEND_RCON_HISTORICAL_INTERVAL_SECONDS` only as an outer substitution
   alias for canonical `HLL_RCON_HISTORICAL_CAPTURE_INTERVAL_SECONDS`. Do not

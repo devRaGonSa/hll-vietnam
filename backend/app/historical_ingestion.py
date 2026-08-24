@@ -20,7 +20,6 @@ from .data_sources import (
     build_historical_runtime_source_policy,
     resolve_historical_ingestion_data_source,
 )
-from .elo_mmr_engine import rebuild_elo_mmr_models
 from .historical_snapshots import generate_and_persist_historical_snapshots
 from .historical_storage import (
     finalize_backfill_progress,
@@ -230,16 +229,11 @@ def _run_ingestion(
                 active_runs.pop(str(server["slug"]), None)
         if rebuild_snapshots:
             snapshot_result = generate_and_persist_historical_snapshots(server_key=server_slug)
-            elo_mmr_result = rebuild_elo_mmr_models()
         else:
             snapshot_result = {
                 "status": "skipped",
                 "reason": "snapshot-rebuild-disabled",
                 "generation_policy": "handled-by-caller",
-            }
-            elo_mmr_result = {
-                "status": "skipped",
-                "reason": "snapshot-rebuild-disabled",
             }
     except Exception as exc:
         for active_server_slug, run_id in active_runs.items():
@@ -276,7 +270,6 @@ def _run_ingestion(
         "servers": processed_servers,
         "coverage": list_historical_coverage_report(server_slug=server_slug),
         "snapshot_result": snapshot_result,
-        "elo_mmr_result": elo_mmr_result,
         "totals": {
             "pages_processed": stats.pages_processed,
             "matches_seen": stats.matches_seen,

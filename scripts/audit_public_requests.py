@@ -32,7 +32,6 @@ RANKING_METRICS = (
 RANKING_SCOPES = ("all", "comunidad-hispana-01", "comunidad-hispana-02")
 HISTORICAL_SCOPES = ("all-servers", "comunidad-hispana-01", "comunidad-hispana-02")
 HISTORICAL_LEGACY_METRICS = ("kills", "deaths", "support", "matches_over_100_kills")
-PLAYER_EVENT_VIEWS = ("most-killed", "death-by", "duels", "weapon-kills", "teamkills")
 
 
 @dataclass(frozen=True)
@@ -312,43 +311,6 @@ def build_probe_specs() -> list[ProbeSpec]:
             context="historico.html",
             parameters="server, metric=kills, limit=10",
         )
-        add(
-            f"monthly-mvp-{server}",
-            f"/api/historical/monthly-mvp?server={server}&limit=10",
-            context="historical public API",
-            parameters="server, limit=10",
-        )
-        add(
-            f"monthly-mvp-v2-{server}",
-            f"/api/historical/monthly-mvp-v2?server={server}&limit=10",
-            context="historical public API",
-            parameters="server, limit=10",
-        )
-        add(
-            f"snapshot-monthly-mvp-{server}",
-            f"/api/historical/snapshots/monthly-mvp?server={server}&limit=10",
-            context="historical snapshots",
-            parameters="server, limit=10",
-        )
-        add(
-            f"snapshot-monthly-mvp-v2-{server}",
-            f"/api/historical/snapshots/monthly-mvp-v2?server={server}&limit=10",
-            context="historical snapshots",
-            parameters="server, limit=10",
-        )
-        for view in PLAYER_EVENT_VIEWS:
-            add(
-                f"player-events-{server}-{view}",
-                f"/api/historical/player-events?server={server}&view={view}&limit=10",
-                context="historical public API",
-                parameters="server, view, limit=10",
-            )
-            add(
-                f"snapshot-player-events-{server}-{view}",
-                f"/api/historical/snapshots/player-events?server={server}&view={view}&limit=10",
-                context="historical snapshots",
-                parameters="server, view, limit=10",
-            )
 
     add(
         "historical-match-detail-known",
@@ -361,12 +323,6 @@ def build_probe_specs() -> list[ProbeSpec]:
         parameters="server, match",
     )
 
-    add(
-        "elo-mmr-leaderboard-paused",
-        "/api/historical/elo-mmr/leaderboard?server=all-servers&limit=10",
-        context="paused public API",
-        parameters="server, limit=10",
-    )
     return specs
 
 
@@ -396,14 +352,6 @@ def build_player_dependent_specs(player_id: str) -> list[ProbeSpec]:
             method="GET",
             path=f"/api/historical/player-profile?player={quoted_player}",
             parameters="player from search",
-        ),
-        ProbeSpec(
-            id="elo-mmr-player-paused",
-            kind="backend-api",
-            context="paused public API",
-            method="GET",
-            path=f"/api/historical/elo-mmr/player?server=all-servers&player={quoted_player}",
-            parameters="player from search, server=all-servers",
         ),
     ]
 

@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -14,45 +13,21 @@ from .historical_storage import (
     list_historical_server_summaries,
     list_historical_servers,
     list_monthly_leaderboard,
-    list_monthly_mvp_ranking,
-    list_monthly_mvp_v2_ranking,
     list_recent_historical_matches,
     list_weekly_leaderboard,
 )
-from .player_event_aggregates import (
-    list_death_by,
-    list_most_killed,
-    list_net_duel_summaries,
-    list_teamkill_summaries,
-    list_weapon_kills,
-)
-from .player_event_storage import initialize_player_event_storage
 
 SNAPSHOT_TYPE_SERVER_SUMMARY = "server-summary"
 SNAPSHOT_TYPE_WEEKLY_LEADERBOARD = "weekly-leaderboard"
 SNAPSHOT_TYPE_MONTHLY_LEADERBOARD = "monthly-leaderboard"
-SNAPSHOT_TYPE_MONTHLY_MVP = "monthly-mvp"
-SNAPSHOT_TYPE_MONTHLY_MVP_V2 = "monthly-mvp-v2"
 SNAPSHOT_TYPE_RECENT_MATCHES = "recent-matches"
-SNAPSHOT_TYPE_PLAYER_EVENT_MOST_KILLED = "player-event-most-killed"
-SNAPSHOT_TYPE_PLAYER_EVENT_DEATH_BY = "player-event-death-by"
-SNAPSHOT_TYPE_PLAYER_EVENT_DUELS = "player-event-duels"
-SNAPSHOT_TYPE_PLAYER_EVENT_WEAPON_KILLS = "player-event-weapon-kills"
-SNAPSHOT_TYPE_PLAYER_EVENT_TEAMKILLS = "player-event-teamkills"
 
 SUPPORTED_SNAPSHOT_TYPES = frozenset(
     {
         SNAPSHOT_TYPE_SERVER_SUMMARY,
         SNAPSHOT_TYPE_WEEKLY_LEADERBOARD,
         SNAPSHOT_TYPE_MONTHLY_LEADERBOARD,
-        SNAPSHOT_TYPE_MONTHLY_MVP,
-        SNAPSHOT_TYPE_MONTHLY_MVP_V2,
         SNAPSHOT_TYPE_RECENT_MATCHES,
-        SNAPSHOT_TYPE_PLAYER_EVENT_MOST_KILLED,
-        SNAPSHOT_TYPE_PLAYER_EVENT_DEATH_BY,
-        SNAPSHOT_TYPE_PLAYER_EVENT_DUELS,
-        SNAPSHOT_TYPE_PLAYER_EVENT_WEAPON_KILLS,
-        SNAPSHOT_TYPE_PLAYER_EVENT_TEAMKILLS,
     }
 )
 
@@ -76,14 +51,6 @@ SNAPSHOT_LEADERBOARD_METRICS = (
     "matches_over_100_kills",
     "support",
 )
-PLAYER_EVENT_SNAPSHOT_TYPES = (
-    SNAPSHOT_TYPE_PLAYER_EVENT_MOST_KILLED,
-    SNAPSHOT_TYPE_PLAYER_EVENT_DEATH_BY,
-    SNAPSHOT_TYPE_PLAYER_EVENT_DUELS,
-    SNAPSHOT_TYPE_PLAYER_EVENT_WEAPON_KILLS,
-    SNAPSHOT_TYPE_PLAYER_EVENT_TEAMKILLS,
-)
-
 DEFAULT_SNAPSHOT_WINDOW = "all-time"
 DEFAULT_WEEKLY_SNAPSHOT_WINDOW = "7d"
 DEFAULT_MONTHLY_SNAPSHOT_WINDOW = "month"
@@ -165,36 +132,6 @@ def build_historical_server_snapshots(
             )
     )
 
-    _log_snapshot_build_started(server_key, SNAPSHOT_TYPE_MONTHLY_MVP)
-    snapshots.append(
-        _build_monthly_mvp_snapshot(
-            server_key,
-            generated_at_value,
-            limit=leaderboard_limit,
-            db_path=db_path,
-        )
-    )
-    _log_snapshot_build_started(server_key, SNAPSHOT_TYPE_MONTHLY_MVP_V2)
-    snapshots.append(
-        _build_monthly_mvp_v2_snapshot(
-            server_key,
-            generated_at_value,
-            limit=leaderboard_limit,
-            db_path=db_path,
-        )
-    )
-    for snapshot_type in PLAYER_EVENT_SNAPSHOT_TYPES:
-        _log_snapshot_build_started(server_key, snapshot_type)
-        snapshots.append(
-            _build_player_event_snapshot(
-                server_key,
-                snapshot_type,
-                generated_at_value,
-                limit=leaderboard_limit,
-                db_path=db_path,
-            )
-        )
-
     _log_snapshot_build_started(server_key, SNAPSHOT_TYPE_RECENT_MATCHES)
     snapshots.append(
         _build_recent_matches_snapshot(
@@ -252,35 +189,6 @@ def build_priority_historical_snapshots(
                 _build_monthly_leaderboard_snapshot(
                     server_key,
                     metric,
-                    generated_at_value,
-                    limit=leaderboard_limit,
-                    db_path=db_path,
-                )
-            )
-        _log_snapshot_build_started(server_key, SNAPSHOT_TYPE_MONTHLY_MVP)
-        snapshots.append(
-            _build_monthly_mvp_snapshot(
-                server_key,
-                generated_at_value,
-                limit=leaderboard_limit,
-                db_path=db_path,
-            )
-        )
-        _log_snapshot_build_started(server_key, SNAPSHOT_TYPE_MONTHLY_MVP_V2)
-        snapshots.append(
-            _build_monthly_mvp_v2_snapshot(
-                server_key,
-                generated_at_value,
-                limit=leaderboard_limit,
-                db_path=db_path,
-            )
-        )
-        for snapshot_type in PLAYER_EVENT_SNAPSHOT_TYPES:
-            _log_snapshot_build_started(server_key, snapshot_type)
-            snapshots.append(
-                _build_player_event_snapshot(
-                    server_key,
-                    snapshot_type,
                     generated_at_value,
                     limit=leaderboard_limit,
                     db_path=db_path,
@@ -497,26 +405,6 @@ def generate_and_persist_historical_monthly_ui_snapshots(
                     db_path=db_path,
                 )
             )
-        _log_snapshot_build_started(server_key, SNAPSHOT_TYPE_MONTHLY_MVP)
-        snapshots.append(
-            _build_monthly_mvp_snapshot(
-                server_key,
-                generated_at_value,
-                limit=leaderboard_limit,
-                db_path=db_path,
-            )
-        )
-        _log_snapshot_build_started(server_key, SNAPSHOT_TYPE_MONTHLY_MVP_V2)
-        snapshots.append(
-            _build_monthly_mvp_v2_snapshot(
-                server_key,
-                generated_at_value,
-                limit=leaderboard_limit,
-                tolerate_missing_player_event_ledger=True,
-                db_path=db_path,
-            )
-        )
-
     persisted_records = persist_historical_snapshot_batch(snapshots, db_path=db_path)
     snapshots_by_server: dict[str, int] = {}
     for record in persisted_records:
@@ -529,7 +417,6 @@ def generate_and_persist_historical_monthly_ui_snapshots(
         "snapshot_policy": "monthly-ui-subset",
         "server_keys": list(server_keys),
         "metrics": list(SNAPSHOT_LEADERBOARD_METRICS),
-        "includes_monthly_mvp": True,
         "snapshot_count": len(persisted_records),
         "servers_processed": len(snapshots_by_server),
         "snapshots_by_server": snapshots_by_server,
@@ -750,165 +637,6 @@ def _build_recent_matches_snapshot(
     }
 
 
-def _build_player_event_snapshot(
-    server_key: str,
-    snapshot_type: str,
-    generated_at: datetime,
-    *,
-    limit: int,
-    db_path: Path | None = None,
-) -> dict[str, object]:
-    month_key = _get_latest_player_event_month_key(server_key=server_key, db_path=db_path)
-    source_range_start = None
-    source_range_end = None
-    items: list[dict[str, object]] = []
-    found = False
-
-    if month_key:
-        source_range_start, source_range_end = _get_player_event_source_range(
-            server_key=server_key,
-            month_key=month_key,
-            db_path=db_path,
-        )
-        items = _list_player_event_snapshot_items(
-            snapshot_type=snapshot_type,
-            server_key=server_key,
-            month_key=month_key,
-            limit=limit,
-            db_path=db_path,
-        )
-        found = bool(items or source_range_start or source_range_end)
-
-    return {
-        "server_key": server_key,
-        "snapshot_type": snapshot_type,
-        "metric": None,
-        "window": DEFAULT_MONTHLY_SNAPSHOT_WINDOW,
-        "generated_at": generated_at,
-        "source_range_start": source_range_start,
-        "source_range_end": source_range_end,
-        "is_stale": False,
-        "payload": {
-            "server_key": server_key,
-            "period": "monthly",
-            "month_key": month_key,
-            "limit": limit,
-            "found": found,
-            "generated_at": _to_iso(generated_at),
-            "source_range_start": _to_iso(source_range_start) if source_range_start else None,
-            "source_range_end": _to_iso(source_range_end) if source_range_end else None,
-            "items": items,
-        },
-    }
-
-
-def _build_monthly_mvp_snapshot(
-    server_key: str,
-    generated_at: datetime,
-    *,
-    limit: int,
-    db_path: Path | None = None,
-) -> dict[str, object]:
-    ranking_result = list_monthly_mvp_ranking(
-        limit=limit,
-        server_id=server_key,
-        db_path=db_path,
-    )
-    month_key = str(ranking_result.get("window_start") or "")[:7] or None
-    return {
-        "server_key": server_key,
-        "snapshot_type": SNAPSHOT_TYPE_MONTHLY_MVP,
-        "metric": None,
-        "window": DEFAULT_MONTHLY_SNAPSHOT_WINDOW,
-        "generated_at": generated_at,
-        "source_range_start": _parse_optional_timestamp(ranking_result.get("window_start")),
-        "source_range_end": _parse_optional_timestamp(ranking_result.get("window_end")),
-        "is_stale": False,
-        "payload": {
-            "server_key": server_key,
-            "limit": limit,
-            "month_key": month_key,
-            "generated_at": _to_iso(generated_at),
-            **ranking_result,
-        },
-    }
-
-
-def _build_monthly_mvp_v2_snapshot(
-    server_key: str,
-    generated_at: datetime,
-    *,
-    limit: int,
-    tolerate_missing_player_event_ledger: bool = False,
-    db_path: Path | None = None,
-) -> dict[str, object]:
-    try:
-        ranking_result = list_monthly_mvp_v2_ranking(
-            limit=limit,
-            server_id=server_key,
-            db_path=db_path,
-        )
-    except sqlite3.OperationalError as error:
-        if not tolerate_missing_player_event_ledger or "player_event_raw_ledger" not in str(error):
-            raise
-        ranking_result = {
-            "timeframe": "monthly",
-            "metric": "mvp-v2",
-            "ranking_version": "v2",
-            "window_start": None,
-            "window_end": None,
-            "window_days": None,
-            "window_kind": "missing-player-event-ledger",
-            "window_label": "Sin ledger de eventos",
-            "uses_fallback": True,
-            "selection_reason": "player-event-raw-ledger-missing",
-            "current_month_start": None,
-            "current_month_closed_matches": 0,
-            "previous_month_closed_matches": 0,
-            "sufficient_sample": {
-                "minimum_closed_matches": 0,
-                "current_month_closed_matches": 0,
-                "current_month_has_sufficient_sample": False,
-                "is_early_month": False,
-            },
-            "event_coverage": {
-                "ready": False,
-                "reason": "player-event-raw-ledger-missing",
-                "source_range_start": None,
-                "source_range_end": None,
-            },
-            "eligibility": None,
-            "eligible_players_count": 0,
-            "items": [],
-            "error": str(error),
-        }
-    month_key = str(ranking_result.get("window_start") or "")[:7] or None
-    event_coverage = ranking_result.get("event_coverage")
-    source_range_start = None
-    source_range_end = None
-    if isinstance(event_coverage, dict):
-        source_range_start = _parse_optional_timestamp(event_coverage.get("source_range_start"))
-        source_range_end = _parse_optional_timestamp(event_coverage.get("source_range_end"))
-    return {
-        "server_key": server_key,
-        "snapshot_type": SNAPSHOT_TYPE_MONTHLY_MVP_V2,
-        "metric": None,
-        "window": DEFAULT_MONTHLY_SNAPSHOT_WINDOW,
-        "generated_at": generated_at,
-        "source_range_start": source_range_start,
-        "source_range_end": source_range_end,
-        "is_stale": False,
-        "payload": {
-            "server_key": server_key,
-            "limit": limit,
-            "month_key": month_key,
-            "found": bool(event_coverage.get("ready")) if isinstance(event_coverage, dict) else False,
-            "generated_at": _to_iso(generated_at),
-            **ranking_result,
-        },
-    }
-
-
 def _resolve_snapshot_target_keys(
     *,
     server_key: str | None,
@@ -925,97 +653,6 @@ def _resolve_snapshot_target_keys(
         return [ALL_SERVERS_SLUG]
 
     return [normalized_server_key, ALL_SERVERS_SLUG]
-
-
-def _list_player_event_snapshot_items(
-    *,
-    snapshot_type: str,
-    server_key: str,
-    month_key: str,
-    limit: int,
-    db_path: Path | None,
-) -> list[dict[str, object]]:
-    aggregator_by_snapshot_type = {
-        SNAPSHOT_TYPE_PLAYER_EVENT_MOST_KILLED: list_most_killed,
-        SNAPSHOT_TYPE_PLAYER_EVENT_DEATH_BY: list_death_by,
-        SNAPSHOT_TYPE_PLAYER_EVENT_DUELS: list_net_duel_summaries,
-        SNAPSHOT_TYPE_PLAYER_EVENT_WEAPON_KILLS: list_weapon_kills,
-        SNAPSHOT_TYPE_PLAYER_EVENT_TEAMKILLS: list_teamkill_summaries,
-    }
-    aggregator = aggregator_by_snapshot_type[snapshot_type]
-    return aggregator(
-        server_slug=server_key,
-        month=month_key,
-        limit=limit,
-        db_path=db_path,
-    )
-
-
-def _get_latest_player_event_month_key(
-    *,
-    server_key: str,
-    db_path: Path | None = None,
-) -> str | None:
-    resolved_path = initialize_player_event_storage(db_path=db_path)
-    where_sql, params = _build_player_event_scope_where(server_key=server_key)
-    with _connect(resolved_path) as connection:
-        row = connection.execute(
-            f"""
-            SELECT MAX(substr(CAST(occurred_at AS TEXT), 1, 7)) AS latest_month
-            FROM player_event_raw_ledger
-            WHERE occurred_at IS NOT NULL
-              AND {where_sql}
-            """,
-            params,
-        ).fetchone()
-    if not row or not row["latest_month"]:
-        return None
-    return str(row["latest_month"])
-
-
-def _get_player_event_source_range(
-    *,
-    server_key: str,
-    month_key: str,
-    db_path: Path | None = None,
-) -> tuple[datetime | None, datetime | None]:
-    resolved_path = initialize_player_event_storage(db_path=db_path)
-    where_sql, params = _build_player_event_scope_where(server_key=server_key)
-    with _connect(resolved_path) as connection:
-        row = connection.execute(
-            f"""
-            SELECT
-                MIN(occurred_at) AS source_range_start,
-                MAX(occurred_at) AS source_range_end
-            FROM player_event_raw_ledger
-            WHERE occurred_at IS NOT NULL
-              AND substr(CAST(occurred_at AS TEXT), 1, 7) = ?
-              AND {where_sql}
-            """,
-            [month_key, *params],
-        ).fetchone()
-    if not row:
-        return None, None
-    return (
-        _parse_optional_timestamp(row["source_range_start"]),
-        _parse_optional_timestamp(row["source_range_end"]),
-    )
-
-
-def _build_player_event_scope_where(*, server_key: str) -> tuple[str, list[object]]:
-    if server_key == ALL_SERVERS_SLUG:
-        return "1 = 1", []
-    return "server_slug = ?", [server_key]
-
-
-def _connect(db_path: Path) -> sqlite3.Connection:
-    if get_database_url():
-        from .postgres_display_storage import connect_postgres_compat
-
-        return connect_postgres_compat()
-    connection = sqlite3.connect(db_path)
-    connection.row_factory = sqlite3.Row
-    return connection
 
 
 def _parse_optional_timestamp(value: object) -> datetime | None:

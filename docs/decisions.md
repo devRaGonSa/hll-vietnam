@@ -284,3 +284,18 @@ inventario de readers/writers y el gate de apagado vive en
 `docs/CRCON_FIRST_LEGACY_DEPENDENCY_LEDGER.md`; no hay writers
 `SHUTDOWN_READY` mientras existan rollback y decisiones pendientes de MVP,
 player-event y Elo/MMR.
+
+## Decision 021: retirada de MVP, player-events de compatibilidad y Elo/MMR
+
+TASK-309 resuelve las decisiones de producto pendientes de Decision 020:
+MVP V1/V2, player-events de compatibilidad y Elo/MMR se retiran por completo
+de la aplicacion. Se eliminan rutas, payloads, calculos, workers exclusivos,
+configuracion, tests de producto, helpers frontend y documentacion operativa.
+No se mantienen tombstones de compatibilidad.
+
+Esta decision no autoriza borrar tablas, filas, migraciones, SQLite ni
+snapshots existentes. Las referencias de storage generico necesarias para
+inspeccionar o migrar esos restos se clasifican como `DEAD_STORAGE_CANDIDATE`.
+Tampoco modifica deployment, CRCON, credenciales o writers historicos
+compartidos que siguen sosteniendo el rollback de los dominios publicos
+supervivientes.

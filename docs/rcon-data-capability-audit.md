@@ -23,7 +23,7 @@ No se implementa ninguna tabla, ruta, scoring ni captura adicional.
 - `backend/README.md`
 - `docs/historical-crcon-source-discovery.md`
 - `docs/monthly-player-ranking-data-audit.md`
-- `docs/monthly-mvp-ranking-scoring-design.md`
+- the removed monthly-MVP design (historical evidence; deleted in TASK-309)
 
 ## Current RCON Surface In This Repository
 

@@ -6,11 +6,11 @@ import unittest
 from unittest.mock import patch
 from urllib.parse import urlparse
 
+import app.api.payloads as payload_facade
 from app.api.routes import DOMAIN_ROUTERS, resolve_get_payload
 from app.api.routes import current_match as current_match_routes
 from app.api.routes import history as history_routes
 from app.api.routes import players as player_routes
-from app.api.routes import product_features as product_routes
 from app.api.routes import rankings as ranking_routes
 from app.api.routes import servers as server_routes
 
@@ -57,17 +57,18 @@ PUBLIC_ROUTE_CASES = {
         "/api/historical/matches/detail?server=server-one&match=opaque-match",
         "/api/historical/server-summary?server=server-one",
     ),
-    "product_features": (
-        "/api/historical/monthly-mvp?limit=20",
-        "/api/historical/monthly-mvp-v2?limit=20",
-        "/api/historical/player-events?view=most-killed&limit=20",
-        "/api/historical/snapshots/monthly-mvp?limit=20",
-        "/api/historical/snapshots/monthly-mvp-v2?limit=20",
-        "/api/historical/snapshots/player-events?view=most-killed&limit=20",
-        "/api/historical/elo-mmr/leaderboard?limit=20",
-        "/api/historical/elo-mmr/player?player=opaque-player",
-    ),
 }
+
+REMOVED_PRODUCT_ROUTE_CASES = (
+    "/api/historical/monthly-mvp?limit=20",
+    "/api/historical/monthly-mvp-v2?limit=20",
+    "/api/historical/player-events?view=most-killed&limit=20",
+    "/api/historical/snapshots/monthly-mvp?limit=20",
+    "/api/historical/snapshots/monthly-mvp-v2?limit=20",
+    "/api/historical/snapshots/player-events?view=most-killed&limit=20",
+    "/api/historical/elo-mmr/leaderboard?limit=20",
+    "/api/historical/elo-mmr/player?player=opaque-player",
+)
 
 PATCHED_BUILDERS = {
     server_routes: (
@@ -105,16 +106,6 @@ PATCHED_BUILDERS = {
         "build_historical_match_detail_payload",
         "build_historical_server_summary_payload",
     ),
-    product_routes: (
-        "build_monthly_mvp_payload",
-        "build_monthly_mvp_v2_payload",
-        "build_player_event_payload",
-        "build_monthly_mvp_snapshot_payload",
-        "build_monthly_mvp_v2_snapshot_payload",
-        "build_player_event_snapshot_payload",
-        "build_elo_mmr_leaderboard_payload",
-        "build_elo_mmr_player_payload",
-    ),
 }
 
 
@@ -129,7 +120,6 @@ class ApiRouteRegistryTests(unittest.TestCase):
                 "players",
                 "rankings",
                 "history",
-                "product_features",
             ],
         )
 
@@ -149,7 +139,27 @@ class ApiRouteRegistryTests(unittest.TestCase):
                         self.assertEqual(status, HTTPStatus.OK)
                         self.assertEqual(payload["status"], "ok")
 
-        self.assertEqual(sum(map(len, PUBLIC_ROUTE_CASES.values())), 37)
+        self.assertEqual(sum(map(len, PUBLIC_ROUTE_CASES.values())), 29)
+
+    def test_removed_product_routes_use_normal_unknown_route_behavior(self) -> None:
+        for path in REMOVED_PRODUCT_ROUTE_CASES:
+            with self.subTest(path=path):
+                self.assertEqual(resolve_get_payload(path), (None, {}))
+
+    def test_payload_facade_does_not_export_removed_product_builders(self) -> None:
+        removed_builders = {
+            "build_monthly_mvp_payload",
+            "build_monthly_mvp_v2_payload",
+            "build_player_event_payload",
+            "build_monthly_mvp_snapshot_payload",
+            "build_monthly_mvp_v2_snapshot_payload",
+            "build_player_event_snapshot_payload",
+            "build_elo_mmr_leaderboard_payload",
+            "build_elo_mmr_player_payload",
+        }
+        self.assertTrue(removed_builders.isdisjoint(payload_facade.__all__))
+        for builder in removed_builders:
+            self.assertFalse(hasattr(payload_facade, builder))
 
     def test_unknown_route_keeps_unmatched_contract(self) -> None:
         self.assertEqual(resolve_get_payload("/api/not-a-route"), (None, {}))
@@ -272,8 +282,6 @@ class ApiRouteRegistryTests(unittest.TestCase):
             ("/api/historical/recent-matches?page=0", "Invalid page parameter"),
             ("/api/historical/matches/detail?server=server-one", "Match parameter is required"),
             ("/api/historical/player-profile", "Player parameter is required"),
-            ("/api/historical/player-events?view=unknown", "Invalid view parameter"),
-            ("/api/historical/elo-mmr/player", "Player parameter is required"),
         )
         for path, message in cases:
             with self.subTest(path=path):
