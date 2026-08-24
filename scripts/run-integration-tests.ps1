@@ -37,6 +37,8 @@ Assert-LastExitCode "Backend startup import check failed."
 
 powershell -ExecutionPolicy Bypass -File scripts/run-historical-ui-regression-tests.ps1
 Assert-LastExitCode "Historical UI regression validation failed."
+powershell -ExecutionPolicy Bypass -File scripts/run-home-page-regression-tests.ps1
+Assert-LastExitCode "Home page regression validation failed."
 powershell -ExecutionPolicy Bypass -File scripts/run-stats-validation.ps1
 Assert-LastExitCode "Stats regression validation failed."
 

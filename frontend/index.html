@@ -58,7 +58,7 @@
                   class="discord-button"
                   href="https://discord.com/invite/PedEqZ2Xsa"
                   target="_blank"
-                  rel="noreferrer"
+                  rel="noopener noreferrer"
                 >
                   Unirse al Discord
                 </a>
@@ -69,56 +69,6 @@
       </header>
 
       <main class="content">
-        <section class="panel panel--video">
-          <div class="panel__shell">
-            <div class="panel__header">
-              <p class="eyebrow eyebrow--section">Trailer</p>
-              <h2 id="trailer-title">Primer vistazo a HLL Vietnam</h2>
-            </div>
-            <div class="video-wrapper">
-              <iframe
-                id="trailer-frame"
-                src="https://www.youtube.com/embed/JzYzYNVWZ_A"
-                title="Trailer HLL Vietnam"
-                loading="lazy"
-                allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
-                referrerpolicy="strict-origin-when-cross-origin"
-                allowfullscreen
-              ></iframe>
-            </div>
-            <section
-              class="release-countdown"
-              data-hll-vietnam-countdown
-              data-countdown-target="2026-08-13T00:00:00+02:00"
-              aria-labelledby="release-countdown-title"
-            >
-              <div class="release-countdown__copy">
-                <p class="eyebrow eyebrow--section" id="release-countdown-title">
-                  Fecha de lanzamiento de Hell Let Loose Vietnam (13 de agosto)
-                </p>
-              </div>
-              <div class="release-countdown__units" aria-live="off">
-                <article>
-                  <strong data-countdown-days>0</strong>
-                  <span>Dias</span>
-                </article>
-                <article>
-                  <strong data-countdown-hours>0</strong>
-                  <span>Horas</span>
-                </article>
-                <article>
-                  <strong data-countdown-minutes>0</strong>
-                  <span>Minutos</span>
-                </article>
-                <article>
-                  <strong data-countdown-seconds>0</strong>
-                  <span>Segundos</span>
-                </article>
-              </div>
-            </section>
-          </div>
-        </section>
-
         <section class="panel panel--servers" aria-labelledby="servers-title">
           <div class="panel__shell">
             <div class="panel__header panel__header--servers">
@@ -144,6 +94,106 @@
           </div>
         </section>
 
+        <section class="panel panel--vip" aria-labelledby="vip-title">
+          <div class="panel__shell">
+            <div class="panel__header">
+              <p class="eyebrow eyebrow--section">VIP de la comunidad</p>
+              <h2 id="vip-title">Premios VIP</h2>
+              <p class="panel__intro panel__intro--vip">
+                Consigue acceso VIP mediante una aportación anual o participa en
+                las recompensas automáticas activas de la comunidad.
+              </p>
+            </div>
+
+            <div class="vip-grid">
+              <article class="vip-card vip-card--annual">
+                <p class="vip-card__tag">Aportación anual</p>
+                <h3>VIP anual</h3>
+                <p>
+                  Solicita tu VIP anual abriendo un ticket en nuestro Discord.
+                  Esta modalidad se obtiene mediante una aportación o pago anual.
+                </p>
+                <a
+                  class="discord-button vip-card__cta"
+                  href="https://discord.com/invite/PedEqZ2Xsa"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                >
+                  Abrir ticket en Discord
+                </a>
+              </article>
+
+              <article class="vip-card vip-card--seed">
+                <p class="vip-card__tag">Automático · HLL y HLL Vietnam</p>
+                <h3>Ayuda al seeding</h3>
+                <p>
+                  Juega al menos 10 minutos y sigue conectado cuando el servidor
+                  alcance 25 jugadores por equipo.
+                </p>
+                <ul class="vip-seed-list">
+                  <li><span>HLL #1 y HLL #2</span><strong>+24 h VIP</strong></li>
+                  <li><span>HLL Vietnam</span><strong>+12 h VIP</strong></li>
+                </ul>
+                <p class="vip-card__meta">
+                  Activo de 09:30 a 21:30 (hora peninsular). Se concede por cada
+                  ciclo de seeding y se acumula sobre el VIP temporal existente.
+                </p>
+              </article>
+
+              <article class="vip-card vip-card--weekly">
+                <div class="vip-card__heading">
+                  <div>
+                    <p class="vip-card__tag">Automático · HLL #1 y HLL #2</p>
+                    <h3>Retos semanales activos</h3>
+                  </div>
+                  <p class="vip-card__period">24–31 agosto 2026</p>
+                </div>
+                <p>
+                  Completa cada reto durante la semana y recibe su recompensa una
+                  sola vez. Puedes completar y acumular varios retos.
+                </p>
+                <ul class="vip-reward-list">
+                  <li><span>1.000 bajas</span><strong>+4 h VIP</strong></li>
+                  <li><span>15.000 puntos de soporte</span><strong>+4 h VIP</strong></li>
+                  <li><span>10.000 puntos de ataque</span><strong>+4 h VIP</strong></li>
+                  <li><span>12.000 puntos de defensa</span><strong>+4 h VIP</strong></li>
+                  <li><span>50 vehículos destruidos</span><strong>+4 h VIP</strong></li>
+                  <li><span>10 bajas cuerpo a cuerpo con cuchillo o pala</span><strong>+4 h VIP</strong></li>
+                </ul>
+                <div class="vip-weekly-highlight">
+                  <span>Mayor tiempo jugado de la semana</span>
+                  <strong>+24 h VIP</strong>
+                </div>
+              </article>
+            </div>
+
+            <p class="vip-disclaimer">
+              Las recompensas automáticas se aplican según las reglas activas de
+              la comunidad y pueden cambiar en futuros periodos.
+            </p>
+          </div>
+        </section>
+
+        <section class="panel panel--video">
+          <div class="panel__shell">
+            <div class="panel__header">
+              <p class="eyebrow eyebrow--section">Trailer</p>
+              <h2 id="trailer-title">Primer vistazo a HLL Vietnam</h2>
+            </div>
+            <div class="video-wrapper">
+              <iframe
+                id="trailer-frame"
+                src="https://www.youtube.com/embed/JzYzYNVWZ_A"
+                title="Trailer HLL Vietnam"
+                loading="lazy"
+                allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
+                referrerpolicy="strict-origin-when-cross-origin"
+                allowfullscreen
+              ></iframe>
+            </div>
+          </div>
+        </section>
+
         <section class="panel panel--clans" aria-labelledby="clans-title">
           <div class="panel__shell">
             <div class="panel__header">
@@ -163,5 +213,3 @@
     <script src="./assets/js/main.js"></script>
   </body>
 </html>
-
-
