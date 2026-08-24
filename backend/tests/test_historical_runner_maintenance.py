@@ -105,8 +105,12 @@ class HistoricalRunnerMaintenanceTests(unittest.TestCase):
                 run_number=1,
             )
 
-        self.assertEqual(result["status"], "ok")
-        self.assertEqual(result["database_maintenance_result"]["status"], "error")
+        self.assertEqual(result["status"], "partial")
+        maintenance_result = result["database_maintenance_result"]
+        self.assertEqual(maintenance_result["status"], "error")
+        self.assertEqual(maintenance_result["error_type"], "RuntimeError")
+        self.assertEqual(maintenance_result["error"], "maintenance failed")
+        self.assertEqual(result["attempts_used"], 1)
         self.assertIn("database-maintenance-scheduler-failed", stream.getvalue())
 
     def test_interval_parsing_handles_invalid_values_safely(self) -> None:

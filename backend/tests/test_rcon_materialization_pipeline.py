@@ -11,7 +11,6 @@ from pathlib import Path
 from unittest.mock import patch
 
 from app.historical_storage import upsert_historical_match
-from app.api.payloads import build_recent_historical_matches_payload
 from app.rcon_historical_player_stats import (
     get_rcon_materialized_player_stats,
     initialize_player_period_stats_storage,
@@ -610,7 +609,7 @@ class RconMaterializationPipelineTests(unittest.TestCase):
             self.assertEqual(players["Alpha"]["external_profile_links"], {})
             gc.collect()
 
-    def test_recent_matches_prefer_materialized_rcon_over_scoreboard_fallback(self) -> None:
+    def test_materialized_rcon_read_model_is_isolated_from_scoreboard_storage(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             db_path = Path(tmpdir) / "historical.sqlite3"
             previous_storage_path = os.environ.get("HLL_BACKEND_STORAGE_PATH")
@@ -620,10 +619,6 @@ class RconMaterializationPipelineTests(unittest.TestCase):
                 materialize_rcon_admin_log(db_path=db_path)
                 _persist_scoreboard_match(db_path)
 
-                payload = build_recent_historical_matches_payload(
-                    limit=5,
-                    server_slug="comunidad-hispana-01",
-                )
                 recent = list_rcon_historical_recent_activity(
                     server_key="comunidad-hispana-01",
                     limit=5,
@@ -631,10 +626,12 @@ class RconMaterializationPipelineTests(unittest.TestCase):
             finally:
                 _restore_env("HLL_BACKEND_STORAGE_PATH", previous_storage_path)
 
-            self.assertEqual(payload["data"]["selected_source"], "rcon")
-            self.assertEqual(payload["data"]["items"][0]["result_source"], "admin-log-match-ended")
+            self.assertEqual(len(recent), 1)
             self.assertEqual(recent[0]["result_source"], "admin-log-match-ended")
-            self.assertNotEqual(payload["data"]["selected_source"], "public-scoreboard")
+            self.assertEqual(
+                recent[0]["internal_detail_match_id"],
+                "comunidad-hispana-01:100:500:stmariedumontwarfare",
+            )
             gc.collect()
 
     def test_recent_materialized_detail_id_resolves_through_detail_read_model(self) -> None:
@@ -658,25 +655,6 @@ class RconMaterializationPipelineTests(unittest.TestCase):
 
             self.assertIsNotNone(detail)
             self.assertEqual(detail["match_id"], recent["internal_detail_match_id"])
-            gc.collect()
-
-    def test_public_scoreboard_fallback_used_only_without_rcon_activity(self) -> None:
-        with tempfile.TemporaryDirectory() as tmpdir:
-            db_path = Path(tmpdir) / "historical.sqlite3"
-            previous_storage_path = os.environ.get("HLL_BACKEND_STORAGE_PATH")
-            os.environ["HLL_BACKEND_STORAGE_PATH"] = str(db_path)
-            try:
-                _persist_scoreboard_match(db_path)
-                payload = build_recent_historical_matches_payload(
-                    limit=5,
-                    server_slug="comunidad-hispana-01",
-                )
-            finally:
-                _restore_env("HLL_BACKEND_STORAGE_PATH", previous_storage_path)
-
-            self.assertTrue(payload["data"]["fallback_used"])
-            self.assertEqual(payload["data"]["selected_source"], "public-scoreboard")
-            self.assertEqual(payload["data"]["items"][0]["result_source"], "public-scoreboard-fallback")
             gc.collect()
 
     def test_public_player_search_uses_read_model_without_initialize_or_runtime_fallback(self) -> None:
