@@ -15,6 +15,15 @@ TASK-307 performed no CRCON, RCON, PostgreSQL, Redis, service or deployment
 mutation. It used existing sanitized evidence, local fixtures/tests and a local
 HTTP fail-closed smoke. No real identity was retained.
 
+TASK-310 repeated the canonical local configuration audit on 2026-08-24 after
+the obsolete product slices were removed. `HLL_SERVER_TARGETS`,
+`HLL_CRCON_CURRENT_MATCH_BINDINGS`, `HLL_CRCON_LOG_STREAM_TOKENS` and
+`HLL_CRCON_DATABASE_URL` remain `NOT_CONFIGURED`. The earlier public endpoint
+evidence below is preserved, but the complete configured application runtime
+is still not eligible for a real probe. Current status and operator steps are
+recorded in `docs/CRCON_FIRST_LEGACY_DEPENDENCY_LEDGER.md` and
+`docs/CRCON_FIRST_RUNTIME_OPERATOR_CHECKLIST.md`.
+
 ## TASK-307 runtime-readiness evidence
 
 ### Canonical configuration availability

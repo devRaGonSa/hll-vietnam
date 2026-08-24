@@ -83,24 +83,29 @@ product reader or writer calls the removed player-event model.
 storage is retained physical state, not a target application-owned gameplay
 domain.
 
-## Writer ownership after TASK-309
+## Writer ownership after TASK-310 configuration audit
 
-| Writer/job | Surviving responsibility | Classification | Product feature dependency |
-| --- | --- | --- | --- |
-| local collector / scheduler | server snapshot-history routes and server-card rollback | `NORMAL_REQUIRED` plus `ROLLBACK_HOT` | none |
-| classic historical ingestion | legacy History/Ranking/Stats rollback | `ROLLBACK_HOT` | none |
-| historical runner | legacy snapshots, ranking/search/profile refresh and maintenance coordination | `ROLLBACK_HOT` | none |
-| current/live AdminLog worker | immediate current-match legacy rollback | `ROLLBACK_HOT` | none |
-| RCON historical worker | legacy historical/aggregate rollback materialization | `ROLLBACK_HOT` | none |
-| AdminLog materialization | legacy History/Ranking/Stats/profile rollback | `ROLLBACK_HOT` | none |
-| normal historical snapshot writers | legacy History UI/snapshot rollback | `ROLLBACK_HOT` | none |
-| ranking and annual ranking refreshers | legacy Ranking/Stats rollback | `ROLLBACK_HOT` | none |
-| player index/profile refreshers | legacy Stats rollback | `ROLLBACK_HOT` | none |
-| manual RCON historical backfills | bounded legacy repair/reactivation | `ROLLBACK_COLD` | none |
-| scoreboard candidate/relink tools | bounded legacy correlation repair | `ROLLBACK_COLD` | none |
-| database maintenance scheduler | health of retained actively written stores | `NORMAL_REQUIRED` | none |
-| former player-event worker | no surviving reader or deployment reference | `REMOVED` after satisfying `DEAD_WRITER_CANDIDATE` gates | none |
-| former Elo rebuild CLI/runner job | no surviving reader or deployment reference | `REMOVED` after satisfying `DEAD_WRITER_CANDIDATE` gates | none |
+No runtime replacement can be marked verified until the canonical target,
+Bearer, Log Stream and SELECT-only database configuration is supplied. The
+active-reader column therefore remains `UNVERIFIED`; this is not evidence that
+a legacy reader executed.
+
+| Writer/job | Classification | CRCON replacement runtime verified? | Normal-path active readers | Rollback-only proven? | Safe to stop in next task? |
+| --- | --- | --- | --- | --- | --- |
+| local collector / scheduler | `NORMAL_REQUIRED` plus `ROLLBACK_HOT` | no; ServerTargets absent | `UNVERIFIED` | no | no |
+| classic historical ingestion | `ROLLBACK_HOT` | no; REST/DB runtime absent | `UNVERIFIED` | no | no |
+| historical runner | `ROLLBACK_HOT` | no; aggregate runtime absent | `UNVERIFIED` | no | no |
+| current/live AdminLog worker | `ROLLBACK_HOT` | no; REST/Log Stream runtime absent | `UNVERIFIED` | no | no |
+| RCON historical worker | `ROLLBACK_HOT` | no; history/aggregate runtime absent | `UNVERIFIED` | no | no |
+| AdminLog materialization | `ROLLBACK_HOT` | no; current/aggregate runtime absent | `UNVERIFIED` | no | no |
+| normal historical snapshot writers | `ROLLBACK_HOT` | no; history/aggregate runtime absent | `UNVERIFIED` | no | no |
+| ranking and annual ranking refreshers | `ROLLBACK_HOT` | no; database runtime absent | `UNVERIFIED` | no | no |
+| player index/profile refreshers | `ROLLBACK_HOT` | no; API/database runtime absent | `UNVERIFIED` | no | no |
+| manual RCON historical backfills | `ROLLBACK_COLD` | not required for normal path | `UNVERIFIED` | no | no |
+| scoreboard candidate/relink tools | `ROLLBACK_COLD` | not required for normal path | `UNVERIFIED` | no | no |
+| database maintenance scheduler | `NORMAL_REQUIRED` | not applicable while retained stores are hot | `UNVERIFIED` | no | no |
+| former player-event worker | `REMOVED` | not applicable | 0 | yes | already removed |
+| former Elo rebuild CLI/runner job | `REMOVED` | not applicable | 0 | yes | already removed |
 
 Remaining `APPLICATION_FEATURE_REQUIRED` writers: **none**.
 
@@ -108,7 +113,32 @@ Remaining `DEAD_WRITER_CANDIDATE` implementations: **none**. The two exclusive
 candidates were not referenced by Compose/systemd/CI/startup, so TASK-309
 removed them rather than leaving broken or dead commands.
 
-## Runtime evidence still required from TASK-307
+## TASK-310 sanitized runtime status
+
+| Status key | Result |
+| --- | --- |
+| `CRCON_REST_RUNTIME_HLL` | `CONFIGURATION_REQUIRED` |
+| `PLAYER_SEARCH_RUNTIME` | `CONFIGURATION_REQUIRED` (Bearer also unavailable) |
+| `CRCON_LOG_STREAM_RUNTIME_HLL` | `CONFIGURATION_REQUIRED` |
+| `CRCON_DB_DEPLOYED_SCHEMA` | `UNVERIFIED` |
+| `CRCON_DB_RUNTIME` | `AUTH_UNAVAILABLE` |
+| `SERVER_SUMMARY_RUNTIME` | `UNVERIFIED` |
+| `RANKINGS_RUNTIME` | `UNVERIFIED` |
+| `PLAYER_PROFILE_RUNTIME` | `UNVERIFIED` |
+| `CURRENT_MATCH_RUNTIME_HLL` | `BLOCKED` |
+| `CURRENT_MATCH_PARITY_EVIDENCE` | `INSUFFICIENT_EVIDENCE` |
+| `CURRENT_MATCH_HLLV` | `UNVERIFIED` |
+| `CRCON_FIRST_ACTIVE_LEGACY_READERS` | `UNVERIFIED` |
+| `LEGACY_WRITER_DISABLE_READINESS` | `NOT_READY` |
+
+The canonical local audit found `HLL_SERVER_TARGETS`,
+`HLL_CRCON_CURRENT_MATCH_BINDINGS`, `HLL_CRCON_LOG_STREAM_TOKENS` and
+`HLL_CRCON_DATABASE_URL` all `NOT_CONFIGURED`. Exact non-secret operator
+requirements and the least-privilege SQL template live in
+`docs/CRCON_FIRST_RUNTIME_OPERATOR_CHECKLIST.md` and
+`docs/CRCON_READ_ONLY_ROLE.sql`.
+
+## Runtime evidence still required from TASK-307/TASK-310
 
 Product features no longer block runtime migration. The outstanding operational
 evidence remains:
@@ -131,12 +161,12 @@ required for local development.
 
 `LEGACY_FEATURE_BLOCKERS = NONE`.
 
-`LEGACY_WRITER_DISABLE_READINESS = READY_AFTER_RUNTIME_VALIDATION`.
+`LEGACY_WRITER_DISABLE_READINESS = NOT_READY`.
 
-There is no remaining non-runtime product-feature blocker. The currently hot
-rollback writers stay enabled in TASK-309; disabling them is authorized only
-after the external runtime evidence above passes and a separate operational
-task coordinates the loss of fresh legacy rollback.
+There is no product-feature blocker. Readiness is now blocked only by the
+missing authorized runtime configuration and the resulting inability to prove
+zero normal-path legacy readers. The currently hot rollback writers stay
+enabled; no shutdown task is eligible yet.
 
 No writer was stopped, no deployment file changed, no table/schema/data was
 deleted, and no remote CRCON, PostgreSQL or Redis state was touched.
